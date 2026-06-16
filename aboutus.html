@@ -1,0 +1,358 @@
+<div class="sn-about">
+  <style>
+    .sn-about {
+      --sn-cyan: #22d3ee;
+      --sn-sky: #38bdf8;
+      --sn-indigo: #6366f1;
+      --sn-violet: #8b5cf6;
+      --sn-text: #0f172a;
+      --sn-muted: #475569;
+      --sn-border: rgba(15, 23, 42, 0.1);
+      --sn-card: rgba(255, 255, 255, 0.72);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
+        "Microsoft YaHei", sans-serif;
+      color: var(--sn-text);
+      line-height: 1.65;
+      max-width: 56rem;
+      margin: 0 auto;
+    }
+    .dark .sn-about {
+      --sn-text: #f1f5f9;
+      --sn-muted: #94a3b8;
+      --sn-border: rgba(255, 255, 255, 0.12);
+      --sn-card: rgba(15, 23, 42, 0.55);
+    }
+    .sn-about * {
+      box-sizing: border-box;
+    }
+    .sn-about-hero {
+      text-align: center;
+      padding: 2.5rem 1.25rem 2rem;
+      border-radius: 1.25rem;
+      background: linear-gradient(
+        135deg,
+        rgba(34, 211, 238, 0.12) 0%,
+        rgba(99, 102, 241, 0.1) 50%,
+        rgba(139, 92, 246, 0.08) 100%
+      );
+      border: 1px solid var(--sn-border);
+      margin-bottom: 2rem;
+    }
+    .sn-about-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--sn-indigo);
+      background: rgba(99, 102, 241, 0.1);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      padding: 0.35rem 0.75rem;
+      border-radius: 9999px;
+      margin-bottom: 1rem;
+    }
+    .dark .sn-about-badge {
+      color: var(--sn-cyan);
+      background: rgba(34, 211, 238, 0.12);
+      border-color: rgba(34, 211, 238, 0.25);
+    }
+    .sn-about-title {
+      font-size: clamp(1.75rem, 4vw, 2.25rem);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin: 0 0 0.5rem;
+      background: linear-gradient(90deg, #0891b2, #4f46e5, #7c3aed);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .sn-about-subtitle {
+      font-size: clamp(1rem, 2.5vw, 1.125rem);
+      font-weight: 600;
+      color: var(--sn-text);
+      margin: 0 0 0.35rem;
+    }
+    .sn-about-subtitle-en {
+      font-size: 0.95rem;
+      font-weight: 500;
+      color: var(--sn-muted);
+      margin: 0;
+    }
+    .sn-about-intro {
+      margin-top: 1.75rem;
+      text-align: left;
+      padding: 1.25rem 1.25rem 1rem;
+      background: var(--sn-card);
+      border-radius: 1rem;
+      border: 1px solid var(--sn-border);
+    }
+    .sn-about-intro p {
+      margin: 0 0 1rem;
+      font-size: 0.9375rem;
+      color: var(--sn-muted);
+    }
+    .sn-about-intro p:last-child {
+      margin-bottom: 0;
+    }
+    .sn-about-intro strong {
+      color: var(--sn-text);
+      font-weight: 600;
+    }
+    .sn-about-section-title {
+      text-align: center;
+      margin: 2.5rem 0 1.25rem;
+    }
+    .sn-about-section-title h2 {
+      font-size: clamp(1.25rem, 3vw, 1.5rem);
+      font-weight: 800;
+      margin: 0 0 0.35rem;
+      color: var(--sn-text);
+    }
+    .sn-about-section-title p {
+      margin: 0;
+      font-size: 0.875rem;
+      color: var(--sn-muted);
+      font-weight: 500;
+    }
+    .sn-about-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 1rem;
+    }
+    @media (min-width: 640px) {
+      .sn-about-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    @media (min-width: 1024px) {
+      .sn-about-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+    .sn-about-card {
+      padding: 1.25rem;
+      border-radius: 1rem;
+      border: 1px solid var(--sn-border);
+      background: var(--sn-card);
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+    }
+    .sn-about-card:hover {
+      border-color: rgba(34, 211, 238, 0.35);
+      box-shadow: 0 8px 28px -8px rgba(99, 102, 241, 0.25);
+    }
+    .sn-about-card-icon {
+      font-size: 1.5rem;
+      line-height: 1;
+      margin-bottom: 0.65rem;
+    }
+    .sn-about-card h3 {
+      font-size: 1rem;
+      font-weight: 700;
+      margin: 0 0 0.25rem;
+      color: var(--sn-text);
+    }
+    .sn-about-card h4 {
+      font-size: 0.8125rem;
+      font-weight: 600;
+      margin: 0 0 0.65rem;
+      color: var(--sn-muted);
+    }
+    .sn-about-card p {
+      margin: 0;
+      font-size: 0.8125rem;
+      color: var(--sn-muted);
+      line-height: 1.6;
+    }
+    .sn-about-card p + p {
+      margin-top: 0.65rem;
+    }
+    .sn-about-mission {
+      margin-top: 2rem;
+      padding: 1.5rem 1.25rem;
+      border-radius: 1rem;
+      border: 1px solid var(--sn-border);
+      background: linear-gradient(
+        120deg,
+        rgba(34, 211, 238, 0.08),
+        rgba(99, 102, 241, 0.06)
+      );
+    }
+    .sn-about-mission h2 {
+      font-size: 1.25rem;
+      font-weight: 800;
+      margin: 0 0 0.25rem;
+      text-align: center;
+      color: var(--sn-text);
+    }
+    .sn-about-mission h3 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      text-align: center;
+      margin: 0 0 1rem;
+      color: var(--sn-muted);
+    }
+    .sn-about-mission p {
+      margin: 0 0 0.85rem;
+      font-size: 0.875rem;
+      color: var(--sn-muted);
+    }
+    .sn-about-mission p:last-child {
+      margin-bottom: 0;
+    }
+    .sn-about-divider {
+      height: 1px;
+      background: var(--sn-border);
+      margin: 2rem 0;
+      border: none;
+    }
+    .sn-about-lang-label {
+      display: inline-block;
+      font-size: 0.6875rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--sn-indigo);
+      margin-bottom: 0.35rem;
+    }
+    .dark .sn-about-lang-label {
+      color: var(--sn-cyan);
+    }
+  </style>
+
+  <!-- Hero -->
+  <header class="sn-about-hero">
+    <span class="sn-about-badge">StarNexus · 星域互联</span>
+    <h1 class="sn-about-title">星域互联 StarNexus</h1>
+    <p class="sn-about-subtitle">全球源头大模型直连中转 · 企业级稳定可信 API 平台</p>
+    <p class="sn-about-subtitle-en">
+      Global Direct Access to Top-tier Large Models · Enterprise-Grade Stable &amp;
+      Trusted API Platform
+    </p>
+    <div class="sn-about-intro">
+      <p>
+        <span class="sn-about-lang-label">中文</span><br />
+        <strong>星域互联 StarNexus</strong>是专注服务开发者与企业的大模型 Token
+        中转平台。我们深耕 AI 接口中转领域，深谙行业普遍乱象：模型掺假、计费坑、高峰期不稳定、数据不安全、新平台跑路、接入成本高等核心痛点。平台摒弃行业套路，以<strong>透明、稳定、安全、长效</strong>为核心，从根源解决用户顾虑，让企业调用大模型<strong>零风险、低成本、高效率</strong>。
+      </p>
+      <p>
+        <span class="sn-about-lang-label">English</span><br />
+        <strong>StarNexus</strong> is a large model token relay platform dedicated to
+        developers and enterprises. We specialize in AI API relay services and fully
+        understand industry pain points including counterfeit models, unfair billing,
+        unstable performance during peak hours, data risks, unreliable platforms and high
+        access costs. We stick to <strong>transparency, stability, security and
+        long-term operation</strong>, helping enterprises use large AI models with
+        <strong>zero risk, low cost and high efficiency</strong>.
+      </p>
+    </div>
+  </header>
+
+  <!-- Six commitments -->
+  <div class="sn-about-section-title">
+    <h2>六大核心承诺，直面所有行业顾虑</h2>
+    <p>Six Core Commitments to Solve Industry Concerns</p>
+  </div>
+
+  <div class="sn-about-grid">
+    <article class="sn-about-card">
+      <div class="sn-about-card-icon" aria-hidden="true">🧩</div>
+      <h3>拒绝模型掺假，真实可溯源</h3>
+      <h4>No Counterfeit Models, Fully Traceable</h4>
+      <p>
+        全程直连官方上游，无偷换、无降级、无套壳。响应头透明标注真实模型，可随时校验，付费即用对应正版模型，杜绝「花 GPT-4 费用用 3.5 模型」的乱象。
+      </p>
+      <p>
+        We connect directly to official services without model replacement, downgrade
+        or disguise. Real model information is displayed in response headers for
+        verification. You will always get the official model you paid for.
+      </p>
+    </article>
+
+    <article class="sn-about-card">
+      <div class="sn-about-card-icon" aria-hidden="true">💰</div>
+      <h3>拒绝计费套路，透明可对账</h3>
+      <h4>No Hidden Billing, Fully Transparent</h4>
+      <p>
+        严格对标官方 Token 计费规则，不虚标倍率、不乱扣用量。后台实时展示每笔进出 Token 明细，账单可导出核验，无任何隐形消费，官方底价 5 折起，成本可控更划算。
+      </p>
+      <p>
+        We follow official token billing rules strictly with no overcharging or
+        unauthorized deductions. Real-time usage records and exportable bills are
+        provided. Prices start at 50% off official rates with no hidden fees.
+      </p>
+    </article>
+
+    <article class="sn-about-card">
+      <div class="sn-about-card-icon" aria-hidden="true">⚡</div>
+      <h3>拒绝卡顿宕机，企业级高稳定</h3>
+      <h4>Low Latency &amp; Enterprise-Grade Stability</h4>
+      <p>
+        部署全球多地域专线节点，智能负载均衡、自动故障转移，保障 99.99% 高可用。高峰期不限流、不超时、无 502 报错，全程稳跑核心业务。
+      </p>
+      <p>
+        Global dedicated nodes, smart load balancing and automatic failover ensure
+        99.99% uptime. No traffic limits, timeouts or server errors even during peak
+        periods.
+      </p>
+    </article>
+
+    <article class="sn-about-card">
+      <div class="sn-about-card-icon" aria-hidden="true">🔒</div>
+      <h3>拒绝数据泄露，零落地更合规</h3>
+      <h4>Data Security &amp; Full Compliance</h4>
+      <p>
+        用户对话内容仅实时转发，不缓存、不存储、不用于模型训练。全程 HTTPS 加密传输，守护企业敏感数据，规避合规与泄露风险。
+      </p>
+      <p>
+        User data is only forwarded in real time without caching or storage. All
+        transmission is encrypted via HTTPS to protect sensitive information and avoid
+        compliance risks.
+      </p>
+    </article>
+
+    <article class="sn-about-card">
+      <div class="sn-about-card-icon" aria-hidden="true">🚀</div>
+      <h3>拒绝迁移繁琐，零成本接入</h3>
+      <h4>Easy Integration with Zero Migration Cost</h4>
+      <p>
+        完全兼容 OpenAI 全系接口格式，无需改写业务逻辑、无需重构代码，仅更换一行 Base URL 即可完成迁移，10 分钟快速上线。
+      </p>
+      <p>
+        Fully compatible with all OpenAI API formats. Just replace the Base URL to
+        complete migration within 10 minutes, no code modification required.
+      </p>
+    </article>
+
+    <article class="sn-about-card">
+      <div class="sn-about-card-icon" aria-hidden="true">🛡️</div>
+      <h3>拒绝跑路风险，长期稳定运营</h3>
+      <h4>Reliable &amp; Long-term Operation</h4>
+      <p>
+        正规企业运营平台，非个人临时站点，无停站跑路风险。已稳定服务 10 万+ 开发者与企业，覆盖全球数十个国家，零大规模故障记录，业务长久有保障。
+      </p>
+      <p>
+        Operated by formal enterprise, not a temporary personal site. We have served over
+        100,000 users across the globe with stable and reliable services.
+      </p>
+    </article>
+  </div>
+
+  <hr class="sn-about-divider" />
+
+  <!-- Mission -->
+  <section class="sn-about-mission">
+    <h2>我们的初心与愿景</h2>
+    <h3>Our Mission &amp; Vision</h3>
+    <p>
+      我们坚持无套路、真透明、高稳定的服务理念，整合 OpenAI、Claude、Gemini 等全系主流大模型资源，为用户提供一站式、高性价比、企业级的 AI 调用解决方案。未来将持续打磨技术与服务，打造行业可信的 AI 中转基础设施，助力各行各业低成本落地 AI 应用。
+    </p>
+    <p>
+      We uphold the principles of transparency and high stability. We integrate mainstream
+      large language models including OpenAI, Claude and Gemini to deliver cost-effective
+      enterprise AI solutions. We will keep optimizing our services to build reliable AI
+      relay infrastructure and help industries adopt AI easily.
+    </p>
+  </section>
+</div>

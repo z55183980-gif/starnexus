@@ -1,0 +1,88 @@
+# Production with a pre-built image (no "build" on the server).
+#
+# Local (Windows/macOS/Linux):
+#   docker build -t starnexus-new-api:prod .
+#   docker save starnexus-new-api:prod -o starnexus-new-api.tar
+#   # upload starnexus-new-api.tar to /www/wwwroot/starnexus/
+#
+# Server:
+#   docker load -i starnexus-new-api.tar
+#   docker compose -f docker-compose.prod.image.yml up -d
+
+version: '3.4'
+
+services:
+  new-api:
+    image: starnexus-new-api:prod
+    container_name: xingyuapi-new-api
+    restart: always
+    command: --log-dir /app/logs
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      SQL_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_CONN_STRING: redis://:${REDIS_PASSWORD}@redis:6379
+      TZ: Asia/Shanghai
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_NAME: ${NODE_NAME:-xingyuapi-prod-1}
+      SESSION_SECRET: ${SESSION_SECRET}
+      CRYPTO_SECRET: ${CRYPTO_SECRET}
+      TRUSTED_REDIRECT_DOMAINS: ${TRUSTED_REDIRECT_DOMAINS:-xingyuapi.com}
+      SYNC_FREQUENCY: ${SYNC_FREQUENCY:-60}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - xingyuapi-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    container_name: xingyuapi-redis
+    restart: always
+    env_file:
+      - .env
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - xingyuapi-network
+
+  postgres:
+    image: postgres:15
+    container_name: xingyuapi-postgres
+    restart: always
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - xingyuapi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pg_data:
+
+networks:
+  xingyuapi-network:
+    driver: bridge
