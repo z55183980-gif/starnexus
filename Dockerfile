@@ -1,4 +1,4 @@
-FROM node:20-alpine@sha256:8d514db5c096eadb2a64a7d8bdee2228b268a4bef235b5b2f6f75046a6f8d5d AS builder-image-playground
+FROM node:20-alpine AS builder-image-playground
 
 WORKDIR /build
 COPY web/gpt-image-playground/package.json web/gpt-image-playground/package-lock.json ./
