@@ -88,31 +88,40 @@ func createRootAccountIfNeed() error {
 	return nil
 }
 
+func ensureSetupRecord() {
+	newSetup := Setup{
+		Version:       common.Version,
+		InitializedAt: time.Now().Unix(),
+	}
+	if err := DB.Create(&newSetup).Error; err != nil {
+		common.SysLog("failed to create setup record: " + err.Error())
+	}
+}
+
 func CheckSetup() {
 	setup := GetSetup()
-	if setup == nil {
-		// No setup record exists, check if we have a root user
-		if RootUserExists() {
-			common.SysLog("system is not initialized, but root user exists")
-			// Create setup record
-			newSetup := Setup{
-				Version:       common.Version,
-				InitializedAt: time.Now().Unix(),
-			}
-			err := DB.Create(&newSetup).Error
-			if err != nil {
-				common.SysLog("failed to create setup record: " + err.Error())
-			}
-			constant.Setup = true
-		} else {
-			common.SysLog("system is not initialized and no root user exists")
-			constant.Setup = false
-		}
-	} else {
-		// Setup record exists, system is initialized
+	if setup != nil {
 		common.SysLog("system is already initialized at: " + time.Unix(setup.InitializedAt, 0).String())
 		constant.Setup = true
+		return
 	}
+
+	// Migrated databases may have admin users (role 10) but no root (role 100).
+	if RootUserExists() {
+		common.SysLog("system is not initialized, but root user exists")
+		ensureSetupRecord()
+		constant.Setup = true
+		return
+	}
+	if HasExistingUsers() {
+		common.SysLog("system is not initialized, but existing users found (migrated database)")
+		ensureSetupRecord()
+		constant.Setup = true
+		return
+	}
+
+	common.SysLog("system is not initialized and no users exist")
+	constant.Setup = false
 }
 
 func chooseDB(envName string, isLog bool) (*gorm.DB, error) {

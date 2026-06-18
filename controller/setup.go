@@ -35,7 +35,7 @@ func GetSetup(c *gin.Context) {
 		})
 		return
 	}
-	setup.RootInit = model.RootUserExists()
+	setup.RootInit = model.RootUserExists() || model.HasExistingUsers()
 	if common.UsingMySQL {
 		setup.DatabaseType = "mysql"
 	}

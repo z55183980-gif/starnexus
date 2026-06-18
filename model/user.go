@@ -1012,3 +1012,10 @@ func RootUserExists() bool {
 	}
 	return true
 }
+
+// HasExistingUsers reports whether the users table already has rows (e.g. after pg_restore).
+func HasExistingUsers() bool {
+	var count int64
+	err := DB.Model(&User{}).Limit(1).Count(&count).Error
+	return err == nil && count > 0
+}
