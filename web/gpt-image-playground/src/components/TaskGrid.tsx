@@ -254,7 +254,7 @@ export default function TaskGrid() {
 
   if (!filteredTasks.length) {
     return (
-      <div className="text-center py-20 text-gray-400 dark:text-gray-500">
+      <div className="flex flex-1 flex-col items-center justify-center py-20 text-center text-gray-400 dark:text-gray-500">
         {searchQuery || filterFavorite ? (
           <p className="text-sm">没有找到匹配的任务</p>
         ) : (

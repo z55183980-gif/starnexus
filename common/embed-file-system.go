@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/gin-contrib/static"
 )
@@ -16,20 +17,41 @@ type embedFileSystem struct {
 }
 
 func (e *embedFileSystem) Exists(prefix string, path string) bool {
-	_, err := e.Open(path)
-	if err != nil {
-		return false
-	}
-	return true
+	_, err := e.resolveEmbedPath(path)
+	return err == nil
 }
 
 func (e *embedFileSystem) Open(name string) (http.File, error) {
+	resolved, err := e.resolveEmbedPath(name)
+	if err != nil {
+		return nil, err
+	}
+	return e.FileSystem.Open(resolved)
+}
+
+func (e *embedFileSystem) resolveEmbedPath(name string) (string, error) {
 	if name == "/" {
 		// This will make sure the index page goes to NoRouter handler,
 		// which will use the replaced index bytes with analytic codes.
-		return nil, os.ErrNotExist
+		return "", os.ErrNotExist
 	}
-	return e.FileSystem.Open(name)
+
+	normalized := strings.TrimPrefix(name, "/")
+
+	if file, err := e.FileSystem.Open(normalized); err == nil {
+		stat, statErr := file.Stat()
+		_ = file.Close()
+		if statErr == nil && !stat.IsDir() {
+			return normalized, nil
+		}
+	}
+
+	indexPath := strings.TrimSuffix(normalized, "/") + "/index.html"
+	if _, err := e.FileSystem.Open(indexPath); err == nil {
+		return indexPath, nil
+	}
+
+	return "", os.ErrNotExist
 }
 
 func EmbedFolder(fsEmbed embed.FS, targetPath string) static.ServeFileSystem {

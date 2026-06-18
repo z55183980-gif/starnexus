@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { initStore } from './store'
 import { useStore } from './store'
 import { activateFirstImportedProfile, buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
@@ -14,6 +14,7 @@ import InputBar from './components/InputBar'
 import DetailModal from './components/DetailModal'
 import Lightbox from './components/Lightbox'
 import SettingsModal from './components/SettingsModal'
+import ApiKeyModal from './components/ApiKeyModal'
 import ConfirmDialog from './components/ConfirmDialog'
 import Toast from './components/Toast'
 import MaskEditorModal from './components/MaskEditorModal'
@@ -21,10 +22,14 @@ import ImageContextMenu from './components/ImageContextMenu'
 import SupportPromptModal from './components/SupportPromptModal'
 import { FavoriteCollectionPickerModal, FavoriteCollectionsView, ManageCollectionsModal } from './components/FavoriteCollections'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
+import { isEmbeddedPlayground } from './lib/embed'
+import { useEmbeddedViewportHeight } from './hooks/useEmbeddedViewportHeight'
 
 let customProviderConfigUrlImportStarted = false
 
 export default function App() {
+  const embedded = isEmbeddedPlayground()
+  const viewportHeight = useEmbeddedViewportHeight(embedded)
   const setSettings = useStore((s) => s.setSettings)
   const appMode = useStore((s) => s.appMode)
   const filterFavorite = useStore((s) => s.filterFavorite)
@@ -109,21 +114,37 @@ export default function App() {
 
   return (
     <>
-      <Header />
-      {appMode === 'agent' ? (
-        <AgentWorkspace />
-      ) : (
-        <main data-home-main data-drag-select-surface className="pb-48">
-          <div className="safe-area-x max-w-7xl mx-auto">
-            <SearchBar />
-            {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
+      <div
+        style={embedded ? { height: viewportHeight } : undefined}
+        className={
+          embedded
+            ? 'flex min-h-0 flex-col overflow-hidden'
+            : 'flex min-h-svh flex-col'
+        }
+      >
+        <Header />
+        {appMode === 'agent' ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <AgentWorkspace />
           </div>
-        </main>
-      )}
+        ) : (
+          <main
+            data-home-main
+            data-drag-select-surface
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-48"
+          >
+            <div className="safe-area-x max-w-7xl mx-auto">
+              <SearchBar />
+              {filterFavorite && !activeFavoriteCollectionId ? <FavoriteCollectionsView /> : <TaskGrid />}
+            </div>
+          </main>
+        )}
+      </div>
       <InputBar />
       <DetailModal />
       <Lightbox />
       <SettingsModal />
+      <ApiKeyModal />
       <ConfirmDialog />
       <SupportPromptModal />
       <FavoriteCollectionPickerModal />

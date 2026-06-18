@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { isSidebarModuleEnabled } from '@/lib/nav-modules'
-import { Main } from '@/components/layout'
 import { ImageWorkbench } from '@/features/image-workbench'
 
 export const Route = createFileRoute('/_authenticated/image-workbench/')({
@@ -32,8 +31,8 @@ export const Route = createFileRoute('/_authenticated/image-workbench/')({
 
 function ImageWorkbenchPage() {
   return (
-    <Main className='p-0'>
+    <div className='absolute inset-0 overflow-hidden'>
       <ImageWorkbench />
-    </Main>
+    </div>
   )
 }

@@ -17,14 +17,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
+import { useContentAreaRect } from './use-content-area-rect'
 
-const PLAYGROUND_PATH = '/image-playground/index.html'
+const STATIC_PLAYGROUND_PATH = '/image-playground/'
 const ENABLED_TOKEN_STATUS = 1
+
+function resolvePlaygroundBasePath(): string {
+  const devUrl = import.meta.env.VITE_IMAGE_PLAYGROUND_DEV_URL?.trim()
+  if (import.meta.env.DEV && devUrl) {
+    return `${devUrl.replace(/\/$/, '')}/`
+  }
+  return STATIC_PLAYGROUND_PATH
+}
 
 function buildPlaygroundSrc(apiKey: string): string {
   const params = new URLSearchParams({
@@ -32,8 +42,38 @@ function buildPlaygroundSrc(apiKey: string): string {
     apiKey,
     apiMode: 'images',
     profileName: 'StarNexus',
+    embedded: '1',
   })
-  return `${PLAYGROUND_PATH}?${params.toString()}`
+  return `${resolvePlaygroundBasePath()}?${params.toString()}`
+}
+
+type ImageWorkbenchFrameProps = {
+  title: string
+  src: string
+}
+
+function ImageWorkbenchFrame(props: ImageWorkbenchFrameProps) {
+  const rect = useContentAreaRect(true)
+
+  if (!rect) return null
+
+  return createPortal(
+    <iframe
+      title={props.title}
+      src={props.src}
+      className='border-0 bg-background'
+      style={{
+        position: 'fixed',
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+        zIndex: 1,
+      }}
+      allow='clipboard-read; clipboard-write'
+    />,
+    document.body
+  )
 }
 
 export function ImageWorkbench() {
@@ -113,7 +153,7 @@ export function ImageWorkbench() {
 
   if (loading) {
     return (
-      <div className='flex h-[calc(100dvh-var(--header-height))] items-center justify-center'>
+      <div className='flex h-full min-h-[320px] items-center justify-center'>
         <div className='text-muted-foreground flex items-center gap-2 text-sm'>
           <Loader2 className='size-4 animate-spin' />
           {t('Loading image workbench...')}
@@ -124,7 +164,7 @@ export function ImageWorkbench() {
 
   if (!iframeSrc) {
     return (
-      <div className='flex h-[calc(100dvh-var(--header-height))] items-center justify-center p-6'>
+      <div className='flex h-full min-h-[320px] items-center justify-center p-6'>
         <div className='max-w-md space-y-3 text-center'>
           <h2 className='text-lg font-semibold'>{errorContent.title}</h2>
           <p className='text-muted-foreground text-sm'>{errorContent.description}</p>
@@ -134,12 +174,5 @@ export function ImageWorkbench() {
     )
   }
 
-  return (
-    <iframe
-      title={t('Image Workbench')}
-      src={iframeSrc}
-      className='h-[calc(100dvh-var(--header-height))] w-full border-0'
-      allow='clipboard-read; clipboard-write'
-    />
-  )
+  return <ImageWorkbenchFrame title={t('Image Workbench')} src={iframeSrc} />
 }

@@ -22,10 +22,11 @@ interface SelectProps {
   options: Option[]
   disabled?: boolean
   className?: string
+  prefixLabel?: string
   onOpenChange?: (isOpen: boolean) => void
 }
 
-export default function Select({ value, onChange, onReorder, options, disabled, className, onOpenChange }: SelectProps) {
+export default function Select({ value, onChange, onReorder, options, disabled, className, prefixLabel, onOpenChange }: SelectProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [menuMaxHeight, setMenuMaxHeight] = useState(DEFAULT_DROPDOWN_MAX_HEIGHT)
   const [placement, setPlacement] = useState<'bottom' | 'top'>('bottom')
@@ -164,7 +165,12 @@ export default function Select({ value, onChange, onReorder, options, disabled, 
           disabled ? '!opacity-50 !cursor-not-allowed !bg-gray-100/50 dark:!bg-white/[0.05]' : ''
         }`}
       >
-        <span className="truncate">{selectedOption?.label ?? value}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          {prefixLabel ? (
+            <span className="shrink-0 text-gray-400 dark:text-gray-500">{prefixLabel}</span>
+          ) : null}
+          <span className="truncate">{selectedOption?.label ?? value}</span>
+        </span>
         <ChevronDownIcon className={`w-3.5 h-3.5 flex-shrink-0 text-gray-400 dark:text-gray-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
       </div>
 

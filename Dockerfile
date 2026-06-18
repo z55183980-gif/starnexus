@@ -4,6 +4,7 @@ WORKDIR /build
 COPY web/gpt-image-playground/package.json web/gpt-image-playground/package-lock.json ./
 RUN npm ci
 COPY web/gpt-image-playground/ .
+ENV VITE_BASE=/image-playground/
 ENV VITE_DEFAULT_API_URL=/v1
 ENV VITE_SHOW_DEFAULT_CONFIG_ONLY=true
 ENV VITE_API_PROXY_AVAILABLE=false

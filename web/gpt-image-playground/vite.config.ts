@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
@@ -17,12 +17,15 @@ function loadDevProxyConfig() {
   }
 }
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({ command, mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
   const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
+
+  const integrationBase = env.VITE_BASE || './'
 
   return {
     plugins: [react()],
-    base: './',
+    base: command === 'serve' ? './' : integrationBase,
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
       __DEV_PROXY_CONFIG__: JSON.stringify(devProxyConfig),

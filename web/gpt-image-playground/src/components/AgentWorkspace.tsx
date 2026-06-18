@@ -839,7 +839,7 @@ export default function AgentWorkspace() {
   return (
     <main 
       data-agent-workspace 
-      className="safe-area-x mx-auto flex min-h-[calc(100vh-100px)] flex-col lg:flex-row max-w-7xl lg:gap-3 px-3 lg:px-0 relative overflow-visible transition-all duration-300"
+      className="safe-area-x mx-auto flex h-full min-h-0 w-full flex-1 flex-col lg:flex-row max-w-7xl lg:gap-3 px-3 lg:px-0 relative overflow-hidden transition-all duration-300"
     >
       {/* Pull Down Indicator */}
       {pullDownOffset > 0 && !agentMobileHeaderVisible && (
@@ -981,7 +981,7 @@ export default function AgentWorkspace() {
 
         <div 
           ref={scrollContainerRef}
-          className="flex-1 space-y-4 overflow-visible pb-[calc(var(--input-bar-clearance,12rem)+1.5rem)] px-1 lg:pt-14 lg:px-4"
+          className="flex-1 space-y-4 overflow-y-auto pb-[calc(var(--input-bar-clearance,12rem)+1.5rem)] px-1 max-sm:pt-0 sm:pt-14 lg:px-4"
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}

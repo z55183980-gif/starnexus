@@ -40,11 +40,12 @@ export function AuthenticatedLayout(props: AuthenticatedLayoutProps) {
         <SidebarProvider defaultOpen={defaultOpen} className='flex-col'>
           <SkipToMain />
           <AppHeader />
-          <div className='flex min-h-0 w-full flex-1'>
+          <div className='flex min-h-0 w-full flex-1 overflow-hidden'>
             <AppSidebar />
             <SidebarInset
               className={cn(
                 '@container/content',
+                'min-h-0 overflow-hidden',
                 'h-[calc(100svh-var(--app-header-height,0px))]',
                 'peer-data-[variant=inset]:h-[calc(100svh-var(--app-header-height,0px)-(var(--spacing)*4))]'
               )}

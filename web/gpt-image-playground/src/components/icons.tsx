@@ -181,6 +181,18 @@ export function HelpCircleIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
+export function KeyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" {...props}>
+      <circle cx="8" cy="15" r="4" />
+      <path d="M12 15h8" />
+      <path d="M16 15v-4" />
+      <path d="M20 11V9" />
+      <path d="m15.5 7.5 2-2" />
+    </svg>
+  )
+}
+
 export function SettingsIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" {...props}>

@@ -884,6 +884,8 @@ interface AppState {
   showSettings: boolean
   settingsTabRequest: SettingsTab | null
   setShowSettings: (v: boolean, tab?: SettingsTab) => void
+  showApiKeyModal: boolean
+  setShowApiKeyModal: (v: boolean) => void
   supportPromptOpen: boolean
   supportPromptDismissed: boolean
   supportPromptSkippedForImportedData: boolean
@@ -1576,6 +1578,11 @@ export const useStore = create<AppState>()(
           ...(settingsTabRequest ? { settingsTabRequest } : {}),
           ...(!showSettings ? { settingsTabRequest: null } : {}),
         })
+      },
+      showApiKeyModal: false,
+      setShowApiKeyModal: (showApiKeyModal) => {
+        if (showApiKeyModal) dismissAllTooltips()
+        set({ showApiKeyModal })
       },
       supportPromptOpen: false,
       supportPromptDismissed: false,
@@ -5070,11 +5077,20 @@ export async function addImageFromFile(file: File): Promise<void> {
   useStore.getState().addInputImage(image)
 }
 
-export async function createInputImageFromFile(file: File): Promise<InputImage | null> {
+export async function createInputImageFromFile(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<InputImage | null> {
   if (!file.type.startsWith('image/')) return null
-  const dataUrl = await fileToDataUrl(file)
+  onProgress?.(0)
+  const dataUrl = await fileToDataUrl(file, (ratio) => {
+    onProgress?.(Math.round(ratio * 75))
+  })
+  onProgress?.(80)
   const id = await storeImage(dataUrl, 'upload')
+  onProgress?.(95)
   cacheImage(id, dataUrl)
+  onProgress?.(100)
   return { id, dataUrl }
 }
 
@@ -5089,9 +5105,15 @@ export async function addImageFromUrl(src: string): Promise<void> {
   useStore.getState().addInputImage({ id, dataUrl })
 }
 
-function fileToDataUrl(file: File): Promise<string> {
+function fileToDataUrl(file: File, onProgress?: (ratio: number) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
+    reader.onprogress = (event) => {
+      if (event.lengthComputable && event.total > 0) {
+        onProgress?.(event.loaded / event.total)
+      }
+    }
+    reader.onloadstart = () => onProgress?.(0.02)
     reader.onload = () => resolve(reader.result as string)
     reader.onerror = reject
     reader.readAsDataURL(file)

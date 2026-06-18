@@ -59,10 +59,11 @@ export function AnimatedOutlet() {
   const routeKey = useRouterState({
     select: (s) => s.location.pathname,
   })
+  const isFullBleedRoute = routeKey.startsWith('/image-workbench')
 
-  if (shouldReduce) {
+  if (shouldReduce || isFullBleedRoute) {
     return (
-      <div className='flex min-h-0 flex-1 flex-col'>
+      <div className='relative flex h-full min-h-0 flex-1 flex-col'>
         <Outlet />
       </div>
     )
@@ -74,7 +75,7 @@ export function AnimatedOutlet() {
       initial={MOTION_VARIANTS.pageEnter.initial}
       animate={MOTION_VARIANTS.pageEnter.animate}
       transition={MOTION_TRANSITION.fast}
-      className='flex min-h-0 flex-1 flex-col'
+      className='flex h-full min-h-0 flex-1 flex-col'
     >
       <Outlet />
     </motion.div>

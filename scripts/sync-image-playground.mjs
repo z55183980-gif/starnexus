@@ -9,7 +9,7 @@ Usage (from web/default):
 Optional custom source path:
   npm run image-playground:sync -- ../../other-path
 */
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -19,7 +19,6 @@ const repoRoot = path.resolve(__dirname, '..')
 const defaultSource = path.join(repoRoot, 'web', 'gpt-image-playground')
 const sourceRoot = path.resolve(process.argv[2] || defaultSource)
 const targetDir = path.join(repoRoot, 'web', 'default', 'public', 'image-playground')
-const envLocalPath = path.join(sourceRoot, '.env.local')
 
 if (!existsSync(path.join(sourceRoot, 'package.json'))) {
   console.error(`GPT Image Playground not found at: ${sourceRoot}`)
@@ -38,21 +37,20 @@ if (!existsSync(path.join(sourceRoot, 'node_modules'))) {
   }
 }
 
-writeFileSync(
-  envLocalPath,
-  `# Generated for StarNexus integration
-VITE_DEFAULT_API_URL=/v1
-VITE_SHOW_DEFAULT_CONFIG_ONLY=true
-VITE_API_PROXY_AVAILABLE=false
-`,
-  'utf8',
-)
+const integrationEnv = {
+  ...process.env,
+  VITE_BASE: '/image-playground/',
+  VITE_DEFAULT_API_URL: '/v1',
+  VITE_SHOW_DEFAULT_CONFIG_ONLY: 'true',
+  VITE_API_PROXY_AVAILABLE: 'false',
+}
 
 console.log(`Building GPT Image Playground from ${sourceRoot}...`)
 const build = spawnSync('npm', ['run', 'build'], {
   cwd: sourceRoot,
   stdio: 'inherit',
   shell: true,
+  env: integrationEnv,
 })
 
 if (build.status !== 0) {
@@ -65,10 +63,18 @@ if (!existsSync(distDir)) {
   process.exit(1)
 }
 
-mkdirSync(path.dirname(targetDir), { recursive: true })
-if (existsSync(targetDir)) {
-  rmSync(targetDir, { recursive: true, force: true })
+function syncBuiltAssets(targetRoot) {
+  mkdirSync(path.dirname(targetRoot), { recursive: true })
+  if (existsSync(targetRoot)) {
+    rmSync(targetRoot, { recursive: true, force: true })
+  }
+  cpSync(distDir, targetRoot, { recursive: true })
 }
 
-cpSync(distDir, targetDir, { recursive: true })
+syncBuiltAssets(targetDir)
 console.log(`Synced image playground to ${targetDir}`)
+
+const embedDistDir = path.join(repoRoot, 'web', 'default', 'dist', 'image-playground')
+syncBuiltAssets(embedDistDir)
+console.log(`Synced image playground to ${embedDistDir}`)
+console.log('If you serve the UI via Go (go run main.go), restart Go to pick up dist embed changes.')

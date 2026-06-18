@@ -6,7 +6,9 @@ import 'streamdown/styles.css'
 import 'katex/dist/katex.min.css'
 import './index.css'
 import { installMobileViewportGuards } from './lib/viewport'
+import { markEmbeddedPlayground } from './lib/embed'
 
+markEmbeddedPlayground()
 installMobileViewportGuards()
 
 if ('serviceWorker' in navigator) {

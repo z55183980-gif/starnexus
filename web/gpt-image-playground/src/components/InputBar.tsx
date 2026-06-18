@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { ALL_FAVORITES_COLLECTION_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
+import { ALL_FAVORITES_COLLECTION_ID, deleteFavoriteCollection, getTaskFavoriteCollectionIds, useStore, submitTask, submitAgentMessage, stopAgentResponse, createInputImageFromFile, deleteImageIfUnreferenced, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds, taskMatchesFilterStatus, taskMatchesSearchQuery } from '../store'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -402,6 +402,48 @@ function agentImageMentionMatches(query: string, label: string) {
   return normalizedLabel.includes(normalized) || normalizedLabel.replace(/^@/, '').includes(normalized)
 }
 
+const UPLOAD_PROGRESS_RADIUS = 14
+const UPLOAD_PROGRESS_CIRC = 2 * Math.PI * UPLOAD_PROGRESS_RADIUS
+
+function UploadProgressThumb({ progress }: { progress: number }) {
+  const clamped = Math.min(100, Math.max(0, Math.round(progress)))
+  const offset = UPLOAD_PROGRESS_CIRC - (clamped / 100) * UPLOAD_PROGRESS_CIRC
+
+  return (
+    <div
+      className="relative inline-flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-xl bg-gray-200/90 dark:bg-white/[0.08]"
+      aria-label={`上传中 ${clamped}%`}
+    >
+      <svg className="absolute h-[38px] w-[38px] -rotate-90" viewBox="0 0 36 36" aria-hidden>
+        <circle
+          cx="18"
+          cy="18"
+          r={UPLOAD_PROGRESS_RADIUS}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          className="text-gray-300 dark:text-white/15"
+        />
+        <circle
+          cx="18"
+          cy="18"
+          r={UPLOAD_PROGRESS_RADIUS}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          className="text-gray-500 dark:text-gray-400"
+          strokeDasharray={UPLOAD_PROGRESS_CIRC}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+        />
+      </svg>
+      <span className="relative text-[10px] font-medium tabular-nums text-gray-600 dark:text-gray-300">
+        {clamped}%
+      </span>
+    </div>
+  )
+}
+
 function AtImageOptionThumb({ option }: { option: AtImageOption }) {
   const [src, setSrc] = useState(option.type === 'input' ? option.dataUrl : getCachedImage(option.imageId) || '')
 
@@ -443,6 +485,7 @@ export default function InputBar() {
   const setSettings = useStore((s) => s.setSettings)
   const reusedTaskApiProfileId = useStore((s) => s.reusedTaskApiProfileId)
   const setShowSettings = useStore((s) => s.setShowSettings)
+  const setShowApiKeyModal = useStore((s) => s.setShowApiKeyModal)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
   const showToast = useStore((s) => s.showToast)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
@@ -678,6 +721,7 @@ export default function InputBar() {
   const [atImageMenuIndex, setAtImageMenuIndex] = useState(0)
   const [atImageMenuDismissed, setAtImageMenuDismissed] = useState(false)
   const [touchDragPreview, setTouchDragPreview] = useState<{ src: string; x: number; y: number } | null>(null)
+  const [pendingUploads, setPendingUploads] = useState<Array<{ id: string; progress: number }>>([])
   const handleRef = useRef<HTMLDivElement>(null)
   const dragTouchRef = useRef({ startY: 0, moved: false })
   const suppressHandleClickUntilRef = useRef(0)
@@ -780,7 +824,6 @@ export default function InputBar() {
   const activeProvider = activeProfile.provider
   const isFalProvider = activeProvider === 'fal'
   const agentAutoImageCount = appMode === 'agent' && activeProfile.provider === 'openai' && activeProfile.apiMode === 'responses'
-  const moderationDisabled = isFalProvider
   const transparentOutputAvailable = appMode === 'gallery'
   const showTransparentOutputControl = transparentOutputAvailable && params.output_format === 'png'
   const transparentOutputEnabled = transparentOutputAvailable && showTransparentOutputControl && params.transparent_output
@@ -818,7 +861,6 @@ export default function InputBar() {
     if (open) transparentOutputHint.hide()
   }, [transparentOutputHint.hide])
   const compressionHint = useHintTooltip({ enabled: () => compressionDisabled })
-  const moderationHint = useHintTooltip({ enabled: () => moderationDisabled })
   const sizeHint = useHintTooltip({ enabled: () => isFalTextToImage })
   const qualityHint = useHintTooltip({ enabled: () => settings.codexCli || isFalProvider })
   const nLimitHint = useHintTooltip({ autoHideMs: 2000 })
@@ -1129,9 +1171,23 @@ export default function InputBar() {
       const toAdd = accepted.slice(0, remaining)
       const discarded = accepted.length - toAdd.length
 
-      for (const file of toAdd) {
-        await addImageFromFile(file)
-      }
+      await Promise.all(toAdd.map(async (file) => {
+        const pendingId = crypto.randomUUID()
+        setPendingUploads((prev) => [...prev, { id: pendingId, progress: 0 }])
+        const updateProgress = (progress: number) => {
+          setPendingUploads((prev) =>
+            prev.map((item) => (item.id === pendingId ? { ...item, progress } : item)),
+          )
+        }
+        try {
+          const image = await createInputImageFromFile(file, updateProgress)
+          if (image) {
+            useStore.getState().addInputImage(image)
+          }
+        } finally {
+          setPendingUploads((prev) => prev.filter((item) => item.id !== pendingId))
+        }
+      }))
 
       if (discarded > 0) {
         useStore.getState().showToast(
@@ -1413,9 +1469,9 @@ export default function InputBar() {
     const el = textareaRef.current
     if (!el) return
 
-    // 计算图片区域等固定高度
-    const imagesHeight = imagesRef.current?.offsetHeight ?? 0
-    const fixedOverhead = imagesHeight + 140
+    const hasImageRow = inputImages.length > 0 || pendingUploads.length > 0
+    const imagesHeight = hasImageRow ? (imagesRef.current?.offsetHeight ?? 0) : 0
+    const fixedOverhead = imagesHeight + 180
 
     // 最大高度限制在页面 40% 减固定开销，不小于 80px
     const maxH = Math.max(window.innerHeight * 0.4 - fixedOverhead, 80)
@@ -1428,7 +1484,8 @@ export default function InputBar() {
 
     const placeholderEl = el.parentElement?.querySelector('.prompt-placeholder')
     const placeholderH = placeholderEl ? placeholderEl.scrollHeight : 0
-    const minH = Math.max(42, placeholderH)
+    const baseMinH = hasImageRow ? 48 : 52
+    const minH = Math.max(baseMinH, placeholderH)
 
     const desired = Math.max(scrollH, minH)
     const targetH = desired > maxH ? maxH : desired
@@ -1446,7 +1503,7 @@ export default function InputBar() {
     el.style.overflowY = desired > maxH ? 'auto' : 'hidden'
 
     prevHeightRef.current = targetH
-  }, [])
+  }, [inputImages.length, pendingUploads.length])
 
   // 同步 prompt 至 contentEditable
   useEffect(() => {
@@ -1545,7 +1602,7 @@ export default function InputBar() {
   }, [])
   useEffect(() => {
     adjustTextareaHeight()
-  }, [inputImages.length, Boolean(maskDraft), maskPreviewUrl, adjustTextareaHeight])
+  }, [inputImages.length, pendingUploads.length, Boolean(maskDraft), maskPreviewUrl, adjustTextareaHeight])
 
   useEffect(() => {
     window.addEventListener('resize', adjustTextareaHeight)
@@ -1901,30 +1958,105 @@ export default function InputBar() {
     </button>
   )
 
-  const renderImageThumbs = () => {
-    return (
-      <div ref={imagesRef}>
-        <div className="grid grid-cols-[repeat(auto-fill,52px)] justify-between gap-x-2 gap-y-3 mb-3">
-          {inputImages.map((img, idx) => renderImageThumb(img, idx))}
-          {renderClearAllButton()}
-        </div>
-        {touchDragPreview?.src && createPortal(
+  const renderInputImageThumbs = () => (
+    <>
+      {inputImages.map((img, idx) => renderImageThumb(img, idx))}
+      {pendingUploads.map((item) => (
+        <UploadProgressThumb key={item.id} progress={item.progress} />
+      ))}
+      {inputImages.length > 0 && renderClearAllButton()}
+      {touchDragPreview?.src && createPortal(
+        <div
+          className="fixed z-[140] h-[52px] w-[52px] overflow-hidden rounded-xl shadow-xl pointer-events-none opacity-90"
+          style={{ left: touchDragPreview.x, top: touchDragPreview.y, transform: 'translate(-50%, -50%)' }}
+        >
+          <img src={touchDragPreview.src} className="h-full w-full object-cover" alt="" />
+        </div>,
+        document.body,
+      )}
+    </>
+  )
+
+  const renderUploadImageButton = () => (
+    <div
+      className="relative shrink-0"
+      onMouseEnter={() => setAttachHover(true)}
+      onMouseLeave={() => setAttachHover(false)}
+    >
+      {!isMobile && <ButtonTooltip visible={attachHover} text={uploadImageTooltipText} />}
+      <button
+        type="button"
+        onClick={() => {
+          if (atImageLimit) return
+          if (isMobile) {
+            setShowMobileUploadMenu(!showMobileUploadMenu)
+            return
+          }
+          fileInputRef.current?.click()
+        }}
+        className={`flex h-[52px] w-[52px] flex-col items-center justify-center gap-0.5 rounded-xl border border-dashed transition-all ${
+          atImageLimit
+            ? 'cursor-not-allowed border-gray-200 bg-gray-50/50 text-gray-300 dark:border-white/[0.06] dark:bg-white/[0.02] dark:text-gray-600'
+            : 'border-gray-300 bg-gray-50/90 text-gray-500 hover:border-gray-400 hover:bg-gray-100 dark:border-white/[0.12] dark:bg-white/[0.03] dark:text-gray-400 dark:hover:border-white/20 dark:hover:bg-white/[0.06]'
+        }`}
+        aria-label={uploadImageTooltipText}
+      >
+        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+          <rect x="3" y="5" width="18" height="14" rx="2" />
+          <circle cx="8.5" cy="10.5" r="1.25" />
+          <path strokeLinecap="round" d="M3 16l4.5-4.5a1 1 0 011.414 0L14 16" />
+          <path strokeLinecap="round" d="M14 13l2-2a1 1 0 011.414 0L21 14" />
+          <path strokeLinecap="round" d="M18 6v2M19 7h-2" />
+        </svg>
+        <span className="text-[10px] leading-none font-medium">图片</span>
+      </button>
+
+      {isMobile && showMobileUploadMenu && (
+        <>
           <div
-            className="fixed z-[140] h-[52px] w-[52px] overflow-hidden rounded-xl shadow-xl pointer-events-none opacity-90"
-            style={{ left: touchDragPreview.x, top: touchDragPreview.y, transform: 'translate(-50%, -50%)' }}
-          >
-            <img src={touchDragPreview.src} className="h-full w-full object-cover" alt="" />
-          </div>,
-          document.body,
-        )}
-      </div>
-    )
-  }
+            className="fixed inset-0 z-40"
+            onClick={() => setShowMobileUploadMenu(false)}
+          />
+          <div className="absolute bottom-full left-0 z-50 mb-2 w-32 overflow-hidden rounded-xl border border-gray-100 bg-white shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200 dark:border-gray-700 dark:bg-gray-800">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50"
+              onClick={() => {
+                setShowMobileUploadMenu(false)
+                cameraInputRef.current?.click()
+              }}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              拍照
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 px-4 py-3 text-left text-sm text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-200 dark:hover:bg-gray-700/50"
+              onClick={() => {
+                setShowMobileUploadMenu(false)
+                fileInputRef.current?.click()
+              }}
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              上传图片
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+
+  const paramInlineLabelClass = 'shrink-0 text-gray-400 dark:text-gray-500'
 
   const renderParams = (cols: string) => (
     <div className={`grid ${cols} gap-2 text-xs flex-1`}>
       <label
-        className="relative flex flex-col gap-0.5"
+        className="relative"
         onMouseEnter={sizeHint.show}
         onMouseLeave={sizeHint.hide}
         onTouchStart={sizeHint.startTouch}
@@ -1932,14 +2064,14 @@ export default function InputBar() {
         onTouchCancel={sizeHint.hide}
         onClick={sizeHint.show}
       >
-        <span className="text-gray-400 dark:text-gray-500 ml-1">尺寸</span>
         <button
           type="button"
           onClick={() => { dismissAllTooltips(); setShowSizePicker(true) }}
-          className="px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] focus:outline-none text-xs text-left transition-all duration-200 shadow-sm font-mono"
+          className="flex w-full items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-white/50 dark:bg-white/[0.03] hover:bg-white dark:hover:bg-white/[0.06] focus:outline-none text-xs text-left transition-all duration-200 shadow-sm"
           title="选择尺寸"
         >
-          {displaySize}
+          <span className={paramInlineLabelClass}>尺寸</span>
+          <span className="min-w-0 truncate font-mono">{displaySize}</span>
         </button>
         <ButtonTooltip
           visible={isFalTextToImage && sizeHint.visible}
@@ -1947,7 +2079,7 @@ export default function InputBar() {
         />
       </label>
       <label
-        className="relative flex flex-col gap-0.5"
+        className="relative"
         onMouseEnter={qualityHint.show}
         onMouseLeave={qualityHint.hide}
         onTouchStart={qualityHint.startTouch}
@@ -1955,8 +2087,8 @@ export default function InputBar() {
         onTouchCancel={qualityHint.hide}
         onClick={qualityHint.show}
       >
-        <span className="text-gray-400 dark:text-gray-500 ml-1">质量</span>
         <Select
+          prefixLabel="质量"
           value={settings.codexCli ? 'auto' : isFalProvider && params.quality === 'auto' ? 'high' : params.quality}
           onChange={(val) => {
             if (!settings.codexCli) setParams({ quality: val as any })
@@ -1972,9 +2104,9 @@ export default function InputBar() {
           text={isFalProvider ? <>fal.ai 不支持 <code className="rounded bg-white/10 px-1 py-0.5 font-mono">auto</code> 质量参数</> : 'Codex CLI 不支持质量参数'}
         />
       </label>
-      <label className="flex flex-col gap-0.5">
-        <span className="text-gray-400 dark:text-gray-500 ml-1">格式</span>
+      <label className="relative">
         <Select
+          prefixLabel="格式"
           value={params.output_format}
           onChange={(val) => {
             setParams({
@@ -1992,7 +2124,7 @@ export default function InputBar() {
       </label>
       {showTransparentOutputControl ? (
         <label
-          className="relative flex flex-col gap-0.5"
+          className="relative"
           onMouseEnter={transparentOutputHint.show}
           onMouseLeave={transparentOutputHint.hide}
           onTouchStart={transparentOutputHint.startTouch}
@@ -2000,8 +2132,8 @@ export default function InputBar() {
           onTouchCancel={transparentOutputHint.hide}
           onClick={transparentOutputHint.show}
         >
-          <span className="text-gray-400 dark:text-gray-500 ml-1">透明背景</span>
           <Select
+            prefixLabel="透明背景"
             value={transparentOutputEnabled ? 'on' : 'off'}
             onChange={(val) => {
               if (!transparentOutputAvailable) return
@@ -2021,7 +2153,7 @@ export default function InputBar() {
         </label>
       ) : (
         <label
-          className="relative flex flex-col gap-0.5"
+          className="relative"
           onMouseEnter={compressionHint.show}
           onMouseLeave={compressionHint.hide}
           onTouchStart={compressionHint.startTouch}
@@ -2029,22 +2161,26 @@ export default function InputBar() {
           onTouchCancel={compressionHint.hide}
           onClick={compressionHint.show}
         >
-          <span className="text-gray-400 dark:text-gray-500 ml-1">压缩率</span>
-          <input
-            value={outputCompressionInput}
-            onChange={(e) => setOutputCompressionInput(e.target.value)}
-            onBlur={commitOutputCompression}
-            disabled={compressionDisabled}
-            type="number"
-            min={0}
-            max={100}
-            placeholder="0-100"
-            className={`px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] focus:outline-none text-xs transition-all duration-200 shadow-sm ${
+          <div
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] text-xs transition-all duration-200 shadow-sm ${
               compressionDisabled
                 ? 'bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed'
                 : 'bg-white/50 dark:bg-white/[0.03]'
-              }`}
-          />
+            }`}
+          >
+            <span className={paramInlineLabelClass}>压缩率</span>
+            <input
+              value={outputCompressionInput}
+              onChange={(e) => setOutputCompressionInput(e.target.value)}
+              onBlur={commitOutputCompression}
+              disabled={compressionDisabled}
+              type="number"
+              min={0}
+              max={100}
+              placeholder="0-100"
+              className="min-w-0 w-full bg-transparent outline-none disabled:cursor-not-allowed"
+            />
+          </div>
           <ButtonTooltip
             visible={compressionHint.visible}
             text={isFalProvider ? 'fal.ai 不支持压缩率参数' : '仅 JPEG 和 WebP 支持压缩率'}
@@ -2052,36 +2188,7 @@ export default function InputBar() {
         </label>
       )}
       <label
-        className="relative flex flex-col gap-0.5"
-        onMouseEnter={moderationHint.show}
-        onMouseLeave={moderationHint.hide}
-        onTouchStart={moderationHint.startTouch}
-        onTouchEnd={moderationHint.clearTimer}
-        onTouchCancel={moderationHint.hide}
-        onClick={moderationHint.show}
-      >
-        <span className="text-gray-400 dark:text-gray-500 ml-1">审核</span>
-        <Select
-          value={moderationDisabled ? 'auto' : params.moderation}
-          onChange={(val) => {
-            if (!moderationDisabled) setParams({ moderation: val as any })
-          }}
-          options={[
-            { label: 'auto', value: 'auto' },
-            { label: 'low', value: 'low' },
-          ]}
-          disabled={moderationDisabled}
-          className={moderationDisabled
-            ? 'px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed text-xs transition-all duration-200 shadow-sm'
-            : selectClass}
-        />
-        <ButtonTooltip
-          visible={moderationDisabled && moderationHint.visible}
-          text="fal.ai 不支持审核参数"
-        />
-      </label>
-      <label
-        className="relative flex flex-col gap-0.5"
+        className="relative"
         onMouseEnter={showAgentNHint}
         onMouseLeave={hideNLimitHint}
         onTouchStart={startAgentNHintTouch}
@@ -2092,35 +2199,39 @@ export default function InputBar() {
         }}
         onClick={showAgentNHint}
       >
-        <span className="text-gray-400 dark:text-gray-500 ml-1">数量</span>
-        <input
-          value={nInput}
-          onChange={(e) => handleNInputChange(e.target.value)}
-          onFocus={() => setNInputFocused(true)}
-          onBlur={() => {
-            setNInputFocused(false)
-            commitN()
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'ArrowUp') {
-              handleNLimitIncreaseAttempt(() => e.preventDefault())
-            }
-          }}
-          onWheel={(e) => {
-            if (e.deltaY < 0) {
-              handleNLimitIncreaseAttempt(() => e.preventDefault())
-            }
-          }}
-          disabled={agentAutoImageCount}
-          type={agentAutoImageCount ? 'text' : 'number'}
-          min={agentAutoImageCount ? undefined : 1}
-          max={agentAutoImageCount ? undefined : outputImageLimit}
-          className={`px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] focus:outline-none text-xs transition-all duration-200 shadow-sm ${
+        <div
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200/60 dark:border-white/[0.08] text-xs transition-all duration-200 shadow-sm ${
             agentAutoImageCount
               ? 'bg-gray-100/50 dark:bg-white/[0.05] opacity-50 cursor-not-allowed'
               : 'bg-white/50 dark:bg-white/[0.03]'
           }`}
-        />
+        >
+          <span className={paramInlineLabelClass}>数量</span>
+          <input
+            value={nInput}
+            onChange={(e) => handleNInputChange(e.target.value)}
+            onFocus={() => setNInputFocused(true)}
+            onBlur={() => {
+              setNInputFocused(false)
+              commitN()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowUp') {
+                handleNLimitIncreaseAttempt(() => e.preventDefault())
+              }
+            }}
+            onWheel={(e) => {
+              if (e.deltaY < 0) {
+                handleNLimitIncreaseAttempt(() => e.preventDefault())
+              }
+            }}
+            disabled={agentAutoImageCount}
+            type={agentAutoImageCount ? 'text' : 'number'}
+            min={agentAutoImageCount ? undefined : 1}
+            max={agentAutoImageCount ? undefined : outputImageLimit}
+            className="min-w-0 w-full bg-transparent outline-none disabled:cursor-not-allowed"
+          />
+        </div>
         <ButtonTooltip visible={nLimitHint.visible} text={nLimitHintText} />
         <ButtonTooltip visible={streamConcurrentByN && !nLimitHint.visible} text="数量大于 1 时会将多图生成拆分为并发单图" />
       </label>
@@ -2129,6 +2240,7 @@ export default function InputBar() {
 
   const showFavoriteCollectionBatchBar = inCollectionOverview && selectedFavoriteCollectionIds.length > 0
   const showTaskBatchBar = !showFavoriteCollectionBatchBar && selectedTaskIds.length > 0
+  const showInputImageRow = inputImages.length > 0 || pendingUploads.length > 0
 
   return (
     <>
@@ -2320,28 +2432,29 @@ export default function InputBar() {
             <div className={`w-10 h-1 rounded-full bg-gray-300 dark:bg-white/[0.06] transition-transform duration-200 ${mobileCollapsed ? 'scale-x-75' : ''}`} />
           </div>
 
-          {/* 输入图片行（移动端可折叠） */}
-          {inputImages.length > 0 && (
-            isMobile ? (
-              <>
-                <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
-                  <div className="collapse-inner">
-                    {renderImageThumbs()}
-                  </div>
+          {/* 输入区：无图时上传与文字并排，有图时图片行在上、文字在下 */}
+          <div className="overflow-hidden rounded-2xl border border-gray-200/60 bg-white/50 shadow-sm transition-[border-color,box-shadow] duration-200 focus-within:border-blue-300/50 focus-within:ring-1 focus-within:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:focus-within:border-blue-500/30 dark:focus-within:ring-blue-500/30">
+            <div className={`flex p-3 pb-2 ${showInputImageRow ? 'flex-col gap-2' : 'items-start gap-2.5'}`}>
+              {showInputImageRow ? (
+                <div ref={imagesRef} className="flex flex-wrap items-start gap-2">
+                  {renderUploadImageButton()}
+                  {isMobile ? (
+                    <div className={`collapse-section${mobileCollapsed ? ' collapsed' : ''}`}>
+                      <div className="collapse-inner flex flex-wrap items-start gap-2">
+                        {renderInputImageThumbs()}
+                      </div>
+                    </div>
+                  ) : (
+                    renderInputImageThumbs()
+                  )}
                 </div>
-                {mobileCollapsed && (
-                  <div className="text-xs text-gray-400 dark:text-gray-500 mb-2 ml-1">
-                    {maskDraft ? `1 张遮罩主图 · ${referenceImages.length} 张参考图` : `${inputImages.length} 张参考图`}
-                  </div>
-                )}
-              </>
-            ) : (
-              renderImageThumbs()
-            )
-          )}
+              ) : (
+                <div ref={imagesRef} className="shrink-0">
+                  {renderUploadImageButton()}
+                </div>
+              )}
 
-          {/* 输入框 */}
-          <div className="relative grid">
+              <div className={`relative grid min-w-0 w-full ${showInputImageRow ? 'min-h-[48px]' : 'min-h-[52px] flex-1'}`}>
             {showAtImageMenu && (
               <div style={{ left: `${menuLeft}px` }} className="absolute bottom-full z-50 mb-2 w-64 overflow-hidden rounded-2xl border border-gray-200/70 bg-white/95 p-1.5 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:border-white/[0.08] dark:bg-gray-900/95 dark:ring-white/10">
                 <div className="px-2 pb-1 pt-0.5 text-[11px] text-gray-400 dark:text-gray-500">选择图片引用</div>
@@ -2414,10 +2527,10 @@ export default function InputBar() {
                 syncMentionTagSelection(el)
               }}
               aria-label={promptPlaceholder}
-              className="col-start-1 row-start-1 min-h-[42px] w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words rounded-2xl border border-gray-200/60 bg-white/50 pl-4 pr-10 py-3 text-sm leading-relaxed shadow-sm outline-none transition-[border-color,box-shadow] duration-200 focus:ring-1 focus:ring-blue-300/40 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-100 dark:focus:ring-blue-500/30"
+              className={`col-start-1 row-start-1 w-full overflow-hidden ios-rounded-scroll-fix whitespace-pre-wrap break-words bg-transparent py-0.5 pr-8 text-sm leading-relaxed outline-none dark:text-gray-100 ${showInputImageRow ? 'min-h-[48px]' : 'min-h-[52px]'}`}
             />
             {prompt.length === 0 && (
-              <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none pl-4 pr-10 py-3 text-sm leading-relaxed text-gray-400 dark:text-gray-500${
+              <div className={`prompt-placeholder col-start-1 row-start-1 pointer-events-none py-0.5 pr-8 text-sm leading-relaxed text-gray-400 dark:text-gray-500${
                 isMobile && mobileCollapsed ? ' truncate' : ''
               }`}>
                 {promptPlaceholder}
@@ -2427,43 +2540,30 @@ export default function InputBar() {
               <button
                 type="button"
                 onClick={handleClearPrompt}
-                className={`absolute right-3 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-white/[0.08] rounded-full p-1 transition-all duration-200 focus:outline-none z-10 flex items-center justify-center ${
-                  isSingleLine ? 'top-1/2 -translate-y-1/2' : 'top-3'
-                }`}
+                className={`absolute right-0 top-1.5 z-10 flex items-center justify-center rounded-full p-1 text-gray-400 transition-all duration-200 hover:bg-gray-100 hover:text-gray-600 focus:outline-none dark:hover:bg-white/[0.08] dark:hover:text-gray-200`}
                 title="清空文本"
               >
                 <CloseIcon className="w-3.5 h-3.5" />
               </button>
             )}
-          </div>
+            </div>
+            </div>
+            {isMobile && mobileCollapsed && showInputImageRow && (
+              <div className="px-3 pb-2 text-xs text-gray-400 dark:text-gray-500">
+                {maskDraft ? `1 张遮罩主图 · ${referenceImages.length} 张参考图` : `${inputImages.length} 张参考图`}
+              </div>
+            )}
 
-          {/* 参数 + 按钮 */}
-          <div className="mt-3">
+            {/* 参数 + 按钮 */}
+            <div className="border-t border-gray-200/60 px-3 pb-3 pt-2.5 dark:border-white/[0.06]">
             {/* 桌面端布局 */}
-            <div className="hidden sm:flex items-end justify-between gap-3">
-              {renderParams('grid-cols-6')}
+            <div className="hidden sm:flex items-center justify-between gap-3">
+              {renderParams('grid-cols-5')}
 
-              <div className="flex gap-2 flex-shrink-0 mb-0.5">
-                <div
-                  className="relative"
-                  onMouseEnter={() => setAttachHover(true)}
-                  onMouseLeave={() => setAttachHover(false)}
-                >
-                  <ButtonTooltip visible={attachHover} text={uploadImageTooltipText} />
-                  <button
-                    onClick={() => !atImageLimit && fileInputRef.current?.click()}
-                    className={`p-2.5 rounded-xl transition-all shadow-sm ${
-                      atImageLimit
-                        ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
-                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300 hover:shadow'
-                    }`}
-                    aria-label={uploadImageTooltipText}
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                    </svg>
-                  </button>
-                </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="whitespace-nowrap text-xs text-gray-400 dark:text-gray-500">
+                  {inputImages.length} / {API_MAX_IMAGES} 张
+                </span>
                 <div
                   className="relative"
                   onMouseEnter={() => setSubmitHover(true)}
@@ -2471,9 +2571,9 @@ export default function InputBar() {
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
-                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
+                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowApiKeyModal(true)}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
-                    className={`p-2.5 rounded-xl transition-all shadow-sm hover:shadow ${
+                    className={`flex h-9 w-9 items-center justify-center rounded-xl transition-all shadow-sm hover:shadow ${
                       activeAgentIsRunning
                         ? 'bg-red-500 text-white hover:bg-red-600'
                         : !hasSubmitApiConfig
@@ -2483,12 +2583,12 @@ export default function InputBar() {
                     aria-label={submitButtonAriaLabel}
                   >
                     {activeAgentIsRunning ? (
-                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                      <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
                         <rect x="7" y="7" width="10" height="10" rx="1.5" />
                       </svg>
                     ) : (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 19V5m0 0l-6 6m6-6l6 6" />
                       </svg>
                     )}
                   </button>
@@ -2505,80 +2605,15 @@ export default function InputBar() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center">
                 <div
-                  className="relative"
-                  onMouseEnter={() => setAttachHover(true)}
-                  onMouseLeave={() => setAttachHover(false)}
-                >
-                  <button
-                    onClick={() => {
-                      if (!atImageLimit) {
-                        setShowMobileUploadMenu(!showMobileUploadMenu)
-                      }
-                    }}
-                    className={`p-2.5 rounded-xl transition-all shadow-sm flex-shrink-0 ${
-                      atImageLimit
-                        ? 'bg-gray-200 dark:bg-white/[0.04] text-gray-300 dark:text-gray-500 cursor-not-allowed'
-                        : 'bg-gray-200 dark:bg-white/[0.06] hover:bg-gray-300 dark:hover:bg-white/[0.1] text-gray-500 dark:text-gray-300'
-                    }`}
-                    aria-label={uploadImageTooltipText}
-                  >
-                    <svg
-                      className={`w-5 h-5 transition-transform duration-200 ${showMobileUploadMenu ? 'rotate-90' : ''}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                    </svg>
-                  </button>
-
-                  {/* Mobile Upload Menu */}
-                  {showMobileUploadMenu && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-40"
-                        onClick={() => setShowMobileUploadMenu(false)}
-                      />
-                      <div className="absolute bottom-full left-0 mb-2 w-32 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden z-50 animate-in fade-in slide-in-from-bottom-2 duration-200">
-                        <button
-                          className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
-                          onClick={() => {
-                            setShowMobileUploadMenu(false)
-                            cameraInputRef.current?.click()
-                          }}
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                          </svg>
-                          拍照
-                        </button>
-                        <button
-                          className="w-full px-4 py-3 text-left text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 flex items-center gap-2 transition-colors"
-                          onClick={() => {
-                            setShowMobileUploadMenu(false)
-                            fileInputRef.current?.click()
-                          }}
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                          </svg>
-                          上传图片
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <div
-                  className="relative flex-1"
+                  className="relative w-full"
                   onMouseEnter={() => setSubmitHover(true)}
                   onMouseLeave={() => setSubmitHover(false)}
                 >
                   <ButtonTooltip visible={(activeAgentIsRunning || !hasSubmitApiConfig) && submitHover} text={submitTooltipText} />
                   <button
-                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowSettings(true)}
+                    onClick={() => activeAgentIsRunning ? stopActiveAgentResponse() : hasSubmitApiConfig ? submitCurrentMode() : setShowApiKeyModal(true)}
                     disabled={activeAgentIsRunning ? false : hasSubmitApiConfig ? !canSubmit : false}
                     aria-label={submitButtonAriaLabel}
                     className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all shadow-sm ${
@@ -2602,6 +2637,7 @@ export default function InputBar() {
                   </button>
                 </div>
               </div>
+            </div>
             </div>
           </div>
 
