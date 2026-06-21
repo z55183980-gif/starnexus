@@ -11,6 +11,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -427,6 +429,55 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
+}
+
+func TestRecalculateTaskQuotaByTokenDetailsStoresRawTokensInOther(t *testing.T) {
+	truncate(t)
+	defer lockTokenPricingConfigTest(t)()
+	restore := billing_setting.SetTokenPricingSettingForTest(billing_setting.TokenPricingSetting{
+		Enabled: true,
+		Rules: []billing_setting.TokenPricingRule{
+			{Name: "discount", Enabled: true, InputRatio: 0.5, OutputRatio: 0.5, Groups: []string{"default"}},
+		},
+	})
+	defer restore()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"test-model":1}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{}`))
+	})
+
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 15, 15, 15
+	const initQuota, preConsumed = 10000, 10
+	const tokenRemain = 5000
+
+	seedUser(t, userID, initQuota)
+	seedToken(t, tokenID, userID, "sk-token-pricing-task", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+
+	RecalculateTaskQuotaByTokenDetails(ctx, task, 100, 20)
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.NotContains(t, log.Content, "rawTokens")
+	assert.NotContains(t, log.Content, "rawPrompt")
+	assert.NotContains(t, log.Content, "rawCompletion")
+	assert.Contains(t, log.Content, "tokens=50")
+
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	require.Equal(t, true, other["token_pricing_enabled"])
+	require.Equal(t, float64(80), other["raw_prompt_tokens"])
+	require.Equal(t, float64(20), other["raw_completion_tokens"])
+	require.Equal(t, float64(100), other["raw_total_tokens"])
+	require.Equal(t, float64(40), other["billing_prompt_tokens"])
+	require.Equal(t, float64(10), other["billing_completion_tokens"])
+	require.Equal(t, float64(50), other["billing_total_tokens"])
 }
 
 // ===========================================================================

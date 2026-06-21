@@ -306,17 +306,53 @@ export function UsersMutateDrawer({
                 />
               </div>
 
+              {!isUpdate && (
+                <div className='space-y-4'>
+                  <h3 className='text-sm font-medium'>
+                    {t('Relay Settings')}
+                  </h3>
+
+                  <FormField
+                    control={form.control}
+                    name='concurrency'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Relay Concurrency Limit')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            type='number'
+                            min={0}
+                            step={1}
+                            {...field}
+                            value={field.value ?? 5}
+                            onChange={(e) =>
+                              field.onChange(parseInt(e.target.value) || 0)
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('Max in-flight Relay requests for this user, 0 = unlimited')}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
+
               {/* Group & Quota Settings (Update only) */}
               {isUpdate && (
                 <div className='space-y-4'>
-                  <h3 className='text-sm font-medium'>{t('Group & Quota')}</h3>
+                  <h3 className='text-sm font-medium'>
+                    {t('Group, Quota & Relay')}
+                  </h3>
 
                   <FormField
                     control={form.control}
                     name='group'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Group')}</FormLabel>
+                        <FormLabel>{t('User ownership group')}</FormLabel>
                         <Select
                           items={[
                             ...groups.map((group) => ({
@@ -329,7 +365,7 @@ export function UsersMutateDrawer({
                         >
                           <FormControl>
                             <SelectTrigger>
-                              <SelectValue placeholder={t('Select a group')} />
+                              <SelectValue placeholder={t('Select an ownership group')} />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent alignItemWithTrigger={false}>
@@ -342,6 +378,37 @@ export function UsersMutateDrawer({
                             </SelectGroup>
                           </SelectContent>
                         </Select>
+                        <FormDescription>
+                          {t(
+                            'This is the user\'s base group. Configure which channel/model groups this group can use in system settings.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name='concurrency'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Relay Concurrency Limit')}</FormLabel>
+                        <FormControl>
+                          <Input
+                            type='number'
+                            min={0}
+                            step={1}
+                            {...field}
+                            value={field.value ?? 5}
+                            onChange={(e) =>
+                              field.onChange(parseInt(e.target.value) || 0)
+                            }
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t('Max in-flight Relay requests for this user, 0 = unlimited')}
+                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 )
 
 // TieredResultWrapper wraps billingexpr.TieredResult for use at the service layer.
@@ -19,28 +20,32 @@ type TieredResultWrapper = billingexpr.TieredResult
 // report them as text-only. This function normalizes to text-only when
 // sub-categories are separately priced.
 func BuildTieredTokenParams(usage *dto.Usage, isClaudeUsageSemantic bool, usedVars map[string]bool) billingexpr.TokenParams {
-	p := float64(usage.PromptTokens)
-	c := float64(usage.CompletionTokens)
-	cr := float64(usage.PromptTokensDetails.CachedTokens)
-	cc5m := float64(usage.PromptTokensDetails.CachedCreationTokens)
+	return BuildTieredTokenParamsForContext(usage, isClaudeUsageSemantic, usedVars, billing_setting.TokenPricingContext{})
+}
+
+func BuildTieredTokenParamsForContext(usage *dto.Usage, isClaudeUsageSemantic bool, usedVars map[string]bool, tokenPricingCtx billing_setting.TokenPricingContext) billingexpr.TokenParams {
+	p := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokens, tokenPricingCtx))
+	c := float64(billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokens, tokenPricingCtx))
+	cr := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CachedTokens, tokenPricingCtx))
+	cc5m := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CachedCreationTokens, tokenPricingCtx))
 	cc1h := float64(0)
 
 	if usage.UsageSemantic == "anthropic" {
-		cc1h = float64(usage.ClaudeCacheCreation1hTokens)
-		cc5m = float64(usage.ClaudeCacheCreation5mTokens)
+		cc1h = float64(billing_setting.ApplyInputTokenPricingForContext(usage.ClaudeCacheCreation1hTokens, tokenPricingCtx))
+		cc5m = float64(billing_setting.ApplyInputTokenPricingForContext(usage.ClaudeCacheCreation5mTokens, tokenPricingCtx))
 	}
 
-	img := float64(usage.PromptTokensDetails.ImageTokens)
-	ai := float64(usage.PromptTokensDetails.AudioTokens)
-	imgO := float64(usage.CompletionTokenDetails.ImageTokens)
-	ao := float64(usage.CompletionTokenDetails.AudioTokens)
+	img := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.ImageTokens, tokenPricingCtx))
+	ai := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.AudioTokens, tokenPricingCtx))
+	imgO := float64(billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokenDetails.ImageTokens, tokenPricingCtx))
+	ao := float64(billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokenDetails.AudioTokens, tokenPricingCtx))
 
 	// len = total input context length for tier condition evaluation.
 	// Non-Claude: prompt_tokens already includes everything.
 	// Claude: input_tokens is text-only, so add cache read + cache creation.
-	inputLen := p
+	inputLen := float64(usage.PromptTokens)
 	if isClaudeUsageSemantic {
-		inputLen = p + cr + cc5m + cc1h
+		inputLen = float64(usage.PromptTokens + usage.PromptTokensDetails.CachedTokens + usage.ClaudeCacheCreation5mTokens + usage.ClaudeCacheCreation1hTokens)
 	}
 
 	if !isClaudeUsageSemantic {

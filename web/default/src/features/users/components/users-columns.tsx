@@ -237,6 +237,23 @@ export function useUsersColumns(): ColumnDef<User>[] {
       meta: { label: t('Group') },
     },
     {
+      accessorKey: 'concurrency',
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Relay Concurrency')} />
+      ),
+      cell: ({ row }) => {
+        const concurrency = Number(row.original.concurrency ?? 5)
+        return (
+          <StatusBadge
+            label={concurrency <= 0 ? t('Unlimited') : String(concurrency)}
+            variant={concurrency <= 0 ? 'neutral' : 'info'}
+            copyable={false}
+          />
+        )
+      },
+      meta: { label: t('Relay Concurrency'), mobileHidden: true },
+    },
+    {
       accessorKey: 'role',
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Role')} />

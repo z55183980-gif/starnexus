@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useMemo, useState } from 'react'
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import {
   Card,
   CardContent,
@@ -27,12 +28,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -43,410 +38,321 @@ import {
 } from '@/components/ui/select'
 import { StatusBadge } from '@/components/status-badge'
 
-const OP_ADD = 'add' as const
-const OP_REMOVE = 'remove' as const
-const OP_APPEND = 'append' as const
 const sectionCardClassName =
   'relative shadow-sm ring-0 before:pointer-events-none before:absolute before:inset-0 before:rounded-xl before:border before:border-border/90'
 const sectionHeaderClassName = 'border-b bg-muted/20'
 
-type OpType = typeof OP_ADD | typeof OP_REMOVE | typeof OP_APPEND
+type SpecialUsableMap = Record<string, Record<string, string>>
 
-type Rule = {
-  _id: string
-  userGroup: string
-  op: OpType
-  targetGroup: string
-  description: string
+type GroupSpecialUsableRulesEditorProps = {
+  value: string
+  groupRatio: string
+  userUsableGroups: string
+  onChange: (value: string) => void
 }
 
-let _idCounter = 0
-function uid() {
-  return `gsu_${++_idCounter}`
-}
-
-function parsePrefix(rawKey: string): { op: OpType; groupName: string } {
-  if (rawKey.startsWith('+:')) return { op: OP_ADD, groupName: rawKey.slice(2) }
-  if (rawKey.startsWith('-:'))
-    return { op: OP_REMOVE, groupName: rawKey.slice(2) }
-  return { op: OP_APPEND, groupName: rawKey }
-}
-
-function toRawKey(op: OpType, groupName: string): string {
-  if (op === OP_ADD) return `+:${groupName}`
-  if (op === OP_REMOVE) return `-:${groupName}`
-  return groupName
-}
-
-function safeParseJson(str: string): Record<string, Record<string, string>> {
+function safeParseRecord(str: string): Record<string, unknown> {
   if (!str || !str.trim()) return {}
   try {
-    return JSON.parse(str) as Record<string, Record<string, string>>
+    const parsed = JSON.parse(str)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
   } catch {
     return {}
   }
 }
 
-function flattenRules(nested: Record<string, Record<string, string>>): Rule[] {
-  const rules: Rule[] = []
-  for (const [userGroup, inner] of Object.entries(nested)) {
-    if (typeof inner !== 'object' || inner === null) continue
-    for (const [rawKey, desc] of Object.entries(inner)) {
-      const { op, groupName } = parsePrefix(rawKey)
-      rules.push({
-        _id: uid(),
-        userGroup,
-        op,
-        targetGroup: groupName,
-        description:
-          op === OP_REMOVE ? 'remove' : typeof desc === 'string' ? desc : '',
-      })
+function safeParseSpecialUsable(str: string): SpecialUsableMap {
+  const parsed = safeParseRecord(str)
+  const result: SpecialUsableMap = {}
+
+  for (const [ownershipGroup, rules] of Object.entries(parsed)) {
+    if (!rules || typeof rules !== 'object' || Array.isArray(rules)) continue
+    const entries = Object.entries(rules as Record<string, unknown>)
+      .filter(([rawKey]) => rawKey.trim())
+      .map(([rawKey, desc]) => [rawKey, typeof desc === 'string' ? desc : ''])
+
+    if (entries.length > 0) {
+      result[ownershipGroup] = Object.fromEntries(entries)
     }
   }
-  return rules
-}
 
-function nestRules(rules: Rule[]): Record<string, Record<string, string>> {
-  const result: Record<string, Record<string, string>> = {}
-  for (const { userGroup, op, targetGroup, description } of rules) {
-    if (!userGroup || !targetGroup) continue
-    if (!result[userGroup]) result[userGroup] = {}
-    result[userGroup][toRawKey(op, targetGroup)] = description
-  }
   return result
 }
 
-function serializeRules(rules: Rule[]): string {
-  const nested = nestRules(rules)
-  return Object.keys(nested).length === 0
+function serializeSpecialUsable(map: SpecialUsableMap): string {
+  const cleaned: SpecialUsableMap = {}
+
+  for (const [ownershipGroup, rules] of Object.entries(map)) {
+    const entries = Object.entries(rules).filter(
+      ([rawKey]) => ownershipGroup && rawKey.trim()
+    )
+    if (entries.length > 0) cleaned[ownershipGroup] = Object.fromEntries(entries)
+  }
+
+  return Object.keys(cleaned).length === 0
     ? '{}'
-    : JSON.stringify(nested, null, 2)
+    : JSON.stringify(cleaned, null, 2)
 }
 
-const OP_BADGE_MAP: Record<
-  OpType,
-  { variant: 'info' | 'danger' | 'neutral'; label: string }
-> = {
-  [OP_ADD]: { variant: 'info', label: 'Add (+:)' },
-  [OP_REMOVE]: { variant: 'danger', label: 'Remove (-:)' },
-  [OP_APPEND]: { variant: 'neutral', label: 'Append' },
+function getGroupNames(...jsonStrings: string[]): string[] {
+  const names = new Set<string>()
+
+  for (const jsonString of jsonStrings) {
+    const parsed = safeParseRecord(jsonString)
+    for (const key of Object.keys(parsed)) {
+      if (key.trim()) names.add(key)
+    }
+  }
+
+  return [...names].sort((a, b) => a.localeCompare(b))
 }
 
-type GroupSpecialUsableRulesEditorProps = {
-  value: string
-  onChange: (value: string) => void
-}
+function getDescriptionMap(
+  groupRatio: string,
+  userUsableGroups: string
+): Record<string, string> {
+  const descriptions: Record<string, string> = {}
+  const ratioGroups = safeParseRecord(groupRatio)
+  const usableGroups = safeParseRecord(userUsableGroups)
 
-type GroupSectionProps = {
-  groupName: string
-  items: Rule[]
-  onUpdate: (id: string, field: keyof Rule, val: string) => void
-  onRemove: (id: string) => void
-  onAdd: (groupName: string) => void
-  onRemoveGroup: (groupName: string) => void
-}
+  for (const groupName of Object.keys(ratioGroups)) {
+    descriptions[groupName] = groupName
+  }
+  for (const [groupName, desc] of Object.entries(usableGroups)) {
+    descriptions[groupName] = typeof desc === 'string' ? desc : groupName
+  }
 
-function GroupSection(props: GroupSectionProps) {
-  const { t } = useTranslation()
-  const [open, setOpen] = useState(false)
-
-  return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div className='rounded-lg border'>
-        <div className='flex items-center justify-between p-3'>
-          <div className='flex items-center gap-2'>
-            <CollapsibleTrigger
-              render={
-                <Button variant='ghost' size='sm' className='h-6 w-6 p-0' />
-              }
-            >
-              {open ? (
-                <ChevronUp className='h-4 w-4' />
-              ) : (
-                <ChevronDown className='h-4 w-4' />
-              )}
-            </CollapsibleTrigger>
-            <span className='font-semibold'>{props.groupName}</span>
-            <StatusBadge variant='neutral' copyable={false}>
-              {props.items.length} {t('rules')}
-            </StatusBadge>
-          </div>
-          <div className='flex items-center gap-1'>
-            <Button
-              variant='ghost'
-              size='sm'
-              className='h-7 w-7 p-0'
-              onClick={() => props.onAdd(props.groupName)}
-            >
-              <Plus className='h-4 w-4' />
-            </Button>
-            <Button
-              variant='ghost'
-              size='sm'
-              className='text-destructive h-7 w-7 p-0'
-              onClick={() => props.onRemoveGroup(props.groupName)}
-            >
-              <Trash2 className='h-4 w-4' />
-            </Button>
-          </div>
-        </div>
-        <CollapsibleContent>
-          <div className='space-y-2 border-t p-3'>
-            {props.items.map((rule) => (
-              <div key={rule._id} className='flex items-center gap-2'>
-                <Select
-                  items={[
-                    {
-                      value: OP_ADD,
-                      label: (
-                        <StatusBadge
-                          label={t(OP_BADGE_MAP[OP_ADD].label)}
-                          variant={OP_BADGE_MAP[OP_ADD].variant}
-                          copyable={false}
-                        />
-                      ),
-                    },
-                    {
-                      value: OP_REMOVE,
-                      label: (
-                        <StatusBadge
-                          label={t(OP_BADGE_MAP[OP_REMOVE].label)}
-                          variant={OP_BADGE_MAP[OP_REMOVE].variant}
-                          copyable={false}
-                        />
-                      ),
-                    },
-                    {
-                      value: OP_APPEND,
-                      label: (
-                        <StatusBadge
-                          label={t(OP_BADGE_MAP[OP_APPEND].label)}
-                          variant={OP_BADGE_MAP[OP_APPEND].variant}
-                          copyable={false}
-                        />
-                      ),
-                    },
-                  ]}
-                  value={rule.op}
-                  onValueChange={(v) =>
-                    v !== null && props.onUpdate(rule._id, 'op', v)
-                  }
-                >
-                  <SelectTrigger className='w-[130px]'>
-                    <SelectValue>
-                      <StatusBadge
-                        label={t(OP_BADGE_MAP[rule.op].label)}
-                        variant={OP_BADGE_MAP[rule.op].variant}
-                        copyable={false}
-                      />
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <SelectGroup>
-                      <SelectItem value={OP_ADD}>
-                        <StatusBadge
-                          label={t(OP_BADGE_MAP[OP_ADD].label)}
-                          variant={OP_BADGE_MAP[OP_ADD].variant}
-                          copyable={false}
-                        />
-                      </SelectItem>
-                      <SelectItem value={OP_REMOVE}>
-                        <StatusBadge
-                          label={t(OP_BADGE_MAP[OP_REMOVE].label)}
-                          variant={OP_BADGE_MAP[OP_REMOVE].variant}
-                          copyable={false}
-                        />
-                      </SelectItem>
-                      <SelectItem value={OP_APPEND}>
-                        <StatusBadge
-                          label={t(OP_BADGE_MAP[OP_APPEND].label)}
-                          variant={OP_BADGE_MAP[OP_APPEND].variant}
-                          copyable={false}
-                        />
-                      </SelectItem>
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <Input
-                  className='flex-1'
-                  value={rule.targetGroup}
-                  placeholder={t('Group name')}
-                  onChange={(e) =>
-                    props.onUpdate(rule._id, 'targetGroup', e.target.value)
-                  }
-                />
-                {rule.op !== OP_REMOVE ? (
-                  <Input
-                    className='flex-1'
-                    value={rule.description}
-                    placeholder={t('Description')}
-                    onChange={(e) =>
-                      props.onUpdate(rule._id, 'description', e.target.value)
-                    }
-                  />
-                ) : (
-                  <div className='text-muted-foreground flex-1 px-3 text-sm'>
-                    -
-                  </div>
-                )}
-                <Button
-                  variant='ghost'
-                  size='sm'
-                  className='text-destructive h-8 w-8 p-0'
-                  onClick={() => props.onRemove(rule._id)}
-                >
-                  <Trash2 className='h-4 w-4' />
-                </Button>
-              </div>
-            ))}
-          </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
-  )
+  return descriptions
 }
 
 export function GroupSpecialUsableRulesEditor(
   props: GroupSpecialUsableRulesEditorProps
 ) {
   const { t } = useTranslation()
-  const [rules, setRules] = useState<Rule[]>(() =>
-    flattenRules(safeParseJson(props.value))
+  const availableGroups = useMemo(
+    () => getGroupNames(props.groupRatio, props.userUsableGroups),
+    [props.groupRatio, props.userUsableGroups]
   )
-  const [newGroupName, setNewGroupName] = useState('')
+  const descriptions = useMemo(
+    () => getDescriptionMap(props.groupRatio, props.userUsableGroups),
+    [props.groupRatio, props.userUsableGroups]
+  )
+  const rules = useMemo(() => safeParseSpecialUsable(props.value), [props.value])
+  const ownershipGroups = useMemo(() => {
+    const names = new Set([...availableGroups, ...Object.keys(rules)])
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [availableGroups, rules])
 
-  const { onChange } = props
-  const emitChange = useCallback(
-    (newRules: Rule[]) => {
-      setRules(newRules)
-      onChange(serializeRules(newRules))
+  const [selectedTargetGroups, setSelectedTargetGroups] = useState<
+    Record<string, string>
+  >({})
+
+  const groupRows = useMemo(
+    () =>
+      ownershipGroups.map((ownershipGroup) => {
+        const addedGroups = Object.entries(rules[ownershipGroup] ?? {})
+          .filter(([rawKey]) => rawKey.startsWith('+:'))
+          .map(([rawKey, desc]) => ({
+            rawKey,
+            groupName: rawKey.slice(2),
+            description: desc,
+          }))
+          .sort((a, b) => a.groupName.localeCompare(b.groupName))
+        const added = new Set(addedGroups.map((group) => group.groupName))
+        const addableGroups = availableGroups.filter(
+          (groupName) => groupName !== ownershipGroup && !added.has(groupName)
+        )
+
+        return {
+          ownershipGroup,
+          addedGroups,
+          addableGroups,
+        }
+      }),
+    [availableGroups, ownershipGroups, rules]
+  )
+
+  const emit = useCallback(
+    (nextRules: SpecialUsableMap) => {
+      props.onChange(serializeSpecialUsable(nextRules))
     },
-    [onChange]
+    [props.onChange]
   )
 
-  const updateRule = useCallback(
-    (id: string, field: keyof Rule, val: string) => {
-      emitChange(
-        rules.map((r) => {
-          if (r._id !== id) return r
-          const updated = { ...r, [field]: val }
-          if (field === 'op' && val === OP_REMOVE)
-            updated.description = 'remove'
-          else if (field === 'op' && r.op === OP_REMOVE && val !== OP_REMOVE) {
-            if (updated.description === 'remove') updated.description = ''
-          }
-          return updated
-        })
-      )
+  const addGroup = useCallback(
+    (ownershipGroup: string, targetGroup: string) => {
+      if (!ownershipGroup || !targetGroup) return
+
+      const nextRules: SpecialUsableMap = {
+        ...rules,
+        [ownershipGroup]: {
+          ...(rules[ownershipGroup] ?? {}),
+          [`+:${targetGroup}`]: descriptions[targetGroup] || targetGroup,
+        },
+      }
+
+      emit(nextRules)
+      setSelectedTargetGroups((current) => ({
+        ...current,
+        [ownershipGroup]: '',
+      }))
     },
-    [rules, emitChange]
-  )
-
-  const removeRule = useCallback(
-    (id: string) => emitChange(rules.filter((r) => r._id !== id)),
-    [rules, emitChange]
+    [descriptions, emit, rules]
   )
 
   const removeGroup = useCallback(
-    (groupName: string) =>
-      emitChange(rules.filter((r) => r.userGroup !== groupName)),
-    [rules, emitChange]
-  )
+    (ownershipGroup: string, rawKey: string) => {
+      if (!ownershipGroup) return
+      const nextInner = { ...(rules[ownershipGroup] ?? {}) }
+      delete nextInner[rawKey]
 
-  const addRuleToGroup = useCallback(
-    (groupName: string) => {
-      emitChange([
-        ...rules,
-        {
-          _id: uid(),
-          userGroup: groupName,
-          op: OP_APPEND,
-          targetGroup: '',
-          description: '',
-        },
-      ])
-    },
-    [rules, emitChange]
-  )
-
-  const addNewGroup = useCallback(() => {
-    const name = newGroupName.trim()
-    if (!name) return
-    emitChange([
-      ...rules,
-      {
-        _id: uid(),
-        userGroup: name,
-        op: OP_APPEND,
-        targetGroup: '',
-        description: '',
-      },
-    ])
-    setNewGroupName('')
-  }, [rules, emitChange, newGroupName])
-
-  const grouped = useMemo(() => {
-    const map: Record<string, Rule[]> = {}
-    const order: string[] = []
-    for (const r of rules) {
-      if (!r.userGroup) continue
-      if (!map[r.userGroup]) {
-        map[r.userGroup] = []
-        order.push(r.userGroup)
+      const nextRules = { ...rules }
+      if (Object.keys(nextInner).length === 0) {
+        delete nextRules[ownershipGroup]
+      } else {
+        nextRules[ownershipGroup] = nextInner
       }
-      map[r.userGroup].push(r)
-    }
-    return order.map((name) => ({ name, items: map[name] }))
-  }, [rules])
+
+      emit(nextRules)
+    },
+    [emit, rules]
+  )
 
   return (
     <Card className={sectionCardClassName}>
       <CardHeader className={sectionHeaderClassName}>
-        <CardTitle>{t('Special usable group rules')}</CardTitle>
+        <CardTitle>{t('Additional usable groups')}</CardTitle>
         <CardDescription>
           {t(
-            'Define per-group rules to add, remove, or append selectable groups for specific user groups.'
+            'Choose an ownership group, then add channel/model groups it can also use.'
           )}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className='space-y-3'>
-          {grouped.length === 0 ? (
+        <div className='flex flex-col gap-4'>
+          {ownershipGroups.length === 0 ? (
             <p className='text-muted-foreground py-4 text-center text-sm'>
-              {t('No rules yet. Add a group below to get started.')}
+              {t('Create at least one group before adding usable group rules.')}
             </p>
           ) : (
-            grouped.map((group) => (
-              <GroupSection
-                key={group.name}
-                groupName={group.name}
-                items={group.items}
-                onUpdate={updateRule}
-                onRemove={removeRule}
-                onAdd={addRuleToGroup}
-                onRemoveGroup={removeGroup}
-              />
-            ))
-          )}
+            <>
+              <div className='overflow-hidden rounded-lg border'>
+                {groupRows.map((row) => {
+                  const selectedTarget =
+                    selectedTargetGroups[row.ownershipGroup] &&
+                    row.addableGroups.includes(
+                      selectedTargetGroups[row.ownershipGroup]
+                    )
+                      ? selectedTargetGroups[row.ownershipGroup]
+                      : row.addableGroups[0] ?? ''
 
-          <div className='flex items-center justify-center gap-2 pt-2'>
-            <Input
-              className='w-[200px]'
-              value={newGroupName}
-              placeholder={t('User group name')}
-              onChange={(e) => setNewGroupName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  addNewGroup()
-                }
-              }}
-            />
-            <Button variant='outline' size='sm' onClick={addNewGroup}>
-              <Plus className='mr-1 h-4 w-4' />
-              {t('Add group rules')}
-            </Button>
-          </div>
+                  return (
+                    <div
+                      key={row.ownershipGroup}
+                      className='grid gap-3 border-b px-3 py-3 last:border-b-0 md:grid-cols-[220px_minmax(0,1fr)] md:items-center'
+                    >
+                      <div className='min-w-0'>
+                        <div className='flex items-center gap-2'>
+                          <div className='truncate font-medium'>
+                            {row.ownershipGroup}
+                          </div>
+                          <StatusBadge variant='neutral' copyable={false}>
+                            {row.addedGroups.length}
+                          </StatusBadge>
+                        </div>
+                        <div className='text-muted-foreground mt-1 truncate text-sm'>
+                          {descriptions[row.ownershipGroup] ||
+                            row.ownershipGroup}
+                        </div>
+                      </div>
+
+                      <div className='flex min-w-0 flex-col gap-2 lg:flex-row lg:items-center lg:justify-end'>
+                        <div className='flex min-w-0 flex-1 flex-wrap gap-2'>
+                          {row.addedGroups.length === 0 ? (
+                            <span className='text-muted-foreground text-sm'>
+                              {t('No additional usable groups yet.')}
+                            </span>
+                          ) : (
+                            row.addedGroups.map((group) => (
+                              <Badge
+                                key={group.rawKey}
+                                variant='secondary'
+                                className='max-w-full gap-1 pr-1'
+                                title={group.description || group.groupName}
+                              >
+                                <span className='truncate'>
+                                  {group.groupName}
+                                </span>
+                                <button
+                                  type='button'
+                                  className='text-muted-foreground hover:text-destructive inline-flex rounded-sm'
+                                  onClick={() =>
+                                    removeGroup(
+                                      row.ownershipGroup,
+                                      group.rawKey
+                                    )
+                                  }
+                                  aria-label={t('Remove')}
+                                >
+                                  <Trash2 className='h-3 w-3' />
+                                </button>
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+
+                        <div className='grid shrink-0 gap-2 sm:grid-cols-[220px_auto]'>
+                          <Select
+                            items={row.addableGroups.map((groupName) => ({
+                              value: groupName,
+                              label: groupName,
+                            }))}
+                            value={selectedTarget}
+                            onValueChange={(value) => {
+                              if (value !== null) {
+                                setSelectedTargetGroups((current) => ({
+                                  ...current,
+                                  [row.ownershipGroup]: value,
+                                }))
+                              }
+                            }}
+                            disabled={row.addableGroups.length === 0}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder={t('Add usable group')} />
+                            </SelectTrigger>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                {row.addableGroups.map((groupName) => (
+                                  <SelectItem key={groupName} value={groupName}>
+                                    {groupName}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+
+                          <Button
+                            type='button'
+                            variant='outline'
+                            onClick={() =>
+                              addGroup(row.ownershipGroup, selectedTarget)
+                            }
+                            disabled={!selectedTarget}
+                          >
+                            <Plus className='mr-1 h-4 w-4' />
+                            {t('Add')}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </>
+          )}
         </div>
       </CardContent>
     </Card>

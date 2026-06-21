@@ -2,6 +2,9 @@ package billing_setting
 
 import (
 	"fmt"
+	"math"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -13,18 +16,55 @@ const (
 	BillingModeTieredExpr = "tiered_expr"
 	BillingModeField      = "billing_mode"
 	BillingExprField      = "billing_expr"
+	TokenPricingField     = "token_pricing"
 )
 
+type TokenPricingSetting struct {
+	Enabled     bool               `json:"enabled"`
+	InputRatio  float64            `json:"input_ratio,omitempty"`
+	OutputRatio float64            `json:"output_ratio,omitempty"`
+	Rules       []TokenPricingRule `json:"rules,omitempty"`
+}
+
+type TokenPricingRule struct {
+	Name        string   `json:"name,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	InputRatio  float64  `json:"input_ratio"`
+	OutputRatio float64  `json:"output_ratio"`
+	Models      []string `json:"models,omitempty"`
+	Groups      []string `json:"groups,omitempty"`
+	UserIds     []int    `json:"user_ids,omitempty"`
+}
+
+type TokenPricingContext struct {
+	Model  string
+	Group  string
+	UserId int
+}
+
+type EffectiveTokenPricing struct {
+	Enabled     bool
+	InputRatio  float64
+	OutputRatio float64
+	RuleNames   []string
+}
+
 // BillingSetting is managed by config.GlobalConfig.Register.
-// DB keys: billing_setting.billing_mode, billing_setting.billing_expr
+// DB keys: billing_setting.billing_mode, billing_setting.billing_expr, billing_setting.token_pricing
 type BillingSetting struct {
-	BillingMode map[string]string `json:"billing_mode"`
-	BillingExpr map[string]string `json:"billing_expr"`
+	BillingMode  map[string]string   `json:"billing_mode"`
+	BillingExpr  map[string]string   `json:"billing_expr"`
+	TokenPricing TokenPricingSetting `json:"token_pricing"`
 }
 
 var billingSetting = BillingSetting{
 	BillingMode: make(map[string]string),
 	BillingExpr: make(map[string]string),
+	TokenPricing: TokenPricingSetting{
+		Enabled:     false,
+		InputRatio:  1,
+		OutputRatio: 1,
+	},
 }
 
 func init() {
@@ -53,6 +93,178 @@ func GetBillingModeCopy() map[string]string {
 
 func GetBillingExprCopy() map[string]string {
 	return lo.Assign(billingSetting.BillingExpr)
+}
+
+func GetTokenPricingSetting() TokenPricingSetting {
+	setting := billingSetting.TokenPricing
+	setting.InputRatio = normalizeRatio(setting.InputRatio, !setting.Enabled)
+	setting.OutputRatio = normalizeRatio(setting.OutputRatio, !setting.Enabled)
+	for i := range setting.Rules {
+		setting.Rules[i].InputRatio = normalizeRatio(setting.Rules[i].InputRatio, false)
+		setting.Rules[i].OutputRatio = normalizeRatio(setting.Rules[i].OutputRatio, false)
+		setting.Rules[i].Models = normalizeStringList(setting.Rules[i].Models)
+		setting.Rules[i].Groups = normalizeStringList(setting.Rules[i].Groups)
+	}
+	return setting
+}
+
+func SetTokenPricingSettingForTest(setting TokenPricingSetting) func() {
+	previous := billingSetting.TokenPricing
+	billingSetting.TokenPricing = setting
+	return func() {
+		billingSetting.TokenPricing = previous
+	}
+}
+
+func IsTokenPricingEnabled() bool {
+	return GetEffectiveTokenPricing(TokenPricingContext{}).Enabled
+}
+
+func GetEffectiveTokenPricing(ctx TokenPricingContext) EffectiveTokenPricing {
+	setting := GetTokenPricingSetting()
+	effective := EffectiveTokenPricing{InputRatio: 1, OutputRatio: 1}
+	if !setting.Enabled {
+		return effective
+	}
+
+	if len(setting.Rules) == 0 {
+		effective.InputRatio = setting.InputRatio
+		effective.OutputRatio = setting.OutputRatio
+		effective.Enabled = effective.InputRatio != 1 || effective.OutputRatio != 1
+		return effective
+	}
+
+	matched := false
+	for _, rule := range setting.Rules {
+		if !rule.Enabled || !ruleMatchesContext(rule, ctx) {
+			continue
+		}
+		if !matched {
+			effective.InputRatio = rule.InputRatio
+			effective.OutputRatio = rule.OutputRatio
+			matched = true
+		}
+		if rule.InputRatio > effective.InputRatio {
+			effective.InputRatio = rule.InputRatio
+		}
+		if rule.OutputRatio > effective.OutputRatio {
+			effective.OutputRatio = rule.OutputRatio
+		}
+		if strings.TrimSpace(rule.Name) != "" {
+			effective.RuleNames = append(effective.RuleNames, strings.TrimSpace(rule.Name))
+		}
+	}
+	effective.Enabled = matched && (effective.InputRatio != 1 || effective.OutputRatio != 1)
+	return effective
+}
+
+func ApplyInputTokenPricing(tokens int) int {
+	return ApplyInputTokenPricingForContext(tokens, TokenPricingContext{})
+}
+
+func ApplyOutputTokenPricing(tokens int) int {
+	return ApplyOutputTokenPricingForContext(tokens, TokenPricingContext{})
+}
+
+func ApplyInputTokenPricingForContext(tokens int, ctx TokenPricingContext) int {
+	pricing := GetEffectiveTokenPricing(ctx)
+	if !pricing.Enabled {
+		return tokens
+	}
+	return roundTokenCount(float64(tokens) * pricing.InputRatio)
+}
+
+func ApplyOutputTokenPricingForContext(tokens int, ctx TokenPricingContext) int {
+	pricing := GetEffectiveTokenPricing(ctx)
+	if !pricing.Enabled {
+		return tokens
+	}
+	return roundTokenCount(float64(tokens) * pricing.OutputRatio)
+}
+
+func roundTokenCount(value float64) int {
+	if value <= 0 {
+		return 0
+	}
+	return int(math.Round(value))
+}
+
+func normalizeRatio(ratio float64, defaultOne bool) float64 {
+	if ratio < 0 {
+		return 0
+	}
+	if ratio == 0 && defaultOne {
+		return 1
+	}
+	return ratio
+}
+
+func normalizeStringList(values []string) []string {
+	normalized := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		normalized = append(normalized, value)
+	}
+	return normalized
+}
+
+func ruleMatchesContext(rule TokenPricingRule, ctx TokenPricingContext) bool {
+	if len(rule.Models) > 0 && !stringListContains(rule.Models, ctx.Model) {
+		return false
+	}
+	if len(rule.Groups) > 0 && !stringListContains(rule.Groups, ctx.Group) {
+		return false
+	}
+	if len(rule.UserIds) > 0 && !intListContains(rule.UserIds, ctx.UserId) {
+		return false
+	}
+	return true
+}
+
+func stringListContains(values []string, target string) bool {
+	target = strings.TrimSpace(target)
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func intListContains(values []int, target int) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func ParseUserIdList(raw string) ([]int, error) {
+	parts := strings.Split(raw, ",")
+	userIds := make([]int, 0, len(parts))
+	seen := map[int]bool{}
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		userId, err := strconv.Atoi(part)
+		if err != nil || userId <= 0 {
+			return nil, fmt.Errorf("invalid user id: %s", part)
+		}
+		if seen[userId] {
+			continue
+		}
+		seen[userId] = true
+		userIds = append(userIds, userId)
+	}
+	return userIds, nil
 }
 
 func GetPricingSyncData(base map[string]any) map[string]any {

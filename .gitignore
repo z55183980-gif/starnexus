@@ -21,6 +21,8 @@ web/default/public/image-playground
 web/node_modules
 web/dist
 .env
+.env.prod
+.env.prod2
 one-api
 new-api
 /__debug_bin*

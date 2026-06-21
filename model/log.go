@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,6 +17,21 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
 )
+
+var tokenPricingContentPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`,\s*rawTokens=\d+`),
+	regexp.MustCompile(`,\s*rawPrompt=\d+`),
+	regexp.MustCompile(`,\s*rawCompletion=\d+`),
+	regexp.MustCompile(`,\s*inputRatio=[0-9.]+`),
+	regexp.MustCompile(`,\s*outputRatio=[0-9.]+`),
+}
+
+func sanitizeUserLogContent(content string) string {
+	for _, pattern := range tokenPricingContentPatterns {
+		content = pattern.ReplaceAllString(content, "")
+	}
+	return content
+}
 
 type Log struct {
 	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
@@ -55,6 +71,7 @@ const (
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].Content = sanitizeUserLogContent(logs[i].Content)
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
@@ -62,6 +79,15 @@ func formatUserLogs(logs []*Log, startIdx int) {
 			delete(otherMap, "admin_info")
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
+			delete(otherMap, "token_pricing_input_ratio")
+			delete(otherMap, "token_pricing_output_ratio")
+			delete(otherMap, "token_pricing_rules")
+			delete(otherMap, "raw_prompt_tokens")
+			delete(otherMap, "raw_completion_tokens")
+			delete(otherMap, "raw_total_tokens")
+			delete(otherMap, "billing_prompt_tokens")
+			delete(otherMap, "billing_completion_tokens")
+			delete(otherMap, "billing_total_tokens")
 		}
 		logs[i].Other = common.MapToJsonStr(otherMap)
 		logs[i].Id = startIdx + i + 1

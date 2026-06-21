@@ -8,6 +8,8 @@
 # Server:
 #   docker load -i starnexus-new-api.tar
 #   docker compose -f docker-compose.prod.image.yml up -d
+#
+# Server 2 (slave) remote DB/Redis — same as docker-compose.prod.yml header.
 
 version: '3.4'
 
@@ -30,6 +32,7 @@ services:
       TZ: Asia/Shanghai
       ERROR_LOG_ENABLED: "true"
       BATCH_UPDATE_ENABLED: "true"
+      NODE_TYPE: ${NODE_TYPE:-master}
       NODE_NAME: ${NODE_NAME:-xingyuapi-prod-1}
       SESSION_SECRET: ${SESSION_SECRET}
       CRYPTO_SECRET: ${CRYPTO_SECRET}
@@ -55,7 +58,16 @@ services:
     restart: always
     env_file:
       - .env
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+    command:
+      - redis-server
+      - --bind
+      - "0.0.0.0"
+      - --requirepass
+      - "${REDIS_PASSWORD}"
+      - --protected-mode
+      - "yes"
+    ports:
+      - "6379:6379"
     networks:
       - xingyuapi-network
 
@@ -69,6 +81,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     networks:

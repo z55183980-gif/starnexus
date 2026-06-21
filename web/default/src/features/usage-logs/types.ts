@@ -134,6 +134,16 @@ export interface LogOtherData {
   cache_creation_tokens?: number
   cache_creation_tokens_5m?: number
   cache_creation_tokens_1h?: number
+  token_pricing_enabled?: boolean
+  token_pricing_input_ratio?: number
+  token_pricing_output_ratio?: number
+  token_pricing_rules?: string[]
+  raw_prompt_tokens?: number
+  raw_completion_tokens?: number
+  raw_total_tokens?: number
+  billing_prompt_tokens?: number
+  billing_completion_tokens?: number
+  billing_total_tokens?: number
   claude?: boolean
   model_ratio?: number
   completion_ratio?: number

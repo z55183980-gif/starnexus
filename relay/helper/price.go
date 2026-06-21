@@ -32,6 +32,21 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 	)
 }
 
+func tokenPricingContextFromRelayInfo(info *relaycommon.RelayInfo) billing_setting.TokenPricingContext {
+	if info == nil {
+		return billing_setting.TokenPricingContext{}
+	}
+	group := info.UsingGroup
+	if group == "" {
+		group = info.UserGroup
+	}
+	return billing_setting.TokenPricingContext{
+		Model:  info.OriginModelName,
+		Group:  group,
+		UserId: info.UserId,
+	}
+}
+
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
 const claudeCacheCreation1hMultiplier = 6 / 3.75
 
@@ -66,6 +81,8 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(info)
+	billingPromptTokens := billing_setting.ApplyInputTokenPricingForContext(promptTokens, tokenPricingCtx)
 
 	groupRatioInfo := HandleGroupRatio(c, info)
 
@@ -86,9 +103,9 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	var audioCompletionRatio float64
 	var freeModel bool
 	if !usePrice {
-		preConsumedTokens := common.Max(promptTokens, common.PreConsumedQuota)
+		preConsumedTokens := common.Max(billingPromptTokens, common.PreConsumedQuota)
 		if meta.MaxTokens != 0 {
-			preConsumedTokens += meta.MaxTokens
+			preConsumedTokens += billing_setting.ApplyOutputTokenPricingForContext(meta.MaxTokens, tokenPricingCtx)
 		}
 		var success bool
 		var matchName string
@@ -244,9 +261,11 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		return types.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", info.OriginModelName)
 	}
 
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(info)
+	estimatedPromptTokens := billing_setting.ApplyInputTokenPricingForContext(promptTokens, tokenPricingCtx)
 	estimatedCompletionTokens := 0
 	if meta.MaxTokens != 0 {
-		estimatedCompletionTokens = meta.MaxTokens
+		estimatedCompletionTokens = billing_setting.ApplyOutputTokenPricingForContext(meta.MaxTokens, tokenPricingCtx)
 	}
 
 	requestInput, err := ResolveIncomingBillingExprRequestInput(c, info)
@@ -255,7 +274,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 	}
 
 	rawCost, trace, err := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{
-		P:   float64(promptTokens),
+		P:   float64(estimatedPromptTokens),
 		C:   float64(estimatedCompletionTokens),
 		Len: float64(promptTokens),
 	}, requestInput)
@@ -282,7 +301,7 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, promptT
 		ExprString:                exprStr,
 		ExprHash:                  exprHash,
 		GroupRatio:                groupRatioInfo.GroupRatio,
-		EstimatedPromptTokens:     promptTokens,
+		EstimatedPromptTokens:     estimatedPromptTokens,
 		EstimatedCompletionTokens: estimatedCompletionTokens,
 		EstimatedQuotaBeforeGroup: quotaBeforeGroup,
 		EstimatedQuotaAfterGroup:  preConsumedQuota,

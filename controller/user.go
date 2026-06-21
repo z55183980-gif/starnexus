@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -182,6 +183,7 @@ func Register(c *gin.Context) {
 		DisplayName: user.Username,
 		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
+		Concurrency: 5,
 	}
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
@@ -347,29 +349,29 @@ func GetSelf(c *gin.Context) {
 
 	// 构建响应数据，包含用户信息和权限
 	responseData := map[string]interface{}{
-		"id":                user.Id,
-		"username":          user.Username,
-		"display_name":      user.DisplayName,
-		"role":              user.Role,
-		"status":            user.Status,
-		"email":             user.Email,
-		"github_id":         user.GitHubId,
-		"discord_id":        user.DiscordId,
-		"oidc_id":           user.OidcId,
-		"wechat_id":         user.WeChatId,
-		"telegram_id":       user.TelegramId,
-		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
-		"request_count":     user.RequestCount,
-		"aff_code":   user.AffCode,
-		"aff_count":  user.AffCount,
-		"inviter_id": user.InviterId,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,                // 新增权限字段
+		"id":              user.Id,
+		"username":        user.Username,
+		"display_name":    user.DisplayName,
+		"role":            user.Role,
+		"status":          user.Status,
+		"email":           user.Email,
+		"github_id":       user.GitHubId,
+		"discord_id":      user.DiscordId,
+		"oidc_id":         user.OidcId,
+		"wechat_id":       user.WeChatId,
+		"telegram_id":     user.TelegramId,
+		"group":           user.Group,
+		"quota":           user.Quota,
+		"used_quota":      user.UsedQuota,
+		"request_count":   user.RequestCount,
+		"aff_code":        user.AffCode,
+		"aff_count":       user.AffCount,
+		"inviter_id":      user.InviterId,
+		"linux_do_id":     user.LinuxDOId,
+		"setting":         user.Setting,
+		"stripe_customer": user.StripeCustomer,
+		"sidebar_modules": userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":     permissions,                // 新增权限字段
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -499,8 +501,20 @@ func GetUserModels(c *gin.Context) {
 
 func UpdateUser(c *gin.Context) {
 	var updatedUser model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&updatedUser)
+	requestData, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	err = json.Unmarshal(requestData, &updatedUser)
 	if err != nil || updatedUser.Id == 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(requestData, &raw)
+	_, concurrencyProvided := raw["concurrency"]
+	if concurrencyProvided && updatedUser.Concurrency < 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -524,6 +538,9 @@ func UpdateUser(c *gin.Context) {
 	if !canManageTargetRole(myRole, updatedUser.Role) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
+	}
+	if !concurrencyProvided {
+		updatedUser.Concurrency = originUser.Concurrency
 	}
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
@@ -761,9 +778,21 @@ func DeleteSelf(c *gin.Context) {
 
 func CreateUser(c *gin.Context) {
 	var user model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&user)
+	requestData, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	err = json.Unmarshal(requestData, &user)
 	user.Username = strings.TrimSpace(user.Username)
 	if err != nil || user.Username == "" || user.Password == "" {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	var raw map[string]json.RawMessage
+	_ = json.Unmarshal(requestData, &raw)
+	_, concurrencyProvided := raw["concurrency"]
+	if concurrencyProvided && user.Concurrency < 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -773,6 +802,9 @@ func CreateUser(c *gin.Context) {
 	}
 	if user.DisplayName == "" {
 		user.DisplayName = user.Username
+	}
+	if !concurrencyProvided {
+		user.Concurrency = 5
 	}
 	myRole := c.GetInt("role")
 	if user.Role >= myRole {
@@ -785,10 +817,19 @@ func CreateUser(c *gin.Context) {
 		Password:    user.Password,
 		DisplayName: user.DisplayName,
 		Role:        user.Role, // 保持管理员设置的角色
+		Concurrency: user.Concurrency,
 	}
 	if err := cleanUser.Insert(0); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if concurrencyProvided && user.Concurrency == 0 {
+		if err := model.DB.Model(&model.User{}).Where("id = ?", cleanUser.Id).Update("concurrency", 0).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		cleanUser.Concurrency = 0
+		_ = model.InvalidateUserCache(cleanUser.Id)
 	}
 
 	c.JSON(http.StatusOK, gin.H{

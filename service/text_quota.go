@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -25,6 +26,9 @@ type textQuotaSummary struct {
 	PromptTokens             int
 	CompletionTokens         int
 	TotalTokens              int
+	RawPromptTokens          int
+	RawCompletionTokens      int
+	RawTotalTokens           int
 	CacheTokens              int
 	CacheCreationTokens      int
 	CacheCreationTokens5m    int
@@ -55,6 +59,24 @@ type textQuotaSummary struct {
 	AudioInputPrice          float64
 	ImageGenerationCallPrice float64
 	ToolCallSurchargeQuota   decimal.Decimal
+	TokenPricingEnabled      bool
+	TokenPricingInputRatio   float64
+	TokenPricingOutputRatio  float64
+}
+
+func tokenPricingContextFromRelayInfo(relayInfo *relaycommon.RelayInfo) billing_setting.TokenPricingContext {
+	if relayInfo == nil {
+		return billing_setting.TokenPricingContext{}
+	}
+	group := relayInfo.UsingGroup
+	if group == "" {
+		group = relayInfo.UserGroup
+	}
+	return billing_setting.TokenPricingContext{
+		Model:  relayInfo.OriginModelName,
+		Group:  group,
+		UserId: relayInfo.UserId,
+	}
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -182,15 +204,25 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		}
 	}
 
-	summary.PromptTokens = usage.PromptTokens
-	summary.CompletionTokens = usage.CompletionTokens
-	summary.TotalTokens = usage.PromptTokens + usage.CompletionTokens
-	summary.CacheTokens = usage.PromptTokensDetails.CachedTokens
-	summary.CacheCreationTokens = usage.PromptTokensDetails.CachedCreationTokens
-	summary.CacheCreationTokens5m = usage.ClaudeCacheCreation5mTokens
-	summary.CacheCreationTokens1h = usage.ClaudeCacheCreation1hTokens
-	summary.ImageTokens = usage.PromptTokensDetails.ImageTokens
-	summary.AudioTokens = usage.PromptTokensDetails.AudioTokens
+	summary.RawPromptTokens = usage.PromptTokens
+	summary.RawCompletionTokens = usage.CompletionTokens
+	summary.RawTotalTokens = usage.PromptTokens + usage.CompletionTokens
+
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(relayInfo)
+	tokenPricing := billing_setting.GetEffectiveTokenPricing(tokenPricingCtx)
+	summary.TokenPricingEnabled = tokenPricing.Enabled
+	summary.TokenPricingInputRatio = tokenPricing.InputRatio
+	summary.TokenPricingOutputRatio = tokenPricing.OutputRatio
+
+	summary.PromptTokens = billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokens, tokenPricingCtx)
+	summary.CompletionTokens = billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokens, tokenPricingCtx)
+	summary.TotalTokens = summary.PromptTokens + summary.CompletionTokens
+	summary.CacheTokens = billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CachedTokens, tokenPricingCtx)
+	summary.CacheCreationTokens = billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CachedCreationTokens, tokenPricingCtx)
+	summary.CacheCreationTokens5m = billing_setting.ApplyInputTokenPricingForContext(usage.ClaudeCacheCreation5mTokens, tokenPricingCtx)
+	summary.CacheCreationTokens1h = billing_setting.ApplyInputTokenPricingForContext(usage.ClaudeCacheCreation1hTokens, tokenPricingCtx)
+	summary.ImageTokens = billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.ImageTokens, tokenPricingCtx)
+	summary.AudioTokens = billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.AudioTokens, tokenPricingCtx)
 	legacyClaudeDerived := isLegacyClaudeDerivedOpenAIUsage(relayInfo, usage)
 	isOpenRouterClaudeBilling := relayInfo.ChannelMeta != nil &&
 		relayInfo.ChannelType == constant.ChannelTypeOpenRouter &&
@@ -201,8 +233,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		isUsingCustomSettings := relayInfo.PriceData.UsePrice || hasCustomModelRatio(summary.ModelName, relayInfo.PriceData.ModelRatio)
 		if summary.CacheCreationTokens == 0 && relayInfo.PriceData.CacheCreationRatio != 1 && usage.Cost != 0 && !isUsingCustomSettings {
 			maybeCacheCreationTokens := CalcOpenRouterCacheCreateTokens(*usage, relayInfo.PriceData)
-			if maybeCacheCreationTokens >= 0 && summary.PromptTokens >= maybeCacheCreationTokens {
-				summary.CacheCreationTokens = maybeCacheCreationTokens
+			billingCacheCreationTokens := billing_setting.ApplyInputTokenPricingForContext(maybeCacheCreationTokens, tokenPricingCtx)
+			if maybeCacheCreationTokens >= 0 && summary.PromptTokens >= billingCacheCreationTokens {
+				summary.CacheCreationTokens = billingCacheCreationTokens
 			}
 		}
 		summary.PromptTokens -= summary.CacheCreationTokens
@@ -300,7 +333,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		summary.Quota = int(quotaCalculateDecimal.Round(0).IntPart())
 	}
 
-	if summary.TotalTokens == 0 {
+	if summary.RawTotalTokens == 0 {
 		summary.Quota = 0
 	} else if !ratio.IsZero() && summary.Quota == 0 {
 		summary.Quota = 1
@@ -338,7 +371,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 			tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
 		}
-		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(usage, summary.IsClaudeUsageSemantic, tieredUsedVars))
+		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, summary.IsClaudeUsageSemantic, tieredUsedVars, tokenPricingContextFromRelayInfo(relayInfo)))
 		if tieredOk {
 			tieredBillingApplied = true
 			tieredResult = tieredRes
@@ -362,7 +395,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
 
-	if summary.TotalTokens == 0 {
+	if summary.RawTotalTokens == 0 {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -440,6 +473,20 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.CacheCreationTokens1h > 0 {
 		other["cache_creation_tokens_1h"] = summary.CacheCreationTokens1h
 		other["cache_creation_ratio_1h"] = summary.CacheCreationRatio1h
+	}
+	if summary.TokenPricingEnabled {
+		other["token_pricing_enabled"] = true
+		other["token_pricing_input_ratio"] = summary.TokenPricingInputRatio
+		other["token_pricing_output_ratio"] = summary.TokenPricingOutputRatio
+		if ruleNames := billing_setting.GetEffectiveTokenPricing(tokenPricingContextFromRelayInfo(relayInfo)).RuleNames; len(ruleNames) > 0 {
+			other["token_pricing_rules"] = ruleNames
+		}
+		other["raw_prompt_tokens"] = summary.RawPromptTokens
+		other["raw_completion_tokens"] = summary.RawCompletionTokens
+		other["raw_total_tokens"] = summary.RawTotalTokens
+		other["billing_prompt_tokens"] = summary.PromptTokens
+		other["billing_completion_tokens"] = summary.CompletionTokens
+		other["billing_total_tokens"] = summary.TotalTokens
 	}
 	cacheWriteTokens := cacheWriteTokensTotal(summary)
 	if cacheWriteTokens > 0 {

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/shopspring/decimal"
 )
 
@@ -263,6 +264,38 @@ func TestTryTieredSettle_CacheTokensAffectSettlement(t *testing.T) {
 	}
 	if quota2 != 14750 {
 		t.Fatalf("cache quota = %d, want 14750", quota2)
+	}
+}
+
+func TestBuildTieredTokenParamsAppliesTokenPricing(t *testing.T) {
+	defer lockTokenPricingConfigTest(t)()
+	restore := billing_setting.SetTokenPricingSettingForTest(billing_setting.TokenPricingSetting{
+		Enabled: true,
+		Rules: []billing_setting.TokenPricingRule{
+			{Name: "model", Enabled: true, InputRatio: 2, OutputRatio: 3, Models: []string{"gpt-test"}},
+		},
+	})
+	defer restore()
+
+	params := BuildTieredTokenParamsForContext(&dto.Usage{
+		PromptTokens:     1000,
+		CompletionTokens: 100,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 200,
+		},
+	}, false, map[string]bool{"cr": true}, billing_setting.TokenPricingContext{Model: "gpt-test"})
+
+	if params.P != 1600 {
+		t.Fatalf("p = %v, want 1600", params.P)
+	}
+	if params.C != 300 {
+		t.Fatalf("c = %v, want 300", params.C)
+	}
+	if params.CR != 400 {
+		t.Fatalf("cr = %v, want 400", params.CR)
+	}
+	if params.Len != 1000 {
+		t.Fatalf("len = %v, want raw 1000", params.Len)
 	}
 }
 

@@ -82,6 +82,7 @@ func createRootAccountIfNeed() error {
 			DisplayName: "Root User",
 			AccessToken: nil,
 			Quota:       100000000,
+			Concurrency: 5,
 		}
 		DB.Create(&rootUser)
 	}
@@ -263,6 +264,7 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	userConcurrencyColumnExists := DB.Migrator().HasColumn(&User{}, "concurrency")
 
 	models := []interface{}{
 		&Channel{},
@@ -302,6 +304,11 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if !userConcurrencyColumnExists {
+		if err := backfillUserConcurrencyDefault(); err != nil {
+			return err
+		}
+	}
 	if common.UsingSQLite {
 		if err := ensureAffiliateTablesSQLite(); err != nil {
 			return err
@@ -333,6 +340,7 @@ func migrateDB() error {
 func migrateDBFast() error {
 
 	var wg sync.WaitGroup
+	userConcurrencyColumnExists := DB.Migrator().HasColumn(&User{}, "concurrency")
 
 	migrations := []struct {
 		model interface{}
@@ -403,6 +411,11 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if !userConcurrencyColumnExists {
+		if err := backfillUserConcurrencyDefault(); err != nil {
+			return err
+		}
+	}
 	if common.UsingSQLite {
 		if err := ensureAffiliateTablesSQLite(); err != nil {
 			return err
@@ -426,6 +439,14 @@ func migrateDBFast() error {
 		}
 	}
 	common.SysLog("database migrated")
+	return nil
+}
+
+func backfillUserConcurrencyDefault() error {
+	if err := DB.Model(&User{}).Where("concurrency IS NULL OR concurrency = ?", 0).Update("concurrency", 5).Error; err != nil {
+		return fmt.Errorf("failed to backfill user concurrency default: %w", err)
+	}
+	common.SysLog("user concurrency default backfilled")
 	return nil
 }
 

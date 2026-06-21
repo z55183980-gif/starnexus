@@ -346,6 +346,18 @@ export const getUsersColumns = ({
       },
     },
     {
+      title: t('Relay 并发'),
+      dataIndex: 'concurrency',
+      render: (text) => {
+        const concurrency = Number(text ?? 5);
+        return (
+          <Tag color={concurrency <= 0 ? 'grey' : 'blue'} shape='circle'>
+            {concurrency <= 0 ? t('不限制') : concurrency}
+          </Tag>
+        );
+      },
+    },
+    {
       title: t('角色'),
       dataIndex: 'role',
       render: (text, record, index) => {

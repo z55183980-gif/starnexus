@@ -268,6 +268,68 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "billing_setting.token_pricing":
+		var tokenPricing struct {
+			Enabled     bool     `json:"enabled"`
+			InputRatio  *float64 `json:"input_ratio"`
+			OutputRatio *float64 `json:"output_ratio"`
+			Rules       []struct {
+				Name        string   `json:"name"`
+				Enabled     bool     `json:"enabled"`
+				InputRatio  *float64 `json:"input_ratio"`
+				OutputRatio *float64 `json:"output_ratio"`
+				Models      []string `json:"models"`
+				Groups      []string `json:"groups"`
+				UserIds     []int    `json:"user_ids"`
+			} `json:"rules"`
+		}
+		err = common.UnmarshalJsonStr(option.Value.(string), &tokenPricing)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Token 定价设置必须是合法 JSON: " + err.Error(),
+			})
+			return
+		}
+		if len(tokenPricing.Rules) == 0 && (tokenPricing.InputRatio == nil || tokenPricing.OutputRatio == nil) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Token 定价必须包含规则或输入输出系数",
+			})
+			return
+		}
+		if tokenPricing.InputRatio != nil && *tokenPricing.InputRatio < 0 || tokenPricing.OutputRatio != nil && *tokenPricing.OutputRatio < 0 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "Token 定价系数不能为负数",
+			})
+			return
+		}
+		for _, rule := range tokenPricing.Rules {
+			if rule.InputRatio == nil || rule.OutputRatio == nil {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "每条 Token 定价规则都必须包含输入和输出系数",
+				})
+				return
+			}
+			if *rule.InputRatio < 0 || *rule.OutputRatio < 0 {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": "Token 定价系数不能为负数",
+				})
+				return
+			}
+			for _, userId := range rule.UserIds {
+				if userId <= 0 {
+					c.JSON(http.StatusOK, gin.H{
+						"success": false,
+						"message": "Token 定价规则中的用户 ID 必须为正整数",
+					})
+					return
+				}
+			}
+		}
 	case "ModelRequestRateLimitGroup":
 		err = setting.CheckModelRequestRateLimitGroup(option.Value.(string))
 		if err != nil {

@@ -20,7 +20,6 @@ import { parseCurrencyDisplayType } from '@/lib/currency'
 import { CheckinSettingsSection } from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
-import { AffiliateRebateSettingsSection } from './affiliate-rebate-settings-section'
 import { PaymentSettingsSection } from '../integrations/payment-settings-section'
 import {
   isEpayConfigured,
@@ -29,6 +28,11 @@ import {
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
+import { AffiliateRebateSettingsSection } from './affiliate-rebate-settings-section'
+import {
+  parseTokenPricingDefaults,
+  TokenPricingSettingsSection,
+} from './token-pricing-settings-section'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -55,6 +59,51 @@ const getGroupDefaults = (settings: BillingSettings) => ({
     settings['group_ratio_setting.group_special_usable_group'],
 })
 
+function parseJsonString(raw: string | undefined): unknown {
+  if (!raw) {
+    return undefined
+  }
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return undefined
+  }
+}
+
+function collectGroupNames(value: unknown, names: Set<string>) {
+  if (Array.isArray(value)) {
+    value.forEach((item) => {
+      if (typeof item === 'string' && item.trim()) {
+        names.add(item.trim())
+      } else {
+        collectGroupNames(item, names)
+      }
+    })
+    return
+  }
+  if (value && typeof value === 'object') {
+    Object.entries(value as Record<string, unknown>).forEach(([key, item]) => {
+      const groupName = key.replace(/^[+-]:/, '').trim()
+      if (groupName) {
+        names.add(groupName)
+      }
+      collectGroupNames(item, names)
+    })
+  }
+}
+
+const getTokenPricingGroupOptions = (settings: BillingSettings) => {
+  const names = new Set<string>()
+  ;[
+    settings.GroupRatio,
+    settings.UserUsableGroups,
+    settings.GroupGroupRatio,
+    settings.AutoGroups,
+    settings['group_ratio_setting.group_special_usable_group'],
+  ].forEach((raw) => collectGroupNames(parseJsonString(raw), names))
+  return Array.from(names).sort()
+}
+
 const BILLING_SECTIONS = [
   {
     id: 'quota',
@@ -80,16 +129,17 @@ const BILLING_SECTIONS = [
   {
     id: 'affiliate-rebate',
     titleKey: 'Affiliate Rebate (USD)',
-    descriptionKey:
-      'Configure recharge-based referral rebates in USD.',
+    descriptionKey: 'Configure recharge-based referral rebates in USD.',
     build: (settings: BillingSettings) => (
       <AffiliateRebateSettingsSection
         defaultValues={{
           AffiliateEnabled: settings.AffiliateEnabled ?? true,
           AffiliateRebateRate: settings.AffiliateRebateRate ?? 0,
           AffiliateRebateFreezeHours: settings.AffiliateRebateFreezeHours ?? 0,
-          AffiliateRebateDurationDays: settings.AffiliateRebateDurationDays ?? 0,
-          AffiliateRebatePerInviteeCapUSD: settings.AffiliateRebatePerInviteeCapUSD ?? 0,
+          AffiliateRebateDurationDays:
+            settings.AffiliateRebateDurationDays ?? 0,
+          AffiliateRebatePerInviteeCapUSD:
+            settings.AffiliateRebatePerInviteeCapUSD ?? 0,
         }}
       />
     ),
@@ -115,6 +165,20 @@ const BILLING_SECTIONS = [
               settings['general_setting.custom_currency_exchange_rate'] ?? 1,
           },
         }}
+      />
+    ),
+  },
+  {
+    id: 'token-pricing',
+    titleKey: 'Token Pricing',
+    descriptionKey:
+      'Adjust billable token counts while preserving raw token audit data for administrators',
+    build: (settings: BillingSettings) => (
+      <TokenPricingSettingsSection
+        defaultValues={parseTokenPricingDefaults(
+          settings['billing_setting.token_pricing']
+        )}
+        groupOptions={getTokenPricingGroupOptions(settings)}
       />
     ),
   },
@@ -159,50 +223,54 @@ const BILLING_SECTIONS = [
       const payMethods = settings.PayMethods ?? ''
 
       return (
-      <PaymentSettingsSection
-        legacyPayAddress={legacyPayAddress}
-        legacyEpayConfigured={epayConfigured}
-        legacyPayMethods={payMethods}
-        defaultValues={{
-          EpUSDTGatewayAddress: isLegacyEpusdtGatewayConflict(
-            storedGateway,
-            legacyPayAddress,
-            epayConfigured,
-            payMethods
-          )
-            ? ''
-            : storedGateway,
-          EpUSDTApiToken: settings.EpUSDTApiToken ?? '',
-          EpUSDTNotifyURL: settings.EpUSDTNotifyURL ?? '',
-          Price: settings.Price,
-          MinTopUp: settings.MinTopUp,
-          PayMethods: settings.PayMethods,
-          AmountOptions: settings['payment_setting.amount_options'],
-          AmountDiscount: settings['payment_setting.amount_discount'],
-          StripeApiSecret: settings.StripeApiSecret,
-          StripeWebhookSecret: settings.StripeWebhookSecret,
-          StripePriceId: settings.StripePriceId,
-          StripeCurrency: (['usd', 'cny', 'hkd'].includes(
-            (settings.StripeCurrency || 'usd').toLowerCase()
-          )
-            ? (settings.StripeCurrency || 'usd').toLowerCase()
-            : 'usd') as 'usd' | 'cny' | 'hkd',
-          StripeMinTopUp: settings.StripeMinTopUp,
-          StripePromotionCodesEnabled: settings.StripePromotionCodesEnabled,
-        }}
-        secretConfigured={{
-          stripeApiSecret: settings.StripeApiSecretConfigured ?? false,
-          stripeWebhookSecret: settings.StripeWebhookSecretConfigured ?? false,
-          epusdtApiToken: settings.EpUSDTApiTokenConfigured ?? false,
-        }}
-        complianceDefaults={{
-          confirmed: settings['payment_setting.compliance_confirmed'] ?? false,
-          termsVersion:
-            settings['payment_setting.compliance_terms_version'] ?? '',
-          confirmedAt: settings['payment_setting.compliance_confirmed_at'] ?? 0,
-          confirmedBy: settings['payment_setting.compliance_confirmed_by'] ?? 0,
-        }}
-      />
+        <PaymentSettingsSection
+          legacyPayAddress={legacyPayAddress}
+          legacyEpayConfigured={epayConfigured}
+          legacyPayMethods={payMethods}
+          defaultValues={{
+            EpUSDTGatewayAddress: isLegacyEpusdtGatewayConflict(
+              storedGateway,
+              legacyPayAddress,
+              epayConfigured,
+              payMethods
+            )
+              ? ''
+              : storedGateway,
+            EpUSDTApiToken: settings.EpUSDTApiToken ?? '',
+            EpUSDTNotifyURL: settings.EpUSDTNotifyURL ?? '',
+            Price: settings.Price,
+            MinTopUp: settings.MinTopUp,
+            PayMethods: settings.PayMethods,
+            AmountOptions: settings['payment_setting.amount_options'],
+            AmountDiscount: settings['payment_setting.amount_discount'],
+            StripeApiSecret: settings.StripeApiSecret,
+            StripeWebhookSecret: settings.StripeWebhookSecret,
+            StripePriceId: settings.StripePriceId,
+            StripeCurrency: (['usd', 'cny', 'hkd'].includes(
+              (settings.StripeCurrency || 'usd').toLowerCase()
+            )
+              ? (settings.StripeCurrency || 'usd').toLowerCase()
+              : 'usd') as 'usd' | 'cny' | 'hkd',
+            StripeMinTopUp: settings.StripeMinTopUp,
+            StripePromotionCodesEnabled: settings.StripePromotionCodesEnabled,
+          }}
+          secretConfigured={{
+            stripeApiSecret: settings.StripeApiSecretConfigured ?? false,
+            stripeWebhookSecret:
+              settings.StripeWebhookSecretConfigured ?? false,
+            epusdtApiToken: settings.EpUSDTApiTokenConfigured ?? false,
+          }}
+          complianceDefaults={{
+            confirmed:
+              settings['payment_setting.compliance_confirmed'] ?? false,
+            termsVersion:
+              settings['payment_setting.compliance_terms_version'] ?? '',
+            confirmedAt:
+              settings['payment_setting.compliance_confirmed_at'] ?? 0,
+            confirmedBy:
+              settings['payment_setting.compliance_confirmed_by'] ?? 0,
+          }}
+        />
       )
     },
   },

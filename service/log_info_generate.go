@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -211,11 +212,12 @@ func appendFinalRequestFormat(relayInfo *relaycommon.RelayInfo, other map[string
 
 func GenerateWssOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.RealtimeUsage, modelRatio, groupRatio, completionRatio, audioRatio, audioCompletionRatio, modelPrice, userGroupRatio float64) map[string]interface{} {
 	info := GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, 0, 0.0, modelPrice, userGroupRatio)
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(relayInfo)
 	info["ws"] = true
-	info["audio_input"] = usage.InputTokenDetails.AudioTokens
-	info["audio_output"] = usage.OutputTokenDetails.AudioTokens
-	info["text_input"] = usage.InputTokenDetails.TextTokens
-	info["text_output"] = usage.OutputTokenDetails.TextTokens
+	info["audio_input"] = billing_setting.ApplyInputTokenPricingForContext(usage.InputTokenDetails.AudioTokens, tokenPricingCtx)
+	info["audio_output"] = billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokenDetails.AudioTokens, tokenPricingCtx)
+	info["text_input"] = billing_setting.ApplyInputTokenPricingForContext(usage.InputTokenDetails.TextTokens, tokenPricingCtx)
+	info["text_output"] = billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokenDetails.TextTokens, tokenPricingCtx)
 	info["audio_ratio"] = audioRatio
 	info["audio_completion_ratio"] = audioCompletionRatio
 	return info
@@ -223,14 +225,34 @@ func GenerateWssOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 func GenerateAudioOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, modelRatio, groupRatio, completionRatio, audioRatio, audioCompletionRatio, modelPrice, userGroupRatio float64) map[string]interface{} {
 	info := GenerateTextOtherInfo(ctx, relayInfo, modelRatio, groupRatio, completionRatio, 0, 0.0, modelPrice, userGroupRatio)
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(relayInfo)
 	info["audio"] = true
-	info["audio_input"] = usage.PromptTokensDetails.AudioTokens
-	info["audio_output"] = usage.CompletionTokenDetails.AudioTokens
-	info["text_input"] = usage.PromptTokensDetails.TextTokens
-	info["text_output"] = usage.CompletionTokenDetails.TextTokens
+	info["audio_input"] = billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.AudioTokens, tokenPricingCtx)
+	info["audio_output"] = billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokenDetails.AudioTokens, tokenPricingCtx)
+	info["text_input"] = billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.TextTokens, tokenPricingCtx)
+	info["text_output"] = billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokenDetails.TextTokens, tokenPricingCtx)
 	info["audio_ratio"] = audioRatio
 	info["audio_completion_ratio"] = audioCompletionRatio
 	return info
+}
+
+func appendTokenPricingLogInfo(other map[string]interface{}, tokenPricingCtx billing_setting.TokenPricingContext, rawPromptTokens, rawCompletionTokens, rawTotalTokens, billingPromptTokens, billingCompletionTokens int) {
+	tokenPricing := billing_setting.GetEffectiveTokenPricing(tokenPricingCtx)
+	if other == nil || !tokenPricing.Enabled {
+		return
+	}
+	other["token_pricing_enabled"] = true
+	other["token_pricing_input_ratio"] = tokenPricing.InputRatio
+	other["token_pricing_output_ratio"] = tokenPricing.OutputRatio
+	if len(tokenPricing.RuleNames) > 0 {
+		other["token_pricing_rules"] = tokenPricing.RuleNames
+	}
+	other["raw_prompt_tokens"] = rawPromptTokens
+	other["raw_completion_tokens"] = rawCompletionTokens
+	other["raw_total_tokens"] = rawTotalTokens
+	other["billing_prompt_tokens"] = billingPromptTokens
+	other["billing_completion_tokens"] = billingCompletionTokens
+	other["billing_total_tokens"] = billingPromptTokens + billingCompletionTokens
 }
 
 func GenerateClaudeOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelRatio, groupRatio, completionRatio float64,

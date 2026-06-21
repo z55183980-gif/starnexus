@@ -325,9 +325,13 @@ function BillingBreakdown(props: {
   )
 }
 
-function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
+function TokenBreakdown(props: {
+  log: UsageLog
+  other: LogOtherData
+  isAdmin: boolean
+}) {
   const { t } = useTranslation()
-  const { log, other } = props
+  const { log, other, isAdmin } = props
 
   const promptTokens = log.prompt_tokens || 0
   const completionTokens = log.completion_tokens || 0
@@ -380,6 +384,35 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
       label: t('Image Tokens'),
       value: other.image_output.toLocaleString(),
     })
+  }
+
+  if (isAdmin && other.token_pricing_enabled) {
+    rows.push({
+      label: t('Raw Input Tokens'),
+      value: (other.raw_prompt_tokens ?? 0).toLocaleString(),
+    })
+    rows.push({
+      label: t('Raw Output Tokens'),
+      value: (other.raw_completion_tokens ?? 0).toLocaleString(),
+    })
+    rows.push({
+      label: t('Raw Total Tokens'),
+      value: (other.raw_total_tokens ?? 0).toLocaleString(),
+    })
+    rows.push({
+      label: t('Input Token Ratio'),
+      value: `${other.token_pricing_input_ratio ?? 1}x`,
+    })
+    rows.push({
+      label: t('Output Token Ratio'),
+      value: `${other.token_pricing_output_ratio ?? 1}x`,
+    })
+    if (Array.isArray(other.token_pricing_rules) && other.token_pricing_rules.length > 0) {
+      rows.push({
+        label: t('Matched Token Pricing Rules'),
+        value: other.token_pricing_rules.join(', '),
+      })
+    }
   }
 
   return (
@@ -847,7 +880,11 @@ export function DetailsDialog(props: DetailsDialogProps) {
 
             {/* Token breakdown (for consume/error types with token data) */}
             {isDisplayableType(props.log.type) && other && (
-              <TokenBreakdown log={props.log} other={other} />
+              <TokenBreakdown
+                log={props.log}
+                other={other}
+                isAdmin={props.isAdmin}
+              />
             )}
 
             {/* Billing breakdown (consume type) */}

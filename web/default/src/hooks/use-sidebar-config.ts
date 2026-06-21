@@ -37,8 +37,8 @@ type SidebarModulesUserConfig = SidebarModulesAdminConfig | null
  */
 const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
   imageWorkbench: {
-    enabled: true,
-    workbench: true,
+    enabled: false,
+    workbench: false,
   },
   chat: {
     enabled: true,

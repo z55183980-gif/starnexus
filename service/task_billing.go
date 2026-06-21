@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -144,7 +145,27 @@ func taskModelName(task *model.Task) string {
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.OriginModelName != "" {
 		return bc.OriginModelName
 	}
-	return task.Properties.OriginModelName
+	if task.Properties.OriginModelName != "" {
+		return task.Properties.OriginModelName
+	}
+	var taskData struct {
+		Model string `json:"model"`
+	}
+	if len(task.Data) > 0 && common.Unmarshal(task.Data, &taskData) == nil {
+		return taskData.Model
+	}
+	return ""
+}
+
+func tokenPricingContextFromTask(task *model.Task) billing_setting.TokenPricingContext {
+	if task == nil {
+		return billing_setting.TokenPricingContext{}
+	}
+	return billing_setting.TokenPricingContext{
+		Model:  taskModelName(task),
+		Group:  task.Group,
+		UserId: task.UserId,
+	}
 }
 
 // RefundTaskQuota 统一的任务失败退款逻辑。
@@ -185,6 +206,10 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 // actualQuota 是任务完成后的实际应扣额度，与预扣额度 (task.Quota) 做差额结算。
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string) {
+	RecalculateTaskQuotaWithOther(ctx, task, actualQuota, reason, nil)
+}
+
+func RecalculateTaskQuotaWithOther(ctx context.Context, task *model.Task, actualQuota int, reason string, extraOther map[string]interface{}) {
 	if actualQuota <= 0 {
 		return
 	}
@@ -231,6 +256,9 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	other["task_id"] = task.TaskID
 	other["pre_consumed_quota"] = preConsumedQuota
 	other["actual_quota"] = actualQuota
+	for key, value := range extraOther {
+		other[key] = value
+	}
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   logType,
@@ -248,9 +276,26 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
 func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) {
+	RecalculateTaskQuotaByTokenDetails(ctx, task, totalTokens, 0)
+}
+
+// RecalculateTaskQuotaByTokenDetails 根据实际 token 明细重新计费。completionTokens
+// 缺失时将 totalTokens 视为输入 token，避免凭空猜测输出占比。
+func RecalculateTaskQuotaByTokenDetails(ctx context.Context, task *model.Task, totalTokens int, completionTokens int) {
 	if totalTokens <= 0 {
 		return
 	}
+	if completionTokens < 0 {
+		completionTokens = 0
+	}
+	if completionTokens > totalTokens {
+		completionTokens = totalTokens
+	}
+	promptTokens := totalTokens - completionTokens
+	tokenPricingCtx := tokenPricingContextFromTask(task)
+	billingPromptTokens := billing_setting.ApplyInputTokenPricingForContext(promptTokens, tokenPricingCtx)
+	billingCompletionTokens := billing_setting.ApplyOutputTokenPricingForContext(completionTokens, tokenPricingCtx)
+	billingTotalTokens := billingPromptTokens + billingCompletionTokens
 
 	modelName := taskModelName(task)
 
@@ -293,9 +338,25 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 
-	// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio * otherMultiplier
-	actualQuota := int(float64(totalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
+	// 计算实际应扣费额度: adjustedTokens * modelRatio * groupRatio * otherMultiplier
+	actualQuota := int(float64(billingTotalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
 
-	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", totalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	RecalculateTaskQuota(ctx, task, actualQuota, reason)
+	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", billingTotalTokens, modelRatio, finalGroupRatio, otherMultiplier)
+	extraOther := map[string]interface{}{}
+	if tokenPricing := billing_setting.GetEffectiveTokenPricing(tokenPricingCtx); tokenPricing.Enabled {
+		reason = fmt.Sprintf("%s, token定价已应用", reason)
+		extraOther["token_pricing_enabled"] = true
+		extraOther["token_pricing_input_ratio"] = tokenPricing.InputRatio
+		extraOther["token_pricing_output_ratio"] = tokenPricing.OutputRatio
+		if len(tokenPricing.RuleNames) > 0 {
+			extraOther["token_pricing_rules"] = tokenPricing.RuleNames
+		}
+		extraOther["raw_prompt_tokens"] = promptTokens
+		extraOther["raw_completion_tokens"] = completionTokens
+		extraOther["raw_total_tokens"] = totalTokens
+		extraOther["billing_prompt_tokens"] = billingPromptTokens
+		extraOther["billing_completion_tokens"] = billingCompletionTokens
+		extraOther["billing_total_tokens"] = billingTotalTokens
+	}
+	RecalculateTaskQuotaWithOther(ctx, task, actualQuota, reason, extraOther)
 }

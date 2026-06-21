@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -101,10 +102,11 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 	}
 
 	modelName := relayInfo.OriginModelName
-	textInputTokens := usage.InputTokenDetails.TextTokens
-	textOutTokens := usage.OutputTokenDetails.TextTokens
-	audioInputTokens := usage.InputTokenDetails.AudioTokens
-	audioOutTokens := usage.OutputTokenDetails.AudioTokens
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(relayInfo)
+	textInputTokens := billing_setting.ApplyInputTokenPricingForContext(usage.InputTokenDetails.TextTokens, tokenPricingCtx)
+	textOutTokens := billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokenDetails.TextTokens, tokenPricingCtx)
+	audioInputTokens := billing_setting.ApplyInputTokenPricingForContext(usage.InputTokenDetails.AudioTokens, tokenPricingCtx)
+	audioOutTokens := billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokenDetails.AudioTokens, tokenPricingCtx)
 	groupRatio := ratio_setting.GetGroupRatio(relayInfo.UsingGroup)
 	modelRatio, _, _ := ratio_setting.GetModelRatio(modelName)
 
@@ -157,10 +159,11 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
 	usage *dto.RealtimeUsage, extraContent string) {
 
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(relayInfo)
 	var tieredResult *billingexpr.TieredResult
 	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, billingexpr.TokenParams{
-		P:   float64(usage.InputTokens),
-		C:   float64(usage.OutputTokens),
+		P:   float64(billing_setting.ApplyInputTokenPricingForContext(usage.InputTokens, tokenPricingCtx)),
+		C:   float64(billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokens, tokenPricingCtx)),
 		Len: float64(usage.InputTokens),
 	})
 	if tieredOk {
@@ -168,11 +171,14 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
-	textInputTokens := usage.InputTokenDetails.TextTokens
-	textOutTokens := usage.OutputTokenDetails.TextTokens
+	rawInputTokens := usage.InputTokens
+	rawOutputTokens := usage.OutputTokens
+	rawTotalTokens := usage.TotalTokens
+	textInputTokens := billing_setting.ApplyInputTokenPricingForContext(usage.InputTokenDetails.TextTokens, tokenPricingCtx)
+	textOutTokens := billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokenDetails.TextTokens, tokenPricingCtx)
 
-	audioInputTokens := usage.InputTokenDetails.AudioTokens
-	audioOutTokens := usage.OutputTokenDetails.AudioTokens
+	audioInputTokens := billing_setting.ApplyInputTokenPricingForContext(usage.InputTokenDetails.AudioTokens, tokenPricingCtx)
+	audioOutTokens := billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokenDetails.AudioTokens, tokenPricingCtx)
 
 	tokenName := ctx.GetString("token_name")
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(modelName))
@@ -204,7 +210,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		quota = tieredQuota
 	}
 
-	totalTokens := usage.TotalTokens
+	totalTokens := rawTotalTokens
 	var logContent string
 	if !usePrice {
 		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
@@ -236,13 +242,14 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 	other := GenerateWssOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	appendTokenPricingLogInfo(other, tokenPricingCtx, rawInputTokens, rawOutputTokens, rawTotalTokens, billing_setting.ApplyInputTokenPricingForContext(rawInputTokens, tokenPricingCtx), billing_setting.ApplyOutputTokenPricingForContext(rawOutputTokens, tokenPricingCtx))
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
-		PromptTokens:     usage.InputTokens,
-		CompletionTokens: usage.OutputTokens,
+		PromptTokens:     billing_setting.ApplyInputTokenPricingForContext(usage.InputTokens, tokenPricingCtx),
+		CompletionTokens: billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokens, tokenPricingCtx),
 		ModelName:        logModel,
 		TokenName:        tokenName,
 		Quota:            quota,
@@ -282,18 +289,22 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 		tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
 	}
+	tokenPricingCtx := tokenPricingContextFromRelayInfo(relayInfo)
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(usage, false, tieredUsedVars))
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, false, tieredUsedVars, tokenPricingCtx))
 	if tieredOk {
 		tieredResult = tieredRes
 	}
 
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
-	textInputTokens := usage.PromptTokensDetails.TextTokens
-	textOutTokens := usage.CompletionTokenDetails.TextTokens
+	rawPromptTokens := usage.PromptTokens
+	rawCompletionTokens := usage.CompletionTokens
+	rawTotalTokens := usage.PromptTokens + usage.CompletionTokens
+	textInputTokens := billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.TextTokens, tokenPricingCtx)
+	textOutTokens := billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokenDetails.TextTokens, tokenPricingCtx)
 
-	audioInputTokens := usage.PromptTokensDetails.AudioTokens
-	audioOutTokens := usage.CompletionTokenDetails.AudioTokens
+	audioInputTokens := billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.AudioTokens, tokenPricingCtx)
+	audioOutTokens := billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokenDetails.AudioTokens, tokenPricingCtx)
 
 	tokenName := ctx.GetString("token_name")
 	completionRatio := decimal.NewFromFloat(ratio_setting.GetCompletionRatio(relayInfo.OriginModelName))
@@ -325,7 +336,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		quota = tieredQuota
 	}
 
-	totalTokens := usage.TotalTokens
+	totalTokens := rawTotalTokens
 	var logContent string
 	if !usePrice {
 		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
@@ -357,13 +368,14 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
+	appendTokenPricingLogInfo(other, tokenPricingCtx, rawPromptTokens, rawCompletionTokens, rawTotalTokens, billing_setting.ApplyInputTokenPricingForContext(rawPromptTokens, tokenPricingCtx), billing_setting.ApplyOutputTokenPricingForContext(rawCompletionTokens, tokenPricingCtx))
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
+		PromptTokens:     billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokens, tokenPricingCtx),
+		CompletionTokens: billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokens, tokenPricingCtx),
 		ModelName:        logModel,
 		TokenName:        tokenName,
 		Quota:            quota,

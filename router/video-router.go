@@ -20,14 +20,14 @@ func SetVideoRouter(router *gin.Engine) {
 	videoV1Router.Use(middleware.RouteTag("relay"))
 	videoV1Router.Use(middleware.TokenAuth(), middleware.Distribute())
 	{
-		videoV1Router.POST("/video/generations", controller.RelayTask)
+		videoV1Router.POST("/video/generations", middleware.UserConcurrencyLimit(), controller.RelayTask)
 		videoV1Router.GET("/video/generations/:task_id", controller.RelayTaskFetch)
-		videoV1Router.POST("/videos/:video_id/remix", controller.RelayTask)
+		videoV1Router.POST("/videos/:video_id/remix", middleware.UserConcurrencyLimit(), controller.RelayTask)
 	}
 	// openai compatible API video routes
 	// docs: https://platform.openai.com/docs/api-reference/videos/create
 	{
-		videoV1Router.POST("/videos", controller.RelayTask)
+		videoV1Router.POST("/videos", middleware.UserConcurrencyLimit(), controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 
@@ -35,8 +35,8 @@ func SetVideoRouter(router *gin.Engine) {
 	klingV1Router.Use(middleware.RouteTag("relay"))
 	klingV1Router.Use(middleware.KlingRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
 	{
-		klingV1Router.POST("/videos/text2video", controller.RelayTask)
-		klingV1Router.POST("/videos/image2video", controller.RelayTask)
+		klingV1Router.POST("/videos/text2video", middleware.UserConcurrencyLimit(), controller.RelayTask)
+		klingV1Router.POST("/videos/image2video", middleware.UserConcurrencyLimit(), controller.RelayTask)
 		klingV1Router.GET("/videos/text2video/:task_id", controller.RelayTaskFetch)
 		klingV1Router.GET("/videos/image2video/:task_id", controller.RelayTaskFetch)
 	}

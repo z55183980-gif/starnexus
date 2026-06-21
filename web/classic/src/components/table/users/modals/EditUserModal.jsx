@@ -92,6 +92,7 @@ const EditUserModal = (props) => {
     email: '',
     quota: 0,
     quota_amount: 0,
+    concurrency: 5,
     group: 'default',
     remark: '',
   });
@@ -365,6 +366,18 @@ const EditUserModal = (props) => {
                           allowAdditions
                           search
                           rules={[{ required: true, message: t('请选择分组') }]}
+                        />
+                      </Col>
+
+                      <Col span={24}>
+                        <Form.InputNumber
+                          field='concurrency'
+                          label={t('Relay 并发上限')}
+                          placeholder={t('同一用户同时进行中的 Relay 请求数上限')}
+                          min={0}
+                          step={1}
+                          style={{ width: '100%' }}
+                          extraText={t('0 表示不限制')}
                         />
                       </Col>
 

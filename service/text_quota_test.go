@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -316,6 +317,127 @@ func TestCalculateTextQuotaSummaryKeepsPrePRClaudeOpenRouterBilling(t *testing.T
 	require.True(t, summary.IsClaudeUsageSemantic)
 	require.Equal(t, 172, summary.PromptTokens)
 	require.Equal(t, 798, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryAppliesTokenPricing(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	defer lockTokenPricingConfigTest(t)()
+	restore := billing_setting.SetTokenPricingSettingForTest(billing_setting.TokenPricingSetting{
+		Enabled: true,
+		Rules: []billing_setting.TokenPricingRule{
+			{Name: "global", Enabled: true, InputRatio: 2, OutputRatio: 3},
+		},
+	})
+	defer restore()
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-test",
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 2,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 10,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 100, summary.RawPromptTokens)
+	require.Equal(t, 10, summary.RawCompletionTokens)
+	require.Equal(t, 110, summary.RawTotalTokens)
+	require.Equal(t, 200, summary.PromptTokens)
+	require.Equal(t, 30, summary.CompletionTokens)
+	require.Equal(t, 230, summary.TotalTokens)
+	require.True(t, summary.TokenPricingEnabled)
+	// quota = adjustedPrompt(200) + adjustedCompletion(30) * completionRatio(2)
+	require.Equal(t, 260, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryUsesHighestMatchedTokenPricingRule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	defer lockTokenPricingConfigTest(t)()
+	restore := billing_setting.SetTokenPricingSettingForTest(billing_setting.TokenPricingSetting{
+		Enabled: true,
+		Rules: []billing_setting.TokenPricingRule{
+			{Name: "group", Enabled: true, InputRatio: 1.5, OutputRatio: 2, Groups: []string{"vip"}},
+			{Name: "user", Enabled: true, InputRatio: 3, OutputRatio: 1.2, UserIds: []int{7}},
+			{Name: "miss", Enabled: true, InputRatio: 9, OutputRatio: 9, Models: []string{"other"}},
+		},
+	})
+	defer restore()
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          7,
+		UserGroup:       "vip",
+		UsingGroup:      "vip",
+		OriginModelName: "gpt-test",
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 10,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 300, summary.PromptTokens)
+	require.Equal(t, 20, summary.CompletionTokens)
+	require.Equal(t, 3.0, summary.TokenPricingInputRatio)
+	require.Equal(t, 2.0, summary.TokenPricingOutputRatio)
+	require.Equal(t, 320, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryAppliesDiscountTokenPricingRule(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	defer lockTokenPricingConfigTest(t)()
+	restore := billing_setting.SetTokenPricingSettingForTest(billing_setting.TokenPricingSetting{
+		Enabled: true,
+		Rules: []billing_setting.TokenPricingRule{
+			{Name: "discount", Enabled: true, InputRatio: 0.55, OutputRatio: 0.5, Groups: []string{"vip"}},
+		},
+	})
+	defer restore()
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          7,
+		UserGroup:       "vip",
+		UsingGroup:      "vip",
+		OriginModelName: "gpt-test",
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 10,
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.True(t, summary.TokenPricingEnabled)
+	require.Equal(t, 0.55, summary.TokenPricingInputRatio)
+	require.Equal(t, 0.5, summary.TokenPricingOutputRatio)
+	require.Equal(t, 55, summary.PromptTokens)
+	require.Equal(t, 5, summary.CompletionTokens)
+	require.Equal(t, 60, summary.Quota)
 }
 
 func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {

@@ -127,6 +127,8 @@ export const GroupRatioForm = memo(function GroupRatioForm({
 
             <GroupSpecialUsableRulesEditor
               value={form.watch('GroupSpecialUsableGroup')}
+              groupRatio={form.watch('GroupRatio')}
+              userUsableGroups={form.watch('UserUsableGroups')}
               onChange={(value) =>
                 handleFieldChange('GroupSpecialUsableGroup', value)
               }
@@ -207,13 +209,13 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               name='UserUsableGroups'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Selectable groups')}</FormLabel>
+                  <FormLabel>{t('Default selectable channel/model groups')}</FormLabel>
                   <FormControl>
                     <Textarea rows={6} {...field} />
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'JSON map of group → description exposed when users create API keys.'
+                      'JSON map of channel/model group → description. These groups are selectable by default when users create API keys.'
                     )}
                   </FormDescription>
                   <FormMessage />
@@ -272,7 +274,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.'
+                      'Nested JSON keyed by user ownership group. Use it to add (+:), remove (-:), or append selectable channel/model groups for users in that group.'
                     )}
                   </FormDescription>
                   <FormMessage />
@@ -455,19 +457,20 @@ vip          0.5     ${t('No')}                ${t('Assigned by administrator on
               <AccordionContent className='space-y-3'>
                 <p className='text-muted-foreground text-sm leading-6'>
                   {t(
-                    'Special usable group rules can add, remove, or append selectable token groups for a specific user group.'
+                    'Special usable group rules grant extra selectable channel/model groups based on the user ownership group.'
                   )}
                 </p>
                 <GuideCodeBlock>{`{
   "vip": {
-    "+:premium": "${t('Premium plan, half price')}",
+    "+:fast": "${t('Fast channel group')}",
+    "+:cheap": "${t('Low-cost channel group')}",
     "-:default": "remove",
-    "special": "${t('Special group')}"
+    "claude": "${t('Claude channel group')}"
   }
 }`}</GuideCodeBlock>
                 <p className='text-muted-foreground text-sm leading-6'>
                   {t(
-                    'Use +: to add a group, -: to remove a default selectable group, or no prefix to append a group.'
+                    'Use +: to add a group, -: to remove a default selectable group, or no prefix to append a group. The user still keeps one ownership group.'
                   )}
                 </p>
               </AccordionContent>

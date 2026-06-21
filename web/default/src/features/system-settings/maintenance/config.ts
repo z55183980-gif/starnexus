@@ -55,8 +55,8 @@ export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
 
 export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
   imageWorkbench: {
-    enabled: true,
-    workbench: true,
+    enabled: false,
+    workbench: false,
   },
   chat: {
     enabled: true,

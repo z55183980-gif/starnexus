@@ -1,0 +1,43 @@
+# Server 2 (slave): app only — PostgreSQL + Redis on Server 1 (45.134.82.177)
+#
+# Setup:
+#   cp .env.prod2 .env
+#   docker compose -f docker-compose.prod2.yml build
+#   docker compose -f docker-compose.prod2.yml up -d
+#
+# Baota: api subdomain -> http://127.0.0.1:3000
+
+version: '3.4'
+
+services:
+  new-api:
+    build: .
+    image: starnexus-new-api:prod
+    container_name: xingyuapi-new-api
+    restart: always
+    command: --log-dir /app/logs
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./data:/data
+      - ./logs:/app/logs
+    environment:
+      SQL_DSN: ${SQL_DSN}
+      REDIS_CONN_STRING: ${REDIS_CONN_STRING}
+      TZ: Asia/Shanghai
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+      NODE_TYPE: ${NODE_TYPE:-slave}
+      NODE_NAME: ${NODE_NAME:-xingyuapi-prod-2}
+      SESSION_SECRET: ${SESSION_SECRET}
+      CRYPTO_SECRET: ${CRYPTO_SECRET}
+      TRUSTED_REDIRECT_DOMAINS: ${TRUSTED_REDIRECT_DOMAINS:-xingyuapi.com}
+      SYNC_FREQUENCY: ${SYNC_FREQUENCY:-60}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
