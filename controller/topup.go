@@ -486,13 +486,21 @@ func GetUserTopUps(c *gin.Context) {
 func GetAllTopUps(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	keyword := c.Query("keyword")
+	myRole := c.GetInt("role")
+	myId := c.GetInt("id")
 
 	var (
 		topups []*model.TopUp
 		total  int64
 		err    error
 	)
-	if keyword != "" {
+	if myRole == common.RoleAgentUser {
+		if keyword != "" {
+			topups, total, err = model.SearchTopUpsByInviterId(myId, keyword, pageInfo)
+		} else {
+			topups, total, err = model.GetTopUpsByInviterId(myId, pageInfo)
+		}
+	} else if keyword != "" {
 		topups, total, err = model.SearchAllTopUps(keyword, pageInfo)
 	} else {
 		topups, total, err = model.GetAllTopUps(pageInfo)

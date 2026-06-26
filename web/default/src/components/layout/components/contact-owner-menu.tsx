@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright (C) 2023-2026 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo, useState } from 'react'
 import { ChevronDown, ExternalLink, Headphones } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useSupportChannels } from '@/components/support-widget/use-support-channels'
+import { cn } from '@/lib/utils'
 import {
   Dialog,
   DialogContent,
@@ -32,7 +32,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { cn } from '@/lib/utils'
+import { useSupportChannels } from '@/components/support-widget/use-support-channels'
 import type { SupportChannel } from '@/features/system-settings/support/types'
 
 const CONTACT_CHANNEL_IDS = ['wechat', 'telegram', 'whatsapp'] as const
@@ -54,7 +54,9 @@ function useContactChannels() {
   const config = useSupportChannels()
 
   return useMemo(() => {
-    const byId = new Map(config.channels.map((channel) => [channel.id, channel]))
+    const byId = new Map(
+      config.channels.map((channel) => [channel.id, channel])
+    )
     return CONTACT_CHANNEL_IDS.map((id) => byId.get(id)).filter(
       (channel): channel is SupportChannel => Boolean(channel)
     )
@@ -177,7 +179,9 @@ export function ContactOwnerMenu({
 }: ContactOwnerMenuProps) {
   const { t } = useTranslation()
   const channels = useContactChannels()
-  const [qrcodeChannel, setQrcodeChannel] = useState<SupportChannel | null>(null)
+  const [qrcodeChannel, setQrcodeChannel] = useState<SupportChannel | null>(
+    null
+  )
 
   if (channels.length === 0) {
     return null
@@ -187,7 +191,9 @@ export function ContactOwnerMenu({
     return (
       <>
         <div className={cn('flex flex-col gap-1', className)}>
-          <span className={cn(accentStackTitleClassName, 'my-1 tracking-tight')}>
+          <span
+            className={cn(accentStackTitleClassName, 'my-1 tracking-tight')}
+          >
             <Headphones className='size-4 shrink-0' aria-hidden />
             {t('Contact site owner')}
           </span>

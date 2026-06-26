@@ -14,38 +14,38 @@ import (
 	"gorm.io/gorm"
 )
 
-func (UserAffiliate) TableName() string        { return "user_affiliates" }
+func (UserAffiliate) TableName() string       { return "user_affiliates" }
 func (UserAffiliateLedger) TableName() string { return "user_affiliate_ledger" }
-func (TopUpAffiliateAudit) TableName() string  { return "topup_affiliate_audits" }
+func (TopUpAffiliateAudit) TableName() string { return "topup_affiliate_audits" }
 
 type UserAffiliate struct {
-	UserId               int              `json:"user_id" gorm:"primaryKey"`
-	AffCode              string           `json:"aff_code" gorm:"type:varchar(32);uniqueIndex;not null"`
-	InviterId            *int             `json:"inviter_id" gorm:"index"`
-	AffCount             int              `json:"aff_count" gorm:"not null;default:0"`
-	AffQuotaUSD          decimal.Decimal  `json:"aff_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
-	AffFrozenQuotaUSD    decimal.Decimal  `json:"aff_frozen_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
-	AffHistoryQuotaUSD   decimal.Decimal  `json:"aff_history_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
-	AffRebateRatePercent *float64         `json:"aff_rebate_rate_percent" gorm:"type:decimal(5,2)"`
-	AffCodeCustom        bool             `json:"aff_code_custom" gorm:"not null;default:false"`
-	CreatedAt            time.Time        `json:"created_at"`
-	UpdatedAt            time.Time        `json:"updated_at"`
+	UserId               int             `json:"user_id" gorm:"primaryKey"`
+	AffCode              string          `json:"aff_code" gorm:"type:varchar(32);uniqueIndex;not null"`
+	InviterId            *int            `json:"inviter_id" gorm:"index"`
+	AffCount             int             `json:"aff_count" gorm:"not null;default:0"`
+	AffQuotaUSD          decimal.Decimal `json:"aff_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
+	AffFrozenQuotaUSD    decimal.Decimal `json:"aff_frozen_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
+	AffHistoryQuotaUSD   decimal.Decimal `json:"aff_history_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
+	AffRebateRatePercent *float64        `json:"aff_rebate_rate_percent" gorm:"type:decimal(5,2)"`
+	AffCodeCustom        bool            `json:"aff_code_custom" gorm:"not null;default:false"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 type UserAffiliateLedger struct {
-	Id                   int64           `json:"id" gorm:"primaryKey;autoIncrement"`
-	UserId               int             `json:"user_id" gorm:"index;not null"`
-	Action               string          `json:"action" gorm:"type:varchar(32);not null"`
-	AmountUSD            decimal.Decimal `json:"amount_usd" gorm:"type:decimal(20,8);not null"`
-	SourceUserId         *int            `json:"source_user_id" gorm:"index"`
-	SourceTopUpId        *int            `json:"source_topup_id" gorm:"column:source_topup_id;index"`
-	FrozenUntil          *time.Time      `json:"frozen_until"`
-	QuotaAfter           *int            `json:"quota_after"`
-	AffQuotaUSDAfter     *decimal.Decimal `json:"aff_quota_usd_after" gorm:"column:aff_quota_usd_after;type:decimal(20,8)"`
-	AffFrozenUSDAfter    *decimal.Decimal `json:"aff_frozen_quota_usd_after" gorm:"column:aff_frozen_quota_usd_after;type:decimal(20,8)"`
-	AffHistoryUSDAfter   *decimal.Decimal `json:"aff_history_quota_usd_after" gorm:"column:aff_history_quota_usd_after;type:decimal(20,8)"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
+	Id                 int64            `json:"id" gorm:"primaryKey;autoIncrement"`
+	UserId             int              `json:"user_id" gorm:"index;not null"`
+	Action             string           `json:"action" gorm:"type:varchar(32);not null"`
+	AmountUSD          decimal.Decimal  `json:"amount_usd" gorm:"type:decimal(20,8);not null"`
+	SourceUserId       *int             `json:"source_user_id" gorm:"index"`
+	SourceTopUpId      *int             `json:"source_topup_id" gorm:"column:source_topup_id;index"`
+	FrozenUntil        *time.Time       `json:"frozen_until"`
+	QuotaAfter         *int             `json:"quota_after"`
+	AffQuotaUSDAfter   *decimal.Decimal `json:"aff_quota_usd_after" gorm:"column:aff_quota_usd_after;type:decimal(20,8)"`
+	AffFrozenUSDAfter  *decimal.Decimal `json:"aff_frozen_quota_usd_after" gorm:"column:aff_frozen_quota_usd_after;type:decimal(20,8)"`
+	AffHistoryUSDAfter *decimal.Decimal `json:"aff_history_quota_usd_after" gorm:"column:aff_history_quota_usd_after;type:decimal(20,8)"`
+	CreatedAt          time.Time        `json:"created_at"`
+	UpdatedAt          time.Time        `json:"updated_at"`
 }
 
 type TopUpAffiliateAudit struct {
@@ -107,6 +107,12 @@ func resolveGlobalAffiliateRebateRatePercent() float64 {
 func resolveAffiliateRebateRatePercent(profile *UserAffiliate) float64 {
 	if profile != nil && profile.AffRebateRatePercent != nil {
 		return clampAffiliateRebateRate(*profile.AffRebateRatePercent)
+	}
+	if profile != nil {
+		var user User
+		if err := DB.Select("role").Where("id = ?", profile.UserId).First(&user).Error; err == nil && user.Role == common.RoleAgentUser {
+			return clampAffiliateRebateRate(common.AgentAffiliateRebateRate)
+		}
 	}
 	return resolveGlobalAffiliateRebateRatePercent()
 }
@@ -267,6 +273,61 @@ func BindAffiliateInviter(userID, inviterID int) (bool, error) {
 	return true, tx.Commit().Error
 }
 
+func UpdateUserInviter(userID int, inviterID int) error {
+	if userID <= 0 || inviterID < 0 || userID == inviterID {
+		return errors.New("invalid inviter binding")
+	}
+	if inviterID > 0 {
+		if _, err := ensureUserAffiliateRecord(inviterID, loadUserAffCode(inviterID)); err != nil {
+			return err
+		}
+	}
+	if _, err := ensureUserAffiliateRecord(userID, loadUserAffCode(userID)); err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var oldProfile UserAffiliate
+		if err := tx.Where("user_id = ?", userID).First(&oldProfile).Error; err != nil {
+			return err
+		}
+		oldInviterID := 0
+		if oldProfile.InviterId != nil {
+			oldInviterID = *oldProfile.InviterId
+		}
+		if oldInviterID == inviterID {
+			return nil
+		}
+
+		var inviterPtr *int
+		if inviterID > 0 {
+			v := inviterID
+			inviterPtr = &v
+		}
+		if err := tx.Model(&UserAffiliate{}).Where("user_id = ?", userID).Update("inviter_id", inviterPtr).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&User{}).Where("id = ?", userID).Update("inviter_id", inviterID).Error; err != nil {
+			return err
+		}
+		for _, affectedInviterID := range []int{oldInviterID, inviterID} {
+			if affectedInviterID <= 0 {
+				continue
+			}
+			var inviteeCount int64
+			if err := tx.Model(&UserAffiliate{}).Where("inviter_id = ?", affectedInviterID).Count(&inviteeCount).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&UserAffiliate{}).Where("user_id = ?", affectedInviterID).Update("aff_count", int(inviteeCount)).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&User{}).Where("id = ?", affectedInviterID).Update("aff_count", int(inviteeCount)).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func BindAffiliateInviterByCode(userID int, rawCode string) error {
 	code := strings.ToUpper(strings.TrimSpace(rawCode))
 	if code == "" {
@@ -335,7 +396,7 @@ func AccrueAffiliateRebateForTopUp(topUp *TopUp, rechargeUSD decimal.Decimal) (d
 	var applied decimal.Decimal
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var audit TopUpAffiliateAudit
-		err := tx.Where("topup_id = ? AND action = ?", topUp.Id, common.AffiliateTopUpAuditApplied).First(&audit).Error
+		err := tx.Where("topup_id = ?", topUp.Id).First(&audit).Error
 		if err == nil {
 			return nil
 		}

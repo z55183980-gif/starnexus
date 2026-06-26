@@ -132,6 +132,32 @@ export function useSidebarData(): SidebarData {
         ],
       },
       {
+        id: 'agent',
+        title: t('Agent'),
+        items: [
+          {
+            title: t('Users'),
+            url: '/users',
+            icon: Users,
+          },
+          {
+            title: t('Top-up Records'),
+            url: '/topup-records',
+            icon: Receipt,
+          },
+          {
+            title: t('Usage Logs'),
+            url: '/usage-logs/common',
+            icon: FileText,
+          },
+          {
+            title: t('Affiliate Rebate Records'),
+            url: '/affiliate-records',
+            icon: Share2,
+          },
+        ],
+      },
+      {
         id: 'admin',
         title: t('Admin'),
         items: [

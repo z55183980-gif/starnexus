@@ -41,6 +41,7 @@ interface UserQuotaDialogProps {
   onOpenChange: (open: boolean) => void
   userId: number
   currentQuota: number
+  allowAdvancedModes?: boolean
   onSuccess: () => void
 }
 
@@ -49,6 +50,9 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
   const [mode, setMode] = useState<QuotaAdjustMode>('add')
   const [amount, setAmount] = useState('')
   const [loading, setLoading] = useState(false)
+  const availableModes: QuotaAdjustMode[] = props.allowAdvancedModes
+    ? ['add', 'subtract', 'override']
+    : ['add']
 
   const { meta: currencyMeta } = getCurrencyDisplay()
   const currencyLabel = getCurrencyLabel()
@@ -82,10 +86,11 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
     try {
       const value =
         mode === 'override' ? parseQuotaFromDollars(amountValue) : quotaValue
+      const submitMode = props.allowAdvancedModes ? mode : 'add'
       const result = await adjustUserQuota({
         id: props.userId,
         action: 'add_quota',
-        mode,
+        mode: submitMode,
         value: mode === 'override' ? value : Math.abs(value),
       })
       if (result.success) {
@@ -131,7 +136,7 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
           <div className='space-y-2'>
             <Label>{t('Mode')}</Label>
             <div className='flex gap-1'>
-              {(['add', 'subtract', 'override'] as const).map((m) => (
+              {availableModes.map((m) => (
                 <Button
                   key={m}
                   type='button'

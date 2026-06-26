@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 import { useAuthStore } from '@/stores/auth-store'
 import { useStatus } from '@/hooks/use-status'
+import { ROLE } from '@/lib/roles'
 import type { NavGroup, NavItem } from '@/components/layout/types'
 
 type SidebarSectionConfig = {
@@ -58,6 +59,13 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     topup: true,
     affiliate: true,
     personal: true,
+  },
+  agent: {
+    enabled: true,
+    user: true,
+    topupRecords: true,
+    log: true,
+    affiliateRecords: true,
   },
   admin: {
     enabled: true,
@@ -178,7 +186,8 @@ function parseUserSidebarConfig(
 function isModuleEnabled(
   url: string,
   adminConfig: SidebarModulesAdminConfig,
-  userConfig: SidebarModulesUserConfig
+  userConfig: SidebarModulesUserConfig,
+  groupId?: string
 ): boolean {
   const mapping = URL_TO_CONFIG_MAP[url]
   if (!mapping) {
@@ -186,7 +195,11 @@ function isModuleEnabled(
     return true
   }
 
-  const { section, module } = mapping
+  const { section: mappedSection, module } = mapping
+  const section =
+    groupId === 'agent' && (mappedSection === 'admin' || mappedSection === 'console')
+      ? 'agent'
+      : mappedSection
   const adminSection = adminConfig[section]
   const adminAllowed = Boolean(
     adminSection && adminSection.enabled && adminSection[module] === true
@@ -205,7 +218,7 @@ function isModuleEnabled(
  * Check if a navigation item should be visible
  */
 function isNavItemVisible(
-  item: NavItem,
+  item: NavItem & { groupId?: string },
   adminConfig: SidebarModulesAdminConfig,
   userConfig: SidebarModulesUserConfig
 ): boolean {
@@ -225,7 +238,7 @@ function isNavItemVisible(
   if ('url' in item && item.url) {
     const configUrls = item.configUrls ?? [item.url]
     return configUrls.some((url) =>
-      isModuleEnabled(url as string, adminConfig, userConfig)
+      isModuleEnabled(url as string, adminConfig, userConfig, item.groupId)
     )
   }
 
@@ -233,7 +246,7 @@ function isNavItemVisible(
   if ('items' in item && item.items) {
     // If has sub-items, show this collapsible item if at least one sub-item is visible
     return item.items.some((subItem) =>
-      isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+      isModuleEnabled(subItem.url as string, adminConfig, userConfig, item.groupId)
     )
   }
 
@@ -246,14 +259,15 @@ function isNavItemVisible(
 function filterNavItems(
   items: NavItem[],
   adminConfig: SidebarModulesAdminConfig,
-  userConfig: SidebarModulesUserConfig
+  userConfig: SidebarModulesUserConfig,
+  groupId?: string
 ): NavItem[] {
   return items
     .map((item) => {
       // If collapsible item, also filter its sub-items
       if ('items' in item && item.items) {
         const filteredSubItems = item.items.filter((subItem) =>
-          isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+          isModuleEnabled(subItem.url as string, adminConfig, userConfig, groupId)
         )
 
         return {
@@ -263,7 +277,7 @@ function filterNavItems(
       }
       return item
     })
-    .filter((item) => isNavItemVisible(item, adminConfig, userConfig))
+    .filter((item) => isNavItemVisible({ ...item, groupId }, adminConfig, userConfig))
 }
 
 /**
@@ -306,15 +320,28 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
     return parseUserSidebarConfig(auth?.user?.sidebar_modules)
   }, [auth?.user?.permissions?.sidebar_settings, auth?.user?.sidebar_modules])
 
+  const userRole = auth?.user?.role ?? ROLE.GUEST
+
   const filteredNavGroups = useMemo(
     () =>
       navGroups
-        .map((group) => ({
-          ...group,
-          items: filterNavItems(group.items, adminConfig, userConfig),
-        }))
+        .filter((group) => {
+          if (group.id === 'agent') return userRole === ROLE.AGENT
+          if (group.id === 'admin') return userRole >= ROLE.ADMIN
+          return true
+        })
+        .map((group) => {
+          const items = filterNavItems(group.items, adminConfig, userConfig, group.id)
+          return {
+            ...group,
+            items:
+              userRole === ROLE.AGENT && group.id === 'general'
+                ? items.filter((item) => !('url' in item && item.url === '/usage-logs/common'))
+                : items,
+          }
+        })
         .filter((group) => group.items.length > 0), // Only show navigation groups with visible items
-    [navGroups, adminConfig, userConfig]
+    [navGroups, adminConfig, userConfig, userRole]
   )
 
   return filteredNavGroups

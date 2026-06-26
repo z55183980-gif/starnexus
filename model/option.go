@@ -154,6 +154,7 @@ func InitOptionMap() {
 	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
 	common.OptionMap["AffiliateEnabled"] = strconv.FormatBool(common.AffiliateEnabled)
 	common.OptionMap["AffiliateRebateRate"] = strconv.FormatFloat(common.AffiliateRebateRate, 'f', -1, 64)
+	common.OptionMap["AgentAffiliateRebateRate"] = strconv.FormatFloat(common.AgentAffiliateRebateRate, 'f', -1, 64)
 	common.OptionMap["AffiliateRebateFreezeHours"] = strconv.Itoa(common.AffiliateRebateFreezeHours)
 	common.OptionMap["AffiliateRebateDurationDays"] = strconv.Itoa(common.AffiliateRebateDurationDays)
 	common.OptionMap["AffiliateRebatePerInviteeCapUSD"] = strconv.FormatFloat(common.AffiliateRebatePerInviteeCapUSD, 'f', -1, 64)
@@ -561,6 +562,8 @@ func updateOptionMap(key string, value string) (err error) {
 		common.AffiliateEnabled = value == "true"
 	case "AffiliateRebateRate":
 		common.AffiliateRebateRate = clampAffiliateOptionRate(value)
+	case "AgentAffiliateRebateRate":
+		common.AgentAffiliateRebateRate = clampAffiliateOptionRate(value)
 	case "AffiliateRebateFreezeHours":
 		common.AffiliateRebateFreezeHours, _ = strconv.Atoi(value)
 		if common.AffiliateRebateFreezeHours < 0 {

@@ -192,6 +192,7 @@ export type BillingSettings = {
   QuotaForInvitee: number
   AffiliateEnabled: boolean
   AffiliateRebateRate: number
+  AgentAffiliateRebateRate: number
   AffiliateRebateFreezeHours: number
   AffiliateRebateDurationDays: number
   AffiliateRebatePerInviteeCapUSD: number

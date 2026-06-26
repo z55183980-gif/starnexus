@@ -127,26 +127,41 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.DELETE("/oauth/bindings/:provider_id", controller.UnbindCustomOAuth)
 			}
 
+			strictAdminRoute := userRoute.Group("/")
+			strictAdminRoute.Use(middleware.AdminAuth())
+			{
+				strictAdminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
+			}
+
+			agentRoute := userRoute.Group("/")
+			agentRoute.Use(middleware.AgentAuth())
+			{
+				agentRoute.GET("/topup", controller.GetAllTopUps)
+				agentRoute.GET("/", controller.GetAllUsers)
+				agentRoute.GET("/search", controller.SearchUsers)
+				agentRoute.GET("/:id", controller.GetUser)
+				agentRoute.POST("/manage", controller.ManageUser)
+			}
+
 			adminRoute := userRoute.Group("/")
 			adminRoute.Use(middleware.AdminAuth())
 			{
-				adminRoute.GET("/", controller.GetAllUsers)
-				adminRoute.GET("/topup", controller.GetAllTopUps)
-				adminRoute.POST("/topup/complete", controller.AdminCompleteTopUp)
-				adminRoute.GET("/search", controller.SearchUsers)
-				adminRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
-				adminRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
-				adminRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
-				adminRoute.GET("/:id", controller.GetUser)
 				adminRoute.POST("/", controller.CreateUser)
-				adminRoute.POST("/manage", controller.ManageUser)
 				adminRoute.PUT("/", controller.UpdateUser)
 				adminRoute.DELETE("/:id", controller.DeleteUser)
-				adminRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)
+			}
+
+			strictAdminDetailRoute := userRoute.Group("/")
+			strictAdminDetailRoute.Use(middleware.AdminAuth())
+			{
+				strictAdminDetailRoute.GET("/:id/oauth/bindings", controller.GetUserOAuthBindingsByAdmin)
+				strictAdminDetailRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
+				strictAdminDetailRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
+				strictAdminDetailRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)
 
 				// Admin 2FA routes
-				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
-				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
+				strictAdminDetailRoute.GET("/2fa/stats", controller.Admin2FAStats)
+				strictAdminDetailRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
 			}
 		}
 
@@ -198,6 +213,12 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/waffo-pancake/save", controller.SaveWaffoPancake)
 			optionRoute.POST("/waffo-pancake/subscription-product", controller.CreateWaffoPancakeSubscriptionProduct)
 			optionRoute.POST("/waffo-pancake/subscription-product-options", controller.ListWaffoPancakeSubscriptionProductOptions)
+		}
+
+		affiliateAgentRoute := apiRouter.Group("/affiliate/agent")
+		affiliateAgentRoute.Use(middleware.AgentAuth())
+		{
+			affiliateAgentRoute.GET("/ledger", controller.AgentListAffiliateLedgers)
 		}
 
 		affiliateAdminRoute := apiRouter.Group("/affiliate/admin")
@@ -315,6 +336,8 @@ func SetApiRouter(router *gin.Engine) {
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
+		logRoute.GET("/agent", middleware.AgentAuth(), controller.GetAgentUserLogs)
+		logRoute.GET("/agent/stat", middleware.AgentAuth(), controller.GetAgentLogsStat)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)
 		logRoute.GET("/search", middleware.AdminAuth(), controller.SearchAllLogs)

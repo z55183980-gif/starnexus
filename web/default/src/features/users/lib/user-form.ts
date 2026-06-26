@@ -33,6 +33,7 @@ export const userFormSchema = z.object({
   quota_dollars: z.number().min(0).optional(),
   concurrency: z.number().min(0).optional(),
   group: z.string().optional(),
+  inviter_id: z.number().min(0).optional(),
   remark: z.string().optional(),
 })
 
@@ -50,6 +51,7 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   quota_dollars: 0,
   concurrency: 5,
   group: DEFAULT_GROUP,
+  inviter_id: 0,
   remark: '',
 }
 
@@ -76,7 +78,11 @@ export function transformFormDataToPayload(
     payload.role = data.role || 1 // Default to common user
   } else {
     // For update: quota is adjusted atomically via /api/user/manage, not sent here
+    payload.role = data.role
     payload.group = data.group
+    if (data.inviter_id !== undefined) {
+      payload.inviter_id = data.inviter_id
+    }
     payload.remark = data.remark || undefined
     payload.id = userId
   }
@@ -96,6 +102,7 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     quota_dollars: quotaUnitsToDollars(user.quota),
     concurrency: user.concurrency ?? 5,
     group: user.group || DEFAULT_GROUP,
+    inviter_id: user.inviter_id ?? 0,
     remark: user.remark || '',
   }
 }

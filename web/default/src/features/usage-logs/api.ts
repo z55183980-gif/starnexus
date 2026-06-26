@@ -25,6 +25,7 @@ import type {
   GetLogStatsResponse,
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
+  LogAccessScope,
   UserInfo,
 } from './types'
 
@@ -32,14 +33,16 @@ import type {
 // Generic API Helpers
 // ============================================================================
 
-function buildApiPath(endpoint: string, isAdmin: boolean): string {
-  return isAdmin ? endpoint : `${endpoint}/self`
+function buildApiPath(endpoint: string, accessScope: LogAccessScope): string {
+  if (accessScope === 'admin') return endpoint
+  if (accessScope === 'agent') return `${endpoint}/agent`
+  return `${endpoint}/self`
 }
 
 async function fetchLogs<T>(
   endpoint: string,
   params: T,
-  isAdmin: boolean
+  accessScope: LogAccessScope
 ): Promise<GetLogsResponse> {
   const paramRecord = params as unknown as Record<string, unknown>
   const queryParams = buildQueryParams({
@@ -47,7 +50,7 @@ async function fetchLogs<T>(
     page_size: paramRecord.page_size || 20,
     ...params,
   })
-  const path = buildApiPath(endpoint, isAdmin)
+  const path = buildApiPath(endpoint, accessScope)
   const res = await api.get(`${path}?${queryParams}`)
   return res.data
 }
@@ -55,12 +58,12 @@ async function fetchLogs<T>(
 async function fetchLogStats<T>(
   endpoint: string,
   params: T,
-  isAdmin: boolean
+  accessScope: LogAccessScope
 ): Promise<GetLogStatsResponse> {
   const queryParams = buildQueryParams(
     params as unknown as Record<string, unknown>
   )
-  const path = buildApiPath(endpoint, isAdmin)
+  const path = buildApiPath(endpoint, accessScope)
   const res = await api.get(`${path}/stat?${queryParams}`)
   return res.data
 }
@@ -70,18 +73,26 @@ async function fetchLogStats<T>(
 // ============================================================================
 
 export const getAllLogs = (params: GetLogsParams = {}) =>
-  fetchLogs('/api/log', params, true)
+  fetchLogs('/api/log', params, 'admin')
 
 export const getUserLogs = (
   params: Omit<GetLogsParams, 'username' | 'channel'> = {}
-) => fetchLogs('/api/log', params, false)
+) => fetchLogs('/api/log', params, 'self')
 
 export const getLogStats = (params: GetLogStatsParams = {}) =>
-  fetchLogStats('/api/log', params, true)
+  fetchLogStats('/api/log', params, 'admin')
 
 export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
-) => fetchLogStats('/api/log', params, false)
+) => fetchLogStats('/api/log', params, 'self')
+
+export const getAgentLogs = (
+  params: Omit<GetLogsParams, 'channel'> = {}
+) => fetchLogs('/api/log', params, 'agent')
+
+export const getAgentLogStats = (
+  params: Omit<GetLogStatsParams, 'channel'> = {}
+) => fetchLogStats('/api/log', params, 'agent')
 
 export async function getUserInfo(
   userId: number
@@ -95,17 +106,17 @@ export async function getUserInfo(
 // ============================================================================
 
 export const getAllMidjourneyLogs = (params: GetMidjourneyLogsParams) =>
-  fetchLogs('/api/mj', params, true)
+  fetchLogs('/api/mj', params, 'admin')
 
 export const getUserMidjourneyLogs = (params: GetMidjourneyLogsParams) =>
-  fetchLogs('/api/mj', params, false)
+  fetchLogs('/api/mj', params, 'self')
 
 // ============================================================================
 // Task Logs API
 // ============================================================================
 
 export const getAllTaskLogs = (params: GetTaskLogsParams) =>
-  fetchLogs('/api/task', params, true)
+  fetchLogs('/api/task', params, 'admin')
 
 export const getUserTaskLogs = (params: GetTaskLogsParams) =>
-  fetchLogs('/api/task', params, false)
+  fetchLogs('/api/task', params, 'self')

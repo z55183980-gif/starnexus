@@ -25,7 +25,7 @@ export const Route = createFileRoute('/_authenticated/topup-records/')({
   beforeLoad: () => {
     const { auth } = useAuthStore.getState()
 
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
+    if (!auth.user || auth.user.role < ROLE.AGENT) {
       throw redirect({
         to: '/403',
       })

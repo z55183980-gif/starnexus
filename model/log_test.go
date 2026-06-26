@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
@@ -49,4 +51,71 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 	require.NotContains(t, other, "billing_prompt_tokens")
 	require.NotContains(t, other, "billing_completion_tokens")
 	require.NotContains(t, other, "billing_total_tokens")
+}
+
+func TestGetAgentUserLogsScopesToAgentAndInvitees(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	originalDB := DB
+	originalLogDB := LOG_DB
+	DB = db
+	LOG_DB = db
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+	})
+
+	if err := db.AutoMigrate(&User{}, &Log{}); err != nil {
+		t.Fatalf("migrate test database: %v", err)
+	}
+
+	users := []User{
+		{Id: 10, Username: "agent", Role: common.RoleAgentUser, AffCode: "agent-log"},
+		{Id: 11, Username: "invitee", Role: common.RoleCommonUser, InviterId: 10, AffCode: "invitee-log"},
+		{Id: 12, Username: "other", Role: common.RoleCommonUser, InviterId: 99, AffCode: "other-log"},
+		{Id: 13, Username: "admin", Role: common.RoleAdminUser, InviterId: 10, AffCode: "admin-log"},
+	}
+	for _, user := range users {
+		if err := db.Create(&user).Error; err != nil {
+			t.Fatalf("seed user %d: %v", user.Id, err)
+		}
+	}
+
+	now := common.GetTimestamp()
+	logs := []Log{
+		{UserId: 10, Username: "agent", Type: LogTypeConsume, CreatedAt: now, ModelName: "gpt", TokenName: "tk", Quota: 100, PromptTokens: 2, CompletionTokens: 3},
+		{UserId: 11, Username: "invitee", Type: LogTypeConsume, CreatedAt: now, ModelName: "gpt", TokenName: "tk", Quota: 200, PromptTokens: 5, CompletionTokens: 7},
+		{UserId: 12, Username: "other", Type: LogTypeConsume, CreatedAt: now, ModelName: "gpt", TokenName: "tk", Quota: 300, PromptTokens: 11, CompletionTokens: 13},
+		{UserId: 13, Username: "admin", Type: LogTypeConsume, CreatedAt: now, ModelName: "gpt", TokenName: "tk", Quota: 400, PromptTokens: 17, CompletionTokens: 19},
+	}
+	for _, log := range logs {
+		if err := db.Create(&log).Error; err != nil {
+			t.Fatalf("seed log for user %d: %v", log.UserId, err)
+		}
+	}
+
+	got, total, err := GetAgentUserLogs(10, LogTypeUnknown, 0, 0, "", "", "", 0, 20, "", "", "", nil)
+	if err != nil {
+		t.Fatalf("get agent logs: %v", err)
+	}
+	if total != 2 || len(got) != 2 {
+		t.Fatalf("agent logs total=%d len=%d, want agent plus invitee", total, len(got))
+	}
+	seen := map[int]bool{}
+	for _, log := range got {
+		seen[log.UserId] = true
+	}
+	if !seen[10] || !seen[11] || seen[12] || seen[13] {
+		t.Fatalf("agent log users = %v, want agent 10 and invitee 11 only", seen)
+	}
+
+	stat, err := SumAgentUsedQuota(10, LogTypeUnknown, 0, 0, "", "", "", "", nil)
+	if err != nil {
+		t.Fatalf("sum agent quota: %v", err)
+	}
+	if stat.Quota != 300 || stat.Rpm != 2 || stat.Tpm != 17 {
+		t.Fatalf("agent stat = %+v, want quota=300 rpm=2 tpm=17", stat)
+	}
 }

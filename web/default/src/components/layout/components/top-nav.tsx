@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright (C) 2023-2026 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { type TopNavLink } from '../types'
 import { ContactOwnerMenu } from './contact-owner-menu'
+import { QQGroupButton } from './qq-group-button'
 
 type TopNavProps = React.HTMLAttributes<HTMLElement> & {
   links: TopNavLink[]
@@ -90,6 +91,7 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
               )
             )}
             <div className='px-2 py-1.5'>
+              <QQGroupButton variant='stack' />
               <ContactOwnerMenu variant='stack' />
             </div>
           </DropdownMenuContent>
@@ -126,6 +128,7 @@ export function TopNav({ className, links, ...props }: TopNavProps) {
             </Link>
           )
         )}
+        <QQGroupButton variant='dashboard' />
         <ContactOwnerMenu variant='dashboard' />
       </nav>
     </>

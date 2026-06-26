@@ -22,7 +22,6 @@ import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import { type Table } from '@tanstack/react-table'
 import { Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useIsAdmin } from '@/hooks/use-admin'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -44,6 +43,7 @@ import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
 import { CommonLogsStats } from './common-logs-stats'
+import type { LogAccessScope } from '../types'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 import { ExcludeFiltersEditor } from './exclude-filters-editor'
 import { useUsageLogsContext } from './usage-logs-provider'
@@ -59,6 +59,7 @@ function isLogTypeValue(value: string): value is LogTypeValue {
 
 interface CommonLogsFilterBarProps<TData> {
   table: Table<TData>
+  accessScope: LogAccessScope
 }
 
 export function CommonLogsFilterBar<TData>(
@@ -68,7 +69,9 @@ export function CommonLogsFilterBar<TData>(
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const isAdmin = useIsAdmin()
+  const isAdmin = props.accessScope === 'admin'
+  const canViewManagedUsers =
+    props.accessScope === 'admin' || props.accessScope === 'agent'
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
@@ -195,7 +198,7 @@ export function CommonLogsFilterBar<TData>(
 
   const statsBar = (
     <div className='flex flex-wrap items-center gap-2'>
-      <CommonLogsStats />
+      <CommonLogsStats accessScope={props.accessScope} />
       <Tooltip>
         <TooltipTrigger
           render={
@@ -288,7 +291,7 @@ export function CommonLogsFilterBar<TData>(
             onKeyDown={handleKeyDown}
             className={inputClass}
           />
-          {isAdmin && (
+          {canViewManagedUsers && (
             <Input
               placeholder={t('Username')}
               type={sensitiveType}

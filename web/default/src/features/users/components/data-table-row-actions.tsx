@@ -34,6 +34,8 @@ import {
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,6 +56,7 @@ import {
 import { getUserActionMessage } from '../lib'
 import { type User, type ManageUserAction } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
+import { UserQuotaDialog } from './user-quota-dialog'
 import { useUsers } from './users-provider'
 
 interface DataTableRowActionsProps {
@@ -64,10 +67,16 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
   const { setOpen, setCurrentRow, triggerRefresh } = useUsers()
+  const currentUserRole = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
+  const canUseAdminOnlyActions = currentUserRole >= ROLE.ADMIN
+  const canEditUser = currentUserRole >= ROLE.ADMIN
+  const canRechargeUser = currentUserRole >= ROLE.AGENT
+  const canPromoteUsers = currentUserRole === ROLE.SUPER_ADMIN
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -135,6 +144,30 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     return null
   }
 
+  if (!canEditUser && canRechargeUser) {
+    return (
+      <>
+        <Button
+          size='sm'
+          variant='outline'
+          onClick={() => setQuotaDialogOpen(true)}
+        >
+          <Pencil className='mr-1 h-4 w-4' />
+          {t('Recharge')}
+        </Button>
+
+        <UserQuotaDialog
+          open={quotaDialogOpen}
+          onOpenChange={setQuotaDialogOpen}
+          userId={user.id}
+          currentQuota={user.quota}
+          allowAdvancedModes={false}
+          onSuccess={triggerRefresh}
+        />
+      </>
+    )
+  }
+
   return (
     <>
       <DropdownMenu>
@@ -150,116 +183,143 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <span className='sr-only'>{t('Open menu')}</span>
         </DropdownMenuTrigger>
         <DropdownMenuContent align='end' className='w-[180px]'>
-          <DropdownMenuItem onClick={handleEdit}>
-            {t('Edit')}
-            <DropdownMenuShortcut>
-              <Pencil size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {canEditUser && (
+            <>
+              <DropdownMenuItem onClick={handleEdit}>
+                {t('Edit')}
+                <DropdownMenuShortcut>
+                  <Pencil size={16} />
+                </DropdownMenuShortcut>
+              </DropdownMenuItem>
 
-          <DropdownMenuSeparator />
+              <DropdownMenuSeparator />
 
-          {isDisabled ? (
-            <DropdownMenuItem onClick={() => handleManage('enable')}>
-              {t('Enable')}
-              <DropdownMenuShortcut>
-                <Power size={16} />
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
-          ) : (
-            <DropdownMenuItem
-              onClick={() => handleManage('disable')}
-              disabled={isRoot}
-            >
-              {t('Disable')}
-              <DropdownMenuShortcut>
-                <PowerOff size={16} />
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
+              {isDisabled ? (
+                <DropdownMenuItem onClick={() => handleManage('enable')}>
+                  {t('Enable')}
+                  <DropdownMenuShortcut>
+                    <Power size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              ) : (
+                <DropdownMenuItem
+                  onClick={() => handleManage('disable')}
+                  disabled={isRoot}
+                >
+                  {t('Disable')}
+                  <DropdownMenuShortcut>
+                    <PowerOff size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+
+              {canUseAdminOnlyActions && isAdmin && !isRoot && (
+                <DropdownMenuItem onClick={() => handleManage('demote')}>
+                  {t('Demote')}
+                  <DropdownMenuShortcut>
+                    <ArrowDown size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+
+              {canPromoteUsers && !isAdmin && (
+                <DropdownMenuItem onClick={() => handleManage('promote')}>
+                  {t('Promote')}
+                  <DropdownMenuShortcut>
+                    <ArrowUp size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+
+              {canUseAdminOnlyActions && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setBindingDialogOpen(true)
+                  }}
+                >
+                  {t('Manage Bindings')}
+                  <DropdownMenuShortcut>
+                    <Link2 size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+
+              {canUseAdminOnlyActions && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setSubscriptionsDialogOpen(true)
+                  }}
+                >
+                  {t('Manage Subscriptions')}
+                  <DropdownMenuShortcut>
+                    <CreditCard size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+
+              <DropdownMenuItem
+                onSelect={(event) => {
+                  event.preventDefault()
+                  setQuotaDialogOpen(true)
+                }}
+              >
+                {t('Adjust Quota')}
+                <DropdownMenuShortcut>
+                  <Pencil size={16} />
+                </DropdownMenuShortcut>
+              </DropdownMenuItem>
+
+              {canUseAdminOnlyActions && <DropdownMenuSeparator />}
+
+              {canUseAdminOnlyActions && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setResetPasskeyOpen(true)
+                  }}
+                  disabled={isRoot}
+                >
+                  {t('Reset Passkey')}
+                  <DropdownMenuShortcut>
+                    <KeyRound size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+
+              {canUseAdminOnlyActions && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    setResetTwoFAOpen(true)
+                  }}
+                  disabled={isRoot}
+                >
+                  {t('Reset 2FA')}
+                  <DropdownMenuShortcut>
+                    <ShieldAlert size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+
+              {canUseAdminOnlyActions && <DropdownMenuSeparator />}
+
+              {canUseAdminOnlyActions && (
+                <DropdownMenuItem
+                  onClick={handleDelete}
+                  className='text-destructive focus:text-destructive'
+                  disabled={isRoot}
+                >
+                  {t('Delete')}
+                  <DropdownMenuShortcut>
+                    <Trash2 size={16} />
+                  </DropdownMenuShortcut>
+                </DropdownMenuItem>
+              )}
+            </>
           )}
 
-          {isAdmin && !isRoot && (
-            <DropdownMenuItem onClick={() => handleManage('demote')}>
-              {t('Demote')}
-              <DropdownMenuShortcut>
-                <ArrowDown size={16} />
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
-          )}
-
-          {!isAdmin && (
-            <DropdownMenuItem onClick={() => handleManage('promote')}>
-              {t('Promote')}
-              <DropdownMenuShortcut>
-                <ArrowUp size={16} />
-              </DropdownMenuShortcut>
-            </DropdownMenuItem>
-          )}
-
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              setBindingDialogOpen(true)
-            }}
-          >
-            {t('Manage Bindings')}
-            <DropdownMenuShortcut>
-              <Link2 size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              setSubscriptionsDialogOpen(true)
-            }}
-          >
-            {t('Manage Subscriptions')}
-            <DropdownMenuShortcut>
-              <CreditCard size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              setResetPasskeyOpen(true)
-            }}
-            disabled={isRoot}
-          >
-            {t('Reset Passkey')}
-            <DropdownMenuShortcut>
-              <KeyRound size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-
-          <DropdownMenuItem
-            onSelect={(event) => {
-              event.preventDefault()
-              setResetTwoFAOpen(true)
-            }}
-            disabled={isRoot}
-          >
-            {t('Reset 2FA')}
-            <DropdownMenuShortcut>
-              <ShieldAlert size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-
-          <DropdownMenuSeparator />
-
-          <DropdownMenuItem
-            onClick={handleDelete}
-            className='text-destructive focus:text-destructive'
-            disabled={isRoot}
-          >
-            {t('Delete')}
-            <DropdownMenuShortcut>
-              <Trash2 size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -292,6 +352,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         open={subscriptionsDialogOpen}
         onOpenChange={setSubscriptionsDialogOpen}
         user={{ id: user.id, username: user.username }}
+        onSuccess={triggerRefresh}
+      />
+
+      <UserQuotaDialog
+        open={quotaDialogOpen}
+        onOpenChange={setQuotaDialogOpen}
+        userId={user.id}
+        currentQuota={user.quota}
+        allowAdvancedModes={currentUserRole >= ROLE.ADMIN}
         onSuccess={triggerRefresh}
       />
     </>

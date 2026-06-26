@@ -509,4 +509,6 @@ export const STATIC_I18N_KEYS = [
   'Online support',
   'WhatsApp',
   'Contact site owner',
+  'Join QQ group',
+  'Scan the QQ group QR code to join',
 ] as const

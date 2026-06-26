@@ -24,6 +24,7 @@ import { useUpdateOption } from '../hooks/use-update-option'
 const affiliateSchema = z.object({
   AffiliateEnabled: z.boolean(),
   AffiliateRebateRate: z.coerce.number().min(0).max(100),
+  AgentAffiliateRebateRate: z.coerce.number().min(0).max(100),
   AffiliateRebateFreezeHours: z.coerce.number().min(0).max(720),
   AffiliateRebateDurationDays: z.coerce.number().min(0).max(3650),
   AffiliateRebatePerInviteeCapUSD: z.coerce.number().min(0),
@@ -99,7 +100,7 @@ export function AffiliateRebateSettingsSection({
             name='AffiliateRebateRate'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Global rebate rate (%)')}</FormLabel>
+                <FormLabel>{t('User rebate rate (%)')}</FormLabel>
                 <FormControl>
                   <Input
                     type='number'
@@ -108,6 +109,27 @@ export function AffiliateRebateSettingsSection({
                     onChange={handleNumberChange(field.onChange)}
                   />
                 </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={form.control}
+            name='AgentAffiliateRebateRate'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Agent rebate rate (%)')}</FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    step='0.01'
+                    {...field}
+                    onChange={handleNumberChange(field.onChange)}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t('Default rebate rate for agent users when no user-specific rate is set.')}
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}

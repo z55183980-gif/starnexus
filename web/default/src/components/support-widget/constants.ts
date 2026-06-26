@@ -28,3 +28,8 @@ export const CHATWAY_SCRIPT_URL = `https://cdn.chatway.app/widget.js?id=${CHATWA
 export const SUPPORT_TELEGRAM_URL = 'https://t.me/accattc'
 
 export const SUPPORT_WHATSAPP_URL = 'https://wa.me/85255183980'
+
+export const SUPPORT_QQ_GROUP_URL = 'https://dkby.com/doc/qqqun.jpg'
+
+export const SUPPORT_QQ_LOGO_URL =
+  'https://static-res.qq.com/static-res/imqq/qq-logo.png'

@@ -135,6 +135,7 @@ const BILLING_SECTIONS = [
         defaultValues={{
           AffiliateEnabled: settings.AffiliateEnabled ?? true,
           AffiliateRebateRate: settings.AffiliateRebateRate ?? 0,
+          AgentAffiliateRebateRate: settings.AgentAffiliateRebateRate ?? 0,
           AffiliateRebateFreezeHours: settings.AffiliateRebateFreezeHours ?? 0,
           AffiliateRebateDurationDays:
             settings.AffiliateRebateDurationDays ?? 0,

@@ -74,9 +74,7 @@ func TransferAffiliateUSD(c *gin.Context) {
 	})
 }
 
-// AdminListAffiliateLedgers lists affiliate ledger entries for admin.
-// GET /api/affiliate/admin/ledger
-func AdminListAffiliateLedgers(c *gin.Context) {
+func listAffiliateLedgers(c *gin.Context, scopedUserID *int) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
 	if page < 1 {
@@ -90,7 +88,9 @@ func AdminListAffiliateLedgers(c *gin.Context) {
 	var total int64
 	var rows []model.UserAffiliateLedger
 	q := model.DB.Model(&model.UserAffiliateLedger{})
-	if userID := c.Query("user_id"); userID != "" {
+	if scopedUserID != nil {
+		q = q.Where("user_id = ?", *scopedUserID)
+	} else if userID := c.Query("user_id"); userID != "" {
 		q = q.Where("user_id = ?", userID)
 	}
 	if action := c.Query("action"); action != "" {
@@ -131,6 +131,18 @@ func AdminListAffiliateLedgers(c *gin.Context) {
 	})
 }
 
+// AgentListAffiliateLedgers lists the current agent's affiliate ledger entries.
+// GET /api/affiliate/agent/ledger
+func AgentListAffiliateLedgers(c *gin.Context) {
+	userID := c.GetInt("id")
+	listAffiliateLedgers(c, &userID)
+}
+
+// AdminListAffiliateLedgers lists affiliate ledger entries for admin.
+// GET /api/affiliate/admin/ledger
+func AdminListAffiliateLedgers(c *gin.Context) {
+	listAffiliateLedgers(c, nil)
+}
 func escapeAffiliateLedgerLikePattern(input string) string {
 	input = strings.ReplaceAll(input, "!", "!!")
 	input = strings.ReplaceAll(input, "%", "!%")

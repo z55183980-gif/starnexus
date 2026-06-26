@@ -19,16 +19,22 @@ For commercial licensing, please contact support@quantumnous.com
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import { useUsers } from './users-provider'
 
 export function UsersPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, setCurrentRow } = useUsers()
+  const userRole = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
+  const canCreateUser = userRole >= ROLE.ADMIN
 
   const handleCreate = () => {
     setCurrentRow(null)
     setOpen('create')
   }
+
+  if (!canCreateUser) return null
 
   return (
     <div className='flex gap-2'>

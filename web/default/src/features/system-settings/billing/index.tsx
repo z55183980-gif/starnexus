@@ -30,6 +30,7 @@ const defaultBillingSettings: BillingSettings = {
   QuotaForInvitee: 0,
   AffiliateEnabled: true,
   AffiliateRebateRate: 0,
+  AgentAffiliateRebateRate: 0,
   AffiliateRebateFreezeHours: 0,
   AffiliateRebateDurationDays: 0,
   AffiliateRebatePerInviteeCapUSD: 0,

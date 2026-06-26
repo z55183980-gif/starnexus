@@ -16,16 +16,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
-import { Pencil } from 'lucide-react'
+import { Check, ChevronsUpDown, Pencil, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { getRoleLabelKey, ROLE } from '@/lib/roles'
+import { cn } from '@/lib/utils'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { Button } from '@/components/ui/button'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import {
   Form,
   FormControl,
@@ -36,6 +46,11 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -55,7 +70,14 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
-import { createUser, updateUser, getUser, getGroups } from '../api'
+import { useAuthStore } from '@/stores/auth-store'
+import {
+  createUser,
+  updateUser,
+  getUser,
+  getGroups,
+  searchUsers,
+} from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   userFormSchema,
@@ -74,6 +96,141 @@ type UsersMutateDrawerProps = {
   currentRow?: User
 }
 
+function formatInviterOption(user: User) {
+  const displayName =
+    user.display_name && user.display_name !== user.username
+      ? ` / ${user.display_name}`
+      : ''
+  const affCode = user.aff_code ? ` · ${user.aff_code}` : ''
+  return `#${user.id} · ${user.username}${displayName}${affCode}`
+}
+
+function InviterSelector(props: {
+  value?: number
+  onValueChange: (value: number) => void
+  currentUserId?: number
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+  const [keyword, setKeyword] = useState('')
+  const [selectedUser, setSelectedUser] = useState<User | null>(null)
+
+  const usersQuery = useQuery({
+    queryKey: ['inviter-selector-users', keyword],
+    queryFn: () => searchUsers({ keyword, page_size: 20 }),
+    enabled: open,
+  })
+
+  const users = useMemo(
+    () =>
+      (usersQuery.data?.data?.items ?? []).filter(
+        (user) => user.id !== props.currentUserId
+      ),
+    [props.currentUserId, usersQuery.data?.data?.items]
+  )
+
+  const selectedLabel = props.value
+    ? selectedUser?.id === props.value
+      ? formatInviterOption(selectedUser)
+      : `#${props.value}`
+    : t('No Inviter')
+
+  return (
+    <div className='flex gap-2'>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          render={
+            <Button
+              type='button'
+              variant='outline'
+              className='h-9 min-w-0 flex-1 justify-between'
+            />
+          }
+        >
+          <span className='truncate'>{selectedLabel}</span>
+          <ChevronsUpDown className='ml-2 h-4 w-4 shrink-0 opacity-50' />
+        </PopoverTrigger>
+        <PopoverContent className='w-96 p-0' align='start'>
+          <Command shouldFilter={false}>
+            <CommandInput
+              placeholder={t('Search users...')}
+              value={keyword}
+              onValueChange={setKeyword}
+            />
+            <CommandEmpty>
+              {usersQuery.isFetching ? t('Loading...') : t('No users found.')}
+            </CommandEmpty>
+            <CommandList>
+              <CommandGroup>
+                <CommandItem
+                  value='0'
+                  onSelect={() => {
+                    props.onValueChange(0)
+                    setSelectedUser(null)
+                    setOpen(false)
+                  }}
+                >
+                  <Check
+                    className={cn(
+                      'h-4 w-4',
+                      props.value ? 'opacity-0' : 'opacity-100'
+                    )}
+                  />
+                  <span>{t('No Inviter')}</span>
+                </CommandItem>
+                {users.map((user) => (
+                  <CommandItem
+                    key={user.id}
+                    value={String(user.id)}
+                    onSelect={() => {
+                      props.onValueChange(user.id)
+                      setSelectedUser(user)
+                      setOpen(false)
+                    }}
+                  >
+                    <Check
+                      className={cn(
+                        'h-4 w-4',
+                        props.value === user.id ? 'opacity-100' : 'opacity-0'
+                      )}
+                    />
+                    <div className='min-w-0 flex-1'>
+                      <div className='truncate text-sm'>
+                        {user.username}
+                        {user.display_name && user.display_name !== user.username
+                          ? ` / ${user.display_name}`
+                          : ''}
+                      </div>
+                      <div className='text-muted-foreground truncate text-xs'>
+                        ID: {user.id} · {t(getRoleLabelKey(user.role))}
+                        {user.aff_code ? ` · ${user.aff_code}` : ''}
+                      </div>
+                    </div>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+      {Boolean(props.value) && (
+        <Button
+          type='button'
+          variant='outline'
+          size='icon'
+          onClick={() => {
+            props.onValueChange(0)
+            setSelectedUser(null)
+          }}
+        >
+          <X className='h-4 w-4' />
+          <span className='sr-only'>{t('Clear')}</span>
+        </Button>
+      )}
+    </div>
+  )
+}
+
 export function UsersMutateDrawer({
   open,
   onOpenChange,
@@ -82,6 +239,12 @@ export function UsersMutateDrawer({
   const { t } = useTranslation()
   const isUpdate = !!currentRow
   const { triggerRefresh } = useUsers()
+  const userRole = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
+  const canAssignAgent = userRole === ROLE.SUPER_ADMIN
+  const canAssignAdmin = userRole === ROLE.SUPER_ADMIN
+  const canEditUserGroup = userRole >= ROLE.ADMIN
+  const canEditInviter = userRole === ROLE.SUPER_ADMIN
+  const canEditRole = !isUpdate || userRole === ROLE.SUPER_ADMIN
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
 
@@ -223,7 +386,7 @@ export function UsersMutateDrawer({
                   )}
                 />
 
-                {!isUpdate && (
+                {canEditRole && (
                   <FormField
                     control={form.control}
                     name='role'
@@ -233,7 +396,12 @@ export function UsersMutateDrawer({
                         <Select
                           items={[
                             { value: '1', label: t('Common User') },
-                            { value: '10', label: t('Admin') },
+                            ...(canAssignAgent
+                              ? [{ value: '5', label: t('Agent') }]
+                              : []),
+                            ...(canAssignAdmin
+                              ? [{ value: '10', label: t('Admin') }]
+                              : []),
                           ]}
                           onValueChange={(value) =>
                             value !== null && field.onChange(parseInt(value))
@@ -250,12 +418,17 @@ export function UsersMutateDrawer({
                               <SelectItem value='1'>
                                 {t('Common User')}
                               </SelectItem>
-                              <SelectItem value='10'>{t('Admin')}</SelectItem>
+                              {canAssignAgent && (
+                                <SelectItem value='5'>{t('Agent')}</SelectItem>
+                              )}
+                              {canAssignAdmin && (
+                                <SelectItem value='10'>{t('Admin')}</SelectItem>
+                              )}
                             </SelectGroup>
                           </SelectContent>
                         </Select>
                         <FormDescription>
-                          {t("Set the user's role (cannot be Root)")}
+                          {t("Set the user's role")}
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
@@ -347,46 +520,71 @@ export function UsersMutateDrawer({
                     {t('Group, Quota & Relay')}
                   </h3>
 
-                  <FormField
-                    control={form.control}
-                    name='group'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('User ownership group')}</FormLabel>
-                        <Select
-                          items={[
-                            ...groups.map((group) => ({
-                              value: group,
-                              label: group,
-                            })),
-                          ]}
-                          onValueChange={field.onChange}
-                          value={field.value}
-                        >
+                  {canEditUserGroup && (
+                    <FormField
+                      control={form.control}
+                      name='group'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('User ownership group')}</FormLabel>
+                          <Select
+                            items={[
+                              ...groups.map((group) => ({
+                                value: group,
+                                label: group,
+                              })),
+                            ]}
+                            onValueChange={field.onChange}
+                            value={field.value}
+                          >
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder={t('Select an ownership group')} />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                {groups.map((group) => (
+                                  <SelectItem key={group} value={group}>
+                                    {group}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            {t(
+                              'This is the user\'s base group. Configure which channel/model groups this group can use in system settings.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  {canEditInviter && (
+                    <FormField
+                      control={form.control}
+                      name='inviter_id'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Inviter')}</FormLabel>
                           <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder={t('Select an ownership group')} />
-                            </SelectTrigger>
+                            <InviterSelector
+                              value={field.value ?? 0}
+                              onValueChange={field.onChange}
+                              currentUserId={currentRow?.id}
+                            />
                           </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {groups.map((group) => (
-                                <SelectItem key={group} value={group}>
-                                  {group}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          {t(
-                            'This is the user\'s base group. Configure which channel/model groups this group can use in system settings.'
-                          )}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                          <FormDescription>
+                            {t('Search and select an inviter, or clear it to keep no inviter')}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
 
                   <FormField
                     control={form.control}
@@ -525,6 +723,7 @@ export function UsersMutateDrawer({
           onOpenChange={setQuotaDialogOpen}
           userId={currentRow.id}
           currentQuota={parseQuotaFromDollars(currentQuotaRaw || 0)}
+          allowAdvancedModes={userRole >= ROLE.ADMIN}
           onSuccess={refreshUserData}
         />
       )}

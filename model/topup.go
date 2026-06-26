@@ -41,7 +41,7 @@ const (
 	PaymentProviderCreem        = "creem"
 	PaymentProviderWaffo        = "waffo"
 	PaymentProviderWaffoPancake = "waffo_pancake"
-	PaymentProviderEpusdt     = "epusdt"
+	PaymentProviderEpusdt       = "epusdt"
 )
 
 var (
@@ -204,6 +204,74 @@ func GetUserTopUps(userId int, pageInfo *common.PageInfo) (topups []*TopUp, tota
 		return nil, 0, err
 	}
 
+	return topups, total, nil
+}
+
+func GetTopUpsByInviterId(inviterId int, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
+	if inviterId <= 0 {
+		return []*TopUp{}, 0, nil
+	}
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, 0, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	query := tx.Model(&TopUp{}).Joins("JOIN users ON users.id = top_ups.user_id").
+		Where("users.inviter_id = ? AND users.role = ?", inviterId, common.RoleCommonUser)
+	if err = query.Count(&total).Error; err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+	if err = query.Order("top_ups.id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
+	return topups, total, nil
+}
+
+func SearchTopUpsByInviterId(inviterId int, keyword string, pageInfo *common.PageInfo) (topups []*TopUp, total int64, err error) {
+	if inviterId <= 0 {
+		return []*TopUp{}, 0, nil
+	}
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, 0, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	query := tx.Model(&TopUp{}).Joins("JOIN users ON users.id = top_ups.user_id").
+		Where("users.inviter_id = ? AND users.role = ?", inviterId, common.RoleCommonUser)
+	var perr error
+	query, perr = applyTopUpKeywordFilter(query, keyword, true)
+	if perr != nil {
+		tx.Rollback()
+		return nil, 0, perr
+	}
+	if err = query.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {
+		tx.Rollback()
+		common.SysError("failed to count agent topups: " + err.Error())
+		return nil, 0, errors.New("搜索充值记录失败")
+	}
+	if err = query.Order("top_ups.id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
+		tx.Rollback()
+		common.SysError("failed to search agent topups: " + err.Error())
+		return nil, 0, errors.New("搜索充值记录失败")
+	}
+	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
 	return topups, total, nil
 }
 

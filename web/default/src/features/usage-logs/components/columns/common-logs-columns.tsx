@@ -253,7 +253,10 @@ function buildDetailSegments(
   return segments
 }
 
-export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
+export function useCommonLogsColumns(
+  isAdmin: boolean,
+  canViewManagedUsers = isAdmin
+): ColumnDef<UsageLog>[] {
   const { t } = useTranslation()
   const columns: ColumnDef<UsageLog>[] = [
     {
@@ -289,10 +292,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
     },
   ]
 
-  if (isAdmin) {
-    columns.push(
-      {
-        id: 'channel',
+  if (canViewManagedUsers) {
+    if (isAdmin) {
+      columns.push(
+        {
+          id: 'channel',
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title={t('Channel')} />
         ),
@@ -392,8 +396,12 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             </TooltipProvider>
           )
         },
-        meta: { label: t('Channel'), mobileHidden: true },
-      },
+          meta: { label: t('Channel'), mobileHidden: true },
+        }
+      )
+    }
+
+    columns.push(
       {
         id: 'user',
         header: ({ column }) => (

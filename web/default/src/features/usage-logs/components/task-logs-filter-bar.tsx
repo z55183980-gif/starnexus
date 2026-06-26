@@ -21,12 +21,16 @@ import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import { type Table } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
-import { useIsAdmin } from '@/hooks/use-admin'
 import { Input } from '@/components/ui/input'
 import { DataTableToolbar } from '@/components/data-table'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
-import type { DrawingLogFilters, LogCategory, TaskLogFilters } from '../types'
+import type {
+  DrawingLogFilters,
+  LogAccessScope,
+  LogCategory,
+  TaskLogFilters,
+} from '../types'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -37,6 +41,7 @@ type TaskLogsFilters = DrawingLogFilters | TaskLogFilters
 interface TaskLogsFilterBarProps<TData> {
   table: Table<TData>
   logCategory: TaskLikeLogCategory
+  accessScope: LogAccessScope
 }
 
 function getFilterValue(
@@ -65,7 +70,7 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const searchParams = route.useSearch()
-  const isAdmin = useIsAdmin()
+  const isAdmin = props.accessScope === 'admin'
   const fetchingLogs = useIsFetching({ queryKey: ['logs'] })
 
   const [filters, setFilters] = useState<TaskLogsFilters>(() => {

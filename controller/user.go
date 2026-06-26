@@ -238,7 +238,16 @@ func Register(c *gin.Context) {
 
 func GetAllUsers(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.GetAllUsers(pageInfo)
+	myRole := c.GetInt("role")
+	myId := c.GetInt("id")
+	var users []*model.User
+	var total int64
+	var err error
+	if myRole == common.RoleAgentUser {
+		users, total, err = model.GetUsersByInviterId(myId, pageInfo)
+	} else {
+		users, total, err = model.GetAllUsers(pageInfo)
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -255,7 +264,16 @@ func SearchUsers(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")
 	pageInfo := common.GetPageQuery(c)
-	users, total, err := model.SearchUsers(keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	myRole := c.GetInt("role")
+	myId := c.GetInt("id")
+	var users []*model.User
+	var total int64
+	var err error
+	if myRole == common.RoleAgentUser {
+		users, total, err = model.SearchUsersByInviterId(myId, keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	} else {
+		users, total, err = model.SearchUsers(keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -271,6 +289,26 @@ func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }
 
+func canManageTargetUser(myId int, myRole int, target *model.User) bool {
+	if target == nil {
+		return false
+	}
+	if myRole == common.RoleAgentUser {
+		return target.Role == common.RoleCommonUser && target.InviterId == myId
+	}
+	return canManageTargetRole(myRole, target.Role)
+}
+
+func canCreateTargetRole(myRole int, targetRole int) bool {
+	if myRole == common.RoleRootUser {
+		return targetRole == common.RoleCommonUser || targetRole == common.RoleAgentUser || targetRole == common.RoleAdminUser
+	}
+	if myRole == common.RoleAdminUser {
+		return targetRole == common.RoleCommonUser
+	}
+	return false
+}
+
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -283,7 +321,7 @@ func GetUser(c *gin.Context) {
 		return
 	}
 	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, user.Role) {
+	if !canManageTargetUser(c.GetInt("id"), myRole, user) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
@@ -391,6 +429,21 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 		// 超级管理员不需要边栏设置功能
 		permissions["sidebar_settings"] = false
 		permissions["sidebar_modules"] = map[string]interface{}{}
+	} else if userRole == common.RoleAgentUser {
+		// 代理用户只能访问直属推荐用户管理
+		permissions["sidebar_settings"] = true
+		permissions["sidebar_modules"] = map[string]interface{}{
+			"admin": map[string]interface{}{
+				"channel":          false,
+				"models":           false,
+				"redemption":       false,
+				"topupRecords":     true,
+				"user":             true,
+				"affiliateRecords": true,
+				"subscription":     false,
+				"setting":          false,
+			},
+		}
 	} else if userRole == common.RoleAdminUser {
 		// 管理员可以设置边栏，但不包含系统设置功能
 		permissions["sidebar_settings"] = true
@@ -439,25 +492,44 @@ func generateDefaultSidebarConfig(userRole int) string {
 	}
 
 	// 管理员区域 - 根据角色决定
-	if userRole == common.RoleAdminUser {
+	if userRole == common.RoleAgentUser {
+		// 代理用户只能访问直属推荐用户管理
+		defaultConfig["admin"] = map[string]interface{}{
+			"enabled":          true,
+			"channel":          false,
+			"models":           false,
+			"redemption":       false,
+			"topupRecords":     true,
+			"user":             true,
+			"affiliateRecords": true,
+			"subscription":     false,
+			"setting":          false,
+		}
+	} else if userRole == common.RoleAdminUser {
 		// 管理员可以访问管理员区域，但不能访问系统设置
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    false, // 管理员不能访问系统设置
+			"enabled":          true,
+			"channel":          true,
+			"models":           true,
+			"redemption":       true,
+			"topupRecords":     true,
+			"user":             true,
+			"affiliateRecords": true,
+			"subscription":     true,
+			"setting":          false, // 管理员不能访问系统设置
 		}
 	} else if userRole == common.RoleRootUser {
 		// 超级管理员可以访问所有功能
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    true,
+			"enabled":          true,
+			"channel":          true,
+			"models":           true,
+			"redemption":       true,
+			"topupRecords":     true,
+			"user":             true,
+			"affiliateRecords": true,
+			"subscription":     true,
+			"setting":          true,
 		}
 	}
 	// 普通用户不包含admin区域
@@ -531,14 +603,54 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, originUser.Role) {
+	if !canManageTargetUser(c.GetInt("id"), myRole, originUser) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
 		return
 	}
-	if !canManageTargetRole(myRole, updatedUser.Role) {
+	roleProvided := false
+	if _, ok := raw["role"]; ok {
+		roleProvided = true
+	} else if _, ok := raw["Role"]; ok {
+		roleProvided = true
+	}
+	if !roleProvided {
+		updatedUser.Role = originUser.Role
+	}
+	inviterChanged := false
+	inviterProvided := false
+	if _, ok := raw["inviter_id"]; ok {
+		inviterProvided = true
+	} else if _, ok := raw["InviterId"]; ok {
+		inviterProvided = true
+	}
+	roleChanged := updatedUser.Role != originUser.Role
+	if myRole == common.RoleAgentUser {
+		updatedUser.Role = originUser.Role
+		updatedUser.Group = originUser.Group
+		updatedUser.InviterId = originUser.InviterId
+	} else if roleChanged && myRole != common.RoleRootUser {
+		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
+		return
+	} else if !canManageTargetRole(myRole, updatedUser.Role) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
 	}
+	if myRole != common.RoleRootUser || !inviterProvided {
+		updatedUser.InviterId = originUser.InviterId
+	} else if updatedUser.InviterId < 0 || updatedUser.InviterId == updatedUser.Id {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	} else if updatedUser.InviterId > 0 {
+		if _, err := model.GetUserById(updatedUser.InviterId, false); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		inviterChanged = updatedUser.InviterId != originUser.InviterId
+	} else {
+		inviterChanged = originUser.InviterId != 0
+	}
+	desiredInviterID := updatedUser.InviterId
+	desiredRole := updatedUser.Role
 	if !concurrencyProvided {
 		updatedUser.Concurrency = originUser.Concurrency
 	}
@@ -549,6 +661,21 @@ func UpdateUser(c *gin.Context) {
 	if err := updatedUser.Edit(updatePassword); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if inviterChanged {
+		if err := model.UpdateUserInviter(updatedUser.Id, desiredInviterID); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	if roleChanged {
+		if err := model.ResetUserSidebarConfigForRole(updatedUser.Id, desiredRole); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := model.InvalidateUserTokensCache(updatedUser.Id); err != nil {
+			common.SysLog(fmt.Sprintf("failed to invalidate tokens cache for user %d: %s", updatedUser.Id, err.Error()))
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -577,7 +704,7 @@ func AdminClearUserBinding(c *gin.Context) {
 	}
 
 	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, user.Role) {
+	if !canManageTargetUser(c.GetInt("id"), myRole, user) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionSameLevel)
 		return
 	}
@@ -739,8 +866,12 @@ func DeleteUser(c *gin.Context) {
 		return
 	}
 	myRole := c.GetInt("role")
-	if myRole <= originUser.Role {
+	if !canManageTargetUser(c.GetInt("id"), myRole, originUser) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	if myRole == common.RoleAgentUser {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
 		return
 	}
 	err = model.HardDeleteUserById(id)
@@ -807,7 +938,7 @@ func CreateUser(c *gin.Context) {
 		user.Concurrency = 5
 	}
 	myRole := c.GetInt("role")
-	if user.Role >= myRole {
+	if !canCreateTargetRole(myRole, user.Role) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
 	}
@@ -846,6 +977,10 @@ type ManageRequest struct {
 	Mode   string `json:"mode"`
 }
 
+func canAgentManageAction(action string, mode string) bool {
+	return action == "add_quota" && mode == "add"
+}
+
 // ManageUser Only admin user can do this
 func ManageUser(c *gin.Context) {
 	var req ManageRequest
@@ -865,8 +1000,12 @@ func ManageUser(c *gin.Context) {
 		return
 	}
 	myRole := c.GetInt("role")
-	if !canManageTargetRole(myRole, user.Role) {
+	if !canManageTargetUser(c.GetInt("id"), myRole, &user) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
+	if myRole == common.RoleAgentUser && !canAgentManageAction(req.Action, req.Mode) {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
 		return
 	}
 	switch req.Action {
@@ -905,6 +1044,16 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		user.Role = common.RoleAdminUser
+	case "promote_agent":
+		if myRole != common.RoleRootUser {
+			common.ApiErrorI18n(c, i18n.MsgUserAdminCannotPromote)
+			return
+		}
+		if user.Role != common.RoleCommonUser {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		user.Role = common.RoleAgentUser
 	case "demote":
 		if user.Role == common.RoleRootUser {
 			common.ApiErrorI18n(c, i18n.MsgUserCannotDemoteRootUser)
@@ -928,12 +1077,27 @@ func ManageUser(c *gin.Context) {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
 				return
 			}
-			if err := model.IncreaseUserQuota(user.Id, req.Value, true); err != nil {
-				common.ApiError(c, err)
-				return
+			if myRole == common.RoleAgentUser {
+				if err := model.TransferUserQuota(adminId, user.Id, req.Value); err != nil {
+					if errors.Is(err, model.ErrUserQuotaInsufficient) {
+						common.ApiErrorI18n(c, i18n.MsgQuotaInsufficient)
+						return
+					}
+					common.ApiError(c, err)
+					return
+				}
+				model.RecordLogWithAdminInfo(user.Id, model.LogTypeManage,
+					fmt.Sprintf("代理转入用户额度 %s", logger.LogQuota(req.Value)), adminInfo)
+				model.RecordLogWithAdminInfo(adminId, model.LogTypeManage,
+					fmt.Sprintf("代理转出用户 %d 额度 %s", user.Id, logger.LogQuota(req.Value)), adminInfo)
+			} else {
+				if err := model.IncreaseUserQuota(user.Id, req.Value, true); err != nil {
+					common.ApiError(c, err)
+					return
+				}
+				model.RecordLogWithAdminInfo(user.Id, model.LogTypeManage,
+					fmt.Sprintf("管理员增加用户额度 %s", logger.LogQuota(req.Value)), adminInfo)
 			}
-			model.RecordLogWithAdminInfo(user.Id, model.LogTypeManage,
-				fmt.Sprintf("管理员增加用户额度 %s", logger.LogQuota(req.Value)), adminInfo)
 		case "subtract":
 			if req.Value <= 0 {
 				common.ApiErrorI18n(c, i18n.MsgUserQuotaChangeZero)
@@ -972,7 +1136,7 @@ func ManageUser(c *gin.Context) {
 	// 避免在 Redis TTL 过期前仍使用旧状态（尤其是禁用后仍可发起请求的问题）。
 	// InvalidateUserCache 会让下一次 GetUserCache 从数据库重新加载，
 	// InvalidateUserTokensCache 则确保令牌侧的缓存也同步刷新。
-	if req.Action == "disable" || req.Action == "promote" || req.Action == "demote" {
+	if req.Action == "disable" || req.Action == "promote" || req.Action == "promote_agent" || req.Action == "demote" {
 		if err := model.InvalidateUserCache(user.Id); err != nil {
 			common.SysLog(fmt.Sprintf("failed to invalidate user cache for user %d: %s", user.Id, err.Error()))
 		}

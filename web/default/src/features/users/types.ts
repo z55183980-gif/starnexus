@@ -26,7 +26,7 @@ import { z } from 'zod'
 export const userStatusSchema = z.number()
 export type UserStatus = z.infer<typeof userStatusSchema>
 
-/** User role: 1 = common user, 10 = admin, 100 = root */
+/** User role: 1 = common user, 5 = agent, 10 = admin, 100 = root */
 export const userRoleSchema = z.number()
 export type UserRole = z.infer<typeof userRoleSchema>
 
@@ -105,11 +105,13 @@ export interface UserFormData {
   quota?: number // Only used when updating user
   concurrency?: number
   group?: string // Only used when updating user
+  inviter_id?: number // Only Root can update user inviter
   remark?: string // Only used when updating user
 }
 
 export type ManageUserAction =
   | 'promote'
+  | 'promote_agent'
   | 'demote'
   | 'enable'
   | 'disable'

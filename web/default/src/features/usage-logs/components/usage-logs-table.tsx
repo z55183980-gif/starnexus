@@ -33,6 +33,8 @@ import { useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { TableCell, TableRow } from '@/components/ui/table'
@@ -40,7 +42,7 @@ import { DataTablePage } from '@/components/data-table'
 import { DEFAULT_LOGS_DATA, LOG_TYPE_ENUM } from '../constants'
 import { useColumnsByCategory } from '../lib/columns'
 import { fetchLogsByCategory } from '../lib/utils'
-import type { LogCategory } from '../types'
+import type { LogAccessScope, LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 
@@ -58,6 +60,13 @@ interface UsageLogsTableProps {
 export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const { t } = useTranslation()
   const isAdmin = useIsAdmin()
+  const { user } = useAuthStore((state) => state.auth)
+  const accessScope: LogAccessScope = isAdmin
+    ? 'admin'
+    : (user?.role ?? 0) >= ROLE.AGENT
+      ? 'agent'
+      : 'self'
+  const canViewManagedUsers = accessScope === 'admin' || accessScope === 'agent'
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
 
@@ -77,7 +86,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       { columnId: 'model_name', searchKey: 'model', type: 'string' as const },
       { columnId: 'token_name', searchKey: 'token', type: 'string' as const },
       { columnId: 'group', searchKey: 'group', type: 'string' as const },
-      ...(isAdmin
+      ...(canViewManagedUsers
         ? [
             {
               columnId: 'channel',
@@ -98,7 +107,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     queryKey: [
       'logs',
       logCategory,
-      isAdmin,
+      accessScope,
       pagination.pageIndex + 1,
       pagination.pageSize,
       columnFilters,
@@ -108,7 +117,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     queryFn: async () => {
       const result = await fetchLogsByCategory({
         logCategory,
-        isAdmin,
+        accessScope,
         page: pagination.pageIndex + 1,
         pageSize: pagination.pageSize,
         searchParams,
@@ -131,7 +140,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const logs = data?.items || []
-  const columns = useColumnsByCategory(logCategory, isAdmin)
+  const columns = useColumnsByCategory(logCategory, isAdmin, canViewManagedUsers)
   const isLoadingData = isLoading || (isFetching && !data)
 
   const table = useReactTable({
@@ -175,9 +184,9 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       tableHeaderClassName='bg-muted/30 sticky top-0 z-10'
       toolbar={
         isCommon ? (
-          <CommonLogsFilterBar table={table} />
+          <CommonLogsFilterBar table={table} accessScope={accessScope} />
         ) : (
-          <TaskLogsFilterBar table={table} logCategory={logCategory} />
+          <TaskLogsFilterBar table={table} logCategory={logCategory} accessScope={accessScope} />
         )
       }
       renderRow={(row) => {

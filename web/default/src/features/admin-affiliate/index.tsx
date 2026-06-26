@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type KeyboardEvent } from 'react'
 import { RotateCcw, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -45,6 +47,11 @@ export function AdminAffiliateRecords() {
   const [loading, setLoading] = useState(true)
   const [keyword, setKeyword] = useState('')
   const [searchDraft, setSearchDraft] = useState('')
+  const userRole = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
+  const ledgerEndpoint =
+    userRole === ROLE.AGENT
+      ? '/api/affiliate/agent/ledger'
+      : '/api/affiliate/admin/ledger'
 
   const load = useCallback(async () => {
     try {
@@ -59,14 +66,14 @@ export function AdminAffiliateRecords() {
       const res = await api.get<{
         success: boolean
         data: { items: LedgerRow[]; total: number }
-      }>(`/api/affiliate/admin/ledger?${params.toString()}`)
+      }>(`${ledgerEndpoint}?${params.toString()}`)
       if (res.data.success) {
         setRows(res.data.data.items ?? [])
       }
     } finally {
       setLoading(false)
     }
-  }, [keyword])
+  }, [keyword, ledgerEndpoint])
 
   const handleApplySearch = useCallback(() => {
     setKeyword(searchDraft.trim())

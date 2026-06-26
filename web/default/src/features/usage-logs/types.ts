@@ -29,6 +29,7 @@ import type { UsageLog } from './data/schema'
  * Log category for different log types
  */
 export type LogCategory = 'common' | 'drawing' | 'task'
+export type LogAccessScope = 'admin' | 'agent' | 'self'
 
 // ============================================================================
 // Filter Types
@@ -360,7 +361,7 @@ export interface GetTaskLogsParams {
  */
 export interface FetchLogsConfig {
   logCategory: LogCategory
-  isAdmin: boolean
+  accessScope: LogAccessScope
   page: number
   pageSize: number
   searchParams: Record<string, unknown>

@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Eye, EyeOff } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -25,6 +27,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { CommonLogsStats } from './common-logs-stats'
+import type { LogAccessScope } from '../types'
 import { useUsageLogsContext } from './usage-logs-provider'
 
 /**
@@ -36,11 +39,17 @@ import { useUsageLogsContext } from './usage-logs-provider'
  */
 export function CommonLogsHeaderActions() {
   const { t } = useTranslation()
+  const { user } = useAuthStore((state) => state.auth)
+  const accessScope: LogAccessScope = (user?.role ?? 0) >= ROLE.ADMIN
+    ? 'admin'
+    : (user?.role ?? 0) >= ROLE.AGENT
+      ? 'agent'
+      : 'self'
   const { sensitiveVisible, setSensitiveVisible } = useUsageLogsContext()
 
   return (
     <div className='flex flex-wrap items-center gap-2'>
-      <CommonLogsStats />
+      <CommonLogsStats accessScope={accessScope} />
       <Tooltip>
         <TooltipTrigger
           render={

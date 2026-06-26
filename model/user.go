@@ -18,6 +18,8 @@ import (
 
 const UserNameMaxLength = 20
 
+var ErrUserQuotaInsufficient = errors.New("user quota is insufficient")
+
 // NormalizeUsername lowercases and trims username for case-insensitive storage and lookup.
 func NormalizeUsername(username string) string {
 	return strings.ToLower(strings.TrimSpace(username))
@@ -135,15 +137,30 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	}
 
 	// 管理员区域 - 根据角色决定
-	if userRole == common.RoleAdminUser {
+	if userRole == common.RoleAgentUser {
+		// 代理用户只能管理通过自身推荐码注册的用户
+		defaultConfig["admin"] = map[string]interface{}{
+			"enabled":          true,
+			"channel":          false,
+			"models":           false,
+			"redemption":       false,
+			"topupRecords":     true,
+			"user":             true,
+			"affiliateRecords": true,
+			"subscription":     false,
+			"setting":          false,
+		}
+	} else if userRole == common.RoleAdminUser {
 		// 管理员可以访问管理员区域，但不能访问系统设置
 		defaultConfig["admin"] = map[string]interface{}{
 			"enabled":          true,
 			"channel":          true,
 			"models":           true,
 			"redemption":       true,
+			"topupRecords":     true,
 			"user":             true,
 			"affiliateRecords": true,
+			"subscription":     true,
 			"setting":          false, // 管理员不能访问系统设置
 		}
 	} else if userRole == common.RoleRootUser {
@@ -153,8 +170,10 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"channel":          true,
 			"models":           true,
 			"redemption":       true,
+			"topupRecords":     true,
 			"user":             true,
 			"affiliateRecords": true,
+			"subscription":     true,
 			"setting":          true,
 		}
 	}
@@ -233,6 +252,62 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 	return users, total, nil
 }
 
+func GetUsersByInviterId(inviterId int, pageInfo *common.PageInfo) (users []*User, total int64, err error) {
+	if inviterId <= 0 {
+		return []*User{}, 0, nil
+	}
+	tx := DB.Begin()
+	if tx.Error != nil {
+		return nil, 0, tx.Error
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	query := tx.Model(&User{}).Where("inviter_id = ? AND role = ?", inviterId, common.RoleCommonUser)
+	if err = query.Count(&total).Error; err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+	if err = query.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error; err != nil {
+		tx.Rollback()
+		return nil, 0, err
+	}
+	if err = tx.Commit().Error; err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
+func SearchUsersByInviterId(inviterId int, keyword string, group string, startIdx int, num int) ([]*User, int64, error) {
+	if inviterId <= 0 {
+		return []*User{}, 0, nil
+	}
+	query := DB.Model(&User{}).Where("inviter_id = ? AND role = ?", inviterId, common.RoleCommonUser)
+	keyword = strings.TrimSpace(keyword)
+	if keyword != "" {
+		likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
+		if keywordInt, err := strconv.Atoi(keyword); err == nil {
+			query = query.Where("(id = ? OR "+likeCondition+")", keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+		} else {
+			query = query.Where("("+likeCondition+")", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+		}
+	}
+	if group != "" {
+		query = query.Where(commonGroupCol+" = ?", group)
+	}
+	var users []*User
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	if err := query.Omit("password").Order("id desc").Limit(num).Offset(startIdx).Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
 func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
@@ -457,6 +532,24 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	}
 }
 
+func ResetUserSidebarConfigForRole(userID int, role int) error {
+	defaultSidebarConfig := generateDefaultSidebarConfigForRole(role)
+	if defaultSidebarConfig == "" {
+		return nil
+	}
+	var user User
+	if err := DB.Where("id = ?", userID).First(&user).Error; err != nil {
+		return err
+	}
+	currentSetting := user.GetSetting()
+	currentSetting.SidebarModules = defaultSidebarConfig
+	user.SetSetting(currentSetting)
+	if err := DB.Model(&user).Update("setting", user.Setting).Error; err != nil {
+		return err
+	}
+	return updateUserCache(user)
+}
+
 func (user *User) Update(updatePassword bool) error {
 	user.Username = NormalizeUsername(user.Username)
 	var err error
@@ -490,6 +583,7 @@ func (user *User) Edit(updatePassword bool) error {
 	updates := map[string]interface{}{
 		"username":     newUser.Username,
 		"display_name": newUser.DisplayName,
+		"role":         newUser.Role,
 		"group":        newUser.Group,
 		"remark":       newUser.Remark,
 		"concurrency":  newUser.Concurrency,
@@ -897,6 +991,40 @@ func decreaseUserQuota(id int, quota int) (err error) {
 		return err
 	}
 	return err
+}
+
+func TransferUserQuota(fromUserID int, toUserID int, quota int) error {
+	if quota <= 0 {
+		return errors.New("quota must be positive")
+	}
+	if fromUserID == toUserID {
+		return errors.New("cannot transfer quota to self")
+	}
+
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&User{}).
+			Where("id = ? AND quota >= ?", fromUserID, quota).
+			Update("quota", gorm.Expr("quota - ?", quota))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrUserQuotaInsufficient
+		}
+		return tx.Model(&User{}).
+			Where("id = ?", toUserID).
+			Update("quota", gorm.Expr("quota + ?", quota)).Error
+	}); err != nil {
+		return err
+	}
+
+	if err := InvalidateUserCache(fromUserID); err != nil {
+		common.SysLog("failed to invalidate user cache after quota transfer: " + err.Error())
+	}
+	if err := InvalidateUserCache(toUserID); err != nil {
+		common.SysLog("failed to invalidate user cache after quota transfer: " + err.Error())
+	}
+	return nil
 }
 
 func DeltaUpdateUserQuota(id int, delta int) (err error) {

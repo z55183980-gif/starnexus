@@ -1,4 +1,4 @@
-/*
+﻿/*
 Copyright (C) 2023-2026 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
@@ -21,8 +21,8 @@ import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import { cn } from '@/lib/utils'
-import { useNotifications } from '@/hooks/use-notifications'
 import { useHeaderBrandName } from '@/hooks/use-display-system-name'
+import { useNotifications } from '@/hooks/use-notifications'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
@@ -45,6 +45,7 @@ import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
 import { ContactOwnerMenu } from './contact-owner-menu'
 import { HeaderLogo } from './header-logo'
+import { QQGroupButton } from './qq-group-button'
 
 const AUTH_PROMPT_SECONDS = 5
 
@@ -91,11 +92,7 @@ export function PublicHeader(props: PublicHeaderProps) {
   const [authPromptSecondsLeft, setAuthPromptSecondsLeft] =
     useState(AUTH_PROMPT_SECONDS)
   const { auth } = useAuthStore()
-  const {
-    logo: systemLogo,
-    loading,
-    logoLoaded,
-  } = useSystemConfig()
+  const { logo: systemLogo, loading, logoLoaded } = useSystemConfig()
   const displaySiteName = useHeaderBrandName()
   const dynamicLinks = useTopNavLinks()
   const notifications = useNotifications()
@@ -267,6 +264,7 @@ export function PublicHeader(props: PublicHeaderProps) {
                 )
               })}
 
+              <QQGroupButton variant='public' />
               <ContactOwnerMenu variant='public' />
 
               {(showLanguageSwitcher ||
@@ -415,6 +413,10 @@ export function PublicHeader(props: PublicHeaderProps) {
                 </Link>
               )
             })}
+            <QQGroupButton
+              variant='stack'
+              onClick={() => setMobileOpen(false)}
+            />
             <ContactOwnerMenu
               variant='stack'
               onItemClick={() => setMobileOpen(false)}
