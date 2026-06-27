@@ -1,0 +1,84 @@
+# Server 2 staging/test stack: app + isolated PostgreSQL + Redis.
+#
+# Setup:
+#   cp .env.prod3.example .env.prod3
+#   # Edit .env.prod3 passwords/secrets.
+#   docker compose -f docker-compose.prod3.yml up -d --build
+#
+# Baota/Nginx for test.dkby.com -> http://127.0.0.1:3001
+#
+# Switch Server 2 back to production slave:
+#   docker compose -f docker-compose.prod3.yml down
+#   cp .env.prod2 .env
+#   docker compose -f docker-compose.prod2.yml up -d --build --force-recreate
+
+version: '3.4'
+
+services:
+  new-api-staging:
+    build: .
+    image: starnexus-new-api:staging
+    container_name: xingyuapi-new-api-staging
+    restart: always
+    command: --log-dir /app/logs
+    env_file:
+      - .env.prod3
+    ports:
+      - "127.0.0.1:3001:3000"
+    volumes:
+      - ./data-staging:/data
+      - ./logs-staging:/app/logs
+    environment:
+      TZ: Asia/Shanghai
+      ERROR_LOG_ENABLED: "true"
+      BATCH_UPDATE_ENABLED: "true"
+    depends_on:
+      postgres-staging:
+        condition: service_healthy
+      redis-staging:
+        condition: service_started
+    networks:
+      - xingyuapi-staging-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  redis-staging:
+    image: redis:7-alpine
+    container_name: xingyuapi-redis-staging
+    restart: always
+    env_file:
+      - .env.prod3
+    command:
+      - sh
+      - -c
+      - redis-server --bind 0.0.0.0 --requirepass "$${REDIS_PASSWORD}" --protected-mode yes
+    networks:
+      - xingyuapi-staging-network
+
+  postgres-staging:
+    image: postgres:15
+    container_name: xingyuapi-postgres-staging
+    restart: always
+    env_file:
+      - .env.prod3
+    volumes:
+      - pg_data_staging:/var/lib/postgresql/data
+    networks:
+      - xingyuapi-staging-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pg_data_staging:
+
+networks:
+  xingyuapi-staging-network:
+    driver: bridge

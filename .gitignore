@@ -23,6 +23,7 @@ web/dist
 .env
 .env.prod
 .env.prod2
+.env.prod3
 one-api
 new-api
 /__debug_bin*
