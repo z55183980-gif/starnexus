@@ -36,7 +36,6 @@ export let API = axios.create({
   },
 });
 
-
 function redirectToOAuthUrl(url, options = {}) {
   const { openInNewTab = false } = options;
   const targetUrl = typeof url === 'string' ? url : url.toString();
@@ -48,7 +47,6 @@ function redirectToOAuthUrl(url, options = {}) {
 
   window.location.assign(targetUrl);
 }
-
 
 function patchAPIInstance(instance) {
   const originalGet = instance.get.bind(instance);
@@ -310,9 +308,15 @@ export async function onLinuxDOOAuthClicked(
 ) {
   const state = await prepareOAuthState(options);
   if (!state) return;
-  redirectToOAuthUrl(
-    `https://connect.linux.do/oauth2/authorize?response_type=code&client_id=${linuxdo_client_id}&state=${state}`,
+  const url = new URL('https://connect.linux.do/oauth2/authorize');
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', linuxdo_client_id);
+  url.searchParams.set(
+    'redirect_uri',
+    `${window.location.origin}/oauth/linuxdo`,
   );
+  url.searchParams.set('state', state);
+  redirectToOAuthUrl(url.toString());
 }
 
 /**

@@ -3,7 +3,6 @@ package oauth
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,6 +33,8 @@ type linuxdoUser struct {
 	Silenced   bool   `json:"silenced"`
 }
 
+const linuxDOCallbackPath = "/oauth/linuxdo"
+
 func (p *LinuxDOProvider) GetName() string {
 	return "Linux DO"
 }
@@ -54,12 +55,7 @@ func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin
 	credentials := common.LinuxDOClientId + ":" + common.LinuxDOClientSecret
 	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(credentials))
 
-	// Get redirect URI from request
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
-	}
-	redirectURI := fmt.Sprintf("%s://%s/api/oauth/linuxdo", scheme, c.Request.Host)
+	redirectURI := linuxDORedirectURI(c)
 
 	logger.LogDebug(ctx, "[OAuth-LinuxDO] ExchangeToken: token_endpoint=%s, redirect_uri=%s", tokenEndpoint, redirectURI)
 
@@ -90,7 +86,7 @@ func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin
 		AccessToken string `json:"access_token"`
 		Message     string `json:"message"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&tokenRes); err != nil {
+	if err := common.DecodeJson(res.Body, &tokenRes); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("[OAuth-LinuxDO] ExchangeToken decode error: %s", err.Error()))
 		return nil, err
 	}
@@ -130,7 +126,7 @@ func (p *LinuxDOProvider) GetUserInfo(ctx context.Context, token *OAuthToken) (*
 	logger.LogDebug(ctx, "[OAuth-LinuxDO] GetUserInfo response status: %d", res.StatusCode)
 
 	var linuxdoUser linuxdoUser
-	if err := json.NewDecoder(res.Body).Decode(&linuxdoUser); err != nil {
+	if err := common.DecodeJson(res.Body, &linuxdoUser); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("[OAuth-LinuxDO] GetUserInfo decode error: %s", err.Error()))
 		return nil, err
 	}
@@ -182,6 +178,43 @@ func (p *LinuxDOProvider) SetProviderUserID(user *model.User, providerUserID str
 
 func (p *LinuxDOProvider) GetProviderPrefix() string {
 	return "linuxdo_"
+}
+
+func linuxDORedirectURI(c *gin.Context) string {
+	if referer := c.Request.Referer(); referer != "" {
+		if parsed, err := url.Parse(referer); err == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https") && strings.HasPrefix(parsed.Path, linuxDOCallbackPath) {
+			return fmt.Sprintf("%s://%s%s", parsed.Scheme, parsed.Host, linuxDOCallbackPath)
+		}
+	}
+
+	return fmt.Sprintf("%s://%s%s", linuxDORequestScheme(c), linuxDORequestHost(c), linuxDOCallbackPath)
+}
+
+func linuxDORequestScheme(c *gin.Context) string {
+	if proto := firstForwardedHeaderValue(c.GetHeader("X-Forwarded-Proto")); proto == "http" || proto == "https" {
+		return proto
+	}
+	if strings.EqualFold(c.GetHeader("X-Forwarded-Ssl"), "on") || strings.EqualFold(c.GetHeader("X-Url-Scheme"), "https") {
+		return "https"
+	}
+	if c.Request.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func linuxDORequestHost(c *gin.Context) string {
+	if host := firstForwardedHeaderValue(c.GetHeader("X-Forwarded-Host")); host != "" {
+		return host
+	}
+	return c.Request.Host
+}
+
+func firstForwardedHeaderValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(value, ",")[0])
 }
 
 // TrustLevelError indicates the user's trust level is too low
