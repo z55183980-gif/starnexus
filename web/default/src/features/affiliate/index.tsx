@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  functionalUpdate,
+  getCoreRowModel,
+  getPaginationRowModel,
+  useReactTable,
+  type ColumnDef,
+  type PaginationState,
+} from '@tanstack/react-table'
 import { Share2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { CopyButton } from '@/components/copy-button'
+import { DataTablePagination } from '@/components/data-table/pagination'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -17,12 +26,16 @@ import {
 } from '@/components/ui/table'
 import { formatQuota } from '@/lib/format'
 import { getSelf } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import {
   generateAffiliateLink,
   getAffiliateDetail,
   transferAffiliateUSD,
   type AffiliateDetail,
+  type AffiliateInvitee,
 } from './api'
+
+const DEFAULT_INVITEE_PAGE_SIZE = 10
 
 function formatUSD(value: string | number | undefined): string {
   const n = typeof value === 'string' ? parseFloat(value) : (value ?? 0)
@@ -34,27 +47,79 @@ export function AffiliateProgram() {
   const { t } = useTranslation()
   const [detail, setDetail] = useState<AffiliateDetail | null>(null)
   const [loading, setLoading] = useState(true)
+  const [inviteesRefreshing, setInviteesRefreshing] = useState(false)
   const [transferring, setTransferring] = useState(false)
+  const [inviteePage, setInviteePage] = useState(1)
+  const [inviteePageSize, setInviteePageSize] = useState(
+    DEFAULT_INVITEE_PAGE_SIZE
+  )
+  const loadedRef = useRef(false)
 
   const load = useCallback(async () => {
     try {
-      setLoading(true)
-      const res = await getAffiliateDetail()
+      if (loadedRef.current) {
+        setInviteesRefreshing(true)
+      } else {
+        setLoading(true)
+      }
+      const res = await getAffiliateDetail({
+        page: inviteePage,
+        pageSize: inviteePageSize,
+      })
       if (res.data.success) {
         setDetail(res.data.data)
       }
     } catch {
       toast.error(t('Failed to load affiliate data'))
     } finally {
+      loadedRef.current = true
       setLoading(false)
+      setInviteesRefreshing(false)
     }
-  }, [t])
+  }, [inviteePage, inviteePageSize, t])
 
   useEffect(() => {
     void load()
   }, [load])
 
   const inviteLink = detail ? generateAffiliateLink(detail.aff_code) : ''
+  const inviteeTotal =
+    detail?.invitees_total ?? detail?.aff_count ?? detail?.invitees?.length ?? 0
+  const inviteePageCount = Math.max(1, Math.ceil(inviteeTotal / inviteePageSize))
+  const inviteePagination = useMemo<PaginationState>(
+    () => ({
+      pageIndex: inviteePage - 1,
+      pageSize: inviteePageSize,
+    }),
+    [inviteePage, inviteePageSize]
+  )
+  const inviteeColumns = useMemo<ColumnDef<AffiliateInvitee>[]>(() => [], [])
+  const inviteeTable = useReactTable({
+    data: detail?.invitees ?? [],
+    columns: inviteeColumns,
+    state: { pagination: inviteePagination },
+    onPaginationChange: (updater) => {
+      const next = functionalUpdate(updater, inviteePagination)
+      if (next.pageSize !== inviteePagination.pageSize) {
+        setInviteePage(1)
+        setInviteePageSize(next.pageSize)
+        return
+      }
+      if (next.pageIndex !== inviteePagination.pageIndex) {
+        setInviteePage(next.pageIndex + 1)
+      }
+    },
+    getCoreRowModel: getCoreRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    manualPagination: true,
+    pageCount: inviteePageCount,
+  })
+
+  useEffect(() => {
+    if (detail && inviteePage > inviteePageCount) {
+      setInviteePage(inviteePageCount)
+    }
+  }, [detail, inviteePage, inviteePageCount])
 
   const handleTransferUSD = async () => {
     try {
@@ -169,7 +234,12 @@ export function AffiliateProgram() {
           <CardTitle className='text-base'>{t('Invitees')}</CardTitle>
         </CardHeader>
         <CardContent className='p-0'>
-          <Table>
+          <Table
+            className={cn(
+              'transition-opacity',
+              inviteesRefreshing && 'opacity-60'
+            )}
+          >
             <TableHeader>
               <TableRow>
                 <TableHead>{t('User')}</TableHead>
@@ -195,6 +265,11 @@ export function AffiliateProgram() {
               )}
             </TableBody>
           </Table>
+          {inviteeTotal > 0 && (
+            <div className='border-t px-4 py-3'>
+              <DataTablePagination table={inviteeTable} />
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

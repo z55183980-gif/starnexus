@@ -28,7 +28,8 @@ func GetAffiliateDetail(c *gin.Context) {
 	_, _ = model.ThawAffiliateFrozenQuota(userID)
 	profile, _ = model.GetUserAffiliateByUserID(userID)
 
-	invitees, err := model.ListAffiliateInvitees(userID, 100)
+	pageInfo := common.GetPageQuery(c)
+	invitees, total, err := model.ListAffiliateInvitees(userID, pageInfo)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -47,6 +48,9 @@ func GetAffiliateDetail(c *gin.Context) {
 			"effective_rebate_rate_percent": model.ResolveEffectiveRebateRatePercent(profile),
 			"affiliate_enabled":             common.AffiliateEnabled,
 			"invitees":                      invitees,
+			"invitees_total":                total,
+			"invitees_page":                 pageInfo.GetPage(),
+			"invitees_page_size":            pageInfo.GetPageSize(),
 		},
 	})
 }

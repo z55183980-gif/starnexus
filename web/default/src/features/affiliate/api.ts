@@ -18,10 +18,23 @@ export type AffiliateDetail = {
   effective_rebate_rate_percent: number
   affiliate_enabled: boolean
   invitees: AffiliateInvitee[]
+  invitees_total?: number
+  invitees_page?: number
+  invitees_page_size?: number
 }
 
-export async function getAffiliateDetail() {
-  return api.get<{ success: boolean; data: AffiliateDetail }>('/api/user/affiliate')
+export type AffiliateDetailParams = {
+  page?: number
+  pageSize?: number
+}
+
+export async function getAffiliateDetail(params?: AffiliateDetailParams) {
+  return api.get<{ success: boolean; data: AffiliateDetail }>('/api/user/affiliate', {
+    params: {
+      p: params?.page,
+      page_size: params?.pageSize,
+    },
+  })
 }
 
 export async function transferAffiliateUSD() {

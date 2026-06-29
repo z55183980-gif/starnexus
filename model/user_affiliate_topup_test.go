@@ -220,6 +220,72 @@ func TestUpdateUserInviterSyncsUserAndAffiliateRows(t *testing.T) {
 	}
 }
 
+func TestListAffiliateInviteesPaginatesAndReturnsTotal(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	originalDB := DB
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+
+	if err := db.AutoMigrate(&User{}, &UserAffiliate{}, &UserAffiliateLedger{}); err != nil {
+		t.Fatalf("migrate test database: %v", err)
+	}
+
+	users := []User{
+		{Id: 1, Username: "agent", AffCode: "AGENT"},
+		{Id: 2, Username: "oldest", Email: "oldest@example.com", AffCode: "OLDEST"},
+		{Id: 3, Username: "middle", Email: "middle@example.com", AffCode: "MIDDLE"},
+		{Id: 4, Username: "newest", Email: "newest@example.com", AffCode: "NEWEST"},
+	}
+	for _, user := range users {
+		if err := db.Create(&user).Error; err != nil {
+			t.Fatalf("seed user %d: %v", user.Id, err)
+		}
+	}
+
+	inviterID := 1
+	affiliates := []UserAffiliate{
+		{UserId: 1, AffCode: "AGENT"},
+		{UserId: 2, AffCode: "OLDEST", InviterId: &inviterID},
+		{UserId: 3, AffCode: "MIDDLE", InviterId: &inviterID},
+		{UserId: 4, AffCode: "NEWEST", InviterId: &inviterID},
+	}
+	for _, affiliate := range affiliates {
+		if err := db.Create(&affiliate).Error; err != nil {
+			t.Fatalf("seed affiliate %d: %v", affiliate.UserId, err)
+		}
+	}
+
+	sourceUserID := 2
+	if err := db.Create(&UserAffiliateLedger{
+		UserId:       inviterID,
+		Action:       common.AffiliateLedgerActionAccrue,
+		AmountUSD:    decimal.NewFromFloat(1.25),
+		SourceUserId: &sourceUserID,
+	}).Error; err != nil {
+		t.Fatalf("seed ledger: %v", err)
+	}
+
+	rows, total, err := ListAffiliateInvitees(inviterID, &common.PageInfo{Page: 2, PageSize: 2})
+	if err != nil {
+		t.Fatalf("list invitees: %v", err)
+	}
+	if total != 3 {
+		t.Fatalf("invitee total = %d, want 3", total)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("invitee rows len = %d, want 1", len(rows))
+	}
+	if rows[0].UserId != 2 || rows[0].Username != "oldest" || rows[0].Email != "oldest@example.com" {
+		t.Fatalf("second page row = %+v, want oldest invitee", rows[0])
+	}
+	if !rows[0].TotalRebate.Equal(decimal.NewFromFloat(1.25)) {
+		t.Fatalf("total rebate = %s, want 1.25", rows[0].TotalRebate)
+	}
+}
+
 func TestTransferUserQuotaMovesQuotaAtomically(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

@@ -636,27 +636,50 @@ type AffiliateInviteeView struct {
 	TotalRebate decimal.Decimal `json:"total_rebate_usd"`
 }
 
-func ListAffiliateInvitees(inviterID int, limit int) ([]AffiliateInviteeView, error) {
-	if limit <= 0 || limit > 100 {
-		limit = 100
+func ListAffiliateInvitees(inviterID int, pageInfo *common.PageInfo) ([]AffiliateInviteeView, int64, error) {
+	if inviterID <= 0 {
+		return []AffiliateInviteeView{}, 0, nil
+	}
+	if pageInfo == nil {
+		pageInfo = &common.PageInfo{Page: 1, PageSize: common.ItemsPerPage}
+	}
+	if pageInfo.Page < 1 {
+		pageInfo.Page = 1
+	}
+	if pageInfo.PageSize <= 0 {
+		pageInfo.PageSize = common.ItemsPerPage
+	}
+	if pageInfo.PageSize > 100 {
+		pageInfo.PageSize = 100
+	}
+	var total int64
+	if err := DB.Table("user_affiliates AS ua").
+		Joins("JOIN users u ON u.id = ua.user_id").
+		Where("ua.inviter_id = ?", inviterID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
 	}
 	var rows []AffiliateInviteeView
-	err := DB.Raw(`
-SELECT ua.user_id,
-       COALESCE(u.username, '') AS username,
-       COALESCE(u.email, '') AS email,
-       ua.created_at,
-       COALESCE(SUM(l.amount_usd), 0) AS total_rebate
-FROM user_affiliates ua
-JOIN users u ON u.id = ua.user_id
-LEFT JOIN user_affiliate_ledger l
-       ON l.user_id = ? AND l.action = ? AND l.source_user_id = ua.user_id
-WHERE ua.inviter_id = ?
-GROUP BY ua.user_id, u.username, u.email, ua.created_at
-ORDER BY ua.created_at DESC
-LIMIT ?
-`, inviterID, common.AffiliateLedgerActionAccrue, inviterID, limit).Scan(&rows).Error
-	return rows, err
+	err := DB.Table("user_affiliates AS ua").
+		Select(`
+ua.user_id,
+COALESCE(u.username, '') AS username,
+COALESCE(u.email, '') AS email,
+ua.created_at,
+COALESCE(SUM(l.amount_usd), 0) AS total_rebate`).
+		Joins("JOIN users u ON u.id = ua.user_id").
+		Joins(
+			"LEFT JOIN user_affiliate_ledger l ON l.user_id = ? AND l.action = ? AND l.source_user_id = ua.user_id",
+			inviterID,
+			common.AffiliateLedgerActionAccrue,
+		).
+		Where("ua.inviter_id = ?", inviterID).
+		Group("ua.user_id, u.username, u.email, ua.created_at").
+		Order("ua.created_at DESC, ua.user_id DESC").
+		Offset(pageInfo.GetStartIdx()).
+		Limit(pageInfo.GetPageSize()).
+		Scan(&rows).Error
+	return rows, total, err
 }
 
 // RepairAffiliateColumnNames fixes legacy GORM column names (top_up_id, source_top_up_id)
