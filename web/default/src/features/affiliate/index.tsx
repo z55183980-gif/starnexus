@@ -24,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Main } from '@/components/layout'
 import { formatQuota } from '@/lib/format'
 import { getSelf } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -144,18 +145,22 @@ export function AffiliateProgram() {
 
   if (loading) {
     return (
-      <div className='space-y-4 p-4'>
-        <Skeleton className='h-10 w-64' />
-        <Skeleton className='h-40 w-full' />
-      </div>
+      <Main>
+        <div className='min-h-0 flex-1 space-y-4 overflow-auto p-4'>
+          <Skeleton className='h-10 w-64' />
+          <Skeleton className='h-40 w-full' />
+        </div>
+      </Main>
     )
   }
 
   if (!detail) {
     return (
-      <div className='text-muted-foreground p-4 text-sm'>
-        {t('Failed to load affiliate data')}
-      </div>
+      <Main>
+        <div className='text-muted-foreground min-h-0 flex-1 overflow-auto p-4 text-sm'>
+          {t('Failed to load affiliate data')}
+        </div>
+      </Main>
     )
   }
 
@@ -163,115 +168,128 @@ export function AffiliateProgram() {
   const frozenUSD = parseFloat(String(detail.aff_frozen_quota_usd)) || 0
 
   return (
-    <div className='mx-auto flex w-full max-w-5xl flex-col gap-4 p-4'>
-      <div className='flex items-center gap-2'>
-        <Share2 className='text-muted-foreground size-5' />
-        <h1 className='text-xl font-semibold'>{t('Referral Program')}</h1>
-      </div>
-      <p className='text-muted-foreground text-sm'>
-        {t(
-          'Share your link. When invitees top up, you earn {{rate}}% rebate.',
-          { rate: detail.effective_rebate_rate_percent }
-        )}
-      </p>
+    <Main>
+      <div className='min-h-0 flex-1 overflow-auto'>
+        <div className='mx-auto flex w-full max-w-5xl flex-col gap-4 p-4'>
+          <div className='flex items-center gap-2'>
+            <Share2 className='text-muted-foreground size-5' />
+            <h1 className='text-xl font-semibold'>{t('Referral Program')}</h1>
+          </div>
+          <p className='text-muted-foreground text-sm'>
+            {t(
+              'Share your link. When invitees top up, you earn {{rate}}% rebate.',
+              { rate: detail.effective_rebate_rate_percent }
+            )}
+          </p>
 
-      <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
-        {[
-          [t('Rebate Rate'), `${detail.effective_rebate_rate_percent}%`],
-          [t('Invites'), String(detail.aff_count)],
-          [t('Available (USD)'), formatUSD(availableUSD)],
-          [t('Total Earned (USD)'), formatUSD(detail.aff_history_quota_usd)],
-        ].map(([label, value]) => (
-          <Card key={label}>
-            <CardHeader className='pb-2'>
-              <CardTitle className='text-muted-foreground text-xs font-medium uppercase'>
-                {label}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className='text-lg font-semibold tabular-nums'>
-              {value}
+          <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
+            {[
+              [t('Rebate Rate'), `${detail.effective_rebate_rate_percent}%`],
+              [t('Invites'), String(detail.aff_count)],
+              [t('Available (USD)'), formatUSD(availableUSD)],
+              [t('Total Earned (USD)'), formatUSD(detail.aff_history_quota_usd)],
+            ].map(([label, value]) => (
+              <Card key={label}>
+                <CardHeader className='pb-2'>
+                  <CardTitle className='text-muted-foreground text-xs font-medium uppercase'>
+                    {label}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className='text-lg font-semibold tabular-nums'>
+                  {value}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {frozenUSD > 0 && (
+            <p className='text-amber-600 text-sm dark:text-amber-400'>
+              {t('Frozen rebate (USD): {{amount}}', {
+                amount: formatUSD(frozenUSD),
+              })}
+            </p>
+          )}
+
+          <Card>
+            <CardContent className='grid gap-4 p-4 md:grid-cols-2'>
+              <div>
+                <div className='mb-1 text-sm font-medium'>
+                  {t('Your invite code')}
+                </div>
+                <div className='flex items-center gap-2'>
+                  <Input readOnly value={detail.aff_code} />
+                  <CopyButton value={detail.aff_code} />
+                </div>
+              </div>
+              <div>
+                <div className='mb-1 text-sm font-medium'>{t('Invite link')}</div>
+                <div className='flex items-center gap-2'>
+                  <Input readOnly value={inviteLink} />
+                  <CopyButton value={inviteLink} />
+                </div>
+              </div>
             </CardContent>
           </Card>
-        ))}
-      </div>
 
-      {frozenUSD > 0 && (
-        <p className='text-amber-600 text-sm dark:text-amber-400'>
-          {t('Frozen rebate (USD): {{amount}}', { amount: formatUSD(frozenUSD) })}
-        </p>
-      )}
-
-      <Card>
-        <CardContent className='grid gap-4 p-4 md:grid-cols-2'>
-          <div>
-            <div className='mb-1 text-sm font-medium'>{t('Your invite code')}</div>
-            <div className='flex items-center gap-2'>
-              <Input readOnly value={detail.aff_code} />
-              <CopyButton value={detail.aff_code} />
-            </div>
+          <div className='flex gap-2'>
+            <Button
+              disabled={
+                !detail.affiliate_enabled || availableUSD <= 0 || transferring
+              }
+              onClick={() => void handleTransferUSD()}
+            >
+              {transferring ? t('Transferring...') : t('Transfer to Balance')}
+            </Button>
           </div>
-          <div>
-            <div className='mb-1 text-sm font-medium'>{t('Invite link')}</div>
-            <div className='flex items-center gap-2'>
-              <Input readOnly value={inviteLink} />
-              <CopyButton value={inviteLink} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      <div className='flex gap-2'>
-        <Button
-          disabled={!detail.affiliate_enabled || availableUSD <= 0 || transferring}
-          onClick={() => void handleTransferUSD()}
-        >
-          {transferring ? t('Transferring...') : t('Transfer to Balance')}
-        </Button>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className='text-base'>{t('Invitees')}</CardTitle>
-        </CardHeader>
-        <CardContent className='p-0'>
-          <Table
-            className={cn(
-              'transition-opacity',
-              inviteesRefreshing && 'opacity-60'
-            )}
-          >
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('User')}</TableHead>
-                <TableHead>{t('Email')}</TableHead>
-                <TableHead>{t('Rebate (USD)')}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {detail.invitees?.length ? (
-                detail.invitees.map((row) => (
-                  <TableRow key={row.user_id}>
-                    <TableCell>{row.username || `#${row.user_id}`}</TableCell>
-                    <TableCell>{row.email || '—'}</TableCell>
-                    <TableCell>{formatUSD(row.total_rebate_usd)}</TableCell>
+          <Card>
+            <CardHeader>
+              <CardTitle className='text-base'>{t('Invitees')}</CardTitle>
+            </CardHeader>
+            <CardContent className='p-0'>
+              <Table
+                className={cn(
+                  'transition-opacity',
+                  inviteesRefreshing && 'opacity-60'
+                )}
+              >
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('User')}</TableHead>
+                    <TableHead>{t('Email')}</TableHead>
+                    <TableHead>{t('Rebate (USD)')}</TableHead>
                   </TableRow>
-                ))
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={3} className='text-muted-foreground text-center'>
-                    {t('No invitees yet')}
-                  </TableCell>
-                </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {detail.invitees?.length ? (
+                    detail.invitees.map((row) => (
+                      <TableRow key={row.user_id}>
+                        <TableCell>{row.username || `#${row.user_id}`}</TableCell>
+                        <TableCell>{row.email || '—'}</TableCell>
+                        <TableCell>{formatUSD(row.total_rebate_usd)}</TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell
+                        colSpan={3}
+                        className='text-muted-foreground text-center'
+                      >
+                        {t('No invitees yet')}
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+              {inviteeTotal > 0 && (
+                <div className='border-t px-4 py-3'>
+                  <DataTablePagination table={inviteeTable} />
+                </div>
               )}
-            </TableBody>
-          </Table>
-          {inviteeTotal > 0 && (
-            <div className='border-t px-4 py-3'>
-              <DataTablePagination table={inviteeTable} />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </div>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </Main>
   )
 }
