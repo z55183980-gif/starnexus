@@ -147,6 +147,23 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
 		return
 	}
+	// Context auto compaction is parked for now. Keep the implementation here so
+	// it can be re-enabled by uncommenting this block when needed.
+	/*
+		if relayFormat == types.RelayFormatClaude {
+			compactedMeta, compactedTokens, compactResult, compactErr := relay.MaybeCompactClaudeRequest(c, relayInfo, tokens)
+			if compactErr != nil {
+				newAPIError = compactErr
+				return
+			}
+			if compactResult != nil && compactResult.Applied {
+				meta = compactedMeta
+				tokens = compactedTokens
+				c.Set("context_compaction_result", compactResult)
+				c.Set("context_compaction_admin_info", compactResult.AdminInfo())
+			}
+		}
+	*/
 
 	relayInfo.SetEstimatePromptTokens(tokens)
 

@@ -21,21 +21,37 @@ import { quotaUnitsToDollars } from '@/lib/format'
 import { DEFAULT_GROUP } from '../constants'
 import { type UserFormData, type User } from '../types'
 
+const CONTEXT_AUTO_COMPACT_FORM_ENABLED = false
+
 // ============================================================================
 // Form Schema
 // ============================================================================
 
-export const userFormSchema = z.object({
-  username: z.string().min(1, 'Username is required'),
-  display_name: z.string().optional(),
-  password: z.string().optional(),
-  role: z.number().optional(),
-  quota_dollars: z.number().min(0).optional(),
-  concurrency: z.number().min(0).optional(),
-  group: z.string().optional(),
-  inviter_id: z.number().min(0).optional(),
-  remark: z.string().optional(),
-})
+export const userFormSchema = z
+  .object({
+    username: z.string().min(1, 'Username is required'),
+    display_name: z.string().optional(),
+    password: z.string().optional(),
+    role: z.number().optional(),
+    quota_dollars: z.number().min(0).optional(),
+    concurrency: z.number().min(0).optional(),
+    group: z.string().optional(),
+    inviter_id: z.number().min(0).optional(),
+    remark: z.string().optional(),
+    context_auto_compact_enabled: z.boolean().optional(),
+    context_auto_compact_trigger_k: z.number().min(64).max(250).optional(),
+    context_auto_compact_target_k: z.number().min(32).max(249).optional(),
+  })
+  .refine(
+    (data) =>
+      data.context_auto_compact_enabled !== true ||
+      (data.context_auto_compact_target_k ?? 140) <
+        (data.context_auto_compact_trigger_k ?? 250),
+    {
+      path: ['context_auto_compact_target_k'],
+      message: 'Target must be lower than trigger',
+    }
+  )
 
 export type UserFormValues = z.infer<typeof userFormSchema>
 
@@ -53,6 +69,9 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   group: DEFAULT_GROUP,
   inviter_id: 0,
   remark: '',
+  context_auto_compact_enabled: false,
+  context_auto_compact_trigger_k: 250,
+  context_auto_compact_target_k: 140,
 }
 
 // ============================================================================
@@ -84,6 +103,19 @@ export function transformFormDataToPayload(
       payload.inviter_id = data.inviter_id
     }
     payload.remark = data.remark || undefined
+    // Context auto compaction payload is parked for now. Keep this block so it
+    // can be re-enabled together with the backend relay trigger.
+    if (CONTEXT_AUTO_COMPACT_FORM_ENABLED) {
+      payload.setting = {
+        context_auto_compact_enabled:
+          data.context_auto_compact_enabled === true,
+        context_auto_compact_mode: 'same_model_summary',
+        context_auto_compact_trigger_k:
+          data.context_auto_compact_trigger_k ?? 250,
+        context_auto_compact_target_k:
+          data.context_auto_compact_target_k ?? 140,
+      }
+    }
     payload.id = userId
   }
 
@@ -94,6 +126,14 @@ export function transformFormDataToPayload(
  * Transform user data to form defaults
  */
 export function transformUserToFormDefaults(user: User): UserFormValues {
+  let setting: Record<string, unknown> = {}
+  if (user.setting) {
+    try {
+      setting = JSON.parse(user.setting) as Record<string, unknown>
+    } catch (_error) {
+      setting = {}
+    }
+  }
   return {
     username: user.username,
     display_name: user.display_name,
@@ -104,5 +144,15 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     group: user.group || DEFAULT_GROUP,
     inviter_id: user.inviter_id ?? 0,
     remark: user.remark || '',
+    context_auto_compact_enabled:
+      setting.context_auto_compact_enabled === true,
+    context_auto_compact_trigger_k:
+      typeof setting.context_auto_compact_trigger_k === 'number'
+        ? setting.context_auto_compact_trigger_k
+        : 250,
+    context_auto_compact_target_k:
+      typeof setting.context_auto_compact_target_k === 'number'
+        ? setting.context_auto_compact_target_k
+        : 140,
   }
 }

@@ -455,6 +455,18 @@ export const STATIC_I18N_KEYS = [
   'Rebate accrual',
   'Transfer to balance',
   'No affiliate rebate records yet',
+  'All actions',
+  'Failed to load affiliate records',
+  'Affiliate rebate activity will appear here',
+  'Search by record ID, user ID, username, source user, top-up, or action...',
+  'Source user ID',
+  'Frozen until',
+  'Quota after',
+  'Export current page',
+  'Exported current page',
+  'No records to export',
+  'Start date',
+  'End date',
 
   // Available models
   'Available Models',

@@ -1,4 +1,7 @@
-# Production with a pre-built image (no "build" on the server).
+# Production app node with a pre-built image (no "build" on the server).
+#
+# PostgreSQL and Redis are external services on Server 3 (45.134.82.172).
+# This compose file runs only the application container.
 #
 # Local (Windows/macOS/Linux):
 #   docker build -t starnexus-new-api:prod .
@@ -8,8 +11,6 @@
 # Server:
 #   docker load -i starnexus-new-api.tar
 #   docker compose -f docker-compose.prod.image.yml up -d
-#
-# Server 2 (slave) remote DB/Redis — same as docker-compose.prod.yml header.
 
 version: '3.4'
 
@@ -27,8 +28,8 @@ services:
       - ./data:/data
       - ./logs:/app/logs
     environment:
-      SQL_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_CONN_STRING: redis://:${REDIS_PASSWORD}@redis:6379
+      SQL_DSN: ${SQL_DSN}
+      REDIS_CONN_STRING: ${REDIS_CONN_STRING}
       TZ: Asia/Shanghai
       ERROR_LOG_ENABLED: "true"
       BATCH_UPDATE_ENABLED: "true"
@@ -38,65 +39,9 @@ services:
       CRYPTO_SECRET: ${CRYPTO_SECRET}
       TRUSTED_REDIRECT_DOMAINS: ${TRUSTED_REDIRECT_DOMAINS:-xingyuapi.com}
       SYNC_FREQUENCY: ${SYNC_FREQUENCY:-60}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    networks:
-      - xingyuapi-network
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  redis:
-    image: redis:7-alpine
-    container_name: xingyuapi-redis
-    restart: always
-    env_file:
-      - .env
-    command:
-      - redis-server
-      - --bind
-      - "0.0.0.0"
-      - --requirepass
-      - "${REDIS_PASSWORD}"
-      - --protected-mode
-      - "yes"
-    ports:
-      - "6379:6379"
-    networks:
-      - xingyuapi-network
-
-  postgres:
-    image: postgres:15
-    container_name: xingyuapi-postgres
-    restart: always
-    env_file:
-      - .env
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    networks:
-      - xingyuapi-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-volumes:
-  pg_data:
-
-networks:
-  xingyuapi-network:
-    driver: bridge

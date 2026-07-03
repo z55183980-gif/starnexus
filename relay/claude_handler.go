@@ -141,7 +141,8 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 			return newApiErr
 		}
 
-		service.PostTextConsumeQuota(c, info, usage, nil)
+		finalUsage, extraContent := applyContextCompactionUsage(c, usage)
+		service.PostTextConsumeQuota(c, info, finalUsage, extraContent)
 		return nil
 	}
 
@@ -213,6 +214,19 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return newAPIError
 	}
 
-	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
+	finalUsage, extraContent := applyContextCompactionUsage(c, usage.(*dto.Usage))
+	service.PostTextConsumeQuota(c, info, finalUsage, extraContent)
 	return nil
+}
+
+func applyContextCompactionUsage(c *gin.Context, usage *dto.Usage) (*dto.Usage, []string) {
+	finalUsage := usage
+	var extraContent []string
+	if value, ok := c.Get("context_compaction_result"); ok {
+		if result, ok := value.(*ContextCompactionResult); ok && result != nil && result.Applied {
+			finalUsage = WithContextCompactionUsage(finalUsage, result.Usage())
+			extraContent = ContextCompactionLogContent(result)
+		}
+	}
+	return finalUsage, extraContent
 }

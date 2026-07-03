@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 // GetAffiliateDetail returns the current user's affiliate profile (USD rebate + invitees).
@@ -78,6 +80,20 @@ func TransferAffiliateUSD(c *gin.Context) {
 	})
 }
 
+type affiliateLedgerItem struct {
+	Id             int64           `json:"id"`
+	UserId         int             `json:"user_id"`
+	Username       string          `json:"username"`
+	Action         string          `json:"action"`
+	AmountUSD      decimal.Decimal `json:"amount_usd"`
+	SourceUserId   *int            `json:"source_user_id"`
+	SourceUsername *string         `json:"source_username"`
+	SourceTopUpId  *int            `json:"source_topup_id"`
+	FrozenUntil    *time.Time      `json:"frozen_until,omitempty"`
+	QuotaAfter     *int            `json:"quota_after,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+}
+
 func listAffiliateLedgers(c *gin.Context, scopedUserID *int) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
@@ -90,36 +106,74 @@ func listAffiliateLedgers(c *gin.Context, scopedUserID *int) {
 	offset := (page - 1) * pageSize
 
 	var total int64
-	var rows []model.UserAffiliateLedger
-	q := model.DB.Model(&model.UserAffiliateLedger{})
+	var rows []affiliateLedgerItem
+	q := model.DB.Table("user_affiliate_ledger AS l").
+		Joins("LEFT JOIN users AS u ON u.id = l.user_id").
+		Joins("LEFT JOIN users AS su ON su.id = l.source_user_id")
 	if scopedUserID != nil {
-		q = q.Where("user_id = ?", *scopedUserID)
+		q = q.Where("l.user_id = ?", *scopedUserID)
 	} else if userID := c.Query("user_id"); userID != "" {
-		q = q.Where("user_id = ?", userID)
+		parsedUserID, err := strconv.Atoi(userID)
+		if err != nil || parsedUserID <= 0 {
+			common.ApiError(c, errors.New("invalid user_id"))
+			return
+		}
+		q = q.Where("l.user_id = ?", parsedUserID)
 	}
 	if action := c.Query("action"); action != "" {
-		q = q.Where("action = ?", action)
+		q = q.Where("l.action = ?", action)
+	}
+	if start := c.Query("start_time"); start != "" {
+		startTime, err := time.Parse(time.RFC3339, start)
+		if err != nil {
+			common.ApiError(c, errors.New("invalid start_time"))
+			return
+		}
+		q = q.Where("l.created_at >= ?", startTime)
+	}
+	if end := c.Query("end_time"); end != "" {
+		endTime, err := time.Parse(time.RFC3339, end)
+		if err != nil {
+			common.ApiError(c, errors.New("invalid end_time"))
+			return
+		}
+		q = q.Where("l.created_at <= ?", endTime)
 	}
 	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
 		pattern := "%" + escapeAffiliateLedgerLikePattern(keyword) + "%"
 		if keywordID, err := strconv.Atoi(keyword); err == nil {
 			q = q.Where(
-				"(id = ? OR user_id = ? OR source_user_id = ? OR source_topup_id = ? OR action LIKE ? ESCAPE '!')",
+				"(l.id = ? OR l.user_id = ? OR l.source_user_id = ? OR l.source_topup_id = ? OR l.action LIKE ? ESCAPE '!' OR u.username LIKE ? ESCAPE '!' OR su.username LIKE ? ESCAPE '!')",
 				keywordID,
 				keywordID,
 				keywordID,
 				keywordID,
 				pattern,
+				pattern,
+				pattern,
 			)
 		} else {
-			q = q.Where("action LIKE ? ESCAPE '!'", pattern)
+			q = q.Where("(l.action LIKE ? ESCAPE '!' OR u.username LIKE ? ESCAPE '!' OR su.username LIKE ? ESCAPE '!')", pattern, pattern, pattern)
 		}
 	}
 	if err := q.Count(&total).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if err := q.Order("id desc").Offset(offset).Limit(pageSize).Find(&rows).Error; err != nil {
+	selectColumns := strings.Join([]string{
+		"l.id",
+		"l.user_id",
+		"COALESCE(u.username, '') AS username",
+		"l.action",
+		"l.amount_usd",
+		"l.source_user_id",
+		"su.username AS source_username",
+		"l.source_topup_id",
+		"l.frozen_until",
+		"l.quota_after",
+		"l.created_at",
+	}, ", ")
+	if err := q.Select(selectColumns).Order("l.id desc").Offset(offset).Limit(pageSize).Scan(&rows).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}

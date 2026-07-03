@@ -587,6 +587,7 @@ func (user *User) Edit(updatePassword bool) error {
 		"group":        newUser.Group,
 		"remark":       newUser.Remark,
 		"concurrency":  newUser.Concurrency,
+		"setting":      newUser.Setting,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password

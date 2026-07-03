@@ -1,18 +1,13 @@
 # Production: StarNexus / new-api (Scheme A — PostgreSQL + Redis, local build)
 #
+# PostgreSQL and Redis are external services on Server 3 (45.134.82.172).
+# This compose file runs only the application container.
+#
 # Setup:
-#   cp .env.prod.example .env
-#   # Edit .env — set POSTGRES_PASSWORD, REDIS_PASSWORD, SESSION_SECRET, CRYPTO_SECRET
-#   docker compose -f docker-compose.prod.yml build
-#   docker compose -f docker-compose.prod.yml up -d
+#   cp .env.prod .env
+#   docker compose -f docker-compose.prod.yml up -d --build
 #
 # Baota reverse proxy: xingyuapi.com + api.xingyuapi.com -> http://127.0.0.1:3000
-#
-# Server 2 (slave) remote DB/Redis:
-#   1. Set SERVER2_IP in .env (Server 2 public IP)
-#   2. Baota Security: allow SERVER2_IP -> TCP 5432, 6379 only (never 0.0.0.0/0)
-#   3. docker compose -f docker-compose.prod.yml up -d
-#   4. On Server 2: nc -zv 45.134.82.177 5432 && nc -zv 45.134.82.177 6379
 
 version: '3.4'
 
@@ -31,8 +26,8 @@ services:
       - ./data:/data
       - ./logs:/app/logs
     environment:
-      SQL_DSN: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_CONN_STRING: redis://:${REDIS_PASSWORD}@redis:6379
+      SQL_DSN: ${SQL_DSN}
+      REDIS_CONN_STRING: ${REDIS_CONN_STRING}
       TZ: Asia/Shanghai
       ERROR_LOG_ENABLED: "true"
       BATCH_UPDATE_ENABLED: "true"
@@ -42,67 +37,9 @@ services:
       CRYPTO_SECRET: ${CRYPTO_SECRET}
       TRUSTED_REDIRECT_DOMAINS: ${TRUSTED_REDIRECT_DOMAINS:-xingyuapi.com}
       SYNC_FREQUENCY: ${SYNC_FREQUENCY:-60}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    networks:
-      - xingyuapi-network
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
-
-  redis:
-    image: redis:7-alpine
-    container_name: xingyuapi-redis
-    restart: always
-    env_file:
-      - .env
-    command:
-      - redis-server
-      - --bind
-      - "0.0.0.0"
-      - --requirepass
-      - "${REDIS_PASSWORD}"
-      - --protected-mode
-      - "yes"
-    ports:
-      # Restrict at host firewall to SERVER2_IP only (see .env SERVER2_IP)
-      - "6379:6379"
-    networks:
-      - xingyuapi-network
-
-  postgres:
-    image: postgres:15
-    container_name: xingyuapi-postgres
-    restart: always
-    env_file:
-      - .env
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      # Restrict at host firewall to SERVER2_IP only (see .env SERVER2_IP)
-      - "5432:5432"
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    networks:
-      - xingyuapi-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-volumes:
-  pg_data:
-
-networks:
-  xingyuapi-network:
-    driver: bridge

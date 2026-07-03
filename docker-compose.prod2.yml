@@ -1,9 +1,10 @@
-# Server 2 (slave): app only — PostgreSQL + Redis on Server 1 (45.134.82.177)
+# Server 2: app only.
+#
+# PostgreSQL and Redis are external services on Server 3 (45.134.82.172).
 #
 # Setup:
 #   cp .env.prod2 .env
-#   docker compose -f docker-compose.prod2.yml build
-#   docker compose -f docker-compose.prod2.yml up -d
+#   docker compose -f docker-compose.prod2.yml up -d --build
 #
 # Baota: api subdomain -> http://127.0.0.1:3000
 

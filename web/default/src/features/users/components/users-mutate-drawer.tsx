@@ -60,6 +60,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Sheet,
   SheetClose,
@@ -282,6 +283,10 @@ export function UsersMutateDrawer({
   const tokensOnly = currencyMeta.kind === 'tokens'
 
   const currentQuotaRaw = form.watch('quota_dollars') || 0
+  const contextAutoCompactEnabled = form.watch('context_auto_compact_enabled')
+  // Context auto compaction UI is parked for now. Flip this back on when the
+  // backend trigger is re-enabled.
+  const contextAutoCompactUiEnabled = false
 
   const onSubmit = async (data: UserFormValues) => {
     if (!isUpdate) {
@@ -611,6 +616,103 @@ export function UsersMutateDrawer({
                       </FormItem>
                     )}
                   />
+
+                  {contextAutoCompactUiEnabled && canEditUserGroup && (
+                    <FormField
+                      control={form.control}
+                      name='context_auto_compact_enabled'
+                      render={({ field }) => (
+                        <FormItem className='flex flex-row items-center justify-between rounded-md border p-3'>
+                          <div className='space-y-0.5'>
+                            <FormLabel>{t('自动压缩上下文')}</FormLabel>
+                            <FormDescription>
+                              {t('超过阈值时使用当前请求模型摘要旧消息，并计入当轮账单')}
+                            </FormDescription>
+                          </div>
+                          <FormControl>
+                            <Switch
+                              checked={field.value === true}
+                              onCheckedChange={field.onChange}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  )}
+
+                  {contextAutoCompactUiEnabled &&
+                    canEditUserGroup &&
+                    contextAutoCompactEnabled && (
+                    <div className='grid gap-4 sm:grid-cols-2'>
+                      <FormField
+                        control={form.control}
+                        name='context_auto_compact_trigger_k'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('触发阈值')}</FormLabel>
+                            <FormControl>
+                              <div className='flex items-center gap-2'>
+                                <Input
+                                  type='number'
+                                  min={64}
+                                  max={250}
+                                  step={1}
+                                  {...field}
+                                  value={field.value ?? 250}
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      parseInt(e.target.value) || 250
+                                    )
+                                  }
+                                />
+                                <span className='text-muted-foreground text-sm'>
+                                  K
+                                </span>
+                              </div>
+                            </FormControl>
+                            <FormDescription>
+                              {t('建议不超过 250K')}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name='context_auto_compact_target_k'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('压缩目标')}</FormLabel>
+                            <FormControl>
+                              <div className='flex items-center gap-2'>
+                                <Input
+                                  type='number'
+                                  min={32}
+                                  max={249}
+                                  step={1}
+                                  {...field}
+                                  value={field.value ?? 140}
+                                  onChange={(e) =>
+                                    field.onChange(
+                                      parseInt(e.target.value) || 140
+                                    )
+                                  }
+                                />
+                                <span className='text-muted-foreground text-sm'>
+                                  K
+                                </span>
+                              </div>
+                            </FormControl>
+                            <FormDescription>
+                              {t('必须低于触发阈值')}
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
 
                   <FormField
                     control={form.control}

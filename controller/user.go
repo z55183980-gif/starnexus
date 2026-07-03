@@ -654,6 +654,30 @@ func UpdateUser(c *gin.Context) {
 	if !concurrencyProvided {
 		updatedUser.Concurrency = originUser.Concurrency
 	}
+	// Context auto compaction settings are parked for now. Preserve the existing
+	// user setting and re-enable this block when the feature is ready to turn on.
+	/*
+		if rawSetting, ok := raw["setting"]; ok && myRole >= common.RoleAdminUser {
+			var incomingSetting dto.UserSetting
+			if err := json.Unmarshal(rawSetting, &incomingSetting); err != nil {
+				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				return
+			}
+			currentSetting := originUser.GetSetting()
+			currentSetting.ContextAutoCompactEnabled = incomingSetting.ContextAutoCompactEnabled
+			currentSetting.ContextAutoCompactMode = incomingSetting.ContextAutoCompactMode
+			currentSetting.ContextAutoCompactTriggerK = incomingSetting.ContextAutoCompactTriggerK
+			currentSetting.ContextAutoCompactTargetK = incomingSetting.ContextAutoCompactTargetK
+			if currentSetting.ContextAutoCompactMode == "" && currentSetting.ContextAutoCompactEnabled {
+				currentSetting.ContextAutoCompactMode = "same_model_summary"
+			}
+			updatedUser.Setting = originUser.Setting
+			updatedUser.SetSetting(currentSetting)
+		} else {
+			updatedUser.Setting = originUser.Setting
+		}
+	*/
+	updatedUser.Setting = originUser.Setting
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
 	}

@@ -58,6 +58,7 @@ export const userSchema = z.object({
   last_login_at: z.number().optional(),
   DeletedAt: z.any().nullable().optional(),
   remark: z.string().optional(),
+  setting: z.string().optional(),
 })
 export type User = z.infer<typeof userSchema>
 
@@ -107,6 +108,12 @@ export interface UserFormData {
   group?: string // Only used when updating user
   inviter_id?: number // Only Root can update user inviter
   remark?: string // Only used when updating user
+  setting?: {
+    context_auto_compact_enabled?: boolean
+    context_auto_compact_mode?: string
+    context_auto_compact_trigger_k?: number
+    context_auto_compact_target_k?: number
+  }
 }
 
 export type ManageUserAction =

@@ -72,6 +72,11 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
+	if v, ok := ctx.Get("context_compaction_admin_info"); ok {
+		if info, ok := v.(map[string]interface{}); ok && len(info) > 0 {
+			adminInfo["context_compaction"] = info
+		}
+	}
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)
