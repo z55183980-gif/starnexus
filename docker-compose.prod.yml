@@ -25,6 +25,8 @@ services:
     volumes:
       - ./data:/data
       - ./logs:/app/logs
+    networks:
+      - xingyuapi-network
     environment:
       SQL_DSN: ${SQL_DSN}
       REDIS_CONN_STRING: ${REDIS_CONN_STRING}
@@ -43,3 +45,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+networks:
+  xingyuapi-network:
+    external: true
+    name: starnexus_xingyuapi-network
