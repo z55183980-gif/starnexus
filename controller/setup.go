@@ -24,18 +24,18 @@ type SetupRequest struct {
 	DemoSiteEnabled    bool   `json:"DemoSiteEnabled"`
 }
 
-func GetSetup(c *gin.Context) {
-	setup := Setup{
-		Status: constant.Setup,
-	}
+func setupCompleted() bool {
 	if constant.Setup {
-		c.JSON(200, gin.H{
-			"success": true,
-			"data":    setup,
-		})
-		return
+		return true
 	}
-	setup.RootInit = model.RootUserExists() || model.HasExistingUsers()
+	if model.RootUserExists() || model.HasExistingUsers() {
+		constant.Setup = true
+		return true
+	}
+	return false
+}
+
+func detectSetupDatabaseType(setup *Setup) {
 	if common.UsingMySQL {
 		setup.DatabaseType = "mysql"
 	}
@@ -45,6 +45,23 @@ func GetSetup(c *gin.Context) {
 	if common.UsingSQLite {
 		setup.DatabaseType = "sqlite"
 	}
+}
+
+func GetSetup(c *gin.Context) {
+	setup := Setup{
+		Status: setupCompleted(),
+	}
+	if setup.Status {
+		setup.RootInit = true
+		detectSetupDatabaseType(&setup)
+		c.JSON(200, gin.H{
+			"success": true,
+			"data":    setup,
+		})
+		return
+	}
+	setup.RootInit = model.RootUserExists() || model.HasExistingUsers()
+	detectSetupDatabaseType(&setup)
 	c.JSON(200, gin.H{
 		"success": true,
 		"data":    setup,
@@ -53,7 +70,7 @@ func GetSetup(c *gin.Context) {
 
 func PostSetup(c *gin.Context) {
 	// Check if setup is already completed
-	if constant.Setup {
+	if setupCompleted() {
 		c.JSON(200, gin.H{
 			"success": false,
 			"message": "系统已经初始化完成",
