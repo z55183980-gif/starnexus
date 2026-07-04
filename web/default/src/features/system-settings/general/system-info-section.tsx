@@ -18,8 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import * as z from 'zod'
 import type { Resolver } from 'react-hook-form'
+import { useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { RotateCcw } from 'lucide-react'
+import { Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import {
@@ -47,13 +48,149 @@ import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 
+type ApiBaseUrlItem = {
+  title: string
+  url: string
+}
+
+const DEFAULT_API_BASE_URL_TITLE = 'API 请求地址'
+
+function createApiBaseUrlItem(): ApiBaseUrlItem {
+  return {
+    title: '',
+    url: '',
+  }
+}
+
+function normalizeApiBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '')
+}
+
+function normalizeApiBaseUrlItem(value: unknown): ApiBaseUrlItem | null {
+  if (typeof value === 'string') {
+    const url = normalizeApiBaseUrl(value)
+    return url ? { title: DEFAULT_API_BASE_URL_TITLE, url } : null
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const item = value as Partial<ApiBaseUrlItem>
+  const url = typeof item.url === 'string' ? normalizeApiBaseUrl(item.url) : ''
+  if (!url) {
+    return null
+  }
+
+  const title =
+    typeof item.title === 'string' && item.title.trim()
+      ? item.title.trim()
+      : DEFAULT_API_BASE_URL_TITLE
+
+  return { title, url }
+}
+
+function parseApiBaseUrlItems(value: unknown): ApiBaseUrlItem[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeApiBaseUrlItem(item))
+      .filter((item): item is ApiBaseUrlItem => Boolean(item))
+  }
+
+  if (typeof value !== 'string') {
+    return [createApiBaseUrlItem()]
+  }
+
+  const raw = value.trim()
+  if (!raw) {
+    return [createApiBaseUrlItem()]
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    const items = parseApiBaseUrlItems(parsed)
+    return items.length > 0 ? items : [createApiBaseUrlItem()]
+  } catch {
+    const items = raw
+      .split(/[\n,]+/)
+      .map((item) => normalizeApiBaseUrlItem(item))
+      .filter((item): item is ApiBaseUrlItem => Boolean(item))
+    return items.length > 0 ? items : [createApiBaseUrlItem()]
+  }
+}
+
+function getNormalizedApiBaseUrlItems(
+  items: ApiBaseUrlItem[]
+): ApiBaseUrlItem[] {
+  const seen = new Set<string>()
+  const normalized: ApiBaseUrlItem[] = []
+
+  for (const item of items) {
+    const url = normalizeApiBaseUrl(item.url)
+    if (!url || seen.has(url)) {
+      continue
+    }
+    seen.add(url)
+    normalized.push({
+      title: item.title.trim() || DEFAULT_API_BASE_URL_TITLE,
+      url,
+    })
+  }
+
+  return normalized
+}
+
+function serializeApiBaseUrlItems(items: ApiBaseUrlItem[]): string {
+  const normalized = getNormalizedApiBaseUrlItems(items)
+  return normalized.length > 0 ? JSON.stringify(normalized) : ''
+}
+
+const apiBaseUrlItemSchema = z
+  .object({
+    title: z.string(),
+    url: z.string(),
+  })
+  .superRefine((item, ctx) => {
+    const title = item.title.trim()
+    const url = item.url.trim()
+
+    if (!title && !url) {
+      return
+    }
+
+    if (!title) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['title'],
+        message: 'Title is required',
+      })
+    }
+
+    if (!url) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['url'],
+        message: 'URL is required',
+      })
+      return
+    }
+
+    if (!z.string().url().safeParse(url).success) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['url'],
+        message: 'Invalid URL',
+      })
+    }
+  })
+
 const _systemInfoSchema = z.object({
   theme: z.object({
     frontend: z.enum(['default', 'classic']),
   }),
   SystemName: z.string().min(1),
   ServerAddress: z.string().optional(),
-  ApiBaseUrl: z.string().url().optional().or(z.literal('')),
+  ApiBaseUrl: z.array(apiBaseUrlItemSchema),
   Logo: z.string().url().optional().or(z.literal('')),
   Footer: z.string().optional(),
   About: z.string().optional(),
@@ -67,7 +204,9 @@ const _systemInfoSchema = z.object({
 type SystemInfoFormValues = z.infer<typeof _systemInfoSchema>
 
 type SystemInfoSectionProps = {
-  defaultValues: SystemInfoFormValues
+  defaultValues: Omit<SystemInfoFormValues, 'ApiBaseUrl'> & {
+    ApiBaseUrl: string | ApiBaseUrlItem[]
+  }
 }
 
 function normalizeValue(value: unknown): string {
@@ -86,7 +225,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     },
     SystemName: normalizeValue(defaultValues.SystemName),
     ServerAddress: normalizeValue(defaultValues.ServerAddress),
-    ApiBaseUrl: normalizeValue(defaultValues.ApiBaseUrl),
+    ApiBaseUrl: parseApiBaseUrlItems(defaultValues.ApiBaseUrl),
     Logo: normalizeValue(defaultValues.Logo),
     Footer: normalizeValue(defaultValues.Footer),
     About: normalizeValue(defaultValues.About),
@@ -105,7 +244,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       error: () => t('System name is required'),
     }),
     ServerAddress: z.string().optional(),
-    ApiBaseUrl: z.string().url().optional().or(z.literal('')),
+    ApiBaseUrl: z.array(apiBaseUrlItemSchema),
     Logo: z.string().url().optional().or(z.literal('')),
     Footer: z.string().optional(),
     About: z.string().optional(),
@@ -124,10 +263,24 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
         SystemInfoFormValues
       >,
       defaultValues: normalizedDefaults,
-      onSubmit: async (_data, changedFields) => {
+      onSubmit: async (data, changedFields) => {
+        const apiBaseUrlChanged = Object.keys(changedFields).some(
+          (key) => key === 'ApiBaseUrl' || key.startsWith('ApiBaseUrl.')
+        )
+
+        if (apiBaseUrlChanged) {
+          await updateOption.mutateAsync({
+            key: 'ApiBaseUrl',
+            value: serializeApiBaseUrlItems(data.ApiBaseUrl),
+          })
+        }
+
         for (const [key, value] of Object.entries(changedFields)) {
+          if (key === 'ApiBaseUrl' || key.startsWith('ApiBaseUrl.')) {
+            continue
+          }
           let v = normalizeValue(value)
-          if (key === 'ServerAddress' || key === 'ApiBaseUrl') {
+          if (key === 'ServerAddress') {
             v = v.replace(/\/+$/, '')
           }
           await updateOption.mutateAsync({
@@ -138,6 +291,15 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       },
     })
 
+  const {
+    fields: apiBaseUrlFields,
+    append: appendApiBaseUrl,
+    remove: removeApiBaseUrl,
+  } = useFieldArray({
+    control: form.control,
+    name: 'ApiBaseUrl',
+  })
+
   return (
     <>
       <FormNavigationGuard when={isDirty} />
@@ -147,7 +309,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
         description={t('Configure basic system information and branding')}
       >
         <Form {...form}>
-          <form onSubmit={handleSubmit} className='space-y-6'>
+          <form onSubmit={handleSubmit} className='flex flex-col gap-6'>
             <FormDirtyIndicator isDirty={isDirty} />
             <FormField
               control={form.control}
@@ -228,24 +390,81 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
               )}
             />
 
-            <FormField
-              control={form.control}
-              name='ApiBaseUrl'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('API Base URL')}</FormLabel>
-                  <FormControl>
-                    <Input placeholder='https://api.xingyuapi.com' {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'The API endpoint shown to users on the API Keys page'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div className='flex flex-col gap-3'>
+              <div className='flex items-start justify-between gap-3'>
+                <div className='flex min-w-0 flex-col gap-1'>
+                  <h3 className='text-sm font-medium'>{t('API Base URL')}</h3>
+                  <p className='text-muted-foreground text-sm'>
+                    {t('The API endpoint shown to users on the API Keys page')}
+                  </p>
+                </div>
+                <Button
+                  type='button'
+                  variant='outline'
+                  onClick={() => appendApiBaseUrl(createApiBaseUrlItem())}
+                  disabled={isSubmitting || updateOption.isPending}
+                >
+                  <Plus data-icon='inline-start' />
+                  {t('Add API address')}
+                </Button>
+              </div>
+
+              <div className='flex flex-col gap-3'>
+                {apiBaseUrlFields.map((item, index) => (
+                  <div
+                    key={item.id}
+                    className='grid gap-3 rounded-lg border p-3 md:grid-cols-[minmax(10rem,0.7fr)_minmax(16rem,1fr)_2.5rem]'
+                  >
+                    <FormField
+                      control={form.control}
+                      name={`ApiBaseUrl.${index}.title`}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Chinese Title')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder={t('e.g. Domestic API')}
+                              disabled={isSubmitting || updateOption.isPending}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`ApiBaseUrl.${index}.url`}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('URL')}</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder='https://api.xingyuapi.com'
+                              disabled={isSubmitting || updateOption.isPending}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className='flex items-end justify-end'>
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon'
+                        onClick={() => removeApiBaseUrl(index)}
+                        disabled={isSubmitting || updateOption.isPending}
+                        aria-label={t('Remove')}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <FormField
               control={form.control}

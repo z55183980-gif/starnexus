@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,6 +17,64 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+type apiBaseURLItem struct {
+	Title string `json:"title"`
+	URL   string `json:"url"`
+}
+
+func normalizeAPIBaseURL(value string) string {
+	return strings.TrimRight(strings.TrimSpace(value), "/")
+}
+
+func appendAPIBaseURLItem(items []apiBaseURLItem, seen map[string]struct{}, title, url string) []apiBaseURLItem {
+	normalizedURL := normalizeAPIBaseURL(url)
+	if normalizedURL == "" {
+		return items
+	}
+	if _, ok := seen[normalizedURL]; ok {
+		return items
+	}
+	seen[normalizedURL] = struct{}{}
+	return append(items, apiBaseURLItem{
+		Title: strings.TrimSpace(title),
+		URL:   normalizedURL,
+	})
+}
+
+func parseAPIBaseURLItems(raw string) []apiBaseURLItem {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return []apiBaseURLItem{}
+	}
+
+	items := make([]apiBaseURLItem, 0)
+	seen := make(map[string]struct{})
+
+	var structured []apiBaseURLItem
+	if err := common.UnmarshalJsonStr(raw, &structured); err == nil {
+		for _, item := range structured {
+			items = appendAPIBaseURLItem(items, seen, item.Title, item.URL)
+		}
+		return items
+	}
+
+	var urls []string
+	if err := common.UnmarshalJsonStr(raw, &urls); err == nil {
+		for _, url := range urls {
+			items = appendAPIBaseURLItem(items, seen, "", url)
+		}
+		return items
+	}
+
+	for _, url := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ','
+	}) {
+		items = appendAPIBaseURLItem(items, seen, "", url)
+	}
+
+	return items
+}
 
 func TestStatus(c *gin.Context) {
 	err := model.PingDB()
@@ -46,6 +103,11 @@ func GetStatus(c *gin.Context) {
 
 	passkeySetting := system_setting.GetPasskeySettings()
 	legalSetting := system_setting.GetLegalSettings()
+	apiBaseURLItems := parseAPIBaseURLItems(common.OptionMap["ApiBaseUrl"])
+	apiBaseURL := ""
+	if len(apiBaseURLItems) > 0 {
+		apiBaseURL = apiBaseURLItems[0].URL
+	}
 
 	data := gin.H{
 		"version":                     common.Version,
@@ -67,7 +129,8 @@ func GetStatus(c *gin.Context) {
 		"wechat_qrcode":               common.WeChatAccountQRCodeImageURL,
 		"wechat_login":                common.WeChatAuthEnabled,
 		"server_address":              system_setting.ServerAddress,
-		"api_base_url":                strings.TrimRight(common.OptionMap["ApiBaseUrl"], "/"),
+		"api_base_url":                apiBaseURL,
+		"api_base_urls":               apiBaseURLItems,
 		"turnstile_check":             common.TurnstileCheckEnabled,
 		"turnstile_site_key":          common.TurnstileSiteKey,
 		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
@@ -355,7 +418,7 @@ type PasswordResetRequest struct {
 
 func ResetPassword(c *gin.Context) {
 	var req PasswordResetRequest
-	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	err := common.DecodeJson(c.Request.Body, &req)
 	if req.Email == "" || req.Token == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

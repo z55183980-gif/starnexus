@@ -85,6 +85,11 @@ export interface ApiResponse {
 // System Status
 // ============================================================================
 
+export interface ApiBaseUrlItem {
+  title?: string
+  url: string
+}
+
 export interface SystemStatus {
   success?: boolean
   message?: string
@@ -111,6 +116,7 @@ export interface SystemStatus {
     wechat_account_qrcode_image_url?: string
     WeChatAccountQRCodeImageURL?: string
     api_base_url?: string
+    api_base_urls?: ApiBaseUrlItem[]
     turnstile_check?: boolean
     turnstile_site_key?: string
     email_verification?: boolean
@@ -155,6 +161,7 @@ export interface SystemStatus {
   wechat_account_qrcode_image_url?: string
   WeChatAccountQRCodeImageURL?: string
   api_base_url?: string
+  api_base_urls?: ApiBaseUrlItem[]
   turnstile_check?: boolean
   turnstile_site_key?: string
   email_verification?: boolean
