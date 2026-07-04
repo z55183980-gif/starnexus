@@ -281,23 +281,38 @@ func GetUsersByInviterId(inviterId int, pageInfo *common.PageInfo) (users []*Use
 	return users, total, nil
 }
 
-func SearchUsersByInviterId(inviterId int, keyword string, group string, startIdx int, num int) ([]*User, int64, error) {
-	if inviterId <= 0 {
-		return []*User{}, 0, nil
-	}
-	query := DB.Model(&User{}).Where("inviter_id = ? AND role = ?", inviterId, common.RoleCommonUser)
+func applyUserSearchFilters(query *gorm.DB, keyword string, group string, status *int, role *int) *gorm.DB {
 	keyword = strings.TrimSpace(keyword)
+	group = strings.TrimSpace(group)
+
 	if keyword != "" {
+		likeKeyword := "%" + keyword + "%"
 		likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
 		if keywordInt, err := strconv.Atoi(keyword); err == nil {
-			query = query.Where("(id = ? OR "+likeCondition+")", keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+			query = query.Where("(id = ? OR "+likeCondition+")", keywordInt, likeKeyword, likeKeyword, likeKeyword)
 		} else {
-			query = query.Where("("+likeCondition+")", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+			query = query.Where("("+likeCondition+")", likeKeyword, likeKeyword, likeKeyword)
 		}
 	}
 	if group != "" {
 		query = query.Where(commonGroupCol+" = ?", group)
 	}
+	if status != nil {
+		query = query.Where("status = ?", *status)
+	}
+	if role != nil {
+		query = query.Where("role = ?", *role)
+	}
+
+	return query
+}
+
+func SearchUsersByInviterId(inviterId int, keyword string, group string, status *int, role *int, startIdx int, num int) ([]*User, int64, error) {
+	if inviterId <= 0 {
+		return []*User{}, 0, nil
+	}
+	query := DB.Model(&User{}).Where("inviter_id = ? AND role = ?", inviterId, common.RoleCommonUser)
+	query = applyUserSearchFilters(query, keyword, group, status, role)
 	var users []*User
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -308,7 +323,8 @@ func SearchUsersByInviterId(inviterId int, keyword string, group string, startId
 	}
 	return users, total, nil
 }
-func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, int64, error) {
+
+func SearchUsers(keyword string, group string, status *int, role *int, startIdx int, num int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -326,32 +342,7 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 
 	// 构建基础查询
 	query := tx.Unscoped().Model(&User{})
-
-	// 构建搜索条件
-	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
-
-	// 尝试将关键字转换为整数ID
-	keywordInt, err := strconv.Atoi(keyword)
-	if err == nil {
-		// 如果是数字，同时搜索ID和其他字段
-		likeCondition = "id = ? OR " + likeCondition
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
-		} else {
-			query = query.Where(likeCondition,
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
-		}
-	} else {
-		// 非数字关键字，只搜索字符串字段
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
-		} else {
-			query = query.Where(likeCondition,
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
-		}
-	}
+	query = applyUserSearchFilters(query, keyword, group, status, role)
 
 	// 获取总数
 	err = query.Count(&total).Error

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import {
@@ -25,7 +25,6 @@ import {
   getCoreRowModel,
   getFacetedRowModel,
   getFacetedUniqueValues,
-  getFilteredRowModel,
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
@@ -33,13 +32,15 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import {
   DISABLED_ROW_DESKTOP,
   DISABLED_ROW_MOBILE,
   DataTablePage,
 } from '@/components/data-table'
-import { getUsers, searchUsers } from '../api'
+import { getGroups, getUsers, searchUsers } from '../api'
 import {
   USER_STATUS,
   getUserStatusOptions,
@@ -62,6 +63,10 @@ export function UsersTable() {
   const columns = useUsersColumns()
   const { refreshTrigger } = useUsers()
   const isMobile = useMediaQuery('(max-width: 640px)')
+  const currentUserRole = useAuthStore(
+    (state) => state.auth.user?.role ?? ROLE.GUEST
+  )
+  const canUseGroupFilter = currentUserRole >= ROLE.ADMIN
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
@@ -82,9 +87,34 @@ export function UsersTable() {
     columnFilters: [
       { columnId: 'status', searchKey: 'status', type: 'array' },
       { columnId: 'role', searchKey: 'role', type: 'array' },
-      { columnId: 'group', searchKey: 'group', type: 'string' },
+      { columnId: 'group', searchKey: 'group', type: 'array' },
     ],
   })
+
+  const statusFilter =
+    ((columnFilters.find((f) => f.id === 'status')?.value as string[]) ||
+      [])[0] || ''
+  const roleFilter =
+    ((columnFilters.find((f) => f.id === 'role')?.value as string[]) ||
+      [])[0] || ''
+  const groupFilter =
+    ((columnFilters.find((f) => f.id === 'group')?.value as string[]) ||
+      [])[0] || ''
+
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: getGroups,
+    enabled: canUseGroupFilter,
+  })
+
+  const groupOptions = useMemo(
+    () =>
+      (groupsData?.data || []).map((group) => ({
+        label: group,
+        value: group,
+      })),
+    [groupsData?.data]
+  )
 
   // Fetch data with React Query
   const { data, isLoading, isFetching } = useQuery({
@@ -93,17 +123,29 @@ export function UsersTable() {
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
+      statusFilter,
+      roleFilter,
+      groupFilter,
       refreshTrigger,
     ],
     queryFn: async () => {
-      const hasFilter = globalFilter?.trim()
+      const keyword = globalFilter?.trim() || ''
+      const hasFilter = Boolean(
+        keyword || statusFilter || roleFilter || groupFilter
+      )
       const params = {
         p: pagination.pageIndex + 1,
         page_size: pagination.pageSize,
       }
 
       const result = hasFilter
-        ? await searchUsers({ ...params, keyword: globalFilter })
+        ? await searchUsers({
+            ...params,
+            keyword,
+            status: statusFilter,
+            role: roleFilter,
+            group: groupFilter,
+          })
         : await getUsers(params)
 
       if (!result.success) {
@@ -152,7 +194,6 @@ export function UsersTable() {
       )
     },
     getCoreRowModel: getCoreRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFacetedRowModel: getFacetedRowModel(),
@@ -160,7 +201,8 @@ export function UsersTable() {
     onPaginationChange,
     onGlobalFilterChange,
     onColumnFiltersChange,
-    manualPagination: !globalFilter,
+    manualPagination: true,
+    manualFiltering: true,
     pageCount: Math.ceil((data?.total || 0) / pagination.pageSize),
   })
 
@@ -195,6 +237,16 @@ export function UsersTable() {
             options: getUserRoleOptions(t),
             singleSelect: true,
           },
+          ...(canUseGroupFilter
+            ? [
+                {
+                  columnId: 'group',
+                  title: t('Group'),
+                  options: groupOptions,
+                  singleSelect: true,
+                },
+              ]
+            : []),
         ],
       }}
       getRowClassName={(row, { isMobile }) =>

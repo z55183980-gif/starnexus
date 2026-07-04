@@ -263,6 +263,8 @@ func GetAllUsers(c *gin.Context) {
 func SearchUsers(c *gin.Context) {
 	keyword := c.Query("keyword")
 	group := c.Query("group")
+	status := parseOptionalIntQuery(c, "status")
+	role := parseOptionalIntQuery(c, "role")
 	pageInfo := common.GetPageQuery(c)
 	myRole := c.GetInt("role")
 	myId := c.GetInt("id")
@@ -270,9 +272,9 @@ func SearchUsers(c *gin.Context) {
 	var total int64
 	var err error
 	if myRole == common.RoleAgentUser {
-		users, total, err = model.SearchUsersByInviterId(myId, keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+		users, total, err = model.SearchUsersByInviterId(myId, keyword, group, status, role, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	} else {
-		users, total, err = model.SearchUsers(keyword, group, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+		users, total, err = model.SearchUsers(keyword, group, status, role, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	}
 	if err != nil {
 		common.ApiError(c, err)
@@ -283,6 +285,18 @@ func SearchUsers(c *gin.Context) {
 	pageInfo.SetItems(users)
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+func parseOptionalIntQuery(c *gin.Context, key string) *int {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func canManageTargetRole(myRole int, targetRole int) bool {
