@@ -224,6 +224,72 @@ docker ps
 docker compose logs --tail 100
 ```
 
+## sub2api 迁移到服务器3
+
+sub2api 和 StarNexus 共用服务器3的 PostgreSQL + Redis，但必须使用独立数据库和独立 Redis DB。
+
+推荐分配：
+
+```text
+StarNexus PostgreSQL: starnex
+StarNexus Redis DB:   1
+sub2api PostgreSQL:   sub2api
+sub2api Redis DB:     2
+```
+
+服务器3创建 sub2api 数据库和用户：
+
+```sql
+CREATE USER sub2api WITH PASSWORD '<SUB2API_DB_PASSWORD>';
+CREATE DATABASE sub2api OWNER sub2api;
+GRANT ALL PRIVILEGES ON DATABASE sub2api TO sub2api;
+```
+
+服务器1导出现有 sub2api PostgreSQL：
+
+```bash
+docker exec sub2api-postgres sh -lc 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f /tmp/sub2api.dump'
+docker cp sub2api-postgres:/tmp/sub2api.dump /root/sub2api.dump
+scp /root/sub2api.dump root@45.134.82.172:/root/sub2api.dump
+```
+
+服务器3恢复 sub2api 数据库：
+
+```bash
+/www/server/pgsql/bin/pg_restore -h 127.0.0.1 -p 5432 -U sub2api -d sub2api --clean --if-exists --no-owner /root/sub2api.dump
+```
+
+服务器1的 `deploy/sub2api/.env` 设置为连接服务器3：
+
+```env
+DATABASE_HOST=45.134.82.172
+DATABASE_PORT=5432
+POSTGRES_USER=sub2api
+POSTGRES_PASSWORD=<SUB2API_DB_PASSWORD>
+POSTGRES_DB=sub2api
+
+REDIS_HOST=45.134.82.172
+REDIS_PORT=6379
+REDIS_PASSWORD=<REDIS_PASSWORD>
+REDIS_DB=2
+```
+
+然后只重建/重启 sub2api 应用，不再启动本机 `sub2api-postgres` 和 `sub2api-redis`：
+
+```bash
+cd /www/wwwroot/starnexus/deploy/sub2api
+docker compose -f docker-compose.local.yml up -d sub2api
+docker logs -f sub2api
+```
+
+确认 sub2api 正常后，旧的本机 `sub2api-postgres` / `sub2api-redis` 先停止保留，不要立刻删除：
+
+```bash
+docker stop sub2api-postgres sub2api-redis
+```
+
+稳定运行一段时间后，再考虑备份并删除旧容器和旧数据目录。
+
 ## 安全备注
 
 数据库密码、Redis 密码、Cloudflare Tunnel token 不要写入文档或聊天记录。
