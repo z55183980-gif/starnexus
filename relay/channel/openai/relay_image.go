@@ -37,6 +37,15 @@ func openAIImageCompletedEventType(info *relaycommon.RelayInfo) string {
 	return "image_generation.completed"
 }
 
+func newOpenAIImageStreamWriteError(err error) *types.NewAPIError {
+	return types.NewOpenAIError(
+		err,
+		types.ErrorCodeBadResponse,
+		http.StatusInternalServerError,
+		types.ErrOptionWithSkipRetry(),
+	)
+}
+
 func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	defer service.CloseResponseBodyGracefully(resp)
 
@@ -100,6 +109,7 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 	usage := &dto.Usage{}
 	var lastStreamData []byte
 	var completedImages int64
+	var streamWriteErr error
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		raw := common.StringToByteSlice(data)
@@ -121,6 +131,7 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 			}
 		}
 		if err := writeOpenaiImageStreamChunk(c, raw); err != nil {
+			streamWriteErr = err
 			sr.Stop(err)
 		}
 	})
@@ -142,6 +153,9 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 		if upstreamFinished || float64(completedImages) > requestedN {
 			updateOpenAIImageCount(info, completedImages)
 		}
+	}
+	if streamWriteErr != nil {
+		return usage, newOpenAIImageStreamWriteError(streamWriteErr)
 	}
 	return usage, nil
 }
@@ -275,14 +289,14 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 				}
 				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, writeErr)
 			}
-			return &usageResp.Usage, nil
+			return &usageResp.Usage, newOpenAIImageStreamWriteError(writeErr)
 		}
 	}
 	if err := helper.StringData(c, "[DONE]"); err != nil {
 		if info != nil && info.StreamStatus != nil {
 			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, err)
 		}
-		return &usageResp.Usage, nil
+		return &usageResp.Usage, newOpenAIImageStreamWriteError(err)
 	}
 	if info != nil {
 		info.ReceivedResponseCount += int(imageCount)
