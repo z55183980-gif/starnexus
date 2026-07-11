@@ -1,11 +1,14 @@
 package claude
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -154,14 +157,17 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	}
 
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
-		(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") || strings.HasPrefix(textRequest.Model, "claude-opus-4-7")) {
+		(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") ||
+			strings.HasPrefix(textRequest.Model, "claude-opus-4-7") ||
+			strings.HasPrefix(textRequest.Model, "claude-opus-4-8")) {
 		claudeRequest.Model = baseModel
 		claudeRequest.Thinking = &dto.Thinking{
 			Type: "adaptive",
 		}
 		claudeRequest.OutputConfig = json.RawMessage(fmt.Sprintf(`{"effort":"%s"}`, effortLevel))
-		if strings.HasPrefix(baseModel, "claude-opus-4-7") {
-			// Opus 4.7 rejects non-default temperature/top_p/top_k with 400
+		if strings.HasPrefix(baseModel, "claude-opus-4-7") ||
+			strings.HasPrefix(baseModel, "claude-opus-4-8") {
+			// Opus 4.7/4.8 reject non-default temperature/top_p/top_k with 400
 			// and defaults display to "omitted"; restore the 4.6 visible summary.
 			claudeRequest.Thinking.Display = "summarized"
 			claudeRequest.Temperature = nil
@@ -175,8 +181,9 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 		strings.HasSuffix(textRequest.Model, "-thinking") {
 
 		trimmedModel := strings.TrimSuffix(textRequest.Model, "-thinking")
-		if strings.HasPrefix(trimmedModel, "claude-opus-4-7") {
-			// Opus 4.7 rejects thinking.type="enabled"; use adaptive at high effort.
+		if strings.HasPrefix(trimmedModel, "claude-opus-4-7") ||
+			strings.HasPrefix(trimmedModel, "claude-opus-4-8") {
+			// Opus 4.7/4.8 reject thinking.type="enabled"; use adaptive at high effort.
 			claudeRequest.Thinking = &dto.Thinking{Type: "adaptive", Display: "summarized"}
 			claudeRequest.OutputConfig = json.RawMessage(`{"effort":"high"}`)
 			claudeRequest.Temperature = nil
@@ -376,6 +383,14 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 								Text: common.GetPointer[string](mediaMessage.Text),
 							})
 						}
+					case dto.ContentTypeFile:
+						claudeFileMessage, ok, err := openAIFileContentToClaude(c, mediaMessage)
+						if err != nil {
+							return nil, err
+						}
+						if ok {
+							claudeMediaMessages = append(claudeMediaMessages, claudeFileMessage)
+						}
 					default:
 						source := mediaMessage.ToFileSource()
 						if source == nil {
@@ -432,6 +447,84 @@ func RequestOpenAI2ClaudeMessage(c *gin.Context, textRequest dto.GeneralOpenAIRe
 	claudeRequest.Prompt = ""
 	claudeRequest.Messages = claudeMessages
 	return &claudeRequest, nil
+}
+
+func openAIFileContentToClaude(c *gin.Context, mediaMessage dto.MediaContent) (dto.ClaudeMediaMessage, bool, error) {
+	file := mediaMessage.GetFile()
+	if file == nil || strings.TrimSpace(file.FileData) == "" {
+		return dto.ClaudeMediaMessage{}, false, nil
+	}
+
+	mimeType, base64Payload := splitOpenAIFileDataURL(file.FileData)
+	extension := strings.ToLower(filepath.Ext(file.FileName))
+	if mimeType == "application/pdf" || extension == ".pdf" {
+		source := types.NewFileSourceFromData(file.FileData, "application/pdf")
+		base64Data, detectedMimeType, err := service.GetBase64Data(c, source, "formatting file for Claude")
+		if err != nil {
+			return dto.ClaudeMediaMessage{}, false, fmt.Errorf("get file data failed: %s", err.Error())
+		}
+		if detectedMimeType == "" {
+			detectedMimeType = "application/pdf"
+		}
+		return dto.ClaudeMediaMessage{
+			Type: "document",
+			Source: &dto.ClaudeMessageSource{
+				Type:      "base64",
+				MediaType: detectedMimeType,
+				Data:      base64Data,
+			},
+		}, true, nil
+	}
+
+	if isClaudeTextFileContent(mimeType, extension) {
+		decoded, err := base64.StdEncoding.DecodeString(base64Payload)
+		if err != nil {
+			return dto.ClaudeMediaMessage{}, false, fmt.Errorf("decode text file for Claude failed: %w", err)
+		}
+		if !utf8.Valid(decoded) {
+			return dto.ClaudeMediaMessage{}, false, nil
+		}
+		return dto.ClaudeMediaMessage{
+			Type: "text",
+			Text: common.GetPointer(string(decoded)),
+		}, true, nil
+	}
+
+	return dto.ClaudeMediaMessage{}, false, nil
+}
+
+func splitOpenAIFileDataURL(data string) (string, string) {
+	if !strings.HasPrefix(data, "data:") {
+		return "", data
+	}
+	comma := strings.Index(data, ",")
+	if comma < 0 {
+		return "", data
+	}
+	header := data[:comma]
+	payload := data[comma+1:]
+	mimeStart := strings.Index(header, ":") + 1
+	mimeEnd := strings.Index(header, ";")
+	if mimeStart <= 0 || mimeEnd <= mimeStart {
+		return "", payload
+	}
+	return strings.ToLower(strings.TrimSpace(header[mimeStart:mimeEnd])), payload
+}
+
+func isClaudeTextFileContent(mimeType string, extension string) bool {
+	if strings.HasPrefix(mimeType, "text/") {
+		return true
+	}
+	switch mimeType {
+	case "application/json", "application/xml", "application/x-yaml", "application/yaml", "application/javascript":
+		return true
+	}
+	switch extension {
+	case ".txt", ".md", ".markdown", ".csv", ".json", ".jsonl", ".yaml", ".yml", ".xml", ".html", ".htm", ".log":
+		return true
+	default:
+		return false
+	}
 }
 
 func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCompletionsStreamResponse {

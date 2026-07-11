@@ -144,17 +144,26 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	switch relayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
-			_, err := c.MultipartForm()
+			multiForm, err := common.ParseMultipartFormReusable(c)
 			if err != nil {
 				return nil, fmt.Errorf("failed to parse image edit form request: %w", err)
 			}
-			formData := c.Request.PostForm
-			imageRequest.Prompt = formData.Get("prompt")
-			imageRequest.Model = formData.Get("model")
-			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
-			imageRequest.Quality = formData.Get("quality")
-			imageRequest.Size = formData.Get("size")
-			if imageValue := formData.Get("image"); imageValue != "" {
+			formValue := func(key string) string {
+				if multiForm == nil || multiForm.Value == nil {
+					return ""
+				}
+				values := multiForm.Value[key]
+				if len(values) == 0 {
+					return ""
+				}
+				return values[0]
+			}
+			imageRequest.Prompt = formValue("prompt")
+			imageRequest.Model = formValue("model")
+			imageRequest.N = common.GetPointer(uint(common.String2Int(formValue("n"))))
+			imageRequest.Quality = formValue("quality")
+			imageRequest.Size = formValue("size")
+			if imageValue := formValue("image"); imageValue != "" {
 				imageRequest.Image, _ = common.Marshal(imageValue)
 			}
 
@@ -167,10 +176,13 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 				imageRequest.N = common.GetPointer(uint(1))
 			}
 
-			hasWatermark := formData.Has("watermark")
-			if hasWatermark {
-				watermark := formData.Get("watermark") == "true"
+			if _, hasWatermark := multiForm.Value["watermark"]; hasWatermark {
+				watermark := formValue("watermark") == "true"
 				imageRequest.Watermark = &watermark
+			}
+			if _, hasStream := multiForm.Value["stream"]; hasStream {
+				stream := formValue("stream") == "true" || formValue("stream") == "1"
+				imageRequest.Stream = &stream
 			}
 			break
 		}
@@ -221,6 +233,13 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		if imageRequest.N == nil || *imageRequest.N == 0 {
 			imageRequest.N = common.GetPointer(uint(1))
 		}
+	}
+
+	if imageRequest.N == nil || *imageRequest.N == 0 {
+		imageRequest.N = common.GetPointer(uint(1))
+	}
+	if *imageRequest.N > dto.MaxImageN {
+		return nil, fmt.Errorf("n must be between 1 and %d", dto.MaxImageN)
 	}
 
 	return imageRequest, nil

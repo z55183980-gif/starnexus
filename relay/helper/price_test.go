@@ -10,6 +10,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -59,4 +60,69 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, "stream", info.TieredBillingSnapshot.EstimatedTier)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
+}
+
+func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedModelPrices := ratio_setting.ModelPrice2JSONString()
+	savedModelRatios := ratio_setting.ModelRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
+	})
+
+	modelPrices, err := common.Marshal(map[string]float64{
+		"fixed-image-price": 0.04,
+	})
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(string(modelPrices)))
+	modelRatios, err := common.Marshal(map[string]float64{"ratio-image-price": 15})
+	require.NoError(t, err)
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(modelRatios)))
+
+	tests := []struct {
+		name           string
+		model          string
+		wantQuota      int
+		wantUsePrice   bool
+		wantImageCount bool
+	}{
+		{
+			name:           "fixed price applies image count",
+			model:          "fixed-image-price",
+			wantQuota:      180000,
+			wantUsePrice:   true,
+			wantImageCount: true,
+		},
+		{
+			name:         "ratio price ignores request billing ratios",
+			model:        "ratio-image-price",
+			wantQuota:    15000,
+			wantUsePrice: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Set("group", "default")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: tt.model,
+				UserGroup:       "default",
+				UsingGroup:      "default",
+			}
+			meta := &types.TokenCountMeta{
+				ImagePriceRatio: 3,
+				BillingRatios:   map[string]float64{"n": 3},
+			}
+
+			priceData, err := ModelPriceHelper(ctx, info, 1000, meta)
+
+			require.NoError(t, err)
+			require.Equal(t, tt.wantQuota, priceData.QuotaToPreConsume)
+			require.Equal(t, tt.wantUsePrice, priceData.UsePrice)
+			require.Equal(t, tt.wantImageCount, priceData.HasOtherRatio("n"))
+			require.Equal(t, priceData.OtherRatios, info.PriceData.OtherRatios)
+		})
+	}
 }
