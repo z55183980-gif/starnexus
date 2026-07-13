@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { User, Wallet, LogOut, Settings, Server } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -44,6 +44,8 @@ export function ProfileDropdown() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const [open, setOpen] = useDialogState()
+  const [currentNodeName, setCurrentNodeName] = useState('')
+  const [currentNodeLoading, setCurrentNodeLoading] = useState(false)
   const user = useAuthStore((state) => state.auth.user)
   const { displayName, roleLabel } = useUserDisplay(user)
   const isAdmin = (user?.role ?? ROLE.GUEST) >= ROLE.ADMIN
@@ -56,6 +58,8 @@ export function ProfileDropdown() {
   )
 
   const handleCurrentNodeClick = async () => {
+    if (currentNodeLoading) return
+    setCurrentNodeLoading(true)
     try {
       const result = await getCurrentNode()
       if (!result.success) {
@@ -64,13 +68,11 @@ export function ProfileDropdown() {
       }
 
       const nodeName = result.data?.node_name?.trim()
-      toast.info(
-        nodeName
-          ? t('Current node: {{node}}', { node: nodeName })
-          : t('Current node is not configured')
-      )
+      setCurrentNodeName(nodeName || t('Current node is not configured'))
     } catch {
       toast.error(t('Failed to load current node'))
+    } finally {
+      setCurrentNodeLoading(false)
     }
   }
 
@@ -132,9 +134,20 @@ export function ProfileDropdown() {
           </DropdownMenuItem>
 
           {isAdmin && (
-            <DropdownMenuItem onClick={handleCurrentNodeClick}>
+            <DropdownMenuItem
+              className='pr-2'
+              onSelect={(event) => {
+                event.preventDefault()
+                void handleCurrentNodeClick()
+              }}
+            >
               <Server className='size-4' />
-              {t('Current Node')}
+              <span>{t('Query Node')}</span>
+              {(currentNodeName || currentNodeLoading) && (
+                <span className='text-muted-foreground ml-auto max-w-28 truncate text-xs'>
+                  {currentNodeLoading ? t('Loading...') : currentNodeName}
+                </span>
+              )}
             </DropdownMenuItem>
           )}
 
