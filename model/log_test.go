@@ -14,6 +14,9 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 		{
 			Content: "token重算：tokens=50, modelRatio=1.00, rawTokens=100, rawPrompt=80, rawCompletion=20, inputRatio=0.5000, outputRatio=0.5000",
 			Other: common.MapToJsonStr(map[string]interface{}{
+				"admin_info": map[string]interface{}{
+					"node_name": "xingyuapi-prod-1",
+				},
 				"token_pricing_enabled":      true,
 				"token_pricing_input_ratio":  2,
 				"token_pricing_output_ratio": 3,
@@ -42,6 +45,7 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, other["token_pricing_enabled"])
 	require.Equal(t, float64(5), other["cache_tokens"])
+	require.NotContains(t, other, "admin_info")
 	require.NotContains(t, other, "token_pricing_input_ratio")
 	require.NotContains(t, other, "token_pricing_output_ratio")
 	require.NotContains(t, other, "token_pricing_rules")
@@ -51,6 +55,25 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 	require.NotContains(t, other, "billing_prompt_tokens")
 	require.NotContains(t, other, "billing_completion_tokens")
 	require.NotContains(t, other, "billing_total_tokens")
+}
+
+func TestAttachNodeNameToLogOther(t *testing.T) {
+	originalNodeName := common.NodeName
+	common.NodeName = "xingyuapi-prod-1"
+	t.Cleanup(func() {
+		common.NodeName = originalNodeName
+	})
+
+	other := attachNodeNameToLogOther(map[string]interface{}{
+		"admin_info": map[string]interface{}{
+			"use_channel": []int{42},
+		},
+	})
+
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "xingyuapi-prod-1", adminInfo["node_name"])
+	require.Equal(t, []int{42}, adminInfo["use_channel"])
 }
 
 func TestGetAgentUserLogsScopesToAgentAndInvitees(t *testing.T) {

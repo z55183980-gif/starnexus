@@ -176,7 +176,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
-	otherStr := common.MapToJsonStr(other)
+	otherStr := common.MapToJsonStr(attachNodeNameToLogOther(other))
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -231,6 +231,22 @@ type RecordConsumeLogParams struct {
 	Other            map[string]interface{} `json:"other"`
 }
 
+func attachNodeNameToLogOther(other map[string]interface{}) map[string]interface{} {
+	if common.NodeName == "" {
+		return other
+	}
+	if other == nil {
+		other = make(map[string]interface{})
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = make(map[string]interface{})
+		other["admin_info"] = adminInfo
+	}
+	adminInfo["node_name"] = common.NodeName
+	return other
+}
+
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
 	if !common.LogConsumeEnabled {
 		return
@@ -239,7 +255,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
-	otherStr := common.MapToJsonStr(params.Other)
+	otherStr := common.MapToJsonStr(attachNodeNameToLogOther(params.Other))
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {
@@ -319,7 +335,7 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		ChannelId: params.ChannelId,
 		TokenId:   params.TokenId,
 		Group:     params.Group,
-		Other:     common.MapToJsonStr(params.Other),
+		Other:     common.MapToJsonStr(attachNodeNameToLogOther(params.Other)),
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {

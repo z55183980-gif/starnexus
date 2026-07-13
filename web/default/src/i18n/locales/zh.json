@@ -2790,6 +2790,7 @@
     "No users found.": "未找到用户。",
     "No vendor data available": "暂无厂商数据",
     "No X Found": "未找到 X",
+    "Node": "节点",
     "Node Name": "节点名称",
     "Non-stream": "非流式",
     "Non-zero invitation rewards require compliance confirmation in Payment Gateway settings.": "设置非零邀请奖励额度前，需要先在支付设置中确认合规声明。",

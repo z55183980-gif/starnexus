@@ -292,6 +292,28 @@ export function useCommonLogsColumns(
     },
   ]
 
+  if (isAdmin) {
+    columns.push({
+      id: 'node',
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Node')} />
+      ),
+      cell: ({ row }) => {
+        const nodeName = parseLogOther(row.original.other)?.admin_info
+          ?.node_name
+
+        return (
+          <span className='block max-w-[140px] truncate font-mono text-xs'>
+            {nodeName || '-'}
+          </span>
+        )
+      },
+      enableSorting: false,
+      meta: { label: t('Node'), mobileHidden: true },
+      size: 140,
+    })
+  }
+
   if (canViewManagedUsers) {
     if (isAdmin) {
       columns.push(
