@@ -209,6 +209,18 @@ export async function getStatus() {
   return res.data?.data as Record<string, unknown>
 }
 
+export async function getCurrentNode(): Promise<{
+  success: boolean
+  message?: string
+  data?: { node_name?: string }
+}> {
+  const res = await api.get('/api/status/node', {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
 // Get system notice
 export async function getNotice(): Promise<{
   success: boolean

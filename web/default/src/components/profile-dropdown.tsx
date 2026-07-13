@@ -18,9 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMemo } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { User, Wallet, LogOut, Settings } from 'lucide-react'
+import { User, Wallet, LogOut, Settings, Server } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
+import { getCurrentNode } from '@/lib/api'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { ROLE } from '@/lib/roles'
 import useDialogState from '@/hooks/use-dialog'
@@ -44,6 +46,7 @@ export function ProfileDropdown() {
   const [open, setOpen] = useDialogState()
   const user = useAuthStore((state) => state.auth.user)
   const { displayName, roleLabel } = useUserDisplay(user)
+  const isAdmin = (user?.role ?? ROLE.GUEST) >= ROLE.ADMIN
   const isSuperAdmin = user?.role === ROLE.SUPER_ADMIN
   const avatarName = user?.username || displayName
   const avatarFallback = getUserAvatarFallback(avatarName)
@@ -51,6 +54,25 @@ export function ProfileDropdown() {
     () => getUserAvatarStyle(avatarName),
     [avatarName]
   )
+
+  const handleCurrentNodeClick = async () => {
+    try {
+      const result = await getCurrentNode()
+      if (!result.success) {
+        toast.error(result.message || t('Failed to load current node'))
+        return
+      }
+
+      const nodeName = result.data?.node_name?.trim()
+      toast.info(
+        nodeName
+          ? t('Current node: {{node}}', { node: nodeName })
+          : t('Current node is not configured')
+      )
+    } catch {
+      toast.error(t('Failed to load current node'))
+    }
+  }
 
   return (
     <>
@@ -108,6 +130,13 @@ export function ProfileDropdown() {
             <Wallet className='size-4' />
             {t('Wallet')}
           </DropdownMenuItem>
+
+          {isAdmin && (
+            <DropdownMenuItem onClick={handleCurrentNodeClick}>
+              <Server className='size-4' />
+              {t('Current Node')}
+            </DropdownMenuItem>
+          )}
 
           {isSuperAdmin && (
             <DropdownMenuItem

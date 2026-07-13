@@ -232,6 +232,17 @@ func GetStatus(c *gin.Context) {
 	return
 }
 
+func GetCurrentNode(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"node_name": common.NodeName,
+		},
+	})
+	return
+}
+
 func GetNotice(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	defer common.OptionMapRWMutex.RUnlock()
