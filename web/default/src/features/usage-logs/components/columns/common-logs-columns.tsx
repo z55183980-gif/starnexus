@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { type ColumnDef } from '@tanstack/react-table'
 import { CircleAlert, Sparkles, KeyRound } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import {
@@ -30,6 +32,15 @@ import {
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -37,6 +48,7 @@ import {
 } from '@/components/ui/tooltip'
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
+import { getUserNodeBinding, updateUserNodeBinding } from '../../api'
 import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
@@ -53,7 +65,7 @@ import {
   getLogTypeConfig,
   isPerCallBilling,
 } from '../../lib/utils'
-import type { LogOtherData } from '../../types'
+import type { LogOtherData, UserRoutingNode } from '../../types'
 import { DetailsDialog } from '../dialogs/details-dialog'
 import { ModelBadge } from '../model-badge'
 import { useUsageLogsContext } from '../usage-logs-provider'
@@ -298,14 +310,87 @@ export function useCommonLogsColumns(
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Node')} />
       ),
-      cell: ({ row }) => {
+      cell: function NodeCell({ row }) {
+        const queryClient = useQueryClient()
+        const [open, setOpen] = useState(false)
+        const userId = row.original.user_id
         const nodeName = parseLogOther(row.original.other)?.admin_info
           ?.node_name
 
+        const bindingQuery = useQuery({
+          queryKey: ['user-node-binding', userId],
+          queryFn: () => getUserNodeBinding(userId),
+          enabled: open && userId > 0,
+          staleTime: 30_000,
+        })
+        const binding = bindingQuery.data?.data
+        const mutation = useMutation({
+          mutationFn: async (node: UserRoutingNode) => {
+            const result = await updateUserNodeBinding(userId, node)
+            if (!result.success || !result.data) {
+              throw new Error(
+                result.message || t('Failed to update node binding')
+              )
+            }
+            return result
+          },
+          onSuccess: (result) => {
+            queryClient.setQueryData(['user-node-binding', userId], result)
+            toast.success(t('Node binding updated'))
+            setOpen(false)
+          },
+          onError: (error: Error) => {
+            toast.error(error.message || t('Failed to update node binding'))
+          },
+        })
+        const disabled =
+          bindingQuery.isLoading || mutation.isPending || !binding?.configured
+        const options: UserRoutingNode[] = ['auto', 's1', 's2', 's3']
+
+        if (userId <= 0) {
+          return (
+            <span className='block max-w-[140px] truncate font-mono text-xs'>
+              {nodeName || '-'}
+            </span>
+          )
+        }
+
         return (
-          <span className='block max-w-[140px] truncate font-mono text-xs'>
-            {nodeName || '-'}
-          </span>
+          <DropdownMenu open={open} onOpenChange={setOpen}>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type='button'
+                  className='block max-w-[140px] truncate font-mono text-xs hover:underline'
+                  title={t('User routing')}
+                />
+              }
+            >
+              {nodeName || '-'}
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start'>
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{t('User routing')}</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={binding?.node || 'auto'}>
+                  {options.map((option) => (
+                    <DropdownMenuRadioItem
+                      key={option}
+                      value={option}
+                      disabled={disabled}
+                      onClick={() => mutation.mutate(option)}
+                    >
+                      {option === 'auto' ? t('Auto') : option}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+              {binding && !binding.configured && (
+                <p className='text-muted-foreground px-1.5 py-1 text-xs'>
+                  {t('Node router is not configured')}
+                </p>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )
       },
       enableSorting: false,

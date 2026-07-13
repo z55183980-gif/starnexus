@@ -917,6 +917,7 @@ func DeleteUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	clearUserNodeBindingBestEffort(id)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -938,6 +939,7 @@ func DeleteSelf(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	clearUserNodeBindingBestEffort(id)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

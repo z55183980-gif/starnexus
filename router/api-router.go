@@ -158,6 +158,8 @@ func SetApiRouter(router *gin.Engine) {
 				strictAdminDetailRoute.DELETE("/:id/oauth/bindings/:provider_id", controller.UnbindCustomOAuthByAdmin)
 				strictAdminDetailRoute.DELETE("/:id/bindings/:binding_type", controller.AdminClearUserBinding)
 				strictAdminDetailRoute.DELETE("/:id/reset_passkey", controller.AdminResetPasskey)
+				strictAdminDetailRoute.GET("/:id/node_binding", controller.GetUserNodeBinding)
+				strictAdminDetailRoute.PUT("/:id/node_binding", controller.UpdateUserNodeBinding)
 
 				// Admin 2FA routes
 				strictAdminDetailRoute.GET("/2fa/stats", controller.Admin2FAStats)

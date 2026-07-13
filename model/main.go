@@ -270,6 +270,7 @@ func migrateDB() error {
 		&Channel{},
 		&Token{},
 		&User{},
+		&UserNodeBinding{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},

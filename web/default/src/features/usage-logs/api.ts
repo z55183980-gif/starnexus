@@ -26,6 +26,8 @@ import type {
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
   LogAccessScope,
+  UserNodeBindingResponse,
+  UserRoutingNode,
   UserInfo,
 } from './types'
 
@@ -98,6 +100,28 @@ export async function getUserInfo(
   userId: number
 ): Promise<{ success: boolean; message?: string; data?: UserInfo }> {
   const res = await api.get(`/api/user/${userId}`)
+  return res.data
+}
+
+export async function getUserNodeBinding(
+  userId: number
+): Promise<UserNodeBindingResponse> {
+  const res = await api.get(`/api/user/${userId}/node_binding`)
+  return res.data
+}
+
+export async function updateUserNodeBinding(
+  userId: number,
+  node: UserRoutingNode
+): Promise<UserNodeBindingResponse> {
+  const res = await api.put(
+    `/api/user/${userId}/node_binding`,
+    { node },
+    {
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
   return res.data
 }
 

@@ -307,6 +307,20 @@ export interface GetLogsResponse {
   }
 }
 
+export type UserRoutingNode = 'auto' | 's1' | 's2' | 's3'
+
+export interface UserNodeBindingData {
+  user_id: number
+  node: UserRoutingNode
+  configured: boolean
+}
+
+export interface UserNodeBindingResponse {
+  success: boolean
+  message?: string
+  data?: UserNodeBindingData
+}
+
 export interface GetLogStatsParams {
   type?: number
   username?: string

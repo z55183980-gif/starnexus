@@ -227,6 +227,7 @@ func AddToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	refreshUserNodeBindingAsync(cleanToken.UserId)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -241,6 +242,7 @@ func DeleteToken(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	refreshUserNodeBindingAsync(userId)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -328,6 +330,7 @@ func DeleteTokenBatch(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	refreshUserNodeBindingAsync(userId)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
