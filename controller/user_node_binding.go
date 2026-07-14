@@ -41,15 +41,18 @@ func GetUserNodeBinding(c *gin.Context) {
 	if !ok {
 		return
 	}
-	node, err := model.GetUserNodeBinding(user.Id)
+	binding, err := model.GetUserNodeBindingRecord(user.Id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	common.ApiSuccess(c, gin.H{
-		"user_id":    user.Id,
-		"node":       node,
-		"configured": service.IsUserNodeRouterConfigured(),
+		"user_id":             user.Id,
+		"node":                binding.Node,
+		"revision":            binding.Revision,
+		"tokens_synced":       binding.TokensSynced,
+		"configured":          service.IsUserNodeRouterConfigured(),
+		"propagation_seconds": 60,
 	})
 }
 
@@ -63,17 +66,8 @@ func UpdateUserNodeBinding(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	node, err := model.NormalizeUserNode(input.Node)
+	binding, err := service.UpdateUserNodeRoute(c.Request.Context(), user.Id, input.Node)
 	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-		return
-	}
-	previousNode, err := model.GetUserNodeBinding(user.Id)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if err := service.SyncUserNodeBinding(c.Request.Context(), user.Id, node); err != nil {
 		if errors.Is(err, service.ErrUserNodeRouterNotConfigured) {
 			common.ApiErrorMsg(c, "用户节点路由未配置")
 			return
@@ -81,18 +75,14 @@ func UpdateUserNodeBinding(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := model.SaveUserNodeBinding(user.Id, node); err != nil {
-		if rollbackErr := service.SyncUserNodeBinding(context.Background(), user.Id, previousNode); rollbackErr != nil {
-			common.SysLog(fmt.Sprintf("failed to roll back user node binding for user %d: %s", user.Id, rollbackErr.Error()))
-		}
-		common.ApiError(c, err)
-		return
-	}
-	model.RecordLog(user.Id, model.LogTypeManage, fmt.Sprintf("admin updated user node binding to %s", node))
+	model.RecordLog(user.Id, model.LogTypeManage, fmt.Sprintf("admin updated user node binding to %s", binding.Node))
 	common.ApiSuccess(c, gin.H{
-		"user_id":    user.Id,
-		"node":       node,
-		"configured": true,
+		"user_id":             user.Id,
+		"node":                binding.Node,
+		"revision":            binding.Revision,
+		"tokens_synced":       binding.TokensSynced,
+		"configured":          true,
+		"propagation_seconds": 60,
 	})
 }
 
@@ -112,11 +102,11 @@ func clearUserNodeBindingBestEffort(userId int) {
 		return
 	}
 	if service.IsUserNodeRouterConfigured() {
-		if err := service.SyncUserNodeBinding(context.Background(), userId, model.UserNodeAuto); err != nil {
+		if err := service.DeleteUserNodeRouting(context.Background(), userId); err != nil {
 			common.SysLog(fmt.Sprintf("failed to clear user node binding for user %d: %s", userId, err.Error()))
 		}
 	}
-	if err := model.SaveUserNodeBinding(userId, model.UserNodeAuto); err != nil {
+	if err := model.DeleteUserNodeBinding(userId); err != nil {
 		common.SysLog(fmt.Sprintf("failed to delete stored user node binding for user %d: %s", userId, err.Error()))
 	}
 }

@@ -271,6 +271,8 @@ func migrateDB() error {
 		&Token{},
 		&User{},
 		&UserNodeBinding{},
+		&UserNodeRoutingLock{},
+		&RoutingNode{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
@@ -303,6 +305,9 @@ func migrateDB() error {
 	}
 	err := DB.AutoMigrate(models...)
 	if err != nil {
+		return err
+	}
+	if err := EnsureDefaultRoutingNodes(); err != nil {
 		return err
 	}
 	if !userConcurrencyColumnExists {
@@ -350,6 +355,9 @@ func migrateDBFast() error {
 		{&Channel{}, "Channel"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
+		{&UserNodeBinding{}, "UserNodeBinding"},
+		{&UserNodeRoutingLock{}, "UserNodeRoutingLock"},
+		{&RoutingNode{}, "RoutingNode"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},
@@ -411,6 +419,9 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := EnsureDefaultRoutingNodes(); err != nil {
+		return err
 	}
 	if !userConcurrencyColumnExists {
 		if err := backfillUserConcurrencyDefault(); err != nil {

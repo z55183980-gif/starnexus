@@ -307,12 +307,15 @@ export interface GetLogsResponse {
   }
 }
 
-export type UserRoutingNode = 'auto' | 's1' | 's2' | 's3'
+export type UserRoutingNode = string
 
 export interface UserNodeBindingData {
   user_id: number
   node: UserRoutingNode
+  revision: number
+  tokens_synced: boolean
   configured: boolean
+  propagation_seconds: number
 }
 
 export interface UserNodeBindingResponse {

@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/tooltip'
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
+import { getRoutingNodes } from '@/features/node-routing/api'
 import { getUserNodeBinding, updateUserNodeBinding } from '../../api'
 import type { UsageLog } from '../../data/schema'
 import {
@@ -323,6 +324,12 @@ export function useCommonLogsColumns(
           enabled: open && userId > 0,
           staleTime: 30_000,
         })
+        const nodesQuery = useQuery({
+          queryKey: ['routing-nodes'],
+          queryFn: () => getRoutingNodes(false),
+          enabled: open,
+          staleTime: 60_000,
+        })
         const binding = bindingQuery.data?.data
         const mutation = useMutation({
           mutationFn: async (node: UserRoutingNode) => {
@@ -336,7 +343,9 @@ export function useCommonLogsColumns(
           },
           onSuccess: (result) => {
             queryClient.setQueryData(['user-node-binding', userId], result)
-            toast.success(t('Node binding updated'))
+            toast.success(
+              t('Node binding updated. Changes may take up to 60 seconds.')
+            )
             setOpen(false)
           },
           onError: (error: Error) => {
@@ -344,8 +353,18 @@ export function useCommonLogsColumns(
           },
         })
         const disabled =
-          bindingQuery.isLoading || mutation.isPending || !binding?.configured
-        const options: UserRoutingNode[] = ['auto', 's1', 's2', 's3']
+          bindingQuery.isLoading ||
+          nodesQuery.isLoading ||
+          nodesQuery.isError ||
+          mutation.isPending ||
+          !binding?.configured
+        const options = [
+          { key: 'auto', name: t('Auto') },
+          ...(nodesQuery.data?.data || []).map((node) => ({
+            key: node.key,
+            name: node.name,
+          })),
+        ]
 
         if (userId <= 0) {
           return (
@@ -374,12 +393,17 @@ export function useCommonLogsColumns(
                 <DropdownMenuRadioGroup value={binding?.node || 'auto'}>
                   {options.map((option) => (
                     <DropdownMenuRadioItem
-                      key={option}
-                      value={option}
+                      key={option.key}
+                      value={option.key}
                       disabled={disabled}
-                      onClick={() => mutation.mutate(option)}
+                      onClick={() => mutation.mutate(option.key)}
                     >
-                      {option === 'auto' ? t('Auto') : option}
+                      {option.name}
+                      {option.key !== 'auto' && (
+                        <span className='text-muted-foreground ml-auto font-mono text-xs'>
+                          {option.key}
+                        </span>
+                      )}
                     </DropdownMenuRadioItem>
                   ))}
                 </DropdownMenuRadioGroup>
@@ -387,6 +411,11 @@ export function useCommonLogsColumns(
               {binding && !binding.configured && (
                 <p className='text-muted-foreground px-1.5 py-1 text-xs'>
                   {t('Node router is not configured')}
+                </p>
+              )}
+              {nodesQuery.isError && (
+                <p className='text-destructive px-1.5 py-1 text-xs'>
+                  {t('Failed to load')}
                 </p>
               )}
             </DropdownMenuContent>

@@ -14,7 +14,7 @@ func TestUserNodeBindingLifecycle(t *testing.T) {
 	originalDB := DB
 	DB = db
 	t.Cleanup(func() { DB = originalDB })
-	require.NoError(t, db.AutoMigrate(&UserNodeBinding{}))
+	require.NoError(t, db.AutoMigrate(&UserNodeBinding{}, &UserNodeRoutingLock{}))
 
 	node, err := GetUserNodeBinding(42)
 	require.NoError(t, err)
@@ -30,6 +30,16 @@ func TestUserNodeBindingLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, UserNodeAuto, node)
 
-	_, err = NormalizeUserNode("s4")
+	node, err = NormalizeUserNode("S5-East")
+	require.NoError(t, err)
+	require.Equal(t, "s5-east", node)
+
+	require.NoError(t, SaveUserNodeBindingWithRevision(42, "s5-east", 123))
+	binding, err := GetUserNodeBindingRecord(42)
+	require.NoError(t, err)
+	require.Equal(t, "s5-east", binding.Node)
+	require.Equal(t, int64(123), binding.Revision)
+
+	_, err = NormalizeUserNode("invalid/node")
 	require.Error(t, err)
 }

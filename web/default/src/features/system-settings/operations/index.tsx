@@ -93,6 +93,7 @@ export function OperationsSettings() {
     | 'monitoring'
     | 'email'
     | 'worker'
+    | 'node-routing'
     | 'logs'
     | 'performance'
     | 'update-checker'

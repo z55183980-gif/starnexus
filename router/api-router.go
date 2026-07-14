@@ -168,6 +168,16 @@ func SetApiRouter(router *gin.Engine) {
 			}
 		}
 
+		nodeRoutingRoute := apiRouter.Group("/node-routing")
+		nodeRoutingRoute.Use(middleware.AdminAuth())
+		{
+			nodeRoutingRoute.GET("/nodes", controller.GetRoutingNodes)
+			nodeRoutingRoute.POST("/nodes", middleware.RootAuth(), controller.CreateRoutingNode)
+			nodeRoutingRoute.PUT("/nodes/:id", middleware.RootAuth(), controller.UpdateRoutingNode)
+			nodeRoutingRoute.DELETE("/nodes/:id", middleware.RootAuth(), controller.DeleteRoutingNode)
+			nodeRoutingRoute.POST("/reconcile", middleware.RootAuth(), controller.ReconcileRoutingNodes)
+		}
+
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())
