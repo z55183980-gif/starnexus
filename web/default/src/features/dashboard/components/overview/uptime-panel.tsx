@@ -21,6 +21,7 @@ import { Activity, RotateCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { IconBadge } from '@/components/ui/icon-badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { getUptimeStatus } from '@/features/dashboard/api'
 import type {
@@ -95,7 +96,9 @@ export function UptimePanel() {
     <PanelWrapper
       title={
         <span className='flex items-center gap-2'>
-          <Activity className='text-muted-foreground/60 size-4' />
+          <IconBadge tone='success' size='sm'>
+            <Activity />
+          </IconBadge>
           {t('Uptime')}
         </span>
       }
