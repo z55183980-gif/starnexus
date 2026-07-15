@@ -30,6 +30,31 @@ func GetRoutingNodes(c *gin.Context) {
 	common.ApiSuccess(c, nodes)
 }
 
+func GetRoutingNodeBoundUsers(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	node, err := model.GetRoutingNodeById(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo := common.GetPageQuery(c)
+	users, total, err := model.ListRoutingNodeBoundUsers(node.Key, pageInfo)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"items":     users,
+		"total":     total,
+		"page":      pageInfo.GetPage(),
+		"page_size": pageInfo.GetPageSize(),
+	})
+}
+
 func CreateRoutingNode(c *gin.Context) {
 	var input routingNodeRequest
 	if err := common.DecodeJson(c.Request.Body, &input); err != nil {

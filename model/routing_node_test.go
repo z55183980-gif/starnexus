@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -38,6 +39,30 @@ func TestRoutingNodeLifecycle(t *testing.T) {
 	require.Error(t, DeleteRoutingNode(node.Id))
 	require.NoError(t, DeleteUserNodeBinding(9))
 	require.NoError(t, DeleteRoutingNode(node.Id))
+}
+
+func TestListRoutingNodeBoundUsers(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalDB := DB
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+	require.NoError(t, db.AutoMigrate(&User{}, &UserNodeBinding{}))
+	require.NoError(t, db.Create(&[]User{
+		{Id: 1, Username: "alice", DisplayName: "Alice", AffCode: "alice-code"},
+		{Id: 2, Username: "bob", DisplayName: "Bob", AffCode: "bob-code"},
+		{Id: 3, Username: "carol", DisplayName: "Carol", AffCode: "carol-code"},
+	}).Error)
+	require.NoError(t, db.Create(&[]UserNodeBinding{
+		{UserId: 1, Node: "s1"},
+		{UserId: 2, Node: "s1"},
+		{UserId: 3, Node: "s2"},
+	}).Error)
+
+	users, total, err := ListRoutingNodeBoundUsers("S1", &common.PageInfo{Page: 2, PageSize: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Equal(t, []RoutingNodeBoundUser{{UserId: 2, Username: "bob", DisplayName: "Bob"}}, users)
 }
 
 func TestUserNodeRoutingDatabaseLock(t *testing.T) {

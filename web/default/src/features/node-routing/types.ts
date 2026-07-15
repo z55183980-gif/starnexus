@@ -23,3 +23,20 @@ export interface RoutingNodesResponse {
   message?: string
   data?: RoutingNode[]
 }
+
+export interface RoutingNodeBoundUser {
+  user_id: number
+  username: string
+  display_name: string
+}
+
+export interface RoutingNodeBoundUsersResponse {
+  success: boolean
+  message?: string
+  data?: {
+    items: RoutingNodeBoundUser[]
+    total: number
+    page: number
+    page_size: number
+  }
+}

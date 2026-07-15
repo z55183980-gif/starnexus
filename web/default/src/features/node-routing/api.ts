@@ -1,6 +1,7 @@
 import { api } from '@/lib/api'
 import type {
   RoutingNode,
+  RoutingNodeBoundUsersResponse,
   RoutingNodeInput,
   RoutingNodesResponse,
 } from './types'
@@ -14,6 +15,21 @@ export async function getRoutingNodes(
   const result = res.data as RoutingNodesResponse
   if (!result.success) {
     throw new Error(result.message || 'Failed to load routing nodes')
+  }
+  return result
+}
+
+export async function getRoutingNodeBoundUsers(
+  nodeId: number,
+  page = 1,
+  pageSize = 20
+): Promise<RoutingNodeBoundUsersResponse> {
+  const res = await api.get(`/api/node-routing/nodes/${nodeId}/users`, {
+    params: { p: page, page_size: pageSize },
+  })
+  const result = res.data as RoutingNodeBoundUsersResponse
+  if (!result.success) {
+    throw new Error(result.message || 'Failed to load bound users')
   }
   return result
 }

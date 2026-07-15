@@ -27,6 +27,12 @@ type RoutingNodeWithCount struct {
 	BindingCount int64 `json:"binding_count"`
 }
 
+type RoutingNodeBoundUser struct {
+	UserId      int    `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+}
+
 func NormalizeRoutingNodeKey(key string) (string, error) {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if !routingNodeKeyPattern.MatchString(key) || key == UserNodeAuto {
@@ -97,6 +103,40 @@ func CountUserNodeBindingsByNode(node string) (int64, error) {
 		Where("node = ?", strings.ToLower(strings.TrimSpace(node))).
 		Count(&count).Error
 	return count, err
+}
+
+func ListRoutingNodeBoundUsers(node string, pageInfo *common.PageInfo) ([]RoutingNodeBoundUser, int64, error) {
+	node = strings.ToLower(strings.TrimSpace(node))
+	if pageInfo == nil {
+		pageInfo = &common.PageInfo{Page: 1, PageSize: common.ItemsPerPage}
+	}
+	if pageInfo.Page < 1 {
+		pageInfo.Page = 1
+	}
+	if pageInfo.PageSize < 1 {
+		pageInfo.PageSize = common.ItemsPerPage
+	}
+	if pageInfo.PageSize > 100 {
+		pageInfo.PageSize = 100
+	}
+
+	query := DB.Table("user_node_bindings").
+		Joins("JOIN users ON users.id = user_node_bindings.user_id").
+		Where("user_node_bindings.node = ?", node)
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var users []RoutingNodeBoundUser
+	err := query.
+		Select("users.id AS user_id, users.username, users.display_name").
+		Order("users.id ASC").
+		Limit(pageInfo.GetPageSize()).
+		Offset(pageInfo.GetStartIdx()).
+		Scan(&users).Error
+	return users, total, err
 }
 
 func CreateRoutingNode(node *RoutingNode) error {

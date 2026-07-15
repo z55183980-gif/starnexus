@@ -172,6 +172,7 @@ func SetApiRouter(router *gin.Engine) {
 		nodeRoutingRoute.Use(middleware.AdminAuth())
 		{
 			nodeRoutingRoute.GET("/nodes", controller.GetRoutingNodes)
+			nodeRoutingRoute.GET("/nodes/:id/users", middleware.RootAuth(), controller.GetRoutingNodeBoundUsers)
 			nodeRoutingRoute.POST("/nodes", middleware.RootAuth(), controller.CreateRoutingNode)
 			nodeRoutingRoute.PUT("/nodes/:id", middleware.RootAuth(), controller.UpdateRoutingNode)
 			nodeRoutingRoute.DELETE("/nodes/:id", middleware.RootAuth(), controller.DeleteRoutingNode)
