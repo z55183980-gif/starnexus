@@ -27,7 +27,7 @@ func BuildTieredTokenParamsForContext(usage *dto.Usage, isClaudeUsageSemantic bo
 	p := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokens, tokenPricingCtx))
 	c := float64(billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokens, tokenPricingCtx))
 	cr := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CachedTokens, tokenPricingCtx))
-	cc5m := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CachedCreationTokens, tokenPricingCtx))
+	cc5m := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CacheCreationTokensTotal(), tokenPricingCtx))
 	cc1h := float64(0)
 
 	if usage.UsageSemantic == "anthropic" {

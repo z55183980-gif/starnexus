@@ -27,6 +27,22 @@ const probeExpr = `param("service_tier") == "fast" ? tier("fast", p * 4 + c * 20
 
 const testQuotaPerUnit = 500_000.0
 
+func TestBuildTieredTokenParamsUsesNativeCacheWriteTokens(t *testing.T) {
+	usage := &dto.Usage{
+		PromptTokens: 100,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens:     80,
+			CacheWriteTokens: 90,
+		},
+	}
+
+	params := BuildTieredTokenParams(usage, false, map[string]bool{"cr": true, "cc": true})
+
+	if params.P != 0 || params.CR != 80 || params.CC != 90 {
+		t.Fatalf("params = %#v, want P=0 CR=80 CC=90", params)
+	}
+}
+
 func makeSnapshot(expr string, groupRatio float64, estPrompt, estCompletion int) *billingexpr.BillingSnapshot {
 	return &billingexpr.BillingSnapshot{
 		BillingMode:               "tiered_expr",
