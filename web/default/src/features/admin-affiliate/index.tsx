@@ -54,9 +54,7 @@ type LedgerRow = {
   amount_usd: string
   source_user_id?: number | null
   source_username?: string | null
-  source_topup_id?: number | null
-  frozen_until?: string | null
-  quota_after?: number | null
+  source_topup_amount?: number | null
   created_at: string
 }
 
@@ -118,12 +116,10 @@ function buildAffiliateLedgerCSV(
     t('User'),
     t('User ID'),
     t('Action'),
-    t('Amount'),
+    t('Rebate Amount'),
     t('Source user'),
     t('Source user ID'),
-    t('Top-up'),
-    t('Frozen until'),
-    t('Quota after'),
+    t('Recharge Amount'),
     t('Time'),
   ]
   const lines = rows.map((row) =>
@@ -135,9 +131,9 @@ function buildAffiliateLedgerCSV(
       formatLedgerAmount(row.amount_usd),
       formatUserLabel(row.source_username, row.source_user_id),
       row.source_user_id ?? '',
-      row.source_topup_id ?? '',
-      formatLedgerDate(row.frozen_until),
-      row.quota_after ?? '',
+      row.source_topup_amount == null
+        ? ''
+        : formatLedgerAmount(row.source_topup_amount),
       formatLedgerDate(row.created_at),
     ]
       .map(escapeCSVCell)
@@ -340,14 +336,14 @@ export function AdminAffiliateRecords() {
       },
       {
         accessorKey: 'amount_usd',
-        header: t('Amount'),
+        header: t('Rebate Amount'),
         cell: ({ row }) => (
           <span className='font-mono tabular-nums'>
             {formatLedgerAmount(row.original.amount_usd)}
           </span>
         ),
         size: 120,
-        meta: { label: t('Amount') },
+        meta: { label: t('Rebate Amount') },
       },
       {
         accessorKey: 'source_username',
@@ -371,39 +367,18 @@ export function AdminAffiliateRecords() {
         meta: { label: t('Source user') },
       },
       {
-        accessorKey: 'source_topup_id',
-        header: t('Top-up'),
+        accessorKey: 'source_topup_amount',
+        header: t('Recharge Amount'),
         cell: ({ row }) =>
-          row.original.source_topup_id == null ? (
+          row.original.source_topup_amount == null ? (
             '-'
           ) : (
             <span className='font-mono tabular-nums'>
-              {row.original.source_topup_id}
-            </span>
-          ),
-        size: 96,
-        meta: { label: t('Top-up') },
-      },
-      {
-        accessorKey: 'frozen_until',
-        header: t('Frozen until'),
-        cell: ({ row }) => formatLedgerDate(row.original.frozen_until),
-        size: 172,
-        meta: { label: t('Frozen until'), mobileHidden: true },
-      },
-      {
-        accessorKey: 'quota_after',
-        header: t('Quota after'),
-        cell: ({ row }) =>
-          row.original.quota_after == null ? (
-            '-'
-          ) : (
-            <span className='font-mono tabular-nums'>
-              {row.original.quota_after.toLocaleString()}
+              {formatLedgerAmount(row.original.source_topup_amount)}
             </span>
           ),
         size: 120,
-        meta: { label: t('Quota after'), mobileHidden: true },
+        meta: { label: t('Recharge Amount') },
       },
       {
         accessorKey: 'created_at',
@@ -449,7 +424,7 @@ export function AdminAffiliateRecords() {
       customSearch={
         <Input
           placeholder={t(
-            'Search by record ID, user ID, username, source user, top-up, or action...'
+            'Search by record ID, user ID, username, source user, or action...'
           )}
           value={searchDraft}
           onChange={(e) => setSearchDraft(e.target.value)}

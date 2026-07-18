@@ -81,17 +81,18 @@ func TransferAffiliateUSD(c *gin.Context) {
 }
 
 type affiliateLedgerItem struct {
-	Id             int64           `json:"id"`
-	UserId         int             `json:"user_id"`
-	Username       string          `json:"username"`
-	Action         string          `json:"action"`
-	AmountUSD      decimal.Decimal `json:"amount_usd"`
-	SourceUserId   *int            `json:"source_user_id"`
-	SourceUsername *string         `json:"source_username"`
-	SourceTopUpId  *int            `json:"source_topup_id"`
-	FrozenUntil    *time.Time      `json:"frozen_until,omitempty"`
-	QuotaAfter     *int            `json:"quota_after,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
+	Id                int64           `json:"id"`
+	UserId            int             `json:"user_id"`
+	Username          string          `json:"username"`
+	Action            string          `json:"action"`
+	AmountUSD         decimal.Decimal `json:"amount_usd"`
+	SourceUserId      *int            `json:"source_user_id"`
+	SourceUsername    *string         `json:"source_username"`
+	SourceTopUpId     *int            `json:"source_topup_id" gorm:"column:source_topup_id"`
+	SourceTopUpAmount *int64          `json:"source_topup_amount" gorm:"column:source_topup_amount"`
+	FrozenUntil       *time.Time      `json:"frozen_until,omitempty"`
+	QuotaAfter        *int            `json:"quota_after,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
 }
 
 func listAffiliateLedgers(c *gin.Context, scopedUserID *int) {
@@ -109,7 +110,8 @@ func listAffiliateLedgers(c *gin.Context, scopedUserID *int) {
 	var rows []affiliateLedgerItem
 	q := model.DB.Table("user_affiliate_ledger AS l").
 		Joins("LEFT JOIN users AS u ON u.id = l.user_id").
-		Joins("LEFT JOIN users AS su ON su.id = l.source_user_id")
+		Joins("LEFT JOIN users AS su ON su.id = l.source_user_id").
+		Joins("LEFT JOIN top_ups AS tu ON tu.id = l.source_topup_id")
 	if scopedUserID != nil {
 		q = q.Where("l.user_id = ?", *scopedUserID)
 	} else if userID := c.Query("user_id"); userID != "" {
@@ -169,6 +171,7 @@ func listAffiliateLedgers(c *gin.Context, scopedUserID *int) {
 		"l.source_user_id",
 		"su.username AS source_username",
 		"l.source_topup_id",
+		"tu.amount AS source_topup_amount",
 		"l.frozen_until",
 		"l.quota_after",
 		"l.created_at",

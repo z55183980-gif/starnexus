@@ -23,7 +23,7 @@ func setupAffiliateLedgerTestDB(t *testing.T) *gorm.DB {
 	t.Cleanup(func() {
 		model.DB = originalDB
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserAffiliateLedger{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.UserAffiliateLedger{}))
 	return db
 }
 
@@ -43,6 +43,13 @@ func TestAdminListAffiliateLedgersReturnsUsernames(t *testing.T) {
 	require.NoError(t, db.Create(&model.User{Id: 2, Username: "invitee", Role: common.RoleCommonUser, AffCode: "INVITEE"}).Error)
 	sourceUserID := 2
 	sourceTopUpID := 91
+	require.NoError(t, db.Create(&model.TopUp{
+		Id:      sourceTopUpID,
+		UserId:  sourceUserID,
+		Amount:  50,
+		TradeNo: "affiliate-ledger-test-topup",
+		Status:  "success",
+	}).Error)
 	require.NoError(t, db.Create(&model.UserAffiliateLedger{
 		UserId:        1,
 		Action:        common.AffiliateLedgerActionAccrue,
@@ -69,6 +76,8 @@ func TestAdminListAffiliateLedgersReturnsUsernames(t *testing.T) {
 	require.Equal(t, "agent", response.Data.Items[0].Username)
 	require.NotNil(t, response.Data.Items[0].SourceUsername)
 	require.Equal(t, "invitee", *response.Data.Items[0].SourceUsername)
+	require.NotNil(t, response.Data.Items[0].SourceTopUpAmount)
+	require.Equal(t, int64(50), *response.Data.Items[0].SourceTopUpAmount)
 }
 
 func TestAgentListAffiliateLedgersIsScopedToCurrentUser(t *testing.T) {

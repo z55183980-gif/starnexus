@@ -141,11 +141,6 @@ export function useSidebarData(): SidebarData {
             icon: Users,
           },
           {
-            title: t('Top-up Records'),
-            url: '/topup-records',
-            icon: Receipt,
-          },
-          {
             title: t('Usage Logs'),
             url: '/usage-logs/common',
             icon: FileText,

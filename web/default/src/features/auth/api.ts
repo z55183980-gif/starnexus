@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { getAffiliateCode } from './lib/storage'
 import type {
   LoginPayload,
   LoginResponse,
@@ -86,8 +87,7 @@ export async function githubOAuthStart(clientId: string, state: string) {
 
 // Get OAuth state for CSRF protection
 export async function getOAuthState(): Promise<string> {
-  const aff =
-    typeof window !== 'undefined' ? (localStorage.getItem('aff') ?? '') : ''
+  const aff = getAffiliateCode()
   const res = await api.get('/api/oauth/state', { params: { aff } })
   if (res.data?.success) return res.data.data
   return ''

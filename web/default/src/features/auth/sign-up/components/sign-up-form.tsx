@@ -89,13 +89,14 @@ export function SignUpForm({
     turnstileToken,
     validateTurnstile,
   })
+  const initialAffiliateCode = useMemo(() => getAffiliateCode(), [])
 
   const form = useForm<z.infer<typeof registerFormSchema>>({
     resolver: zodResolver(registerFormSchema),
     defaultValues: {
       username: '',
       email: '',
-      aff_code: '',
+      aff_code: initialAffiliateCode,
       password: '',
       confirmPassword: '',
     },
@@ -134,13 +135,6 @@ export function SignUpForm({
       setAgreedToLegal(true)
     }
   }, [requiresLegalConsent])
-
-  useEffect(() => {
-    const storedAffiliateCode = getAffiliateCode()
-    if (storedAffiliateCode) {
-      form.setValue('aff_code', storedAffiliateCode)
-    }
-  }, [form])
 
   useEffect(() => {
     saveAffiliateCode(affiliateCodeValue || '')
@@ -271,7 +265,9 @@ export function SignUpForm({
                 <Input
                   placeholder={t('Enter invitation code if you have one')}
                   {...field}
-                  onChange={(event) => field.onChange(event.target.value.trim())}
+                  onChange={(event) =>
+                    field.onChange(event.target.value.trim())
+                  }
                 />
               </FormControl>
               <FormMessage />

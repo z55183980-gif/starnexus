@@ -83,6 +83,12 @@ export function removeUserId(): void {
  */
 export function getAffiliateCode(): string {
   if (typeof window === 'undefined') return ''
+
+  const urlCode = new URLSearchParams(window.location.search)
+    .get(STORAGE_KEYS.AFFILIATE)
+    ?.trim()
+  if (urlCode) return urlCode
+
   try {
     return window.localStorage.getItem(STORAGE_KEYS.AFFILIATE) ?? ''
   } catch (error) {

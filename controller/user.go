@@ -176,7 +176,14 @@ func Register(c *gin.Context) {
 		return
 	}
 	affCode := strings.ToUpper(strings.TrimSpace(user.AffCode)) // inviter's code, not the new user's own code
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	inviterId := 0
+	if affCode != "" {
+		inviterId, err = model.GetUserIdByAffCode(affCode)
+		if err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserAffCodeInvalid)
+			return
+		}
+	}
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
