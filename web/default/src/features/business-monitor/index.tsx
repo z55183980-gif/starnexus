@@ -23,6 +23,8 @@ import {
   CircleDollarSign,
   Clock3,
   Gauge,
+  KeyRound,
+  Sparkles,
   Check,
   CheckCircle2,
   Timer,
@@ -31,6 +33,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
+import { StatusBadge } from '@/components/status-badge'
 import {
   Card,
   CardAction,
@@ -101,10 +104,6 @@ function parseNodeNumber(log: UsageLog, index: number) {
   return (index % 4) + 1
 }
 
-function getLogTokens(log: UsageLog) {
-  return Math.max(0, log.prompt_tokens + log.completion_tokens)
-}
-
 const TIMING_PILL_BG: Record<string, string> = {
   success:
     'border border-emerald-200/40 bg-emerald-50/35 dark:border-emerald-900/40 dark:bg-emerald-950/15',
@@ -112,6 +111,78 @@ const TIMING_PILL_BG: Record<string, string> = {
     'border border-amber-200/45 bg-amber-50/35 dark:border-amber-900/40 dark:bg-amber-950/15',
   danger:
     'border border-rose-200/50 bg-rose-50/35 dark:border-rose-900/40 dark:bg-rose-950/15',
+}
+
+function formatRatioCompact(ratio: number | undefined) {
+  if (ratio == null || !Number.isFinite(ratio)) return '-'
+  return ratio % 1 === 0
+    ? String(ratio)
+    : ratio.toFixed(4).replace(/\.?0+$/, '')
+}
+
+function TokenDisplay({ log }: { log: UsageLog }) {
+  const other = parseLogOther(log.other)
+  const tokenName = log.token_name
+  if (!tokenName) return null
+  const group = log.group || other?.group || ''
+  const ratio =
+    other?.user_group_ratio != null &&
+    other.user_group_ratio !== -1 &&
+    Number.isFinite(other.user_group_ratio)
+      ? other.user_group_ratio
+      : other?.group_ratio != null &&
+          other.group_ratio !== 1 &&
+          Number.isFinite(other.group_ratio)
+        ? other.group_ratio
+        : undefined
+  const meta = [group, ratio == null ? '' : `${formatRatioCompact(ratio)}x`]
+    .filter(Boolean)
+    .join(' · ')
+
+  return (
+    <div className='flex max-w-[200px] flex-col gap-0.5'>
+      <StatusBadge
+        label={tokenName}
+        icon={KeyRound}
+        copyText={tokenName}
+        size='sm'
+        showDot={false}
+        className='border-border/60 bg-muted/30 text-foreground max-w-full overflow-hidden rounded-md border px-1.5 py-0.5 font-mono'
+      />
+      {meta && (
+        <span className='text-muted-foreground/60 truncate text-[11px]'>
+          {meta}
+        </span>
+      )}
+    </div>
+  )
+}
+
+function ChannelDisplay({ log }: { log: UsageLog }) {
+  const other = parseLogOther(log.other)
+  const affinity = other?.admin_info?.channel_affinity
+
+  return (
+    <div className='flex max-w-[160px] flex-col gap-0.5'>
+      <div className='relative inline-flex w-fit'>
+        <StatusBadge
+          label={`#${log.channel}`}
+          autoColor={String(log.channel)}
+          copyText={String(log.channel)}
+          size='sm'
+          className='font-mono'
+        />
+        {affinity && (
+          <Sparkles className='absolute -top-1 -right-1 size-3 fill-current text-amber-500' />
+        )}
+      </div>
+      {log.channel_name && (
+        <span className='text-muted-foreground/70 truncate text-[11px]'>
+          {log.channel_name}
+        </span>
+      )}
+    </div>
+  )
 }
 
 const TIMING_PILL_TEXT: Record<string, string> = {
@@ -400,6 +471,7 @@ export function BusinessMonitor() {
       }
       const [
         logsResponse,
+        errorLogsResponse,
         statsResponse,
         quotaResponse,
         alertsResponse,
@@ -411,6 +483,13 @@ export function BusinessMonitor() {
             p: 1,
             page_size: 100,
             type: LOG_TYPE_ENUM.CONSUME,
+            start_timestamp: todayStart,
+            end_timestamp: now,
+          }),
+          getAllLogs({
+            p: 1,
+            page_size: 100,
+            type: LOG_TYPE_ENUM.ERROR,
             start_timestamp: todayStart,
             end_timestamp: now,
           }),
@@ -431,9 +510,15 @@ export function BusinessMonitor() {
           fetchUserSummary(),
         ])
 
-      const logs = (
+      const consumeLogs = (
         logsResponse.success ? (logsResponse.data?.items ?? []) : []
       ) as UsageLog[]
+      const errorLogs = (
+        errorLogsResponse.success ? (errorLogsResponse.data?.items ?? []) : []
+      ) as UsageLog[]
+      const logs = [...consumeLogs, ...errorLogs]
+        .sort((a, b) => b.created_at - a.created_at || b.id - a.id)
+        .slice(0, 100)
       const quotaData = quotaResponse.success ? (quotaResponse.data ?? []) : []
       const totalTokens = quotaData.reduce(
         (total, item) => total + Number(item.token_used || 0),
@@ -550,13 +635,14 @@ export function BusinessMonitor() {
           <div className='grid min-w-0 grid-cols-1 items-stretch gap-3 sm:gap-4 xl:grid-cols-[minmax(0,2.15fr)_minmax(260px,0.95fr)]'>
             <Card size='sm' className='h-full min-w-0 gap-0 py-0'>
               <CardContent className='p-0'>
-                <Table className='min-w-[720px] [&_th]:h-8'>
+                <Table className='min-w-[820px] [&_th]:h-8'>
                   <TableHeader className='bg-muted/30'>
                     <TableRow>
                       <TableHead>{t('Time')}</TableHead>
                       <TableHead>{t('User / Model')}</TableHead>
-                      <TableHead>{t('Channel / Latency')}</TableHead>
-                      <TableHead>{t('Tokens')}</TableHead>
+                      <TableHead>{t('Channel')}</TableHead>
+                      <TableHead>{t('Timing')}</TableHead>
+                      <TableHead>{t('Token')}</TableHead>
                       <TableHead>{t('Consumption')}</TableHead>
                       <TableHead>{t('Status')}</TableHead>
                     </TableRow>
@@ -585,26 +671,38 @@ export function BusinessMonitor() {
                           </div>
                         </TableCell>
                         <TableCell className='py-1.5'>
-                          <div className='flex min-w-0 flex-col gap-1.5'>
-                            <span className='truncate font-medium'>
-                              {log.channel_name || `#${log.channel}`}
-                            </span>
-                            <LogTiming log={log} />
-                          </div>
+                          <ChannelDisplay log={log} />
                         </TableCell>
-                        <TableCell className='py-1.5 tabular-nums'>
-                          {formatTokens(getLogTokens(log))}
+                        <TableCell className='py-1.5'>
+                          <LogTiming log={log} />
+                        </TableCell>
+                        <TableCell className='py-1.5'>
+                          <TokenDisplay log={log} />
                         </TableCell>
                         <TableCell className='py-1.5 tabular-nums'>
                           {formatLogQuota(log.quota)}
                         </TableCell>
                         <TableCell className='py-1.5'>
+                          {(() => {
+                            const isError = log.type === LOG_TYPE_ENUM.ERROR
+                            return (
                           <Badge
-                            variant='outline'
+                            variant={isError ? 'destructive' : 'outline'}
+                            className={
+                              isError
+                                ? undefined
+                                : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400'
+                            }
                           >
-                            <CircleCheck data-icon='inline-start' />
-                            {t('Success')}
+                            {isError ? (
+                              <CircleAlert data-icon='inline-start' />
+                            ) : (
+                              <CircleCheck data-icon='inline-start' />
+                            )}
+                            {t(isError ? 'Error' : 'Success')}
                           </Badge>
+                            )
+                          })()}
                         </TableCell>
                       </TableRow>
                     ))}

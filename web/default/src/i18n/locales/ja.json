@@ -674,7 +674,6 @@
     "Changes are written to the settings draft on save.": "保存すると変更は設定ドラフトに書き込まれます。",
     "Changing...": "変更中...",
     "Channel": "チャネル",
-    "Channel / Latency": "チャネル / レイテンシ",
     "Channel Affinity": "チャネルアフィニティ",
     "Channel affinity reuses the last successful channel based on keys extracted from the request context or JSON body.": "チャネルアフィニティは、リクエストコンテキストまたは JSON Body から抽出したキーに基づいて、前回成功したチャネルを優先的に再利用します。",
     "Channel Affinity: Upstream Cache Hit": "チャネルアフィニティ：上流キャッシュヒット",

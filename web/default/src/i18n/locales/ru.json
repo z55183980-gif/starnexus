@@ -674,7 +674,6 @@
     "Changes are written to the settings draft on save.": "Изменения будут записаны в черновик настроек при сохранении.",
     "Changing...": "Изменение...",
     "Channel": "Канал",
-    "Channel / Latency": "Канал / Задержка",
     "Channel Affinity": "Привязка к каналу",
     "Channel affinity reuses the last successful channel based on keys extracted from the request context or JSON body.": "Привязка к каналу повторно использует последний успешный канал на основе ключей, извлечённых из контекста запроса или тела JSON.",
     "Channel Affinity: Upstream Cache Hit": "Привязка к каналу: попадание в кэш upstream",

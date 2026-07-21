@@ -674,7 +674,6 @@
     "Changes are written to the settings draft on save.": "Changes are written to the settings draft on save.",
     "Changing...": "Changing...",
     "Channel": "Channel",
-    "Channel / Latency": "Channel / Latency",
     "Channel Affinity": "Channel Affinity",
     "Channel affinity reuses the last successful channel based on keys extracted from the request context or JSON body.": "Channel affinity reuses the last successful channel based on keys extracted from the request context or JSON body.",
     "Channel Affinity: Upstream Cache Hit": "Channel Affinity: Upstream Cache Hit",

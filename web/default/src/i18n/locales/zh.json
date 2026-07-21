@@ -674,7 +674,6 @@
     "Changes are written to the settings draft on save.": "保存后会写入设置草稿。",
     "Changing...": "修改中...",
     "Channel": "渠道",
-    "Channel / Latency": "渠道 / 延迟",
     "Channel Affinity": "渠道亲和性",
     "Channel affinity reuses the last successful channel based on keys extracted from the request context or JSON body.": "渠道亲和性会基于从请求上下文或 JSON Body 提取的 Key，优先复用上一次成功的渠道。",
     "Channel Affinity: Upstream Cache Hit": "渠道亲和性：上游缓存命中",

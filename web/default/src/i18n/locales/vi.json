@@ -674,7 +674,6 @@
     "Changes are written to the settings draft on save.": "Các thay đổi sẽ được ghi vào bản nháp cài đặt khi lưu.",
     "Changing...": "Đang thay đổi...",
     "Channel": "Kênh",
-    "Channel / Latency": "Kênh / Độ trễ",
     "Channel Affinity": "Ưu tiên kênh",
     "Channel affinity reuses the last successful channel based on keys extracted from the request context or JSON body.": "Ưu tiên kênh sẽ sử dụng lại kênh thành công gần nhất dựa trên các khóa được trích xuất từ ngữ cảnh yêu cầu hoặc JSON body.",
     "Channel Affinity: Upstream Cache Hit": "Ưu tiên kênh: Cache hit từ upstream",
