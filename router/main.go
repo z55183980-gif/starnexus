@@ -13,6 +13,8 @@ import (
 )
 
 func SetRouter(router *gin.Engine, assets ThemeAssets) {
+	// Track only AI relay requests for the cross-instance business monitor.
+	router.Use(middleware.GlobalRelayConcurrency())
 	SetApiRouter(router)
 	SetDashboardRouter(router)
 	SetRelayRouter(router)

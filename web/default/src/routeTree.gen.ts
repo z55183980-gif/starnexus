@@ -49,6 +49,7 @@ import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authentica
 import { Route as AuthenticatedImageWorkbenchIndexRouteImport } from './routes/_authenticated/image-workbench/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
+import { Route as AuthenticatedBusinessMonitorIndexRouteImport } from './routes/_authenticated/business-monitor/index'
 import { Route as AuthenticatedAffiliateIndexRouteImport } from './routes/_authenticated/affiliate/index'
 import { Route as AuthenticatedAffiliateRecordsIndexRouteImport } from './routes/_authenticated/affiliate-records/index'
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
@@ -284,6 +285,12 @@ const AuthenticatedChannelsIndexRoute =
     path: '/channels/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedBusinessMonitorIndexRoute =
+  AuthenticatedBusinessMonitorIndexRouteImport.update({
+    id: '/business-monitor/',
+    path: '/business-monitor/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedAffiliateIndexRoute =
   AuthenticatedAffiliateIndexRouteImport.update({
     id: '/affiliate/',
@@ -453,6 +460,7 @@ export interface FileRoutesByFullPath {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/affiliate-records/': typeof AuthenticatedAffiliateRecordsIndexRoute
   '/affiliate/': typeof AuthenticatedAffiliateIndexRoute
+  '/business-monitor/': typeof AuthenticatedBusinessMonitorIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/image-workbench/': typeof AuthenticatedImageWorkbenchIndexRoute
@@ -515,6 +523,7 @@ export interface FileRoutesByTo {
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/affiliate-records': typeof AuthenticatedAffiliateRecordsIndexRoute
   '/affiliate': typeof AuthenticatedAffiliateIndexRoute
+  '/business-monitor': typeof AuthenticatedBusinessMonitorIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/image-workbench': typeof AuthenticatedImageWorkbenchIndexRoute
@@ -581,6 +590,7 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/affiliate-records/': typeof AuthenticatedAffiliateRecordsIndexRoute
   '/_authenticated/affiliate/': typeof AuthenticatedAffiliateIndexRoute
+  '/_authenticated/business-monitor/': typeof AuthenticatedBusinessMonitorIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/image-workbench/': typeof AuthenticatedImageWorkbenchIndexRoute
@@ -646,6 +656,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/affiliate-records/'
     | '/affiliate/'
+    | '/business-monitor/'
     | '/channels/'
     | '/dashboard/'
     | '/image-workbench/'
@@ -708,6 +719,7 @@ export interface FileRouteTypes {
     | '/usage-logs/$section'
     | '/affiliate-records'
     | '/affiliate'
+    | '/business-monitor'
     | '/channels'
     | '/dashboard'
     | '/image-workbench'
@@ -773,6 +785,7 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/affiliate-records/'
     | '/_authenticated/affiliate/'
+    | '/_authenticated/business-monitor/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/image-workbench/'
@@ -1108,6 +1121,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChannelsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/business-monitor/': {
+      id: '/_authenticated/business-monitor/'
+      path: '/business-monitor'
+      fullPath: '/business-monitor/'
+      preLoaderRoute: typeof AuthenticatedBusinessMonitorIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/affiliate/': {
       id: '/_authenticated/affiliate/'
       path: '/affiliate'
@@ -1366,6 +1386,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedAffiliateRecordsIndexRoute: typeof AuthenticatedAffiliateRecordsIndexRoute
   AuthenticatedAffiliateIndexRoute: typeof AuthenticatedAffiliateIndexRoute
+  AuthenticatedBusinessMonitorIndexRoute: typeof AuthenticatedBusinessMonitorIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedImageWorkbenchIndexRoute: typeof AuthenticatedImageWorkbenchIndexRoute
@@ -1393,6 +1414,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedAffiliateRecordsIndexRoute:
     AuthenticatedAffiliateRecordsIndexRoute,
   AuthenticatedAffiliateIndexRoute: AuthenticatedAffiliateIndexRoute,
+  AuthenticatedBusinessMonitorIndexRoute:
+    AuthenticatedBusinessMonitorIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedImageWorkbenchIndexRoute: AuthenticatedImageWorkbenchIndexRoute,

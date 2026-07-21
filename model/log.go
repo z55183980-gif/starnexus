@@ -57,6 +57,35 @@ type Log struct {
 	Other             string `json:"other"`
 }
 
+func publishBusinessMonitorLog(log *Log) {
+	if !common.RedisEnabled || common.RDB == nil {
+		return
+	}
+	logCopy := *log
+	gopool.Go(func() {
+		if err := common.PublishBusinessMonitorLog(&logCopy); err != nil {
+			common.SysLog("failed to publish business monitor log: " + err.Error())
+		}
+	})
+}
+
+func publishBusinessMonitorAlert(log *Log) {
+	logCopy := *log
+	gopool.Go(func() {
+		alert, err := UpsertErrorAlert(&logCopy)
+		if err != nil {
+			common.SysLog("failed to upsert business monitor alert: " + err.Error())
+			return
+		}
+		if !common.RedisEnabled || common.RDB == nil {
+			return
+		}
+		if err = common.PublishBusinessMonitorEvent("alert", alert); err != nil {
+			common.SysLog("failed to publish business monitor alert: " + err.Error())
+		}
+	})
+}
+
 // don't use iota, avoid change log type value
 const (
 	LogTypeUnknown = 0
@@ -213,6 +242,9 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+	} else {
+		publishBusinessMonitorLog(log)
+		publishBusinessMonitorAlert(log)
 	}
 }
 
@@ -292,6 +324,8 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+	} else {
+		publishBusinessMonitorLog(log)
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
@@ -340,6 +374,8 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
+	} else {
+		publishBusinessMonitorLog(log)
 	}
 }
 

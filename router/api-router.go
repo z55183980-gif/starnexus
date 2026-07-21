@@ -367,6 +367,15 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			logRoute.GET("/token", middleware.TokenAuthReadOnly(), controller.GetLogByKey)
 		}
+		businessMonitorRoute := apiRouter.Group("/business-monitor")
+		businessMonitorRoute.Use(middleware.AdminAuth())
+		{
+			businessMonitorRoute.GET("/stream", controller.StreamBusinessMonitorLogs)
+			businessMonitorRoute.GET("/concurrency", controller.GetBusinessMonitorConcurrency)
+			businessMonitorRoute.GET("/alerts", controller.GetBusinessMonitorAlerts)
+			businessMonitorRoute.POST("/alerts/:id/acknowledge", controller.AcknowledgeBusinessMonitorAlert)
+			businessMonitorRoute.POST("/alerts/:id/resolve", controller.ResolveBusinessMonitorAlert)
+		}
 		groupRoute := apiRouter.Group("/group")
 		groupRoute.Use(middleware.AdminAuth())
 		{

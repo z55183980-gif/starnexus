@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Activity,
+  ChartNoAxesCombined,
   Box,
   CreditCard,
   FileText,
@@ -156,6 +157,11 @@ export function useSidebarData(): SidebarData {
         id: 'admin',
         title: t('Admin'),
         items: [
+          {
+            title: t('Business Monitor'),
+            url: '/business-monitor',
+            icon: ChartNoAxesCombined,
+          },
           {
             title: t('Channels'),
             url: '/channels',
