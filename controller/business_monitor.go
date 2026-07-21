@@ -71,8 +71,13 @@ func StreamBusinessMonitorLogs(c *gin.Context) {
 				continue
 			}
 			eventName := "business-monitor-log"
-			if eventType, ok := message.Values["type"].(string); ok && eventType == "alert" {
-				eventName = "business-monitor-alert"
+			if eventType, ok := message.Values["type"].(string); ok {
+				switch eventType {
+				case "alert":
+					eventName = "business-monitor-alert"
+				case "concurrency":
+					eventName = "business-monitor-concurrency"
+				}
 			}
 			if _, err = fmt.Fprintf(c.Writer, "id: %s\nevent: %s\ndata: %s\n\n", message.ID, eventName, payload); err != nil {
 				return

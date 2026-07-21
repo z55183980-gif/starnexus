@@ -62,7 +62,7 @@ func SetRelayRouter(router *gin.Engine) {
 	playgroundRouter := router.Group("/pg")
 	playgroundRouter.Use(middleware.RouteTag("relay"))
 	playgroundRouter.Use(middleware.SystemPerformanceCheck())
-	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute())
+	playgroundRouter.Use(middleware.UserAuth(), middleware.Distribute(), middleware.RelayConcurrency())
 	{
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 	}
@@ -75,7 +75,7 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")
-		wsRouter.Use(middleware.Distribute())
+		wsRouter.Use(middleware.Distribute(), middleware.RelayConcurrency())
 		wsRouter.GET("/realtime", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIRealtime)
 		})
@@ -84,70 +84,72 @@ func SetRelayRouter(router *gin.Engine) {
 		//http router
 		httpRouter := relayV1Router.Group("")
 		httpRouter.Use(middleware.Distribute())
+		relayHTTPRouter := httpRouter.Group("")
+		relayHTTPRouter.Use(middleware.RelayConcurrency())
 
 		// claude related routes
-		httpRouter.POST("/messages", func(c *gin.Context) {
+		relayHTTPRouter.POST("/messages", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatClaude)
 		})
 
 		// chat related routes
-		httpRouter.POST("/completions", func(c *gin.Context) {
+		relayHTTPRouter.POST("/completions", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
-		httpRouter.POST("/chat/completions", func(c *gin.Context) {
+		relayHTTPRouter.POST("/chat/completions", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
 
 		// response related routes
-		httpRouter.POST("/responses", func(c *gin.Context) {
+		relayHTTPRouter.POST("/responses", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIResponses)
 		})
-		httpRouter.POST("/responses/compact", func(c *gin.Context) {
+		relayHTTPRouter.POST("/responses/compact", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
 		})
 
 		// image related routes
-		httpRouter.POST("/edits", func(c *gin.Context) {
+		relayHTTPRouter.POST("/edits", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIImage)
 		})
-		httpRouter.POST("/images/generations", func(c *gin.Context) {
+		relayHTTPRouter.POST("/images/generations", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIImage)
 		})
-		httpRouter.POST("/images/edits", func(c *gin.Context) {
+		relayHTTPRouter.POST("/images/edits", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIImage)
 		})
 
 		// embedding related routes
-		httpRouter.POST("/embeddings", func(c *gin.Context) {
+		relayHTTPRouter.POST("/embeddings", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatEmbedding)
 		})
 
 		// audio related routes
-		httpRouter.POST("/audio/transcriptions", func(c *gin.Context) {
+		relayHTTPRouter.POST("/audio/transcriptions", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)
 		})
-		httpRouter.POST("/audio/translations", func(c *gin.Context) {
+		relayHTTPRouter.POST("/audio/translations", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)
 		})
-		httpRouter.POST("/audio/speech", func(c *gin.Context) {
+		relayHTTPRouter.POST("/audio/speech", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)
 		})
 
 		// rerank related routes
-		httpRouter.POST("/rerank", func(c *gin.Context) {
+		relayHTTPRouter.POST("/rerank", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatRerank)
 		})
 
 		// gemini relay routes
-		httpRouter.POST("/engines/:model/embeddings", func(c *gin.Context) {
+		relayHTTPRouter.POST("/engines/:model/embeddings", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatGemini)
 		})
-		httpRouter.POST("/models/*path", func(c *gin.Context) {
+		relayHTTPRouter.POST("/models/*path", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatGemini)
 		})
 
 		// other relay routes
-		httpRouter.POST("/moderations", func(c *gin.Context) {
+		relayHTTPRouter.POST("/moderations", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
 
@@ -182,9 +184,9 @@ func SetRelayRouter(router *gin.Engine) {
 	relaySunoRouter.Use(middleware.SystemPerformanceCheck())
 	relaySunoRouter.Use(middleware.TokenAuth(), middleware.Distribute())
 	{
-		relaySunoRouter.POST("/submit/:action", middleware.UserConcurrencyLimit(), controller.RelayTask)
-		relaySunoRouter.POST("/fetch", controller.RelayTaskFetch)
-		relaySunoRouter.GET("/fetch/:id", controller.RelayTaskFetch)
+		relaySunoRouter.POST("/submit/:action", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayTask)
+		relaySunoRouter.POST("/fetch", middleware.RelayConcurrency(), controller.RelayTaskFetch)
+		relaySunoRouter.GET("/fetch/:id", middleware.RelayConcurrency(), controller.RelayTaskFetch)
 	}
 
 	relayGeminiRouter := router.Group("/v1beta")
@@ -193,7 +195,7 @@ func SetRelayRouter(router *gin.Engine) {
 	relayGeminiRouter.Use(middleware.TokenAuth())
 	relayGeminiRouter.Use(middleware.UserConcurrencyLimit())
 	relayGeminiRouter.Use(middleware.ModelRequestRateLimit())
-	relayGeminiRouter.Use(middleware.Distribute())
+	relayGeminiRouter.Use(middleware.Distribute(), middleware.RelayConcurrency())
 	{
 		// Gemini API 路径格式: /v1beta/models/{model_name}:{action}
 		relayGeminiRouter.POST("/models/*path", func(c *gin.Context) {
@@ -206,21 +208,21 @@ func registerMjRouterGroup(relayMjRouter *gin.RouterGroup) {
 	relayMjRouter.GET("/image/:id", relay.RelayMidjourneyImage)
 	relayMjRouter.Use(middleware.TokenAuth(), middleware.Distribute())
 	{
-		relayMjRouter.POST("/submit/action", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/shorten", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/modal", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/imagine", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/change", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/simple-change", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/describe", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/blend", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/edits", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/video", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/action", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/shorten", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/modal", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/imagine", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/change", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/simple-change", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/describe", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/blend", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/edits", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/video", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
 		//relayMjRouter.POST("/notify", controller.RelayMidjourney)
-		relayMjRouter.GET("/task/:id/fetch", controller.RelayMidjourney)
-		relayMjRouter.GET("/task/:id/image-seed", controller.RelayMidjourney)
-		relayMjRouter.POST("/task/list-by-condition", controller.RelayMidjourney)
-		relayMjRouter.POST("/insight-face/swap", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
-		relayMjRouter.POST("/submit/upload-discord-images", middleware.UserConcurrencyLimit(), controller.RelayMidjourney)
+		relayMjRouter.GET("/task/:id/fetch", middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.GET("/task/:id/image-seed", middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/task/list-by-condition", middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/insight-face/swap", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
+		relayMjRouter.POST("/submit/upload-discord-images", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayMidjourney)
 	}
 }

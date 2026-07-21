@@ -3,8 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strings"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,35 +17,22 @@ const businessMonitorConcurrencyTTL = 2 * time.Minute
 
 var businessMonitorRequestSeq atomic.Uint64
 
-func isBusinessMonitorRelayRequest(c *gin.Context) bool {
-	path := c.Request.URL.Path
-	isRelayPath := strings.HasPrefix(path, "/v1/") ||
-		strings.HasPrefix(path, "/v1beta/") ||
-		strings.HasPrefix(path, "/kling/") ||
-		strings.HasPrefix(path, "/jimeng") ||
-		strings.HasPrefix(path, "/pg/")
-	if !isRelayPath {
-		return false
-	}
-	if c.Request.Method == http.MethodPost {
-		return true
-	}
-	return strings.EqualFold(c.GetHeader("Upgrade"), "websocket")
-}
-
 func newBusinessMonitorRequestID() string {
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), businessMonitorRequestSeq.Add(1))
+	return fmt.Sprintf("%s-%d-%d-%d", common.NodeName, os.Getpid(), time.Now().UnixNano(), businessMonitorRequestSeq.Add(1))
 }
 
-func GlobalRelayConcurrency() gin.HandlerFunc {
+// RelayConcurrency tracks an authenticated, rate-limited relay request after
+// channel distribution has succeeded. Mount it only on routes that perform
+// real upstream work.
+func RelayConcurrency() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if !isBusinessMonitorRelayRequest(c) || !common.RedisEnabled || common.RDB == nil {
+		if !common.RedisEnabled || common.RDB == nil {
 			c.Next()
 			return
 		}
 
 		requestID := newBusinessMonitorRequestID()
-		if err := common.BusinessMonitorConcurrencyAcquire(c.Request.Context(), requestID, businessMonitorConcurrencyTTL); err != nil {
+		if _, err := common.BusinessMonitorConcurrencyAcquire(c.Request.Context(), requestID, businessMonitorConcurrencyTTL); err != nil {
 			logger.LogWarn(c.Request.Context(), "business monitor concurrency acquire failed: "+err.Error())
 			c.Next()
 			return
@@ -57,7 +43,7 @@ func GlobalRelayConcurrency() gin.HandlerFunc {
 			once.Do(func() {
 				releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				if err := common.BusinessMonitorConcurrencyRelease(releaseCtx, requestID); err != nil {
+				if _, err := common.BusinessMonitorConcurrencyRelease(releaseCtx, requestID); err != nil {
 					logger.LogWarn(releaseCtx, "business monitor concurrency release failed: "+err.Error())
 				}
 			})

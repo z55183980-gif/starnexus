@@ -167,6 +167,51 @@ function TokenDisplay({ log }: { log: UsageLog }) {
   )
 }
 
+function TokenUsageDisplay({
+  log,
+  cacheLabel,
+}: {
+  log: UsageLog
+  cacheLabel: string
+}) {
+  const other = parseLogOther(log.other)
+  const promptTokens = log.prompt_tokens || 0
+  const completionTokens = log.completion_tokens || 0
+  if (promptTokens === 0 && completionTokens === 0) {
+    return <span className='text-muted-foreground text-xs'>-</span>
+  }
+
+  const cacheReadTokens = other?.cache_tokens || 0
+  const cacheWrite5m = other?.cache_creation_tokens_5m || 0
+  const cacheWrite1h = other?.cache_creation_tokens_1h || 0
+  const hasSplitCache = cacheWrite5m > 0 || cacheWrite1h > 0
+  const cacheWriteTokens = hasSplitCache
+    ? cacheWrite5m + cacheWrite1h
+    : other?.cache_creation_tokens || 0
+
+  return (
+    <div className='flex flex-col gap-0.5'>
+      <span className='font-mono text-xs font-medium tabular-nums'>
+        {promptTokens.toLocaleString()} / {completionTokens.toLocaleString()}
+      </span>
+      {(cacheReadTokens > 0 || cacheWriteTokens > 0) && (
+        <div className='flex items-center gap-1 text-[11px]'>
+          {cacheReadTokens > 0 && (
+            <span className='text-muted-foreground/60'>
+              {cacheLabel}↓ {cacheReadTokens.toLocaleString()}
+            </span>
+          )}
+          {cacheWriteTokens > 0 && (
+            <span className='text-muted-foreground/60'>
+              ↑ {cacheWriteTokens.toLocaleString()}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ChannelDisplay({ log }: { log: UsageLog }) {
   const other = parseLogOther(log.other)
   const affinity = other?.admin_info?.channel_affinity
@@ -425,9 +470,27 @@ export function BusinessMonitor() {
           for (const block of blocks) {
             const idLine = block.match(/^id:\s*(.+)$/m)
             if (idLine?.[1]) lastEventId = idLine[1].trim()
-            if (
-              /^event:\s*business-monitor-(log|alert)$/m.test(block)
-            ) {
+            if (/^event:\s*business-monitor-concurrency$/m.test(block)) {
+              const dataLine = block.match(/^data:\s*(.+)$/m)
+              try {
+                const payload = dataLine?.[1] ? JSON.parse(dataLine[1]) : null
+                const nextConcurrency = Number(payload?.concurrency)
+                if (Number.isFinite(nextConcurrency)) {
+                  queryClient.setQueryData(
+                    ['business-monitor-concurrency'],
+                    nextConcurrency
+                  )
+                } else {
+                  queryClient.invalidateQueries({
+                    queryKey: ['business-monitor-concurrency'],
+                  })
+                }
+              } catch {
+                queryClient.invalidateQueries({
+                  queryKey: ['business-monitor-concurrency'],
+                })
+              }
+            } else if (/^event:\s*business-monitor-(log|alert)$/m.test(block)) {
               scheduleRefresh()
             }
           }
@@ -452,6 +515,18 @@ export function BusinessMonitor() {
       if (refreshTimer) clearTimeout(refreshTimer)
     }
   }, [queryClient])
+
+  const { data: concurrency } = useQuery({
+    queryKey: ['business-monitor-concurrency'],
+    queryFn: async () => {
+      const response = await getBusinessMonitorConcurrency()
+      return response.success && response.data?.available !== false
+        ? response.data?.concurrency
+        : undefined
+    },
+    refetchInterval: 5000,
+    staleTime: 1000,
+  })
 
   const {
     data: monitorData,
@@ -490,7 +565,6 @@ export function BusinessMonitor() {
         statsResponse,
         quotaResponse,
         alertsResponse,
-        concurrencyResponse,
         userSummary,
       ] =
         await Promise.all([
@@ -521,7 +595,6 @@ export function BusinessMonitor() {
             true
           ),
           getBusinessMonitorAlerts(),
-          getBusinessMonitorConcurrency(),
           fetchUserSummary(),
         ])
 
@@ -544,11 +617,6 @@ export function BusinessMonitor() {
         logs,
         alerts: alertsResponse.success ? (alertsResponse.data ?? []) : [],
         alertsAvailable: alertsResponse.success,
-        concurrency:
-          concurrencyResponse.success &&
-          concurrencyResponse.data?.available !== false
-          ? concurrencyResponse.data?.concurrency
-          : undefined,
         stats: statsResponse.success ? statsResponse.data : undefined,
         totalTokens,
         userSummary,
@@ -603,9 +671,7 @@ export function BusinessMonitor() {
                 <Metric icon={Gauge} title={t('Concurrency')}>
                   <DualMetricValues
                     leftValue={
-                      monitorData?.concurrency == null
-                        ? '--'
-                        : String(monitorData.concurrency)
+                      concurrency == null ? '--' : String(concurrency)
                     }
                     leftLabel={t('Real-time concurrency')}
                     rightValue={String(monitorData?.stats?.rpm ?? 0)}
@@ -658,10 +724,10 @@ export function BusinessMonitor() {
             </CardContent>
           </Card>
 
-          <div className='grid min-w-0 grid-cols-1 items-stretch gap-3 sm:gap-4 xl:grid-cols-[minmax(0,2.15fr)_minmax(260px,0.95fr)]'>
+          <div className='grid min-w-0 grid-cols-1 items-stretch gap-3 sm:gap-4 xl:grid-cols-[minmax(0,74fr)_minmax(220px,26fr)]'>
             <Card size='sm' className='h-full min-w-0 gap-0 py-0'>
               <CardContent className='p-0'>
-                <Table className='min-w-[820px] [&_th]:h-8'>
+                <Table className='min-w-[900px] [&_th]:h-8'>
                   <TableHeader className='bg-muted/30'>
                     <TableRow>
                       <TableHead>{t('Time')}</TableHead>
@@ -669,6 +735,7 @@ export function BusinessMonitor() {
                       <TableHead>{t('Channel')}</TableHead>
                       <TableHead>{t('Timing')}</TableHead>
                       <TableHead>{t('Token')}</TableHead>
+                      <TableHead>Tokens</TableHead>
                       <TableHead>{t('Consumption')}</TableHead>
                       <TableHead>{t('Status')}</TableHead>
                     </TableRow>
@@ -704,6 +771,9 @@ export function BusinessMonitor() {
                         </TableCell>
                         <TableCell className='py-1.5'>
                           <TokenDisplay log={log} />
+                        </TableCell>
+                        <TableCell className='py-1.5'>
+                          <TokenUsageDisplay log={log} cacheLabel={t('Cache')} />
                         </TableCell>
                         <TableCell className='py-1.5 tabular-nums'>
                           {formatLogQuota(log.quota)}
