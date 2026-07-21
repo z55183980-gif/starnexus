@@ -35,6 +35,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
 import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { IconBadge } from '@/components/ui/icon-badge'
+import { Spinner } from '@/components/ui/spinner'
+import {
   Card,
   CardAction,
   CardContent,
@@ -352,7 +361,9 @@ function TripleMetricValues(props: {
 export function BusinessMonitor() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [streamHealthy, setStreamHealthy] = useState(false)
+  const [streamStatus, setStreamStatus] = useState<
+    'connecting' | 'connected' | 'disconnected'
+  >('connecting')
   const alertMutation = useMutation({
     mutationFn: async (input: { id: number; action: 'acknowledge' | 'resolve' }) =>
       input.action === 'acknowledge'
@@ -398,7 +409,7 @@ export function BusinessMonitor() {
         if (!response.ok || !response.body) {
           throw new Error(`business monitor stream failed: ${response.status}`)
         }
-        setStreamHealthy(true)
+        setStreamStatus('connected')
 
         const reader = response.body.getReader()
         const decoder = new TextDecoder()
@@ -422,12 +433,12 @@ export function BusinessMonitor() {
           }
         }
         if (!controller.signal.aborted) {
-          setStreamHealthy(false)
+          setStreamStatus('disconnected')
           scheduleReconnect()
         }
       } catch {
         if (!controller.signal.aborted) {
-          setStreamHealthy(false)
+          setStreamStatus('disconnected')
           scheduleReconnect()
         }
       }
@@ -442,7 +453,11 @@ export function BusinessMonitor() {
     }
   }, [queryClient])
 
-  const { data: monitorData } = useQuery({
+  const {
+    data: monitorData,
+    isPending: monitorPending,
+    isError: monitorError,
+  } = useQuery({
     queryKey: ['business-monitor'],
     queryFn: async () => {
       const now = Math.floor(Date.now() / 1000)
@@ -528,6 +543,7 @@ export function BusinessMonitor() {
       return {
         logs,
         alerts: alertsResponse.success ? (alertsResponse.data ?? []) : [],
+        alertsAvailable: alertsResponse.success,
         concurrency:
           concurrencyResponse.success &&
           concurrencyResponse.data?.available !== false
@@ -551,6 +567,16 @@ export function BusinessMonitor() {
   const activeUsers = new Set(recentLogs.map((log) => log.user_id)).size
   const p50Latency = getPercentileLatency(logs, 0.5)
   const p95Latency = getPercentileLatency(logs, 0.95)
+  const alertPanelState =
+    alerts.length > 0
+      ? 'alerts'
+      : monitorPending || streamStatus === 'connecting'
+        ? 'checking'
+        : monitorError ||
+            monitorData?.alertsAvailable === false ||
+            streamStatus === 'disconnected'
+          ? 'disconnected'
+          : 'healthy'
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Business Monitor')}</SectionPageLayout.Title>
@@ -562,7 +588,7 @@ export function BusinessMonitor() {
           <span
             className={cn(
               'size-1.5 rounded-full',
-              streamHealthy ? 'bg-emerald-500' : 'bg-amber-500'
+              streamStatus === 'connected' ? 'bg-success' : 'bg-warning'
             )}
             aria-hidden='true'
           />
@@ -714,13 +740,64 @@ export function BusinessMonitor() {
             <Card size='sm' className='h-full min-w-0 gap-0 py-0'>
               <CardHeader className='border-b py-2.5'>
                 <CardTitle>{t('Error Alerts')}</CardTitle>
-                <CardAction>
-                  <Badge variant='outline'>
-                    {t('{{count}} active', { count: alerts.length })}
-                  </Badge>
-                </CardAction>
+                {alerts.length > 0 && (
+                  <CardAction>
+                    <Badge variant='outline'>
+                      {t('{{count}} active', { count: alerts.length })}
+                    </Badge>
+                  </CardAction>
+                )}
               </CardHeader>
               <CardContent className='px-4 py-1'>
+                {alertPanelState === 'checking' && (
+                  <Empty className='min-h-56 py-10'>
+                    <EmptyHeader>
+                      <EmptyMedia>
+                        <IconBadge tone='neutral' size='lg'>
+                          <Spinner />
+                        </IconBadge>
+                      </EmptyMedia>
+                      <EmptyTitle>{t('Checking error alerts')}</EmptyTitle>
+                      <EmptyDescription>
+                        {t('Connecting to real-time monitoring')}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
+                {alertPanelState === 'disconnected' && (
+                  <Empty className='min-h-56 py-10'>
+                    <EmptyHeader>
+                      <EmptyMedia>
+                        <IconBadge tone='warning' size='lg'>
+                          <CircleAlert />
+                        </IconBadge>
+                      </EmptyMedia>
+                      <EmptyTitle>{t('Monitoring connection issue')}</EmptyTitle>
+                      <EmptyDescription>
+                        {t('Unable to verify current alert status')}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
+                {alertPanelState === 'healthy' && (
+                  <Empty className='min-h-56 py-10'>
+                    <EmptyHeader>
+                      <EmptyMedia>
+                        <IconBadge tone='success' size='lg'>
+                          <CircleCheck />
+                        </IconBadge>
+                      </EmptyMedia>
+                      <EmptyTitle>{t('No active error alerts')}</EmptyTitle>
+                      <EmptyDescription>
+                        <StatusBadge
+                          variant='success'
+                          label={t('System operating normally')}
+                          copyable={false}
+                        />
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                )}
                 {alerts.map((alert, index) => (
                   <Fragment key={alert.id}>
                     <div className='flex min-w-0 items-start gap-2 py-2.5'>
