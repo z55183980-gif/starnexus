@@ -406,6 +406,8 @@ function TripleMetricValues(props: {
 }
 
 const LIVE_LOG_PAGE_SIZE = 50
+const BUSINESS_MONITOR_FALLBACK_INTERVAL = 15000
+const BUSINESS_MONITOR_STATS_THROTTLE = 15000
 
 interface LiveLogsSnapshot {
   logs: UsageLog[]
@@ -467,15 +469,25 @@ export function BusinessMonitor() {
     let hasConnected = false
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let statsRefreshTimer: ReturnType<typeof setTimeout> | undefined
+    let lastStatsRefreshAt = Date.now()
 
     const scheduleStatsRefresh = () => {
       if (statsRefreshTimer) return
+      const elapsed = Date.now() - lastStatsRefreshAt
+      const delay = Math.max(0, BUSINESS_MONITOR_STATS_THROTTLE - elapsed)
       statsRefreshTimer = setTimeout(() => {
         statsRefreshTimer = undefined
+        lastStatsRefreshAt = Date.now()
         queryClient.invalidateQueries({
           queryKey: ['business-monitor-stats'],
         })
-      }, 2000)
+      }, delay)
+    }
+
+    const clearScheduledStatsRefresh = () => {
+      if (!statsRefreshTimer) return
+      clearTimeout(statsRefreshTimer)
+      statsRefreshTimer = undefined
     }
 
     const scheduleReconnect = () => {
@@ -503,6 +515,8 @@ export function BusinessMonitor() {
           throw new Error(`business monitor stream failed: ${response.status}`)
         }
         if (hasConnected) {
+          clearScheduledStatsRefresh()
+          lastStatsRefreshAt = Date.now()
           queryClient.invalidateQueries({
             queryKey: ['business-monitor-logs'],
           })
@@ -600,11 +614,13 @@ export function BusinessMonitor() {
           }
         }
         if (!controller.signal.aborted) {
+          clearScheduledStatsRefresh()
           setStreamStatus('disconnected')
           scheduleReconnect()
         }
       } catch {
         if (!controller.signal.aborted) {
+          clearScheduledStatsRefresh()
           setStreamStatus('disconnected')
           scheduleReconnect()
         }
@@ -616,7 +632,7 @@ export function BusinessMonitor() {
     return () => {
       controller.abort()
       if (reconnectTimer) clearTimeout(reconnectTimer)
-      if (statsRefreshTimer) clearTimeout(statsRefreshTimer)
+      clearScheduledStatsRefresh()
     }
   }, [queryClient])
 
@@ -665,7 +681,8 @@ export function BusinessMonitor() {
         updatedAt: now,
       }
     },
-    refetchInterval: 15000,
+    refetchInterval:
+      streamStatus === 'connected' ? false : BUSINESS_MONITOR_FALLBACK_INTERVAL,
     staleTime: 10000,
     structuralSharing: (oldData, newData) => {
       const current = oldData as LiveLogsSnapshot | undefined
@@ -711,8 +728,9 @@ export function BusinessMonitor() {
         totalTokens,
       }
     },
-    refetchInterval: 5000,
-    staleTime: 2000,
+    refetchInterval:
+      streamStatus === 'connected' ? false : BUSINESS_MONITOR_FALLBACK_INTERVAL,
+    staleTime: BUSINESS_MONITOR_STATS_THROTTLE,
   })
 
   const {
