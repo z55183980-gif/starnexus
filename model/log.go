@@ -63,6 +63,12 @@ func publishBusinessMonitorLog(log *Log) {
 	}
 	logCopy := *log
 	gopool.Go(func() {
+		if logCopy.ChannelName == "" && logCopy.ChannelId > 0 {
+			channel, err := CacheGetChannel(logCopy.ChannelId)
+			if err == nil && channel != nil {
+				logCopy.ChannelName = channel.Name
+			}
+		}
 		if err := common.PublishBusinessMonitorLog(&logCopy); err != nil {
 			common.SysLog("failed to publish business monitor log: " + err.Error())
 		}

@@ -227,7 +227,10 @@ func InitLogDB() (err error) {
 			return nil
 		}
 		common.SysLog("log database migration started")
-		return LOG_DB.AutoMigrate(&ErrorAlert{})
+		if err := LOG_DB.AutoMigrate(&ErrorAlert{}); err != nil {
+			return err
+		}
+		return migrateErrorAlertReadState()
 	}
 	db, err := chooseDB("LOG_SQL_DSN", true)
 	if err == nil {
@@ -471,7 +474,16 @@ func migrateLOGDB() error {
 	if err = LOG_DB.AutoMigrate(&Log{}, &ErrorAlert{}); err != nil {
 		return err
 	}
-	return nil
+	return migrateErrorAlertReadState()
+}
+
+func migrateErrorAlertReadState() error {
+	return LOG_DB.Model(&ErrorAlert{}).
+		Where("acknowledged_log_id = ? AND status IN ?", 0, []string{
+			ErrorAlertStatusAcknowledged,
+			ErrorAlertStatusResolved,
+		}).
+		Update("acknowledged_log_id", gorm.Expr("last_log_id")).Error
 }
 
 func ensureAffiliateTablesSQLite() error {

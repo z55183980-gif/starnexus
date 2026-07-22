@@ -20,10 +20,12 @@ export interface ErrorAlert {
   channel_id: number
   channel_name: string
   node_name: string
+  model_name: string
   occurrence_count: number
   first_seen_at: number
   last_seen_at: number
   last_log_id: number
+  acknowledged_log_id: number
   acknowledged_by?: number
   acknowledged_at?: number
   resolved_at?: number
@@ -37,8 +39,13 @@ export async function getBusinessMonitorAlerts(): Promise<{
   return res.data
 }
 
-export async function acknowledgeBusinessMonitorAlert(id: number) {
-  const res = await api.post(`/api/business-monitor/alerts/${id}/acknowledge`)
+export async function acknowledgeBusinessMonitorAlert(
+  id: number,
+  lastLogID: number
+): Promise<{ success: boolean; data?: ErrorAlert }> {
+  const res = await api.post(`/api/business-monitor/alerts/${id}/acknowledge`, {
+    last_log_id: lastLogID,
+  })
   return res.data
 }
 

@@ -126,7 +126,16 @@ func AcknowledgeBusinessMonitorAlert(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	alert, err := model.AcknowledgeErrorAlert(uint(id), c.GetInt("id"))
+	input := struct {
+		LastLogID int `json:"last_log_id"`
+	}{}
+	if c.Request.ContentLength != 0 {
+		if err = common.DecodeJson(c.Request.Body, &input); err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	alert, err := model.AcknowledgeErrorAlert(uint(id), c.GetInt("id"), input.LastLogID)
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CircleAlert,
   CircleCheck,
@@ -26,14 +27,27 @@ import {
   KeyRound,
   Sparkles,
   Check,
-  CheckCircle2,
   Timer,
   Users,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { getCommonHeaders } from '@/lib/api'
+import {
+  formatLogQuota,
+  formatTimeStr,
+  formatTokens,
+  formatUseTime,
+} from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
-import { StatusBadge } from '@/components/status-badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import {
   Empty,
   EmptyDescription,
@@ -42,15 +56,8 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { IconBadge } from '@/components/ui/icon-badge'
-import { Spinner } from '@/components/ui/spinner'
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Table,
   TableBody,
@@ -60,22 +67,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { SectionPageLayout } from '@/components/layout'
-import { getCommonHeaders } from '@/lib/api'
-import { cn } from '@/lib/utils'
+import { StatusBadge } from '@/components/status-badge'
 import { getUserQuotaDates } from '@/features/dashboard/api'
-import { getUsers } from '@/features/users/api'
-import {
-  acknowledgeBusinessMonitorAlert,
-  getBusinessMonitorConcurrency,
-  getBusinessMonitorAlerts,
-  resolveBusinessMonitorAlert,
-} from './api'
-import {
-  formatLogQuota,
-  formatTimeStr,
-  formatTokens,
-  formatUseTime,
-} from '@/lib/format'
 import { getAllLogs, getLogStats } from '@/features/usage-logs/api'
 import { LOG_TYPE_ENUM } from '@/features/usage-logs/constants'
 import type { UsageLog } from '@/features/usage-logs/data/schema'
@@ -84,6 +77,13 @@ import {
   getResponseTimeColor,
   parseLogOther,
 } from '@/features/usage-logs/lib/format'
+import { getUsers } from '@/features/users/api'
+import {
+  acknowledgeBusinessMonitorAlert,
+  getBusinessMonitorConcurrency,
+  getBusinessMonitorAlerts,
+  type ErrorAlert,
+} from './api'
 
 const NODE_STYLES: Record<number, string> = {
   1: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
@@ -258,7 +258,8 @@ const ALERT_SEVERITY_STYLES: Record<string, string> = {
 }
 
 const ALERT_STATUS_STYLES: Record<string, string> = {
-  unhandled: 'border-rose-200 text-rose-600 dark:border-rose-900 dark:text-rose-400',
+  unhandled:
+    'border-rose-200 text-rose-600 dark:border-rose-900 dark:text-rose-400',
   acknowledged:
     'border-amber-200 text-amber-600 dark:border-amber-900 dark:text-amber-400',
   resolved:
@@ -334,9 +335,10 @@ function getPercentileLatency(logs: UsageLog[], percentile: number) {
     .filter((value) => Number.isFinite(value) && value >= 0)
     .sort((a, b) => a - b)
   if (values.length === 0) return 0
-  return values[Math.min(values.length - 1, Math.ceil(values.length * percentile) - 1)]
+  return values[
+    Math.min(values.length - 1, Math.ceil(values.length * percentile) - 1)
+  ]
 }
-
 
 type MetricProps = {
   icon: typeof Gauge
@@ -403,6 +405,31 @@ function TripleMetricValues(props: {
   )
 }
 
+const LIVE_LOG_PAGE_SIZE = 50
+
+interface LiveLogsSnapshot {
+  logs: UsageLog[]
+  updatedAt: number
+}
+
+function mergeLiveLogs(current: UsageLog[], incoming: UsageLog[]) {
+  const byID = new Map<number, UsageLog>()
+  for (const log of current) byID.set(log.id, log)
+  for (const log of incoming) byID.set(log.id, log)
+  return [...byID.values()]
+    .sort((a, b) => b.created_at - a.created_at || b.id - a.id)
+    .slice(0, LIVE_LOG_PAGE_SIZE)
+}
+
+function getSSEPayload(block: string) {
+  const dataLine = block.match(/^data:\s*(.+)$/m)
+  return dataLine?.[1] ? JSON.parse(dataLine[1]) : null
+}
+
+function isUnreadAlert(alert: ErrorAlert) {
+  return alert.last_log_id > (alert.acknowledged_log_id ?? 0)
+}
+
 export function BusinessMonitor() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -410,27 +437,45 @@ export function BusinessMonitor() {
     'connecting' | 'connected' | 'disconnected'
   >('connecting')
   const alertMutation = useMutation({
-    mutationFn: async (input: { id: number; action: 'acknowledge' | 'resolve' }) =>
-      input.action === 'acknowledge'
-        ? acknowledgeBusinessMonitorAlert(input.id)
-        : resolveBusinessMonitorAlert(input.id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['business-monitor'] })
+    mutationFn: async (input: { id: number; lastLogID: number }) =>
+      acknowledgeBusinessMonitorAlert(input.id, input.lastLogID),
+    onSuccess: (response, input) => {
+      queryClient.setQueryData<ErrorAlert[]>(
+        ['business-monitor-alerts'],
+        (current) => {
+          const withoutCurrent = (current ?? []).filter(
+            (alert) => alert.id !== input.id
+          )
+          const updatedAlert = response.data
+          if (!updatedAlert || !isUnreadAlert(updatedAlert)) {
+            return withoutCurrent
+          }
+          return [...withoutCurrent, updatedAlert].sort(
+            (a, b) => b.last_seen_at - a.last_seen_at
+          )
+        }
+      )
+      queryClient.invalidateQueries({
+        queryKey: ['business-monitor-alerts'],
+      })
     },
   })
 
   useEffect(() => {
     const controller = new AbortController()
     let lastEventId = ''
+    let hasConnected = false
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
-    let refreshTimer: ReturnType<typeof setTimeout> | undefined
+    let statsRefreshTimer: ReturnType<typeof setTimeout> | undefined
 
-    const scheduleRefresh = () => {
-      if (refreshTimer) return
-      refreshTimer = setTimeout(() => {
-        refreshTimer = undefined
-        queryClient.invalidateQueries({ queryKey: ['business-monitor'] })
-      }, 500)
+    const scheduleStatsRefresh = () => {
+      if (statsRefreshTimer) return
+      statsRefreshTimer = setTimeout(() => {
+        statsRefreshTimer = undefined
+        queryClient.invalidateQueries({
+          queryKey: ['business-monitor-stats'],
+        })
+      }, 2000)
     }
 
     const scheduleReconnect = () => {
@@ -447,13 +492,31 @@ export function BusinessMonitor() {
           ? `/api/business-monitor/stream?last_id=${encodeURIComponent(lastEventId)}`
           : '/api/business-monitor/stream'
         const response = await fetch(streamUrl, {
-          headers: getCommonHeaders(),
+          headers: {
+            ...getCommonHeaders(),
+            Accept: 'text/event-stream',
+          },
           credentials: 'include',
           signal: controller.signal,
         })
         if (!response.ok || !response.body) {
           throw new Error(`business monitor stream failed: ${response.status}`)
         }
+        if (hasConnected) {
+          queryClient.invalidateQueries({
+            queryKey: ['business-monitor-logs'],
+          })
+          queryClient.invalidateQueries({
+            queryKey: ['business-monitor-alerts'],
+          })
+          queryClient.invalidateQueries({
+            queryKey: ['business-monitor-stats'],
+          })
+          queryClient.invalidateQueries({
+            queryKey: ['business-monitor-concurrency'],
+          })
+        }
+        hasConnected = true
         setStreamStatus('connected')
 
         const reader = response.body.getReader()
@@ -471,9 +534,8 @@ export function BusinessMonitor() {
             const idLine = block.match(/^id:\s*(.+)$/m)
             if (idLine?.[1]) lastEventId = idLine[1].trim()
             if (/^event:\s*business-monitor-concurrency$/m.test(block)) {
-              const dataLine = block.match(/^data:\s*(.+)$/m)
               try {
-                const payload = dataLine?.[1] ? JSON.parse(dataLine[1]) : null
+                const payload = getSSEPayload(block)
                 const nextConcurrency = Number(payload?.concurrency)
                 if (Number.isFinite(nextConcurrency)) {
                   queryClient.setQueryData(
@@ -490,8 +552,50 @@ export function BusinessMonitor() {
                   queryKey: ['business-monitor-concurrency'],
                 })
               }
-            } else if (/^event:\s*business-monitor-(log|alert)$/m.test(block)) {
-              scheduleRefresh()
+            } else if (/^event:\s*business-monitor-log$/m.test(block)) {
+              try {
+                const incomingLog = getSSEPayload(block) as UsageLog | null
+                if (!incomingLog || !Number.isFinite(incomingLog.id)) {
+                  throw new Error('invalid business monitor log event')
+                }
+                queryClient.setQueryData<LiveLogsSnapshot>(
+                  ['business-monitor-logs'],
+                  (current) => ({
+                    logs: mergeLiveLogs(current?.logs ?? [], [incomingLog]),
+                    updatedAt: Math.floor(Date.now() / 1000),
+                  })
+                )
+                scheduleStatsRefresh()
+              } catch {
+                queryClient.invalidateQueries({
+                  queryKey: ['business-monitor-logs'],
+                })
+              }
+            } else if (/^event:\s*business-monitor-alert$/m.test(block)) {
+              try {
+                const incomingAlert = getSSEPayload(block) as ErrorAlert | null
+                if (!incomingAlert || !Number.isFinite(incomingAlert.id)) {
+                  throw new Error('invalid business monitor alert event')
+                }
+                queryClient.setQueryData<ErrorAlert[]>(
+                  ['business-monitor-alerts'],
+                  (current) => {
+                    const withoutCurrent = (current ?? []).filter(
+                      (alert) => alert.id !== incomingAlert.id
+                    )
+                    if (!isUnreadAlert(incomingAlert)) {
+                      return withoutCurrent
+                    }
+                    return [...withoutCurrent, incomingAlert].sort(
+                      (a, b) => b.last_seen_at - a.last_seen_at
+                    )
+                  }
+                )
+              } catch {
+                queryClient.invalidateQueries({
+                  queryKey: ['business-monitor-alerts'],
+                })
+              }
             }
           }
         }
@@ -512,7 +616,7 @@ export function BusinessMonitor() {
     return () => {
       controller.abort()
       if (reconnectTimer) clearTimeout(reconnectTimer)
-      if (refreshTimer) clearTimeout(refreshTimer)
+      if (statsRefreshTimer) clearTimeout(statsRefreshTimer)
     }
   }, [queryClient])
 
@@ -528,75 +632,27 @@ export function BusinessMonitor() {
     staleTime: 1000,
   })
 
-  const {
-    data: monitorData,
-    isPending: monitorPending,
-    isError: monitorError,
-  } = useQuery({
-    queryKey: ['business-monitor'],
+  const { data: logsData } = useQuery({
+    queryKey: ['business-monitor-logs'],
     queryFn: async () => {
       const now = Math.floor(Date.now() / 1000)
       const todayStart = getTodayStartTimestamp()
-      const fetchUserSummary = async () => {
-        let page = 1
-        let total = 0
-        let todayNew = 0
-        while (page <= 100) {
-          const response = await getUsers({ p: page, page_size: 100 })
-          if (!response.success || !response.data) break
-          if (page === 1) total = response.data.total
-          const users = response.data.items
-          todayNew += users.filter(
-            (user) => (user.created_at ?? 0) >= todayStart
-          ).length
-          if (
-            users.length === 0 ||
-            (users[users.length - 1]?.created_at ?? 0) < todayStart
-          ) {
-            break
-          }
-          page += 1
-        }
-        return { total, todayNew }
-      }
-      const [
-        logsResponse,
-        errorLogsResponse,
-        statsResponse,
-        quotaResponse,
-        alertsResponse,
-        userSummary,
-      ] =
-        await Promise.all([
-          getAllLogs({
-            p: 1,
-            page_size: 100,
-            type: LOG_TYPE_ENUM.CONSUME,
-            start_timestamp: todayStart,
-            end_timestamp: now,
-          }),
-          getAllLogs({
-            p: 1,
-            page_size: 100,
-            type: LOG_TYPE_ENUM.ERROR,
-            start_timestamp: todayStart,
-            end_timestamp: now,
-          }),
-          getLogStats({
-            type: LOG_TYPE_ENUM.CONSUME,
-            start_timestamp: todayStart,
-            end_timestamp: now,
-          }),
-          getUserQuotaDates(
-            {
-              start_timestamp: todayStart,
-              end_timestamp: now,
-            },
-            true
-          ),
-          getBusinessMonitorAlerts(),
-          fetchUserSummary(),
-        ])
+      const [logsResponse, errorLogsResponse] = await Promise.all([
+        getAllLogs({
+          p: 1,
+          page_size: LIVE_LOG_PAGE_SIZE,
+          type: LOG_TYPE_ENUM.CONSUME,
+          start_timestamp: todayStart,
+          end_timestamp: now,
+        }),
+        getAllLogs({
+          p: 1,
+          page_size: LIVE_LOG_PAGE_SIZE,
+          type: LOG_TYPE_ENUM.ERROR,
+          start_timestamp: todayStart,
+          end_timestamp: now,
+        }),
+      ])
 
       const consumeLogs = (
         logsResponse.success ? (logsResponse.data?.items ?? []) : []
@@ -604,9 +660,46 @@ export function BusinessMonitor() {
       const errorLogs = (
         errorLogsResponse.success ? (errorLogsResponse.data?.items ?? []) : []
       ) as UsageLog[]
-      const logs = [...consumeLogs, ...errorLogs]
-        .sort((a, b) => b.created_at - a.created_at || b.id - a.id)
-        .slice(0, 100)
+      return {
+        logs: mergeLiveLogs([], [...consumeLogs, ...errorLogs]),
+        updatedAt: now,
+      }
+    },
+    refetchInterval: 15000,
+    staleTime: 10000,
+    structuralSharing: (oldData, newData) => {
+      const current = oldData as LiveLogsSnapshot | undefined
+      const incoming = newData as LiveLogsSnapshot
+      const todayStart = getTodayStartTimestamp()
+      const currentToday = (current?.logs ?? []).filter(
+        (log) => log.created_at >= todayStart
+      )
+      return {
+        logs: mergeLiveLogs(currentToday, incoming.logs),
+        updatedAt: Math.max(current?.updatedAt ?? 0, incoming.updatedAt),
+      }
+    },
+  })
+
+  const { data: statsData } = useQuery({
+    queryKey: ['business-monitor-stats'],
+    queryFn: async () => {
+      const now = Math.floor(Date.now() / 1000)
+      const todayStart = getTodayStartTimestamp()
+      const [statsResponse, quotaResponse] = await Promise.all([
+        getLogStats({
+          type: LOG_TYPE_ENUM.CONSUME,
+          start_timestamp: todayStart,
+          end_timestamp: now,
+        }),
+        getUserQuotaDates(
+          {
+            start_timestamp: todayStart,
+            end_timestamp: now,
+          },
+          true
+        ),
+      ])
       const quotaData = quotaResponse.success ? (quotaResponse.data ?? []) : []
       const totalTokens = quotaData.reduce(
         (total, item) => total + Number(item.token_used || 0),
@@ -614,23 +707,61 @@ export function BusinessMonitor() {
       )
 
       return {
-        logs,
-        alerts: alertsResponse.success ? (alertsResponse.data ?? []) : [],
-        alertsAvailable: alertsResponse.success,
         stats: statsResponse.success ? statsResponse.data : undefined,
         totalTokens,
-        userSummary,
-        updatedAt: now,
       }
+    },
+    refetchInterval: 5000,
+    staleTime: 2000,
+  })
+
+  const {
+    data: alerts = [],
+    isPending: alertsPending,
+    isError: alertsError,
+  } = useQuery({
+    queryKey: ['business-monitor-alerts'],
+    queryFn: async () => {
+      const response = await getBusinessMonitorAlerts()
+      if (!response.success) throw new Error('failed to load error alerts')
+      return response.data ?? []
     },
     refetchInterval: 15000,
     staleTime: 10000,
   })
 
-  const logs = monitorData?.logs ?? []
-  const alerts = monitorData?.alerts ?? []
+  const { data: userSummary } = useQuery({
+    queryKey: ['business-monitor-users'],
+    queryFn: async () => {
+      const todayStart = getTodayStartTimestamp()
+      let page = 1
+      let total = 0
+      let todayNew = 0
+      while (page <= 100) {
+        const response = await getUsers({ p: page, page_size: 100 })
+        if (!response.success || !response.data) break
+        if (page === 1) total = response.data.total
+        const users = response.data.items
+        todayNew += users.filter(
+          (user) => (user.created_at ?? 0) >= todayStart
+        ).length
+        if (
+          users.length === 0 ||
+          (users[users.length - 1]?.created_at ?? 0) < todayStart
+        ) {
+          break
+        }
+        page += 1
+      }
+      return { total, todayNew }
+    },
+    refetchInterval: 60000,
+    staleTime: 30000,
+  })
+
+  const logs = logsData?.logs ?? []
   const recentLogs = logs.filter(
-    (log) => log.created_at >= (monitorData?.updatedAt ?? 0) - 60
+    (log) => log.created_at >= (logsData?.updatedAt ?? 0) - 60
   )
   const activeUsers = new Set(recentLogs.map((log) => log.user_id)).size
   const p50Latency = getPercentileLatency(logs, 0.5)
@@ -638,11 +769,9 @@ export function BusinessMonitor() {
   const alertPanelState =
     alerts.length > 0
       ? 'alerts'
-      : monitorPending || streamStatus === 'connecting'
+      : alertsPending || streamStatus === 'connecting'
         ? 'checking'
-        : monitorError ||
-            monitorData?.alertsAvailable === false ||
-            streamStatus === 'disconnected'
+        : alertsError || streamStatus === 'disconnected'
           ? 'disconnected'
           : 'healthy'
   return (
@@ -670,19 +799,17 @@ export function BusinessMonitor() {
               <div className='bg-border grid grid-cols-1 gap-px sm:grid-cols-2 xl:grid-cols-5'>
                 <Metric icon={Gauge} title={t('Concurrency')}>
                   <DualMetricValues
-                    leftValue={
-                      concurrency == null ? '--' : String(concurrency)
-                    }
+                    leftValue={concurrency == null ? '--' : String(concurrency)}
                     leftLabel={t('Real-time concurrency')}
-                    rightValue={String(monitorData?.stats?.rpm ?? 0)}
+                    rightValue={String(statsData?.stats?.rpm ?? 0)}
                     rightLabel={t('RPM')}
                   />
                 </Metric>
                 <Metric icon={Timer} title={t('Token Throughput')}>
                   <DualMetricValues
-                    leftValue={formatTokens(monitorData?.stats?.tpm ?? 0)}
+                    leftValue={formatTokens(statsData?.stats?.tpm ?? 0)}
                     leftLabel={t('Last minute')}
-                    rightValue={formatTokens(monitorData?.totalTokens ?? 0)}
+                    rightValue={formatTokens(statsData?.totalTokens ?? 0)}
                     rightLabel={t("Today's total")}
                   />
                 </Metric>
@@ -699,7 +826,7 @@ export function BusinessMonitor() {
                   title={t("Today's Consumption")}
                 >
                   <div className='mt-2.5 truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
-                    {formatLogQuota(monitorData?.stats?.quota ?? 0)}
+                    {formatLogQuota(statsData?.stats?.quota ?? 0)}
                   </div>
                 </Metric>
                 <Metric icon={Users} title={t('User Data')}>
@@ -710,11 +837,11 @@ export function BusinessMonitor() {
                         label: t('Real-time active'),
                       },
                       {
-                        value: String(monitorData?.userSummary.todayNew ?? 0),
+                        value: String(userSummary?.todayNew ?? 0),
                         label: t("Today's new"),
                       },
                       {
-                        value: String(monitorData?.userSummary.total ?? 0),
+                        value: String(userSummary?.total ?? 0),
                         label: t('Total users'),
                       },
                     ]}
@@ -750,7 +877,9 @@ export function BusinessMonitor() {
                             >
                               {parseNodeNumber(log, index)}
                             </span>
-                            <span>{formatTimeStr(new Date(log.created_at * 1000))}</span>
+                            <span>
+                              {formatTimeStr(new Date(log.created_at * 1000))}
+                            </span>
                           </div>
                         </TableCell>
                         <TableCell className='py-1.5'>
@@ -773,7 +902,10 @@ export function BusinessMonitor() {
                           <TokenDisplay log={log} />
                         </TableCell>
                         <TableCell className='py-1.5'>
-                          <TokenUsageDisplay log={log} cacheLabel={t('Cache')} />
+                          <TokenUsageDisplay
+                            log={log}
+                            cacheLabel={t('Cache')}
+                          />
                         </TableCell>
                         <TableCell className='py-1.5 tabular-nums'>
                           {formatLogQuota(log.quota)}
@@ -782,21 +914,21 @@ export function BusinessMonitor() {
                           {(() => {
                             const isError = log.type === LOG_TYPE_ENUM.ERROR
                             return (
-                          <Badge
-                            variant={isError ? 'destructive' : 'outline'}
-                            className={
-                              isError
-                                ? undefined
-                                : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400'
-                            }
-                          >
-                            {isError ? (
-                              <CircleAlert data-icon='inline-start' />
-                            ) : (
-                              <CircleCheck data-icon='inline-start' />
-                            )}
-                            {t(isError ? 'Error' : 'Success')}
-                          </Badge>
+                              <Badge
+                                variant={isError ? 'destructive' : 'outline'}
+                                className={
+                                  isError
+                                    ? undefined
+                                    : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-400'
+                                }
+                              >
+                                {isError ? (
+                                  <CircleAlert data-icon='inline-start' />
+                                ) : (
+                                  <CircleCheck data-icon='inline-start' />
+                                )}
+                                {t(isError ? 'Error' : 'Success')}
+                              </Badge>
                             )
                           })()}
                         </TableCell>
@@ -807,156 +939,140 @@ export function BusinessMonitor() {
               </CardContent>
             </Card>
 
-            <Card size='sm' className='h-full min-w-0 gap-0 py-0'>
-              <CardHeader className='border-b py-2.5'>
-                <CardTitle>{t('Error Alerts')}</CardTitle>
-                {alerts.length > 0 && (
-                  <CardAction>
-                    <Badge variant='outline'>
-                      {t('{{count}} active', { count: alerts.length })}
-                    </Badge>
-                  </CardAction>
-                )}
-              </CardHeader>
-              <CardContent className='px-4 py-1'>
-                {alertPanelState === 'checking' && (
-                  <Empty className='min-h-56 py-10'>
-                    <EmptyHeader>
-                      <EmptyMedia>
-                        <IconBadge tone='neutral' size='lg'>
-                          <Spinner />
-                        </IconBadge>
-                      </EmptyMedia>
-                      <EmptyTitle>{t('Checking error alerts')}</EmptyTitle>
-                      <EmptyDescription>
-                        {t('Connecting to real-time monitoring')}
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                )}
-                {alertPanelState === 'disconnected' && (
-                  <Empty className='min-h-56 py-10'>
-                    <EmptyHeader>
-                      <EmptyMedia>
-                        <IconBadge tone='warning' size='lg'>
-                          <CircleAlert />
-                        </IconBadge>
-                      </EmptyMedia>
-                      <EmptyTitle>{t('Monitoring connection issue')}</EmptyTitle>
-                      <EmptyDescription>
-                        {t('Unable to verify current alert status')}
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                )}
-                {alertPanelState === 'healthy' && (
-                  <Empty className='min-h-56 py-10'>
-                    <EmptyHeader>
-                      <EmptyMedia>
-                        <IconBadge tone='success' size='lg'>
-                          <CircleCheck />
-                        </IconBadge>
-                      </EmptyMedia>
-                      <EmptyTitle>{t('No active error alerts')}</EmptyTitle>
-                      <EmptyDescription>
-                        <StatusBadge
-                          variant='success'
-                          label={t('System operating normally')}
-                          copyable={false}
+            <div className='h-full min-h-0'>
+              <Card
+                size='sm'
+                className='h-full min-h-0 min-w-0 gap-0 overflow-hidden py-0'
+              >
+                <CardHeader className='border-b py-2.5'>
+                  <CardTitle>{t('Error Alerts')}</CardTitle>
+                  {alerts.length > 0 && (
+                    <CardAction>
+                      <Badge variant='outline'>
+                        {t('{{count}} unread', { count: alerts.length })}
+                      </Badge>
+                    </CardAction>
+                  )}
+                </CardHeader>
+                <CardContent className='flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-1'>
+                  {alertPanelState === 'checking' && (
+                    <Empty className='min-h-56 py-10'>
+                      <EmptyHeader>
+                        <EmptyMedia>
+                          <IconBadge tone='neutral' size='lg'>
+                            <Spinner />
+                          </IconBadge>
+                        </EmptyMedia>
+                        <EmptyTitle>{t('Checking error alerts')}</EmptyTitle>
+                        <EmptyDescription>
+                          {t('Connecting to real-time monitoring')}
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  )}
+                  {alertPanelState === 'disconnected' && (
+                    <Empty className='min-h-56 py-10'>
+                      <EmptyHeader>
+                        <EmptyMedia>
+                          <IconBadge tone='warning' size='lg'>
+                            <CircleAlert />
+                          </IconBadge>
+                        </EmptyMedia>
+                        <EmptyTitle>
+                          {t('Monitoring connection issue')}
+                        </EmptyTitle>
+                        <EmptyDescription>
+                          {t('Unable to verify current alert status')}
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  )}
+                  {alertPanelState === 'healthy' && (
+                    <Empty className='min-h-56 py-10'>
+                      <EmptyHeader>
+                        <EmptyMedia>
+                          <IconBadge tone='success' size='lg'>
+                            <CircleCheck />
+                          </IconBadge>
+                        </EmptyMedia>
+                        <EmptyTitle>{t('No unread error alerts')}</EmptyTitle>
+                        <EmptyDescription>
+                          <StatusBadge
+                            variant='success'
+                            label={t('All error alerts have been read')}
+                            copyable={false}
+                          />
+                        </EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
+                  )}
+                  {alerts.map((alert, index) => (
+                    <Fragment key={alert.id}>
+                      <div className='flex min-w-0 items-start gap-2 py-2.5'>
+                        <CircleAlert
+                          className={cn(
+                            'mt-0.5 size-3.5 shrink-0',
+                            ALERT_SEVERITY_STYLES[alert.severity]
+                          )}
                         />
-                      </EmptyDescription>
-                    </EmptyHeader>
-                  </Empty>
-                )}
-                {alerts.map((alert, index) => (
-                  <Fragment key={alert.id}>
-                    <div className='flex min-w-0 items-start gap-2 py-2.5'>
-                      <CircleAlert
-                        className={cn(
-                          'mt-0.5 size-3.5 shrink-0',
-                          ALERT_SEVERITY_STYLES[alert.severity]
-                        )}
-                      />
-                      <div className='min-w-0 flex-1'>
-                        <div className='flex min-w-0 items-center gap-1.5'>
-                          <span className='truncate text-sm font-medium'>
-                            {alert.title}
-                          </span>
-                          <Badge
-                            variant='outline'
-                            className={cn(
-                              'h-5 shrink-0 px-1.5 text-[10px]',
-                              ALERT_STATUS_STYLES[alert.status]
-                            )}
-                          >
-                            {t(
-                              alert.status === 'unhandled'
-                                ? 'Unhandled'
-                                : alert.status === 'acknowledged'
-                                  ? 'Acknowledged'
-                                  : 'Resolved'
-                            )}
-                          </Badge>
+                        <div className='min-w-0 flex-1'>
+                          <div className='flex min-w-0 items-center gap-1.5'>
+                            <span className='truncate text-sm font-medium'>
+                              {alert.title}
+                            </span>
+                            <Badge
+                              variant='outline'
+                              className={cn(
+                                'h-5 shrink-0 px-1.5 text-[10px]',
+                                ALERT_STATUS_STYLES[alert.status]
+                              )}
+                            >
+                              {t('Unread')}
+                            </Badge>
+                          </div>
+                          <div className='text-muted-foreground mt-1 flex min-w-0 items-center gap-1 text-[11px]'>
+                            <span className='truncate'>
+                              {alert.channel_name || `#${alert.channel_id}`}
+                              {alert.node_name ? ` · ${alert.node_name}` : ''}
+                              {alert.model_name ? ` · ${alert.model_name}` : ''}
+                            </span>
+                            <span className='shrink-0'>·</span>
+                            <span className='shrink-0 tabular-nums'>
+                              {t('{{count}} occurrences', {
+                                count: alert.occurrence_count,
+                              })}
+                            </span>
+                            <span className='shrink-0'>·</span>
+                            <span className='shrink-0 tabular-nums'>
+                              {formatTimeStr(
+                                new Date(alert.last_seen_at * 1000)
+                              )}
+                            </span>
+                          </div>
                         </div>
-                        <div className='text-muted-foreground mt-1 flex min-w-0 items-center gap-1 text-[11px]'>
-                          <span className='truncate'>
-                            {alert.channel_name || `#${alert.channel_id}`}
-                            {alert.node_name ? ` · ${alert.node_name}` : ''}
-                          </span>
-                          <span className='shrink-0'>·</span>
-                          <span className='shrink-0 tabular-nums'>
-                            {t('{{count}} occurrences', {
-                              count: alert.occurrence_count,
-                            })}
-                          </span>
-                          <span className='shrink-0'>·</span>
-                          <span className='shrink-0 tabular-nums'>
-                            {formatTimeStr(new Date(alert.last_seen_at * 1000))}
-                          </span>
-                        </div>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon-sm'
+                          title={t('Mark as read')}
+                          aria-label={t('Mark as read')}
+                          disabled={alertMutation.isPending}
+                          onClick={() =>
+                            alertMutation.mutate({
+                              id: alert.id,
+                              lastLogID: alert.last_log_id,
+                            })
+                          }
+                        >
+                          <Check />
+                        </Button>
                       </div>
-                      <div className='flex shrink-0 items-center gap-0.5'>
-                        {alert.status === 'unhandled' && (
-                          <button
-                            type='button'
-                            className='text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-7 items-center justify-center rounded-md'
-                            title={t('Acknowledge')}
-                            aria-label={t('Acknowledge')}
-                            disabled={alertMutation.isPending}
-                            onClick={() =>
-                              alertMutation.mutate({
-                                id: alert.id,
-                                action: 'acknowledge',
-                              })
-                            }
-                          >
-                            <Check className='size-3.5' />
-                          </button>
-                        )}
-                        {alert.status !== 'resolved' && (
-                          <button
-                            type='button'
-                            className='text-muted-foreground hover:bg-muted hover:text-foreground inline-flex size-7 items-center justify-center rounded-md'
-                            title={t('Resolve')}
-                            aria-label={t('Resolve')}
-                            disabled={alertMutation.isPending}
-                            onClick={() =>
-                              alertMutation.mutate({
-                                id: alert.id,
-                                action: 'resolve',
-                              })
-                            }
-                          >
-                            <CheckCircle2 className='size-3.5' />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    {index < alerts.length - 1 && <Separator />}
-                  </Fragment>
-                ))}
-              </CardContent>
-            </Card>
+                      {index < alerts.length - 1 && <Separator />}
+                    </Fragment>
+                  ))}
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </SectionPageLayout.Content>

@@ -23,23 +23,25 @@ const (
 )
 
 type ErrorAlert struct {
-	ID              uint   `json:"id" gorm:"primaryKey"`
-	Fingerprint     string `json:"fingerprint" gorm:"uniqueIndex;size:64"`
-	Title           string `json:"title" gorm:"size:512"`
-	Severity        string `json:"severity" gorm:"size:16;index"`
-	Status          string `json:"status" gorm:"size:16;index"`
-	ChannelID       int    `json:"channel_id" gorm:"index"`
-	ChannelName     string `json:"channel_name" gorm:"size:256"`
-	NodeName        string `json:"node_name" gorm:"size:256"`
-	OccurrenceCount int    `json:"occurrence_count"`
-	FirstSeenAt     int64  `json:"first_seen_at" gorm:"index"`
-	LastSeenAt      int64  `json:"last_seen_at" gorm:"index"`
-	LastLogID       int    `json:"last_log_id"`
-	AcknowledgedBy  *int   `json:"acknowledged_by,omitempty"`
-	AcknowledgedAt  *int64 `json:"acknowledged_at,omitempty"`
-	ResolvedAt      *int64 `json:"resolved_at,omitempty"`
-	CreatedAt       int64  `json:"created_at"`
-	UpdatedAt       int64  `json:"updated_at"`
+	ID                uint   `json:"id" gorm:"primaryKey"`
+	Fingerprint       string `json:"fingerprint" gorm:"uniqueIndex;size:64"`
+	Title             string `json:"title" gorm:"size:512"`
+	Severity          string `json:"severity" gorm:"size:16;index"`
+	Status            string `json:"status" gorm:"size:16;index"`
+	ChannelID         int    `json:"channel_id" gorm:"index"`
+	ChannelName       string `json:"channel_name" gorm:"size:256"`
+	NodeName          string `json:"node_name" gorm:"size:256"`
+	ModelName         string `json:"model_name" gorm:"size:256;index"`
+	OccurrenceCount   int    `json:"occurrence_count"`
+	FirstSeenAt       int64  `json:"first_seen_at" gorm:"index"`
+	LastSeenAt        int64  `json:"last_seen_at" gorm:"index"`
+	LastLogID         int    `json:"last_log_id"`
+	AcknowledgedLogID int    `json:"acknowledged_log_id" gorm:"default:0"`
+	AcknowledgedBy    *int   `json:"acknowledged_by,omitempty"`
+	AcknowledgedAt    *int64 `json:"acknowledged_at,omitempty"`
+	ResolvedAt        *int64 `json:"resolved_at,omitempty"`
+	CreatedAt         int64  `json:"created_at"`
+	UpdatedAt         int64  `json:"updated_at"`
 }
 
 var errorAlertVariablePattern = regexp.MustCompile(`(?i)(request[_ -]?id|trace[_ -]?id|channel[_ -]?id)\s*[:=]\s*[^\s,;]+`)
@@ -91,8 +93,31 @@ func errorAlertSeverity(content string) string {
 	return ErrorAlertSeverityInfo
 }
 
+func errorAlertOtherValue(other map[string]interface{}, key string) string {
+	value, ok := other[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
+}
+
 func errorAlertFingerprint(log *Log, title, nodeName string) string {
-	value := fmt.Sprintf("%d|%s|%s", log.ChannelId, nodeName, strings.ToLower(title))
+	other, _ := common.StrToMap(log.Other)
+	parts := []string{
+		fmt.Sprint(log.ChannelId),
+		nodeName,
+		log.ModelName,
+		errorAlertOtherValue(other, "request_path"),
+		fmt.Sprint(log.IsStream),
+		errorAlertOtherValue(other, "status_code"),
+		errorAlertOtherValue(other, "error_type"),
+		errorAlertOtherValue(other, "error_code"),
+		title,
+	}
+	for i := range parts {
+		parts[i] = strings.ToLower(strings.TrimSpace(parts[i]))
+	}
+	value := strings.Join(parts, "\x1f")
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
 }
@@ -111,6 +136,7 @@ func UpsertErrorAlert(log *Log) (*ErrorAlert, error) {
 		ChannelID:       log.ChannelId,
 		ChannelName:     channelName,
 		NodeName:        nodeName,
+		ModelName:       log.ModelName,
 		OccurrenceCount: 1,
 		FirstSeenAt:     log.CreatedAt,
 		LastSeenAt:      log.CreatedAt,
@@ -122,23 +148,32 @@ func UpsertErrorAlert(log *Log) (*ErrorAlert, error) {
 		"title":    title,
 		"severity": errorAlertSeverity(log.Content),
 		"status": gorm.Expr(
-			"CASE WHEN error_alerts.status = ? THEN ? ELSE error_alerts.status END",
-			ErrorAlertStatusResolved,
+			"CASE WHEN error_alerts.acknowledged_log_id < ? THEN ? ELSE error_alerts.status END",
+			log.Id,
 			ErrorAlertStatusUnhandled,
 		),
 		"channel_name":     channelName,
 		"node_name":        nodeName,
+		"model_name":       log.ModelName,
 		"occurrence_count": gorm.Expr("error_alerts.occurrence_count + ?", 1),
-		"last_seen_at":     log.CreatedAt,
-		"last_log_id":      log.Id,
-		"resolved_at":      nil,
-		"acknowledged_by": gorm.Expr(
-			"CASE WHEN error_alerts.status = ? THEN NULL ELSE error_alerts.acknowledged_by END",
-			ErrorAlertStatusResolved,
+		"first_seen_at": gorm.Expr(
+			"CASE WHEN error_alerts.first_seen_at > ? THEN ? ELSE error_alerts.first_seen_at END",
+			log.CreatedAt,
+			log.CreatedAt,
 		),
-		"acknowledged_at": gorm.Expr(
-			"CASE WHEN error_alerts.status = ? THEN NULL ELSE error_alerts.acknowledged_at END",
-			ErrorAlertStatusResolved,
+		"last_seen_at": gorm.Expr(
+			"CASE WHEN error_alerts.last_seen_at < ? THEN ? ELSE error_alerts.last_seen_at END",
+			log.CreatedAt,
+			log.CreatedAt,
+		),
+		"last_log_id": gorm.Expr(
+			"CASE WHEN error_alerts.last_log_id < ? THEN ? ELSE error_alerts.last_log_id END",
+			log.Id,
+			log.Id,
+		),
+		"resolved_at": gorm.Expr(
+			"CASE WHEN error_alerts.acknowledged_log_id < ? THEN NULL ELSE error_alerts.resolved_at END",
+			log.Id,
 		),
 		"updated_at": now,
 	}
@@ -158,45 +193,47 @@ func ListErrorAlerts(status string, limit int) ([]ErrorAlert, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	now := time.Now().Unix()
-	quietBefore := now - int64((3 * time.Minute).Seconds())
-	if err := LOG_DB.Model(&ErrorAlert{}).
-		Where("status <> ? AND last_seen_at < ?", ErrorAlertStatusResolved, quietBefore).
-		Updates(map[string]interface{}{
-			"status":      ErrorAlertStatusResolved,
-			"resolved_at": now,
-			"updated_at":  now,
-		}).Error; err != nil {
-		return nil, err
-	}
 	tx := LOG_DB.Model(&ErrorAlert{}).Order("last_seen_at desc").Limit(limit)
 	if status != "" {
 		tx = tx.Where("status = ?", status)
 	} else {
-		tx = tx.Where("status <> ?", ErrorAlertStatusResolved)
+		tx = tx.Where("last_log_id > acknowledged_log_id")
 	}
 	var alerts []ErrorAlert
 	err := tx.Find(&alerts).Error
 	return alerts, err
 }
 
-func AcknowledgeErrorAlert(id uint, userID int) (*ErrorAlert, error) {
+func AcknowledgeErrorAlert(id uint, userID int, throughLogID int) (*ErrorAlert, error) {
 	var alert ErrorAlert
 	if err := LOG_DB.First(&alert, id).Error; err != nil {
 		return nil, err
 	}
+	if throughLogID <= 0 || throughLogID > alert.LastLogID {
+		throughLogID = alert.LastLogID
+	}
 	now := time.Now().Unix()
 	if err := LOG_DB.Model(&alert).Updates(map[string]interface{}{
-		"status":          ErrorAlertStatusAcknowledged,
+		"status": gorm.Expr(
+			"CASE WHEN last_log_id <= ? THEN ? ELSE ? END",
+			throughLogID,
+			ErrorAlertStatusAcknowledged,
+			ErrorAlertStatusUnhandled,
+		),
+		"acknowledged_log_id": gorm.Expr(
+			"CASE WHEN acknowledged_log_id < ? THEN ? ELSE acknowledged_log_id END",
+			throughLogID,
+			throughLogID,
+		),
 		"acknowledged_by": userID,
 		"acknowledged_at": now,
 		"updated_at":      now,
 	}).Error; err != nil {
 		return nil, err
 	}
-	alert.Status = ErrorAlertStatusAcknowledged
-	alert.AcknowledgedBy = &userID
-	alert.AcknowledgedAt = &now
+	if err := LOG_DB.First(&alert, id).Error; err != nil {
+		return nil, err
+	}
 	return &alert, nil
 }
 
@@ -207,13 +244,15 @@ func ResolveErrorAlert(id uint) (*ErrorAlert, error) {
 	}
 	now := time.Now().Unix()
 	if err := LOG_DB.Model(&alert).Updates(map[string]interface{}{
-		"status":      ErrorAlertStatusResolved,
-		"resolved_at": now,
-		"updated_at":  now,
+		"status":              ErrorAlertStatusResolved,
+		"acknowledged_log_id": alert.LastLogID,
+		"resolved_at":         now,
+		"updated_at":          now,
 	}).Error; err != nil {
 		return nil, err
 	}
 	alert.Status = ErrorAlertStatusResolved
+	alert.AcknowledgedLogID = alert.LastLogID
 	alert.ResolvedAt = &now
 	return &alert, nil
 }

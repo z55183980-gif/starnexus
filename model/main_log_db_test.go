@@ -30,3 +30,25 @@ func TestInitLogDBMigratesErrorAlertsWhenUsingMainDB(t *testing.T) {
 	require.Same(t, DB, LOG_DB)
 	require.True(t, LOG_DB.Migrator().HasTable(&ErrorAlert{}))
 }
+
+func TestMigrateErrorAlertReadStatePreservesHandledAlerts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalLogDB := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { LOG_DB = originalLogDB })
+	require.NoError(t, db.AutoMigrate(&ErrorAlert{}))
+
+	alert := ErrorAlert{
+		Fingerprint:     "handled-alert",
+		Title:           "handled",
+		Status:          ErrorAlertStatusResolved,
+		LastLogID:       88,
+		OccurrenceCount: 1,
+	}
+	require.NoError(t, db.Create(&alert).Error)
+	require.NoError(t, migrateErrorAlertReadState())
+
+	require.NoError(t, db.First(&alert, alert.ID).Error)
+	require.Equal(t, 88, alert.AcknowledgedLogID)
+}
