@@ -53,56 +53,58 @@ export function AlertLogDialog({ alert, onOpenChange }: AlertLogDialogProps) {
     retry: false,
   })
 
-  if (logQuery.data) {
-    return (
-      <DetailsDialog
-        log={logQuery.data}
-        isAdmin
-        open={alert !== null}
-        onOpenChange={onOpenChange}
-      />
-    )
-  }
-
   return (
-    <Dialog open={alert !== null} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-lg'>
-        <DialogHeader>
-          <DialogTitle>
-            {t('Log Details')} #{logID}
-          </DialogTitle>
-          <DialogDescription>
-            {t('View the complete details for this log entry')}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={alert !== null && !logQuery.data}
+        onOpenChange={onOpenChange}
+      >
+        <DialogContent className='sm:max-w-lg'>
+          <DialogHeader>
+            <DialogTitle>
+              {t('Log Details')} #{logID}
+            </DialogTitle>
+            <DialogDescription>
+              {t('View the complete details for this log entry')}
+            </DialogDescription>
+          </DialogHeader>
 
-        {logQuery.isPending ? (
-          <div className='flex min-h-28 items-center justify-center gap-2'>
-            <Spinner />
-            <span className='text-muted-foreground text-sm'>
-              {t('Loading')}
-            </span>
-          </div>
-        ) : (
-          <Alert variant='destructive'>
-            <AlertTitle>{t('Failed to load logs')}</AlertTitle>
-            <AlertDescription>
-              {logQuery.error instanceof Error
-                ? logQuery.error.message || t('Failed to load logs')
-                : t('Failed to load logs')}
-            </AlertDescription>
-            <Button
-              type='button'
-              variant='outline'
-              size='sm'
-              className='mt-2'
-              onClick={() => void logQuery.refetch()}
-            >
-              {t('Retry')}
-            </Button>
-          </Alert>
-        )}
-      </DialogContent>
-    </Dialog>
+          {logQuery.isPending ? (
+            <div className='flex min-h-28 items-center justify-center gap-2'>
+              <Spinner />
+              <span className='text-muted-foreground text-sm'>
+                {t('Loading')}
+              </span>
+            </div>
+          ) : (
+            <Alert variant='destructive'>
+              <AlertTitle>{t('Failed to load logs')}</AlertTitle>
+              <AlertDescription>
+                {logQuery.error instanceof Error
+                  ? logQuery.error.message || t('Failed to load logs')
+                  : t('Failed to load logs')}
+              </AlertDescription>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                className='mt-2'
+                onClick={() => void logQuery.refetch()}
+              >
+                {t('Retry')}
+              </Button>
+            </Alert>
+          )}
+        </DialogContent>
+      </Dialog>
+      {logQuery.data && (
+        <DetailsDialog
+          log={logQuery.data}
+          isAdmin
+          open={alert !== null}
+          onOpenChange={onOpenChange}
+        />
+      )}
+    </>
   )
 }
