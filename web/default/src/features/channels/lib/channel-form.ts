@@ -69,6 +69,7 @@ export const channelFormSchema = z.object({
   // Field passthrough controls (stored in settings JSON)
   allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
   disable_store: z.boolean().optional(), // OpenAI only
+  responses_websocket_v2_enabled: z.boolean().optional(), // OpenAI Responses WSv2
   allow_safety_identifier: z.boolean().optional(), // OpenAI only
   allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
   allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
@@ -127,6 +128,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   // Field passthrough controls
   allow_service_tier: false,
   disable_store: false,
+  responses_websocket_v2_enabled: false,
   allow_safety_identifier: false,
   allow_include_obfuscation: false,
   allow_inference_geo: false,
@@ -181,6 +183,7 @@ export function transformChannelToFormDefaults(
   let awsKeyType: 'ak_sk' | 'api_key' = 'ak_sk'
   let allowServiceTier = false
   let disableStore = false
+  let responsesWebSocketV2Enabled = false
   let allowSafetyIdentifier = false
   let allowIncludeObfuscation = false
   let allowInferenceGeo = false
@@ -199,6 +202,8 @@ export function transformChannelToFormDefaults(
       awsKeyType = parsed.aws_key_type || 'ak_sk'
       allowServiceTier = parsed.allow_service_tier === true
       disableStore = parsed.disable_store === true
+      responsesWebSocketV2Enabled =
+        parsed.responses_websocket_v2_enabled === true
       allowSafetyIdentifier = parsed.allow_safety_identifier === true
       allowIncludeObfuscation = parsed.allow_include_obfuscation === true
       allowInferenceGeo = parsed.allow_inference_geo === true
@@ -254,6 +259,7 @@ export function transformChannelToFormDefaults(
     aws_key_type: awsKeyType,
     allow_service_tier: allowServiceTier,
     disable_store: disableStore,
+    responses_websocket_v2_enabled: responsesWebSocketV2Enabled,
     allow_include_obfuscation: allowIncludeObfuscation,
     allow_inference_geo: allowInferenceGeo,
     allow_speed: allowSpeed,
@@ -335,6 +341,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 
   if (formData.type === 1) {
     settingsObj.disable_store = formData.disable_store === true
+    settingsObj.responses_websocket_v2_enabled =
+      formData.responses_websocket_v2_enabled === true
     settingsObj.allow_safety_identifier =
       formData.allow_safety_identifier === true
     settingsObj.allow_include_obfuscation =
@@ -342,6 +350,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
   } else {
     if ('disable_store' in settingsObj) delete settingsObj.disable_store
+    if ('responses_websocket_v2_enabled' in settingsObj)
+      delete settingsObj.responses_websocket_v2_enabled
     if ('allow_safety_identifier' in settingsObj)
       delete settingsObj.allow_safety_identifier
     if ('allow_include_obfuscation' in settingsObj)

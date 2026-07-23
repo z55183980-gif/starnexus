@@ -81,6 +81,14 @@ func (p *RetryParam) ResetRetryNextTry() {
 //	Retry=3: GroupB, priority1 (startRetryIndex=2, priorityRetry=1)
 //	         分组B, 优先级1
 func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, error) {
+	return cacheGetRandomSatisfiedChannel(param, nil)
+}
+
+func CacheGetRandomSatisfiedChannelFiltered(param *RetryParam, filter func(*model.Channel) bool) (*model.Channel, string, error) {
+	return cacheGetRandomSatisfiedChannel(param, filter)
+}
+
+func cacheGetRandomSatisfiedChannel(param *RetryParam, filter func(*model.Channel) bool) (*model.Channel, string, error) {
 	var channel *model.Channel
 	var err error
 	selectGroup := param.TokenGroup
@@ -115,7 +123,11 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry)
+			if filter == nil {
+				channel, _ = model.GetRandomSatisfiedChannel(autoGroup, param.ModelName, priorityRetry)
+			} else {
+				channel, _ = model.GetRandomSatisfiedChannelFiltered(autoGroup, param.ModelName, priorityRetry, filter)
+			}
 			if channel == nil {
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
@@ -153,7 +165,11 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry())
+		if filter == nil {
+			channel, err = model.GetRandomSatisfiedChannel(param.TokenGroup, param.ModelName, param.GetRetry())
+		} else {
+			channel, err = model.GetRandomSatisfiedChannelFiltered(param.TokenGroup, param.ModelName, param.GetRetry(), filter)
+		}
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

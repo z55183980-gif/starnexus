@@ -23,6 +23,7 @@ import {
   CircleCheck,
   CircleDollarSign,
   Clock3,
+  CheckCheck,
   Gauge,
   KeyRound,
   Sparkles,
@@ -70,6 +71,7 @@ import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { getAllLogs, getLogStats } from '@/features/usage-logs/api'
+import { FailReasonDialog } from '@/features/usage-logs/components/dialogs/fail-reason-dialog'
 import { LOG_TYPE_ENUM } from '@/features/usage-logs/constants'
 import type { UsageLog } from '@/features/usage-logs/data/schema'
 import {
@@ -79,6 +81,7 @@ import {
 } from '@/features/usage-logs/lib/format'
 import { getUsers } from '@/features/users/api'
 import {
+  acknowledgeAllBusinessMonitorAlerts,
   acknowledgeBusinessMonitorAlert,
   getBusinessMonitorConcurrency,
   getBusinessMonitorAlerts,
@@ -435,6 +438,7 @@ function isUnreadAlert(alert: ErrorAlert) {
 export function BusinessMonitor() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const [selectedAlert, setSelectedAlert] = useState<ErrorAlert | null>(null)
   const [streamStatus, setStreamStatus] = useState<
     'connecting' | 'connected' | 'disconnected'
   >('connecting')
@@ -457,6 +461,15 @@ export function BusinessMonitor() {
           )
         }
       )
+      queryClient.invalidateQueries({
+        queryKey: ['business-monitor-alerts'],
+      })
+    },
+  })
+  const acknowledgeAllMutation = useMutation({
+    mutationFn: acknowledgeAllBusinessMonitorAlerts,
+    onSuccess: () => {
+      queryClient.setQueryData<ErrorAlert[]>(['business-monitor-alerts'], [])
       queryClient.invalidateQueries({
         queryKey: ['business-monitor-alerts'],
       })
@@ -965,10 +978,29 @@ export function BusinessMonitor() {
                 <CardHeader className='border-b py-2.5'>
                   <CardTitle>{t('Error Alerts')}</CardTitle>
                   {alerts.length > 0 && (
-                    <CardAction>
+                    <CardAction className='flex items-center gap-2'>
                       <Badge variant='outline'>
                         {t('{{count}} unread', { count: alerts.length })}
                       </Badge>
+                      <Button
+                        type='button'
+                        variant='ghost'
+                        size='icon-sm'
+                        title={t('Mark all as read')}
+                        aria-label={t('Mark all as read')}
+                        aria-busy={acknowledgeAllMutation.isPending}
+                        disabled={
+                          alertMutation.isPending ||
+                          acknowledgeAllMutation.isPending
+                        }
+                        onClick={() => acknowledgeAllMutation.mutate()}
+                      >
+                        {acknowledgeAllMutation.isPending ? (
+                          <Spinner />
+                        ) : (
+                          <CheckCheck />
+                        )}
+                      </Button>
                     </CardAction>
                   )}
                 </CardHeader>
@@ -1027,47 +1059,58 @@ export function BusinessMonitor() {
                   {alerts.map((alert, index) => (
                     <Fragment key={alert.id}>
                       <div className='flex min-w-0 items-start gap-2 py-2.5'>
-                        <CircleAlert
-                          className={cn(
-                            'mt-0.5 size-3.5 shrink-0',
-                            ALERT_SEVERITY_STYLES[alert.severity]
+                        <button
+                          type='button'
+                          className='focus-visible:ring-ring/50 flex min-w-0 flex-1 items-start gap-2 rounded-md text-left outline-none focus-visible:ring-[3px]'
+                          title={t(
+                            'View the complete error message and details'
                           )}
-                        />
-                        <div className='min-w-0 flex-1'>
-                          <div className='flex min-w-0 items-center gap-1.5'>
-                            <span className='truncate text-sm font-medium'>
-                              {alert.title}
-                            </span>
-                            <Badge
-                              variant='outline'
-                              className={cn(
-                                'h-5 shrink-0 px-1.5 text-[10px]',
-                                ALERT_STATUS_STYLES[alert.status]
-                              )}
-                            >
-                              {t('Unread')}
-                            </Badge>
+                          onClick={() => setSelectedAlert(alert)}
+                        >
+                          <CircleAlert
+                            className={cn(
+                              'mt-0.5 size-3.5 shrink-0',
+                              ALERT_SEVERITY_STYLES[alert.severity]
+                            )}
+                          />
+                          <div className='min-w-0 flex-1'>
+                            <div className='flex min-w-0 items-center gap-1.5'>
+                              <span className='truncate text-sm font-medium underline-offset-4 hover:underline'>
+                                {alert.title}
+                              </span>
+                              <Badge
+                                variant='outline'
+                                className={cn(
+                                  'h-5 shrink-0 px-1.5 text-[10px]',
+                                  ALERT_STATUS_STYLES[alert.status]
+                                )}
+                              >
+                                {t('Unread')}
+                              </Badge>
+                            </div>
+                            <div className='text-muted-foreground mt-1 flex min-w-0 items-center gap-1 text-[11px]'>
+                              <span className='truncate'>
+                                {alert.channel_name || `#${alert.channel_id}`}
+                                {alert.node_name ? ` · ${alert.node_name}` : ''}
+                                {alert.model_name
+                                  ? ` · ${alert.model_name}`
+                                  : ''}
+                              </span>
+                              <span className='shrink-0'>·</span>
+                              <span className='shrink-0 tabular-nums'>
+                                {t('{{count}} occurrences', {
+                                  count: alert.occurrence_count,
+                                })}
+                              </span>
+                              <span className='shrink-0'>·</span>
+                              <span className='shrink-0 tabular-nums'>
+                                {formatTimeStr(
+                                  new Date(alert.last_seen_at * 1000)
+                                )}
+                              </span>
+                            </div>
                           </div>
-                          <div className='text-muted-foreground mt-1 flex min-w-0 items-center gap-1 text-[11px]'>
-                            <span className='truncate'>
-                              {alert.channel_name || `#${alert.channel_id}`}
-                              {alert.node_name ? ` · ${alert.node_name}` : ''}
-                              {alert.model_name ? ` · ${alert.model_name}` : ''}
-                            </span>
-                            <span className='shrink-0'>·</span>
-                            <span className='shrink-0 tabular-nums'>
-                              {t('{{count}} occurrences', {
-                                count: alert.occurrence_count,
-                              })}
-                            </span>
-                            <span className='shrink-0'>·</span>
-                            <span className='shrink-0 tabular-nums'>
-                              {formatTimeStr(
-                                new Date(alert.last_seen_at * 1000)
-                              )}
-                            </span>
-                          </div>
-                        </div>
+                        </button>
                         <Button
                           type='button'
                           variant='ghost'
@@ -1094,6 +1137,13 @@ export function BusinessMonitor() {
           </div>
         </div>
       </SectionPageLayout.Content>
+      <FailReasonDialog
+        failReason={selectedAlert?.title ?? ''}
+        open={selectedAlert !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedAlert(null)
+        }}
+      />
     </SectionPageLayout>
   )
 }

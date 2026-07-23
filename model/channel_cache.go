@@ -191,6 +191,88 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 	return nil, errors.New("channel not found")
 }
 
+// GetRandomSatisfiedChannelFiltered selects an enabled channel while applying
+// an additional capability filter. It is intended for protocol-specific
+// transports that cannot use every channel advertising the same model.
+func GetRandomSatisfiedChannelFiltered(group string, modelName string, retry int, filter func(*Channel) bool) (*Channel, error) {
+	if !common.MemoryCacheEnabled {
+		return GetChannelFiltered(group, modelName, retry, filter)
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	channelIDs := group2model2channels[group][modelName]
+	if len(channelIDs) == 0 {
+		channelIDs = group2model2channels[group][ratio_setting.FormatMatchingModelName(modelName)]
+	}
+	eligible := make([]*Channel, 0, len(channelIDs))
+	for _, channelID := range channelIDs {
+		channel, ok := channelsIDM[channelID]
+		if !ok {
+			return nil, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelID)
+		}
+		if filter == nil || filter(channel) {
+			eligible = append(eligible, channel)
+		}
+	}
+	return selectWeightedChannelByRetry(eligible, retry), nil
+}
+
+func selectWeightedChannelByRetry(channels []*Channel, retry int) *Channel {
+	if len(channels) == 0 {
+		return nil
+	}
+	priorities := make(map[int64]struct{})
+	for _, channel := range channels {
+		priorities[channel.GetPriority()] = struct{}{}
+	}
+	sortedPriorities := make([]int64, 0, len(priorities))
+	for priority := range priorities {
+		sortedPriorities = append(sortedPriorities, priority)
+	}
+	sort.Slice(sortedPriorities, func(i, j int) bool { return sortedPriorities[i] > sortedPriorities[j] })
+	if retry < 0 {
+		retry = 0
+	}
+	if retry >= len(sortedPriorities) {
+		retry = len(sortedPriorities) - 1
+	}
+	targetPriority := sortedPriorities[retry]
+	targetChannels := make([]*Channel, 0, len(channels))
+	sumWeight := 0
+	for _, channel := range channels {
+		if channel.GetPriority() != targetPriority {
+			continue
+		}
+		sumWeight += channel.GetWeight()
+		targetChannels = append(targetChannels, channel)
+	}
+	if len(targetChannels) == 0 {
+		return nil
+	}
+	smoothingFactor := 1
+	smoothingAdjustment := 0
+	if sumWeight == 0 {
+		sumWeight = len(targetChannels) * 100
+		smoothingAdjustment = 100
+	} else if sumWeight/len(targetChannels) < 10 {
+		smoothingFactor = 100
+	}
+	totalWeight := sumWeight * smoothingFactor
+	if totalWeight <= 0 {
+		return nil
+	}
+	randomWeight := rand.Intn(totalWeight)
+	for _, channel := range targetChannels {
+		randomWeight -= channel.GetWeight()*smoothingFactor + smoothingAdjustment
+		if randomWeight < 0 {
+			return channel
+		}
+	}
+	return targetChannels[len(targetChannels)-1]
+}
+
 func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)

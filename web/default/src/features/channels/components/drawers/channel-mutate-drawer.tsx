@@ -2926,6 +2926,31 @@ export function ChannelMutateDrawer({
 
                               <FormField
                                 control={form.control}
+                                name='responses_websocket_v2_enabled'
+                                render={({ field }) => (
+                                  <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                    <div className='space-y-0.5'>
+                                      <FormLabel className='text-sm'>
+                                        {t('Responses WebSocket v2')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Enable persistent Responses API WebSocket proxying for compatible upstreams'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value}
+                                        onCheckedChange={field.onChange}
+                                      />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
                                 name='allow_safety_identifier'
                                 render={({ field }) => (
                                   <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>

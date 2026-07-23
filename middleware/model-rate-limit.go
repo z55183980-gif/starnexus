@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common/limiter"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -197,4 +199,83 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			memoryRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
 		}
 	}
+}
+
+// AcquireModelRequestRateLimit checks and records the total-request limit for
+// one relay turn. The returned callback records a successful turn when called
+// with true.
+func AcquireModelRequestRateLimit(c *gin.Context) (func(bool), *types.NewAPIError) {
+	if !setting.ModelRequestRateLimitEnabled {
+		return func(bool) {}, nil
+	}
+
+	duration := int64(setting.ModelRequestRateLimitDurationMinutes * 60)
+	totalMaxCount := setting.ModelRequestRateLimitCount
+	successMaxCount := setting.ModelRequestRateLimitSuccessCount
+	group := common.GetContextKeyString(c, constant.ContextKeyTokenGroup)
+	if group == "" {
+		group = common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	}
+	if groupTotalCount, groupSuccessCount, found := setting.GetGroupRateLimit(group); found {
+		totalMaxCount = groupTotalCount
+		successMaxCount = groupSuccessCount
+	}
+
+	userID := strconv.Itoa(c.GetInt("id"))
+	tooMany := func(message string) *types.NewAPIError {
+		return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeAccessDenied, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
+	}
+	checkFailed := func(err error) *types.NewAPIError {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeAccessDenied, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+	}
+
+	if common.RedisEnabled {
+		ctx := c.Request.Context()
+		rdb := common.RDB
+		successKey := fmt.Sprintf("rateLimit:%s:%s", ModelRequestRateLimitSuccessCountMark, userID)
+		allowed, err := checkRedisRateLimit(ctx, rdb, successKey, successMaxCount, duration)
+		if err != nil {
+			return nil, checkFailed(fmt.Errorf("rate limit check failed: %w", err))
+		}
+		if !allowed {
+			return nil, tooMany(fmt.Sprintf("您已达到请求数限制：%d分钟内最多请求%d次", setting.ModelRequestRateLimitDurationMinutes, successMaxCount))
+		}
+
+		if totalMaxCount > 0 {
+			totalKey := fmt.Sprintf("rateLimit:%s", userID)
+			tb := limiter.New(ctx, rdb)
+			allowed, err = tb.Allow(ctx, totalKey,
+				limiter.WithCapacity(int64(totalMaxCount)*duration),
+				limiter.WithRate(int64(totalMaxCount)),
+				limiter.WithRequested(duration),
+			)
+			if err != nil {
+				return nil, checkFailed(fmt.Errorf("rate limit check failed: %w", err))
+			}
+			if !allowed {
+				return nil, tooMany(fmt.Sprintf("您已达到总请求数限制：%d分钟内最多请求%d次，包括失败次数，请检查您的请求是否正确", setting.ModelRequestRateLimitDurationMinutes, totalMaxCount))
+			}
+		}
+
+		return func(success bool) {
+			if success {
+				recordRedisRequest(context.Background(), rdb, successKey, successMaxCount)
+			}
+		}, nil
+	}
+
+	inMemoryRateLimiter.Init(time.Duration(setting.ModelRequestRateLimitDurationMinutes) * time.Minute)
+	totalKey := ModelRequestRateLimitCountMark + userID
+	successKey := ModelRequestRateLimitSuccessCountMark + userID
+	if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
+		return nil, tooMany("model request rate limit exceeded")
+	}
+	if !inMemoryRateLimiter.Request(successKey+"_check", successMaxCount, duration) {
+		return nil, tooMany("model successful request rate limit exceeded")
+	}
+	return func(success bool) {
+		if success {
+			inMemoryRateLimiter.Request(successKey, successMaxCount, duration)
+		}
+	}, nil
 }

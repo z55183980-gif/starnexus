@@ -49,6 +49,14 @@ export async function acknowledgeBusinessMonitorAlert(
   return res.data
 }
 
+export async function acknowledgeAllBusinessMonitorAlerts(): Promise<{
+  success: boolean
+  data?: ErrorAlert[]
+}> {
+  const res = await api.post('/api/business-monitor/alerts/acknowledge-all')
+  return res.data
+}
+
 export async function resolveBusinessMonitorAlert(id: number) {
   const res = await api.post(`/api/business-monitor/alerts/${id}/resolve`)
   return res.data

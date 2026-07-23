@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	xproxy "golang.org/x/net/proxy"
 )
 
 // applyUpstreamContentLength populates req.ContentLength when the upstream
@@ -394,6 +397,89 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	//all, err := io.ReadAll(requestBody)
 	//err = service.WssString(c, targetConn, string(all))
 	return targetConn, nil
+}
+
+// DoResponsesWssRequest opens an OpenAI Responses WebSocket v2 connection.
+// The caller owns the returned connection and must keep it pinned to the same
+// channel for its entire lifetime.
+func DoResponsesWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo) (*websocket.Conn, *http.Response, error) {
+	fullRequestURL, err := a.GetRequestURL(info)
+	if err != nil {
+		return nil, nil, fmt.Errorf("get responses websocket URL failed: %w", err)
+	}
+	parsedURL, err := url.Parse(fullRequestURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse responses websocket URL failed: %w", err)
+	}
+	switch parsedURL.Scheme {
+	case "https":
+		parsedURL.Scheme = "wss"
+	case "http":
+		parsedURL.Scheme = "ws"
+	case "ws", "wss":
+	default:
+		return nil, nil, fmt.Errorf("unsupported responses websocket scheme: %s", parsedURL.Scheme)
+	}
+
+	targetHeader := http.Header{}
+	if err := a.SetupRequestHeader(c, &targetHeader, info); err != nil {
+		return nil, nil, fmt.Errorf("setup responses websocket header failed: %w", err)
+	}
+	headerOverride, err := processHeaderOverride(info, c)
+	if err != nil {
+		return nil, nil, err
+	}
+	for key, value := range headerOverride {
+		targetHeader.Set(key, value)
+	}
+	for _, name := range []string{"originator", "session_id", "User-Agent", "x-codex-window-id", "x-codex-installation-id"} {
+		if targetHeader.Get(name) == "" && c.Request.Header.Get(name) != "" {
+			targetHeader.Set(name, c.Request.Header.Get(name))
+		}
+	}
+	targetHeader.Set("Content-Type", "application/json")
+	targetHeader.Set("Accept", "application/json")
+	targetHeader.Set("OpenAI-Beta", "responses_websockets=2026-02-06")
+
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 15 * time.Second,
+		Proxy:            http.ProxyFromEnvironment,
+	}
+	if common2.TLSInsecureSkipVerify {
+		dialer.TLSClientConfig = common2.InsecureTLSConfig
+	}
+	if proxyURL := strings.TrimSpace(info.ChannelSetting.Proxy); proxyURL != "" {
+		parsedProxy, parseErr := url.Parse(proxyURL)
+		if parseErr != nil {
+			return nil, nil, fmt.Errorf("parse websocket proxy failed: %w", parseErr)
+		}
+		switch parsedProxy.Scheme {
+		case "http", "https":
+			dialer.Proxy = http.ProxyURL(parsedProxy)
+		case "socks5", "socks5h":
+			var auth *xproxy.Auth
+			if parsedProxy.User != nil {
+				auth = &xproxy.Auth{User: parsedProxy.User.Username()}
+				auth.Password, _ = parsedProxy.User.Password()
+			}
+			socksDialer, dialErr := xproxy.SOCKS5("tcp", parsedProxy.Host, auth, xproxy.Direct)
+			if dialErr != nil {
+				return nil, nil, fmt.Errorf("create websocket SOCKS proxy failed: %w", dialErr)
+			}
+			dialer.Proxy = nil
+			dialer.NetDialContext = func(_ context.Context, network, address string) (net.Conn, error) {
+				return socksDialer.Dial(network, address)
+			}
+		default:
+			return nil, nil, fmt.Errorf("unsupported websocket proxy scheme: %s", parsedProxy.Scheme)
+		}
+	}
+
+	conn, resp, err := dialer.DialContext(c.Request.Context(), parsedURL.String(), targetHeader)
+	if err != nil {
+		return nil, resp, fmt.Errorf("dial responses websocket %s failed: %w", parsedURL.Redacted(), err)
+	}
+	return conn, resp, nil
 }
 
 func startPingKeepAlive(c *gin.Context, pingInterval time.Duration) context.CancelFunc {

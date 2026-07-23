@@ -121,16 +121,8 @@ func releaseOnRequestDone(ctx context.Context, releaseFunc func()) func() {
 // It differs from ModelRequestRateLimit: slots are released when the request finishes.
 func UserConcurrencyLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID := c.GetInt("id")
-		maxConcurrency := common.GetContextKeyInt(c, constant.ContextKeyUserConcurrency)
-		if userID <= 0 || maxConcurrency <= 0 {
-			c.Next()
-			return
-		}
-
-		release, acquired, err := tryAcquireUserConcurrencySlot(c.Request.Context(), userID, maxConcurrency)
+		release, acquired, err := AcquireUserConcurrency(c)
 		if err != nil {
-			logger.LogWarn(c.Request.Context(), fmt.Sprintf("user concurrency check failed user_id=%d err=%v", userID, err))
 			c.Next()
 			return
 		}
@@ -145,4 +137,21 @@ func UserConcurrencyLimit() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// AcquireUserConcurrency acquires one in-flight request slot for a single
+// relay turn. Long-lived protocols should call it per turn, not per connection.
+func AcquireUserConcurrency(c *gin.Context) (func(), bool, error) {
+	userID := c.GetInt("id")
+	maxConcurrency := common.GetContextKeyInt(c, constant.ContextKeyUserConcurrency)
+	if userID <= 0 || maxConcurrency <= 0 {
+		return func() {}, true, nil
+	}
+
+	release, acquired, err := tryAcquireUserConcurrencySlot(c.Request.Context(), userID, maxConcurrency)
+	if err != nil {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("user concurrency check failed user_id=%d err=%v", userID, err))
+		return nil, false, err
+	}
+	return release, acquired, nil
 }

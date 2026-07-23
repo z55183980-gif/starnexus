@@ -142,6 +142,49 @@ func TestAcknowledgeErrorAlertUsesSeenLogWatermark(t *testing.T) {
 	require.Len(t, alerts, 1)
 }
 
+func TestAcknowledgeAllErrorAlerts(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalLogDB := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { LOG_DB = originalLogDB })
+	require.NoError(t, db.AutoMigrate(&ErrorAlert{}))
+
+	firstLog := &Log{Id: 51, CreatedAt: 500, Type: LogTypeError, Content: "timeout", ChannelId: 9}
+	first, err := UpsertErrorAlert(firstLog)
+	require.NoError(t, err)
+	secondLog := &Log{Id: 52, CreatedAt: 501, Type: LogTypeError, Content: "authentication failed", ChannelId: 10}
+	second, err := UpsertErrorAlert(secondLog)
+	require.NoError(t, err)
+
+	alerts, err := AcknowledgeAllErrorAlerts(7)
+	require.NoError(t, err)
+	require.Len(t, alerts, 2)
+	for _, alert := range alerts {
+		require.Equal(t, ErrorAlertStatusAcknowledged, alert.Status)
+		require.Equal(t, alert.LastLogID, alert.AcknowledgedLogID)
+		require.NotNil(t, alert.AcknowledgedBy)
+		require.Equal(t, 7, *alert.AcknowledgedBy)
+	}
+
+	unread, err := ListErrorAlerts("", 50)
+	require.NoError(t, err)
+	require.Empty(t, unread)
+
+	firstLog.Id = 53
+	firstLog.CreatedAt = 502
+	first, err = UpsertErrorAlert(firstLog)
+	require.NoError(t, err)
+	require.Equal(t, ErrorAlertStatusUnhandled, first.Status)
+	require.Equal(t, 51, first.AcknowledgedLogID)
+	require.Equal(t, second.ID, alerts[0].ID)
+
+	unread, err = ListErrorAlerts("", 50)
+	require.NoError(t, err)
+	require.Len(t, unread, 1)
+	require.Equal(t, first.ID, unread[0].ID)
+}
+
 func TestErrorAlertOutOfOrderUpdatesRemainMonotonic(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

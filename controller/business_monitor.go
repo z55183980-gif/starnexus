@@ -146,6 +146,20 @@ func AcknowledgeBusinessMonitorAlert(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": alert})
 }
 
+func AcknowledgeAllBusinessMonitorAlerts(c *gin.Context) {
+	alerts, err := model.AcknowledgeAllErrorAlerts(c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	for i := range alerts {
+		if err = common.PublishBusinessMonitorEvent("alert", &alerts[i]); err != nil {
+			common.SysLog("failed to publish acknowledged business monitor alert: " + err.Error())
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": alerts})
+}
+
 func ResolveBusinessMonitorAlert(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {

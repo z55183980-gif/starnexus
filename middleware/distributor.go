@@ -460,6 +460,103 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	return nil
 }
 
+// SelectChannelForModel selects and initializes a channel without reading an
+// HTTP request body. It is used by protocols whose model arrives after the
+// initial HTTP handshake, such as Responses WebSocket v2.
+func SelectChannelForModel(c *gin.Context, modelName string) (*model.Channel, *types.NewAPIError) {
+	return SelectChannelForModelFiltered(c, modelName, nil)
+}
+
+func SelectChannelForModelFiltered(c *gin.Context, modelName string, filter func(*model.Channel) bool) (*model.Channel, *types.NewAPIError) {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("model is required"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		value, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+		if !ok {
+			return nil, types.NewErrorWithStatusCode(errors.New("token has no model access"), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		limits, ok := value.(map[string]bool)
+		if !ok {
+			limits = map[string]bool{}
+		}
+		matchName := ratio_setting.FormatMatchingModelName(modelName)
+		if !limits[matchName] {
+			return nil, types.NewErrorWithStatusCode(fmt.Errorf("token is not allowed to use model %s", modelName), types.ErrorCodeAccessDenied, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+	}
+
+	var channel *model.Channel
+	if channelID, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId); ok {
+		id, err := strconv.Atoi(fmt.Sprint(channelID))
+		if err != nil {
+			return nil, types.NewErrorWithStatusCode(errors.New("invalid specific channel id"), types.ErrorCodeGetChannelFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		channel, err = model.GetChannelById(id, true)
+		if err != nil || channel == nil {
+			return nil, types.NewErrorWithStatusCode(errors.New("specific channel not found"), types.ErrorCodeGetChannelFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		if channel.Status != common.ChannelStatusEnabled {
+			return nil, types.NewErrorWithStatusCode(errors.New("specific channel is disabled"), types.ErrorCodeGetChannelFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry())
+		}
+		if filter != nil && !filter(channel) {
+			return nil, types.NewErrorWithStatusCode(errors.New("specific channel does not support the requested protocol"), types.ErrorCodeGetChannelFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+	} else {
+		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+		selectGroup := usingGroup
+		if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
+			preferred, err := model.CacheGetChannel(preferredChannelID)
+			if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled && (filter == nil || filter(preferred)) {
+				if usingGroup == "auto" {
+					userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+					for _, group := range service.GetUserAutoGroup(userGroup) {
+						if model.IsChannelEnabledForGroupModel(group, modelName, preferred.Id) {
+							selectGroup = group
+							common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+							channel = preferred
+							service.MarkChannelAffinityUsed(c, group, preferred.Id)
+							break
+						}
+					}
+				} else if model.IsChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
+					channel = preferred
+					service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+				}
+			}
+		}
+
+		if channel == nil {
+			var err error
+			channel, selectGroup, err = service.CacheGetRandomSatisfiedChannelFiltered(&service.RetryParam{
+				Ctx:        c,
+				ModelName:  modelName,
+				TokenGroup: usingGroup,
+				Retry:      common.GetPointer(0),
+			}, filter)
+			if err != nil {
+				return nil, types.NewErrorWithStatusCode(fmt.Errorf("failed to select channel for group %s and model %s: %w", selectGroup, modelName, err), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+			if channel == nil {
+				return nil, types.NewErrorWithStatusCode(fmt.Errorf("no available channel for group %s and model %s", selectGroup, modelName), types.ErrorCodeModelNotFound, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+		}
+	}
+
+	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
+	if apiErr := SetupContextForSelectedChannel(c, channel, modelName); apiErr != nil {
+		return nil, apiErr
+	}
+	return channel, nil
+}
+
 // extractModelNameFromGeminiPath 从 Gemini API URL 路径中提取模型名
 // 输入格式: /v1beta/models/gemini-2.0-flash:generateContent
 // 输出: gemini-2.0-flash

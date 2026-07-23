@@ -237,6 +237,42 @@ func AcknowledgeErrorAlert(id uint, userID int, throughLogID int) (*ErrorAlert, 
 	return &alert, nil
 }
 
+func AcknowledgeAllErrorAlerts(userID int) ([]ErrorAlert, error) {
+	now := time.Now().Unix()
+	var alerts []ErrorAlert
+	err := LOG_DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("last_log_id > acknowledged_log_id").
+			Order("last_seen_at desc").Find(&alerts).Error; err != nil {
+			return err
+		}
+		if len(alerts) == 0 {
+			return nil
+		}
+		if err := tx.Model(&ErrorAlert{}).
+			Where("last_log_id > acknowledged_log_id").
+			Updates(map[string]interface{}{
+				"status":              ErrorAlertStatusAcknowledged,
+				"acknowledged_log_id": gorm.Expr("last_log_id"),
+				"acknowledged_by":     userID,
+				"acknowledged_at":     now,
+				"updated_at":          now,
+			}).Error; err != nil {
+			return err
+		}
+
+		acknowledgedBy := userID
+		for i := range alerts {
+			alerts[i].Status = ErrorAlertStatusAcknowledged
+			alerts[i].AcknowledgedLogID = alerts[i].LastLogID
+			alerts[i].AcknowledgedBy = &acknowledgedBy
+			alerts[i].AcknowledgedAt = &now
+			alerts[i].UpdatedAt = now
+		}
+		return nil
+	})
+	return alerts, err
+}
+
 func ResolveErrorAlert(id uint) (*ErrorAlert, error) {
 	var alert ErrorAlert
 	if err := LOG_DB.First(&alert, id).Error; err != nil {
