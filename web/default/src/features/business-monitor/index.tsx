@@ -24,6 +24,7 @@ import {
   CircleDollarSign,
   Clock3,
   CheckCheck,
+  FileText,
   Gauge,
   KeyRound,
   Sparkles,
@@ -1107,13 +1108,29 @@ export function BusinessMonitor() {
                                   new Date(alert.last_seen_at * 1000)
                                 )}
                               </span>
-                              <span className='shrink-0'>·</span>
-                              <span className='text-foreground shrink-0 font-mono tabular-nums'>
-                                {t('Log Details')} #{alert.last_log_id}
-                              </span>
                             </div>
                           </div>
                         </button>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          className='h-7 shrink-0 gap-1 px-2'
+                          title={`${t('View logs')} #${alert.last_log_id}`}
+                          aria-label={`${t('View logs')} #${alert.last_log_id}`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setSelectedAlert(alert)
+                          }}
+                        >
+                          <FileText data-icon='inline-start' />
+                          <span className='hidden sm:inline'>
+                            {t('View logs')}
+                          </span>
+                          <span className='font-mono tabular-nums'>
+                            #{alert.last_log_id}
+                          </span>
+                        </Button>
                         <Button
                           type='button'
                           variant='ghost'
