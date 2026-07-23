@@ -71,7 +71,6 @@ import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
 import { getUserQuotaDates } from '@/features/dashboard/api'
 import { getAllLogs, getLogStats } from '@/features/usage-logs/api'
-import { FailReasonDialog } from '@/features/usage-logs/components/dialogs/fail-reason-dialog'
 import { LOG_TYPE_ENUM } from '@/features/usage-logs/constants'
 import type { UsageLog } from '@/features/usage-logs/data/schema'
 import {
@@ -87,6 +86,7 @@ import {
   getBusinessMonitorAlerts,
   type ErrorAlert,
 } from './api'
+import { AlertLogDialog } from './components/alert-log-dialog'
 
 const NODE_STYLES: Record<number, string> = {
   1: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
@@ -1062,9 +1062,8 @@ export function BusinessMonitor() {
                         <button
                           type='button'
                           className='focus-visible:ring-ring/50 flex min-w-0 flex-1 items-start gap-2 rounded-md text-left outline-none focus-visible:ring-[3px]'
-                          title={t(
-                            'View the complete error message and details'
-                          )}
+                          title={`${t('Click to view full details')}: ${t('Log Details')} #${alert.last_log_id}`}
+                          aria-label={`${t('Click to view full details')}: ${t('Log Details')} #${alert.last_log_id}`}
                           onClick={() => setSelectedAlert(alert)}
                         >
                           <CircleAlert
@@ -1108,6 +1107,10 @@ export function BusinessMonitor() {
                                   new Date(alert.last_seen_at * 1000)
                                 )}
                               </span>
+                              <span className='shrink-0'>·</span>
+                              <span className='text-foreground shrink-0 font-mono tabular-nums'>
+                                {t('Log Details')} #{alert.last_log_id}
+                              </span>
                             </div>
                           </div>
                         </button>
@@ -1137,9 +1140,8 @@ export function BusinessMonitor() {
           </div>
         </div>
       </SectionPageLayout.Content>
-      <FailReasonDialog
-        failReason={selectedAlert?.title ?? ''}
-        open={selectedAlert !== null}
+      <AlertLogDialog
+        alert={selectedAlert}
         onOpenChange={(open) => {
           if (!open) setSelectedAlert(null)
         }}

@@ -204,6 +204,25 @@ func ListErrorAlerts(status string, limit int) ([]ErrorAlert, error) {
 	return alerts, err
 }
 
+func GetErrorAlertLatestLog(id uint) (*Log, error) {
+	var alert ErrorAlert
+	if err := LOG_DB.Select("last_log_id").First(&alert, id).Error; err != nil {
+		return nil, err
+	}
+
+	var log Log
+	if err := LOG_DB.Where("id = ? AND type = ?", alert.LastLogID, LogTypeError).
+		First(&log).Error; err != nil {
+		return nil, err
+	}
+	if log.ChannelId > 0 {
+		if channel, err := CacheGetChannel(log.ChannelId); err == nil && channel != nil {
+			log.ChannelName = channel.Name
+		}
+	}
+	return &log, nil
+}
+
 func AcknowledgeErrorAlert(id uint, userID int, throughLogID int) (*ErrorAlert, error) {
 	var alert ErrorAlert
 	if err := LOG_DB.First(&alert, id).Error; err != nil {

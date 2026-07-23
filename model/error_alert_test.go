@@ -185,6 +185,42 @@ func TestAcknowledgeAllErrorAlerts(t *testing.T) {
 	require.Equal(t, first.ID, unread[0].ID)
 }
 
+func TestGetErrorAlertLatestLog(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalLogDB := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { LOG_DB = originalLogDB })
+	require.NoError(t, db.AutoMigrate(&Log{}, &ErrorAlert{}))
+
+	firstLog := &Log{
+		Id:        61,
+		CreatedAt: 600,
+		Type:      LogTypeError,
+		Content:   "first upstream failure",
+		ModelName: "gpt-5.6-sol",
+	}
+	require.NoError(t, db.Create(firstLog).Error)
+	alert, err := UpsertErrorAlert(firstLog)
+	require.NoError(t, err)
+
+	latestLog := &Log{
+		Id:        62,
+		CreatedAt: 601,
+		Type:      LogTypeError,
+		Content:   "latest upstream failure",
+		ModelName: "gpt-5.6-sol",
+	}
+	require.NoError(t, db.Create(latestLog).Error)
+	alert, err = UpsertErrorAlert(latestLog)
+	require.NoError(t, err)
+
+	log, err := GetErrorAlertLatestLog(alert.ID)
+	require.NoError(t, err)
+	require.Equal(t, latestLog.Id, log.Id)
+	require.Equal(t, latestLog.Content, log.Content)
+}
+
 func TestErrorAlertOutOfOrderUpdatesRemainMonotonic(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

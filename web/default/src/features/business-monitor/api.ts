@@ -1,4 +1,5 @@
 import { api } from '@/lib/api'
+import type { UsageLog } from '@/features/usage-logs/data/schema'
 
 export async function getBusinessMonitorConcurrency(): Promise<{
   success: boolean
@@ -36,6 +37,18 @@ export async function getBusinessMonitorAlerts(): Promise<{
   data?: ErrorAlert[]
 }> {
   const res = await api.get('/api/business-monitor/alerts?limit=50')
+  return res.data
+}
+
+export async function getBusinessMonitorAlertLog(id: number): Promise<{
+  success: boolean
+  message?: string
+  data?: UsageLog
+}> {
+  const res = await api.get(`/api/business-monitor/alerts/${id}/log`, {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
   return res.data
 }
 

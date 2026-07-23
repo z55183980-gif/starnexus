@@ -120,6 +120,20 @@ func GetBusinessMonitorAlerts(c *gin.Context) {
 	})
 }
 
+func GetBusinessMonitorAlertLog(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	log, err := model.GetErrorAlertLatestLog(uint(id))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, log)
+}
+
 func AcknowledgeBusinessMonitorAlert(c *gin.Context) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {

@@ -528,7 +528,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
       >
         <DialogHeader className='max-sm:gap-1'>
           <DialogTitle className='flex items-center gap-2 text-base'>
-            {t('Log Details')}
+            <span className='tabular-nums'>
+              {t('Log Details')} #{props.log.id}
+            </span>
             <StatusBadge
               label={t(typeConfig.label)}
               variant={typeConfig.color as StatusBadgeProps['variant']}
