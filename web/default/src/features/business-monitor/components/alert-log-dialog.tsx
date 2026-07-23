@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { formatTimeStr } from '@/lib/format'
@@ -27,6 +28,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
@@ -35,8 +37,8 @@ import { parseLogOther } from '@/features/usage-logs/lib/format'
 import { getBusinessMonitorAlertLog, type ErrorAlert } from '../api'
 
 interface AlertLogDialogProps {
-  alert: ErrorAlert | null
-  onOpenChange: (open: boolean) => void
+  alert: ErrorAlert
+  children: ReactNode
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -53,10 +55,11 @@ function getNodeName(log: UsageLog) {
   return other?.admin_info?.node_name || ''
 }
 
-export function AlertLogDialog({ alert, onOpenChange }: AlertLogDialogProps) {
+export function AlertLogDialog({ alert, children }: AlertLogDialogProps) {
   const { t } = useTranslation()
-  const alertID = alert?.id ?? 0
-  const logID = alert?.last_log_id ?? 0
+  const [open, setOpen] = useState(false)
+  const alertID = alert.id
+  const logID = alert.last_log_id
   const logQuery = useQuery({
     queryKey: ['business-monitor-alert-log', alertID, logID],
     queryFn: async () => {
@@ -66,7 +69,7 @@ export function AlertLogDialog({ alert, onOpenChange }: AlertLogDialogProps) {
       }
       return response.data
     },
-    enabled: alert !== null,
+    enabled: open,
     retry: false,
   })
 
@@ -74,7 +77,19 @@ export function AlertLogDialog({ alert, onOpenChange }: AlertLogDialogProps) {
   const logOther = log ? parseLogOther(log.other) : undefined
 
   return (
-    <Dialog open={alert !== null} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger
+        render={
+          <button
+            type='button'
+            className='focus-visible:ring-ring/50 hover:bg-muted/50 flex min-w-0 flex-1 cursor-pointer items-start gap-2 rounded-md px-1 py-1 text-left outline-none focus-visible:ring-[3px]'
+            title={`${t('Click to view full details')}: ${t('Log Details')} #${logID}`}
+            aria-label={`${t('Click to view full details')}: ${t('Log Details')} #${logID}`}
+          />
+        }
+      >
+        {children}
+      </DialogTrigger>
       <DialogContent className='sm:max-w-xl'>
         <DialogHeader>
           <DialogTitle>

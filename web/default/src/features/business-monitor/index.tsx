@@ -24,7 +24,6 @@ import {
   CircleDollarSign,
   Clock3,
   CheckCheck,
-  FileText,
   Gauge,
   KeyRound,
   Sparkles,
@@ -439,7 +438,6 @@ function isUnreadAlert(alert: ErrorAlert) {
 export function BusinessMonitor() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [selectedAlert, setSelectedAlert] = useState<ErrorAlert | null>(null)
   const [streamStatus, setStreamStatus] = useState<
     'connecting' | 'connected' | 'disconnected'
   >('connecting')
@@ -1060,13 +1058,7 @@ export function BusinessMonitor() {
                   {alerts.map((alert, index) => (
                     <Fragment key={alert.id}>
                       <div className='flex min-w-0 items-start gap-2 py-2.5'>
-                        <button
-                          type='button'
-                          className='focus-visible:ring-ring/50 flex min-w-0 flex-1 items-start gap-2 rounded-md text-left outline-none focus-visible:ring-[3px]'
-                          title={`${t('Click to view full details')}: ${t('Log Details')} #${alert.last_log_id}`}
-                          aria-label={`${t('Click to view full details')}: ${t('Log Details')} #${alert.last_log_id}`}
-                          onClick={() => setSelectedAlert(alert)}
-                        >
+                        <AlertLogDialog alert={alert}>
                           <CircleAlert
                             className={cn(
                               'mt-0.5 size-3.5 shrink-0',
@@ -1110,27 +1102,7 @@ export function BusinessMonitor() {
                               </span>
                             </div>
                           </div>
-                        </button>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          className='h-7 shrink-0 gap-1 px-2'
-                          title={`${t('View logs')} #${alert.last_log_id}`}
-                          aria-label={`${t('View logs')} #${alert.last_log_id}`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setSelectedAlert(alert)
-                          }}
-                        >
-                          <FileText data-icon='inline-start' />
-                          <span className='hidden sm:inline'>
-                            {t('View logs')}
-                          </span>
-                          <span className='font-mono tabular-nums'>
-                            #{alert.last_log_id}
-                          </span>
-                        </Button>
+                        </AlertLogDialog>
                         <Button
                           type='button'
                           variant='ghost'
@@ -1157,12 +1129,6 @@ export function BusinessMonitor() {
           </div>
         </div>
       </SectionPageLayout.Content>
-      <AlertLogDialog
-        alert={selectedAlert}
-        onOpenChange={(open) => {
-          if (!open) setSelectedAlert(null)
-        }}
-      />
     </SectionPageLayout>
   )
 }
