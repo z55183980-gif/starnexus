@@ -1,11 +1,12 @@
-# Production: StarNexus / new-api (Scheme A — PostgreSQL + Redis, local build)
+# Production: StarNexus / new-api (Scheme A — PostgreSQL + Redis, pre-built image)
 #
 # PostgreSQL and Redis are external services on Server 3 (45.134.82.172).
 # This compose file runs only the application container.
 #
 # Setup:
 #   cp .env.prod .env
-#   docker compose -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.prod.yml pull new-api
+#   docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate new-api
 #
 # Baota reverse proxy: xingyuapi.com + api.xingyuapi.com -> http://127.0.0.1:3000
 
@@ -13,8 +14,8 @@ version: '3.4'
 
 services:
   new-api:
-    build: .
-    image: starnexus-new-api:prod
+    image: ghcr.io/z55183980-gif/starnexus:${APP_IMAGE_TAG:-main}
+    pull_policy: always
     container_name: xingyuapi-new-api
     restart: always
     command: --log-dir /app/logs

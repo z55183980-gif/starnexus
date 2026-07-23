@@ -4,7 +4,8 @@
 #
 # Setup:
 #   cp .env.prod2 .env
-#   docker compose -f docker-compose.prod2.yml up -d --build
+#   docker compose -f docker-compose.prod2.yml pull new-api
+#   docker compose -f docker-compose.prod2.yml up -d --no-deps --force-recreate new-api
 #
 # Baota: api subdomain -> http://127.0.0.1:3000
 
@@ -12,8 +13,8 @@ version: '3.4'
 
 services:
   new-api:
-    build: .
-    image: starnexus-new-api:prod
+    image: ghcr.io/z55183980-gif/starnexus:${APP_IMAGE_TAG:-main}
+    pull_policy: always
     container_name: xingyuapi-new-api
     restart: always
     command: --log-dir /app/logs
