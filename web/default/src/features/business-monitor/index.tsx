@@ -1005,7 +1005,7 @@ export function BusinessMonitor() {
                 </CardHeader>
                 <CardContent className='flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-1'>
                   {alertPanelState === 'checking' && (
-                    <Empty className='min-h-56 py-10'>
+                    <Empty className='min-h-56 flex-none py-10'>
                       <EmptyHeader>
                         <EmptyMedia>
                           <IconBadge tone='neutral' size='lg'>
@@ -1020,7 +1020,7 @@ export function BusinessMonitor() {
                     </Empty>
                   )}
                   {alertPanelState === 'disconnected' && (
-                    <Empty className='min-h-56 py-10'>
+                    <Empty className='min-h-56 flex-none py-10'>
                       <EmptyHeader>
                         <EmptyMedia>
                           <IconBadge tone='warning' size='lg'>
@@ -1037,7 +1037,7 @@ export function BusinessMonitor() {
                     </Empty>
                   )}
                   {alertPanelState === 'healthy' && (
-                    <Empty className='min-h-56 py-10'>
+                    <Empty className='min-h-56 flex-none py-10'>
                       <EmptyHeader>
                         <EmptyMedia>
                           <IconBadge tone='success' size='lg'>
