@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -21,24 +20,18 @@ import (
 func AlphaSearchHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
 
-	switch info.ChannelType {
-	case constant.ChannelTypeCodex,
-		constant.ChannelTypeSub2API,
-		constant.ChannelTypeNewAPI,
-		constant.ChannelTypeAdvancedCustom:
-	default:
+	request, ok := info.Request.(*dto.AlphaSearchRequest)
+	if !ok {
 		return types.NewErrorWithStatusCode(
-			errors.New("channel does not support /v1/alpha/search"),
+			fmt.Errorf("invalid request type, expected *dto.AlphaSearchRequest, got %T", info.Request),
 			types.ErrorCodeInvalidRequest,
 			http.StatusBadRequest,
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
-
-	request, ok := info.Request.(*dto.AlphaSearchRequest)
-	if !ok {
+	if !info.ChannelOtherSettings.SupportsAlphaSearch(info.ChannelType, request.Model) {
 		return types.NewErrorWithStatusCode(
-			fmt.Errorf("invalid request type, expected *dto.AlphaSearchRequest, got %T", info.Request),
+			errors.New("channel does not support /v1/alpha/search"),
 			types.ErrorCodeInvalidRequest,
 			http.StatusBadRequest,
 			types.ErrOptionWithSkipRetry(),

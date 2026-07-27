@@ -88,6 +88,7 @@ const channelFormBaseSchema = z.object({
   allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
   disable_store: z.boolean().optional(), // OpenAI only
   responses_websocket_v2_enabled: z.boolean().optional(), // OpenAI/Sub2API Responses WSv2
+  alpha_search_enabled: z.boolean().optional(), // OpenAI-compatible Alpha Search endpoint
   allow_safety_identifier: z.boolean().optional(), // OpenAI only
   allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
   allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
@@ -173,6 +174,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_service_tier: false,
   disable_store: false,
   responses_websocket_v2_enabled: false,
+  alpha_search_enabled: false,
   allow_safety_identifier: false,
   allow_include_obfuscation: false,
   allow_inference_geo: false,
@@ -228,6 +230,7 @@ export function transformChannelToFormDefaults(
   let allowServiceTier = false
   let disableStore = false
   let responsesWebSocketV2Enabled = false
+  let alphaSearchEnabled = false
   let allowSafetyIdentifier = false
   let allowIncludeObfuscation = false
   let allowInferenceGeo = false
@@ -249,6 +252,7 @@ export function transformChannelToFormDefaults(
       disableStore = parsed.disable_store === true
       responsesWebSocketV2Enabled =
         parsed.responses_websocket_v2_enabled === true
+      alphaSearchEnabled = parsed.alpha_search_enabled === true
       allowSafetyIdentifier = parsed.allow_safety_identifier === true
       allowIncludeObfuscation = parsed.allow_include_obfuscation === true
       allowInferenceGeo = parsed.allow_inference_geo === true
@@ -313,6 +317,7 @@ export function transformChannelToFormDefaults(
     allow_service_tier: allowServiceTier,
     disable_store: disableStore,
     responses_websocket_v2_enabled: responsesWebSocketV2Enabled,
+    alpha_search_enabled: alphaSearchEnabled,
     allow_include_obfuscation: allowIncludeObfuscation,
     allow_inference_geo: allowInferenceGeo,
     allow_speed: allowSpeed,
@@ -393,7 +398,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 
   // Field passthrough controls:
   // - OpenAI (type 1) and Anthropic (type 14): allow_service_tier
-  // - OpenAI only: disable_store, allow_safety_identifier
+  // - OpenAI only: Alpha Search capability and request field controls
   if (formData.type === 1 || formData.type === 14) {
     settingsObj.allow_service_tier = formData.allow_service_tier === true
   } else if ('allow_service_tier' in settingsObj) {
@@ -408,6 +413,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   }
 
   if (formData.type === 1) {
+    settingsObj.alpha_search_enabled = formData.alpha_search_enabled === true
     settingsObj.disable_store = formData.disable_store === true
     settingsObj.allow_safety_identifier =
       formData.allow_safety_identifier === true
@@ -415,6 +421,8 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       formData.allow_include_obfuscation === true
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
   } else {
+    if ('alpha_search_enabled' in settingsObj)
+      delete settingsObj.alpha_search_enabled
     if ('disable_store' in settingsObj) delete settingsObj.disable_store
     if ('allow_safety_identifier' in settingsObj)
       delete settingsObj.allow_safety_identifier

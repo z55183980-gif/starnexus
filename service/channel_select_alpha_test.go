@@ -16,6 +16,9 @@ func TestChannelSupportsRequestPathAlphaSearch(t *testing.T) {
 	require.True(t, ChannelSupportsRequestPath(&model.Channel{Type: constant.ChannelTypeSub2API}, "/v1/alpha/search", modelName))
 	require.True(t, ChannelSupportsRequestPath(&model.Channel{Type: constant.ChannelTypeNewAPI}, "/v1/alpha/search", modelName))
 	require.False(t, ChannelSupportsRequestPath(&model.Channel{Type: constant.ChannelTypeOpenAI}, "/v1/alpha/search", modelName))
+	openAI := &model.Channel{Type: constant.ChannelTypeOpenAI}
+	openAI.SetOtherSettings(dto.ChannelOtherSettings{AlphaSearchEnabled: true})
+	require.True(t, ChannelSupportsRequestPath(openAI, "/v1/alpha/search", modelName))
 	require.True(t, ChannelSupportsRequestPath(&model.Channel{Type: constant.ChannelTypeOpenAI}, "/v1/responses", modelName))
 	require.False(t, ChannelSupportsRequestPath(nil, "/v1/alpha/search", modelName))
 	require.NotNil(t, ChannelFilterForRequestPath("/v1/alpha/search", modelName))

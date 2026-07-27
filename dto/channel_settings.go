@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/QuantumNous/new-api/constant"
 )
 
 type ChannelSettings struct {
@@ -34,7 +36,8 @@ const (
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
 	ResponsesWebSocketV2Enabled           bool                  `json:"responses_websocket_v2_enabled,omitempty"`
-	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"` // "json" or "api_key"
+	AlphaSearchEnabled                    bool                  `json:"alpha_search_enabled,omitempty"` // 是否允许 OpenAI 兼容渠道处理 /v1/alpha/search（默认关闭）
+	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"`      // "json" or "api_key"
 	OpenRouterEnterprise                  *bool                 `json:"openrouter_enterprise,omitempty"`
 	ClaudeBetaQuery                       bool                  `json:"claude_beta_query,omitempty"`         // Claude 渠道是否强制追加 ?beta=true
 	AllowServiceTier                      bool                  `json:"allow_service_tier,omitempty"`        // 是否允许 service_tier 透传（默认过滤以避免额外计费）
@@ -51,6 +54,22 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateLastRemovedModels  []string              `json:"upstream_model_update_last_removed_models,omitempty"`  // 上次检测到的可删除模型
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
+}
+
+// SupportsAlphaSearch reports whether a channel is explicitly capable of
+// handling /v1/alpha/search. OpenAI-compatible channels must opt in because
+// most upstreams do not implement this Codex-specific endpoint.
+func (s ChannelOtherSettings) SupportsAlphaSearch(channelType int, modelName string) bool {
+	switch channelType {
+	case constant.ChannelTypeCodex, constant.ChannelTypeSub2API, constant.ChannelTypeNewAPI:
+		return true
+	case constant.ChannelTypeOpenAI:
+		return s.AlphaSearchEnabled
+	case constant.ChannelTypeAdvancedCustom:
+		return s.AdvancedCustom != nil && s.AdvancedCustom.SupportsPathForModel("/v1/alpha/search", modelName)
+	default:
+		return false
+	}
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

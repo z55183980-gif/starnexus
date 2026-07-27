@@ -2952,6 +2952,31 @@ export function ChannelMutateDrawer({
                             <>
                               <FormField
                                 control={form.control}
+                                name='alpha_search_enabled'
+                                render={({ field }) => (
+                                  <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                    <div className='space-y-0.5'>
+                                      <FormLabel className='text-sm'>
+                                        {t('Enable Alpha Search')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Allow this OpenAI-compatible upstream channel to handle /v1/alpha/search. Enable only when the upstream explicitly supports this endpoint.'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value}
+                                        onCheckedChange={field.onChange}
+                                      />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
                                 name='disable_store'
                                 render={({ field }) => (
                                   <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>

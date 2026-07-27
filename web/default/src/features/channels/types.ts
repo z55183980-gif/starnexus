@@ -91,6 +91,7 @@ export interface ChannelSettings {
 export interface ChannelOtherSettings {
   azure_responses_version?: string
   responses_websocket_v2_enabled?: boolean
+  alpha_search_enabled?: boolean
   vertex_key_type?: 'json' | 'api_key'
   openrouter_enterprise?: boolean
   aws_key_type?: 'ak_sk' | 'api_key'

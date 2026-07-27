@@ -20,17 +20,12 @@ func ChannelSupportsRequestPath(channel *model.Channel, requestPath string, mode
 	if channel == nil {
 		return false
 	}
+	if strings.HasPrefix(requestPath, alphaSearchRequestPath) {
+		return channel.GetOtherSettings().SupportsAlphaSearch(channel.Type, modelName)
+	}
 	if channel.Type == constant.ChannelTypeAdvancedCustom {
 		config := channel.GetOtherSettings().AdvancedCustom
 		return config != nil && config.SupportsPathForModel(requestPath, modelName)
-	}
-	if strings.HasPrefix(requestPath, alphaSearchRequestPath) {
-		switch channel.Type {
-		case constant.ChannelTypeCodex, constant.ChannelTypeSub2API, constant.ChannelTypeNewAPI:
-			return true
-		default:
-			return false
-		}
 	}
 	return true
 }

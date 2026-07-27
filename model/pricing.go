@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -96,6 +97,8 @@ func GetVendors() []PricingVendor {
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
+	GetPricing()
+
 	if model == "" {
 		return make([]constant.EndpointType, 0)
 	}
@@ -205,7 +208,7 @@ func updatePricing() {
 	// 先根据已有能力填充原生端点
 	for _, ability := range enableAbilities {
 		endpoints := modelSupportEndpointsStr[ability.Model]
-		channelTypes := common.GetEndpointTypesByChannelType(ability.ChannelType, ability.Model)
+		channelTypes := getEndpointTypesForAbility(ability)
 		for _, channelType := range channelTypes {
 			if !common.StringsContains(endpoints, string(channelType)) {
 				endpoints = append(endpoints, string(channelType))
@@ -356,6 +359,25 @@ func updatePricing() {
 	modelEnableGroupsLock.Unlock()
 
 	lastGetPricingTime = time.Now()
+}
+
+func getEndpointTypesForAbility(ability AbilityWithChannel) []constant.EndpointType {
+	endpointTypes := common.GetEndpointTypesByChannelType(ability.ChannelType, ability.Model)
+	var channelSettings dto.ChannelOtherSettings
+	if ability.ChannelSettings != nil && *ability.ChannelSettings != "" {
+		if err := common.UnmarshalJsonStr(*ability.ChannelSettings, &channelSettings); err != nil {
+			common.SysLog(fmt.Sprintf("parse channel settings for channel %d failed: %v", ability.ChannelId, err))
+		}
+	}
+	if channelSettings.SupportsAlphaSearch(ability.ChannelType, ability.Model) {
+		for _, endpointType := range endpointTypes {
+			if endpointType == constant.EndpointTypeOpenAIAlphaSearch {
+				return endpointTypes
+			}
+		}
+		endpointTypes = append(endpointTypes, constant.EndpointTypeOpenAIAlphaSearch)
+	}
+	return endpointTypes
 }
 
 // GetSupportedEndpointMap 返回全局端点到路径的映射

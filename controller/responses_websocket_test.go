@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	openairelay "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -166,10 +167,12 @@ func TestResponsesWSUpstreamFailureRetainsClientAndAllowsReplacement(t *testing.
 	info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
 	var released atomic.Int32
 	upstream := newResponsesWSUpstreamConnection(upstreamServer)
+	failedChannel := &model.Channel{Id: 1}
 	session := &responsesWebSocketSession{
 		baseCtx:  ctx,
 		client:   clientServer,
 		upstream: upstream,
+		channel:  failedChannel,
 		activeTurn: &responsesWebSocketTurn{
 			ctx:             ctx,
 			info:            info,
@@ -184,6 +187,7 @@ func TestResponsesWSUpstreamFailureRetainsClientAndAllowsReplacement(t *testing.
 	session.handleUpstreamFailure(upstream, errors.New("broken pipe"))
 	require.Equal(t, int32(3), released.Load())
 	require.Nil(t, session.getUpstream())
+	require.Nil(t, session.getChannel())
 	select {
 	case <-session.closed:
 		t.Fatal("client session closed after upstream failure")
@@ -206,9 +210,12 @@ func TestResponsesWSUpstreamFailureRetainsClientAndAllowsReplacement(t *testing.
 	replacement := session.attachUpstream(replacementServer)
 	require.NotNil(t, replacement)
 	require.Same(t, replacement, session.getUpstream())
+	replacementChannel := &model.Channel{Id: 2}
+	session.setChannel(replacementChannel)
 
 	session.handleUpstreamFailure(upstream, errors.New("late stale reader failure"))
 	require.Same(t, replacement, session.getUpstream())
+	require.Same(t, replacementChannel, session.getChannel())
 	require.Equal(t, int32(3), released.Load())
 
 	replacementInfo := relaycommon.GenRelayInfoOpenAI(ctx, nil)

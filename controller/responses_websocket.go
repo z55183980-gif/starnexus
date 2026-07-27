@@ -180,24 +180,12 @@ func RelayResponsesWebSocket(c *gin.Context) {
 			continue
 		}
 
-		if session.lockedModel == "" {
+		firstTurn := session.lockedModel == ""
+		if firstTurn {
 			if strings.TrimSpace(request.Model) == "" {
 				session.sendError(types.NewErrorWithStatusCode(errors.New("model is required on the first response.create event"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
 				continue
 			}
-			selectedChannel, selectErr := middleware.SelectChannelForModelFiltered(c, request.Model, func(candidate *model.Channel) bool {
-				return candidate.GetOtherSettings().ResponsesWebSocketV2Enabled
-			})
-			if selectErr != nil {
-				session.sendError(selectErr)
-				return
-			}
-			if !selectedChannel.GetOtherSettings().ResponsesWebSocketV2Enabled {
-				session.sendError(types.NewErrorWithStatusCode(fmt.Errorf("selected channel %d does not enable Responses WebSocket v2", selectedChannel.Id), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-				return
-			}
-			session.channel = selectedChannel
-			session.lockedModel = request.Model
 		} else {
 			if request.Model == "" {
 				request.Model = session.lockedModel
@@ -205,6 +193,26 @@ func RelayResponsesWebSocket(c *gin.Context) {
 				session.sendError(types.NewErrorWithStatusCode(fmt.Errorf("model cannot change within a Responses WebSocket connection: %s -> %s", session.lockedModel, request.Model), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
 				continue
 			}
+		}
+
+		selectedChannel := session.getChannel()
+		if selectedChannel == nil {
+			candidateChannel, selectErr := middleware.SelectChannelForModelFiltered(c, request.Model, func(candidate *model.Channel) bool {
+				return candidate.GetOtherSettings().ResponsesWebSocketV2Enabled
+			})
+			if selectErr != nil {
+				session.sendError(selectErr)
+				continue
+			}
+			if !candidateChannel.GetOtherSettings().ResponsesWebSocketV2Enabled {
+				session.sendError(types.NewErrorWithStatusCode(fmt.Errorf("selected channel %d does not enable Responses WebSocket v2", candidateChannel.Id), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
+				continue
+			}
+			selectedChannel = candidateChannel
+			session.setChannel(selectedChannel)
+		}
+		if firstTurn {
+			session.lockedModel = request.Model
 		}
 
 		turn, preparedResponse, adaptor, prepareErr := session.prepareTurn(request)
@@ -232,7 +240,8 @@ func RelayResponsesWebSocket(c *gin.Context) {
 					_ = resp.Body.Close()
 				}
 				apiErr := types.NewErrorWithStatusCode(dialErr, types.ErrorCodeDoRequestFailed, status, types.ErrOptionWithSkipRetry())
-				processChannelError(turn.ctx, *types.NewChannelError(session.channel.Id, session.channel.Type, session.channel.Name, session.channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), session.channel.GetAutoBan()), apiErr)
+				processChannelError(turn.ctx, *types.NewChannelError(selectedChannel.Id, selectedChannel.Type, selectedChannel.Name, selectedChannel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), selectedChannel.GetAutoBan()), apiErr)
+				session.clearChannel(selectedChannel)
 				session.sendError(apiErr)
 				continue
 			}
@@ -257,7 +266,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 			continue
 		}
 		if connectedUpstream {
-			service.RecordChannelAffinity(c, session.channel.Id)
+			service.RecordChannelAffinity(c, selectedChannel.Id)
 		}
 	}
 }
@@ -564,6 +573,26 @@ func (s *responsesWebSocketSession) getUpstream() *responsesWSUpstreamConnection
 	return s.upstream
 }
 
+func (s *responsesWebSocketSession) getChannel() *model.Channel {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.channel
+}
+
+func (s *responsesWebSocketSession) setChannel(channel *model.Channel) {
+	s.mu.Lock()
+	s.channel = channel
+	s.mu.Unlock()
+}
+
+func (s *responsesWebSocketSession) clearChannel(channel *model.Channel) {
+	s.mu.Lock()
+	if s.channel == channel {
+		s.channel = nil
+	}
+	s.mu.Unlock()
+}
+
 func (s *responsesWebSocketSession) attachUpstream(conn *websocket.Conn) *responsesWSUpstreamConnection {
 	if conn == nil {
 		return nil
@@ -615,6 +644,7 @@ func (s *responsesWebSocketSession) detachUpstream(upstream *responsesWSUpstream
 		return nil, false
 	}
 	s.upstream = nil
+	s.channel = nil
 	turn := s.activeTurn
 	s.activeTurn = nil
 	s.mu.Unlock()

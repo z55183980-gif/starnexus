@@ -319,6 +319,10 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 					createAt = int64(streamResp.Response.CreatedAt)
 				}
 			}
+			if !sendStartIfNeeded() {
+				sr.Stop(streamErr)
+				return
+			}
 
 		//case "response.reasoning_text.delta":
 		//if !sendReasoningDelta(streamResp.Delta) {

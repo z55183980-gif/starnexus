@@ -34,7 +34,6 @@ func TestAlphaSearchHelperAcceptsSupportedChannelTypes(t *testing.T) {
 		constant.ChannelTypeCodex,
 		constant.ChannelTypeSub2API,
 		constant.ChannelTypeNewAPI,
-		constant.ChannelTypeAdvancedCustom,
 	} {
 		t.Run(constant.GetChannelTypeName(channelType), func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -47,6 +46,38 @@ func TestAlphaSearchHelperAcceptsSupportedChannelTypes(t *testing.T) {
 			assert.Contains(t, err.Error(), "empty alpha search request body")
 		})
 	}
+}
+
+func TestAlphaSearchHelperAcceptsOptedInOpenAIChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenAI)
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{AlphaSearchEnabled: true})
+
+	err := AlphaSearchHelper(c, &relaycommon.RelayInfo{Request: &dto.AlphaSearchRequest{Model: "gpt-5.6-sol"}})
+
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "empty alpha search request body")
+}
+
+func TestAlphaSearchHelperAcceptsConfiguredAdvancedCustomRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeAdvancedCustom)
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{
+		AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+			IncomingPath: "/v1/alpha/search",
+			UpstreamPath: "/v1/alpha/search",
+			Models:       []string{"gpt-5.6-sol"},
+		}}},
+	})
+
+	err := AlphaSearchHelper(c, &relaycommon.RelayInfo{Request: &dto.AlphaSearchRequest{Model: "gpt-5.6-sol"}})
+
+	require.NotNil(t, err)
+	assert.Contains(t, err.Error(), "empty alpha search request body")
 }
 
 func TestBuildAlphaSearchRequestBodyPreservesUnknownFields(t *testing.T) {

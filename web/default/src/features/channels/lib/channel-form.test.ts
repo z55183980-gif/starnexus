@@ -45,3 +45,46 @@ describe('Responses WebSocket v2 channel settings', () => {
     assert.equal('responses_websocket_v2_enabled' in settings, false)
   })
 })
+
+describe('Alpha Search channel capability', () => {
+  test('persists the capability for OpenAI channels', () => {
+    const payload = transformFormDataToUpdatePayload(
+      {
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        name: 'test channel',
+        type: 1,
+        models: 'gpt-5.6-sol',
+        group: ['test3'],
+        alpha_search_enabled: true,
+      },
+      44
+    )
+    const settings = JSON.parse(payload.settings || '{}') as Record<
+      string,
+      unknown
+    >
+
+    assert.equal(settings.alpha_search_enabled, true)
+  })
+
+  test('removes the capability from non-OpenAI channels', () => {
+    const payload = transformFormDataToUpdatePayload(
+      {
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        name: 'test channel',
+        type: 14,
+        models: 'gpt-5.6-sol',
+        group: ['test3'],
+        settings: JSON.stringify({ alpha_search_enabled: true }),
+        alpha_search_enabled: true,
+      },
+      44
+    )
+    const settings = JSON.parse(payload.settings || '{}') as Record<
+      string,
+      unknown
+    >
+
+    assert.equal('alpha_search_enabled' in settings, false)
+  })
+})
