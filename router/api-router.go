@@ -232,6 +232,17 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.POST("/waffo-pancake/subscription-product-options", controller.ListWaffoPancakeSubscriptionProductOptions)
 		}
 
+		securityAuditRoute := apiRouter.Group("/security-audit")
+		securityAuditRoute.Use(middleware.RootAuth())
+		{
+			securityAuditRoute.GET("/policies", controller.ListPromptAuditPolicies)
+			securityAuditRoute.POST("/policies", controller.CreatePromptAuditPolicy)
+			securityAuditRoute.PATCH("/policies/:id", controller.UpdatePromptAuditPolicy)
+			securityAuditRoute.DELETE("/policies/:id", controller.DeletePromptAuditPolicy)
+			securityAuditRoute.GET("/users/:user_id/prompts", controller.ListPromptAuditLogs)
+			securityAuditRoute.DELETE("/users/:user_id/prompts", controller.DeletePromptAuditLogs)
+		}
+
 		affiliateAgentRoute := apiRouter.Group("/affiliate/agent")
 		affiliateAgentRoute.Use(middleware.AgentAuth())
 		{

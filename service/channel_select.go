@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -10,6 +11,29 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
+
+const alphaSearchRequestPath = "/v1/alpha/search"
+
+// ChannelSupportsRequestPath keeps endpoint-specific channel requirements in
+// one place so initial distribution, affinity selection, and retries agree.
+func ChannelSupportsRequestPath(channel *model.Channel, requestPath string) bool {
+	if channel == nil {
+		return false
+	}
+	if strings.HasPrefix(requestPath, alphaSearchRequestPath) {
+		return channel.Type == constant.ChannelTypeCodex
+	}
+	return true
+}
+
+func ChannelFilterForRequestPath(requestPath string) func(*model.Channel) bool {
+	if !strings.HasPrefix(requestPath, alphaSearchRequestPath) {
+		return nil
+	}
+	return func(channel *model.Channel) bool {
+		return ChannelSupportsRequestPath(channel, requestPath)
+	}
+}
 
 type RetryParam struct {
 	Ctx          *gin.Context

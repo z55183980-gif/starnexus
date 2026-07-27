@@ -49,6 +49,8 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 		err = relay.EmbeddingHelper(c, info)
 	case relayconstant.RelayModeResponses, relayconstant.RelayModeResponsesCompact:
 		err = relay.ResponsesHelper(c, info)
+	case relayconstant.RelayModeAlphaSearch:
+		err = relay.AlphaSearchHelper(c, info)
 	default:
 		err = relay.TextHelper(c, info)
 	}
@@ -123,6 +125,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	if promptAuditError := service.ApplyPromptAudit(c, request, relayFormat, relayInfo.OriginModelName); promptAuditError != nil {
+		newAPIError = promptAuditError
+		return
+	}
+
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
@@ -133,11 +140,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		meta = fastTokenCountMetaForPricing(request)
 	}
 
-	if needSensitiveCheck && meta != nil {
-		contains, words := service.CheckSensitiveText(meta.CombineText)
-		if contains {
+	if needSensitiveCheck {
+		words, sensitiveError := checkGlobalPromptSensitive(meta)
+		if sensitiveError != nil {
 			logger.LogWarn(c, fmt.Sprintf("user sensitive words detected: %s", strings.Join(words, ", ")))
-			newAPIError = types.NewError(err, types.ErrorCodeSensitiveWordsDetected)
+			newAPIError = sensitiveError
 			return
 		}
 	}
@@ -172,10 +179,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return
 	}
+	if relayFormat == types.RelayFormatOpenAIAlphaSearch {
+		priceData.QuotaToPreConsume = service.AddKnownToolCallSurchargeToPreConsumeQuota(c, relayInfo, priceData.QuotaToPreConsume)
+		relayInfo.PriceData = priceData
+	}
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
-	if priceData.FreeModel {
+	if priceData.FreeModel && priceData.QuotaToPreConsume == 0 {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
 	} else {
 		newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
@@ -264,6 +275,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 }
 
+func checkGlobalPromptSensitive(meta *types.TokenCountMeta) ([]string, *types.NewAPIError) {
+	if meta == nil {
+		return nil, nil
+	}
+	contains, words := service.CheckSensitiveText(meta.CombineText)
+	if !contains {
+		return nil, nil
+	}
+	return words, types.NewErrorWithStatusCode(
+		fmt.Errorf("sensitive words detected: %s", strings.Join(words, ", ")),
+		types.ErrorCodeSensitiveWordsDetected,
+		http.StatusBadRequest,
+		types.ErrOptionWithSkipRetry(),
+	)
+}
+
 var upgrader = websocket.Upgrader{
 	Subprotocols: []string{"realtime"}, // WS 握手支持的协议，如果有使用 Sec-WebSocket-Protocol，则必须在此声明对应的 Protocol TODO add other protocol
 	CheckOrigin: func(r *http.Request) bool {
@@ -320,7 +347,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
-	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
+	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannelFiltered(retryParam, service.ChannelFilterForRequestPath(c.Request.URL.Path))
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 

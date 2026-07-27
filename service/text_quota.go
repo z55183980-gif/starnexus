@@ -64,6 +64,10 @@ type textQuotaSummary struct {
 	TokenPricingOutputRatio  float64
 }
 
+func (s *textQuotaSummary) hasBillableUsage() bool {
+	return s.RawTotalTokens > 0 || !s.ToolCallSurchargeQuota.IsZero()
+}
+
 func tokenPricingContextFromRelayInfo(relayInfo *relaycommon.RelayInfo) billing_setting.TokenPricingContext {
 	if relayInfo == nil {
 		return billing_setting.TokenPricingContext{}
@@ -169,6 +173,27 @@ func noteQuotaClamp(relayInfo *relaycommon.RelayInfo, clamp *common.QuotaClamp) 
 	if relayInfo.QuotaClamp == nil {
 		relayInfo.QuotaClamp = clamp
 	}
+}
+
+// AddKnownToolCallSurchargeToPreConsumeQuota reserves tool charges that are
+// guaranteed by the request shape before the upstream request is sent.
+func AddKnownToolCallSurchargeToPreConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, preConsumedQuota int) int {
+	if relayInfo == nil {
+		return preConsumedQuota
+	}
+	summary := textQuotaSummary{
+		ModelName:  relayInfo.OriginModelName,
+		GroupRatio: relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+	}
+	surcharge := calculateTextToolCallSurcharge(ctx, relayInfo, &summary)
+	if surcharge.IsZero() {
+		return preConsumedQuota
+	}
+	quota, clamp := common.QuotaFromDecimalChecked(
+		decimal.NewFromInt(int64(preConsumedQuota)).Add(surcharge.Ceil()),
+	)
+	noteQuotaClamp(relayInfo, clamp)
+	return quota
 }
 
 func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaSummary, tieredQuota int, tieredResult *billingexpr.TieredResult) int {
@@ -329,10 +354,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
 		quotaCalculateDecimal := promptQuota.Add(completionQuota).Mul(ratio)
-		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
-
 		quotaCalculateDecimal = relayInfo.PriceData.ApplyOtherRatiosToDecimal(quotaCalculateDecimal)
+		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 
 		if !ratio.IsZero() && quotaCalculateDecimal.LessThanOrEqual(decimal.Zero) {
 			quotaCalculateDecimal = decimal.NewFromInt(1)
@@ -342,15 +366,15 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		noteQuotaClamp(relayInfo, clamp)
 	} else {
 		quotaCalculateDecimal := dModelPrice.Mul(dQuotaPerUnit).Mul(dGroupRatio)
-		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
 		quotaCalculateDecimal = relayInfo.PriceData.ApplyOtherRatiosToDecimal(quotaCalculateDecimal)
+		quotaCalculateDecimal = quotaCalculateDecimal.Add(summary.ToolCallSurchargeQuota)
 		quota, clamp := common.QuotaFromDecimalChecked(quotaCalculateDecimal)
 		summary.Quota = quota
 		noteQuotaClamp(relayInfo, clamp)
 	}
 
-	if summary.RawTotalTokens == 0 {
+	if !summary.hasBillableUsage() {
 		summary.Quota = 0
 	} else if !ratio.IsZero() && summary.Quota == 0 {
 		summary.Quota = 1
@@ -412,7 +436,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		extraContent = append(extraContent, fmt.Sprintf("Image Generation Call 花费 %s", decimal.NewFromFloat(summary.ImageGenerationCallPrice).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
 	}
 
-	if summary.RawTotalTokens == 0 {
+	if !summary.hasBillableUsage() {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {

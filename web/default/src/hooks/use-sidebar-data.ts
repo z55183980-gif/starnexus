@@ -31,6 +31,7 @@ import {
   Radio,
   Receipt,
   Settings,
+  ShieldCheck,
   Ticket,
   User,
   Share2,
@@ -157,6 +158,12 @@ export function useSidebarData(): SidebarData {
         id: 'admin',
         title: t('Admin'),
         items: [
+          {
+            title: t('Security Audit'),
+            url: '/security-audit',
+            icon: ShieldCheck,
+            rootOnly: true,
+          },
           {
             title: t('Business Monitor'),
             url: '/business-monitor',

@@ -53,6 +53,10 @@ func Distribute() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
 				return
 			}
+			if !service.ChannelSupportsRequestPath(channel, c.Request.URL.Path) {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorChannelEndpointUnsupported, map[string]any{"Path": c.Request.URL.Path}), types.ErrorCodeInvalidRequest)
+				return
+			}
 		} else {
 			// Select a channel for the user
 			// check token model mapping
@@ -103,7 +107,7 @@ func Distribute() func(c *gin.Context) {
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && preferred != nil {
+					if err == nil && service.ChannelSupportsRequestPath(preferred, c.Request.URL.Path) {
 						if preferred.Status != common.ChannelStatusEnabled {
 							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
@@ -130,12 +134,12 @@ func Distribute() func(c *gin.Context) {
 				}
 
 				if channel == nil {
-					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannelFiltered(&service.RetryParam{
 						Ctx:        c,
 						ModelName:  modelRequest.Model,
 						TokenGroup: usingGroup,
 						Retry:      common.GetPointer(0),
-					})
+					}, service.ChannelFilterForRequestPath(c.Request.URL.Path))
 					if err != nil {
 						showGroup := usingGroup
 						if usingGroup == "auto" {

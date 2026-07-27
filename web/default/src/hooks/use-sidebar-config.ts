@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useMemo } from 'react'
 import { useAuthStore } from '@/stores/auth-store'
-import { useStatus } from '@/hooks/use-status'
 import { ROLE } from '@/lib/roles'
+import { useStatus } from '@/hooks/use-status'
 import type { NavGroup, NavItem } from '@/components/layout/types'
 
 type SidebarSectionConfig = {
@@ -199,7 +199,8 @@ function isModuleEnabled(
 
   const { section: mappedSection, module } = mapping
   const section =
-    groupId === 'agent' && (mappedSection === 'admin' || mappedSection === 'console')
+    groupId === 'agent' &&
+    (mappedSection === 'admin' || mappedSection === 'console')
       ? 'agent'
       : mappedSection
   const adminSection = adminConfig[section]
@@ -222,8 +223,10 @@ function isModuleEnabled(
 function isNavItemVisible(
   item: NavItem & { groupId?: string },
   adminConfig: SidebarModulesAdminConfig,
-  userConfig: SidebarModulesUserConfig
+  userConfig: SidebarModulesUserConfig,
+  userRole: number
 ): boolean {
+  if (item.rootOnly && userRole !== ROLE.SUPER_ADMIN) return false
   // Handle dynamic chat presets type — also runs the admin × user AND gate
   if ('type' in item && item.type === 'chat-presets') {
     const adminChat = adminConfig.chat
@@ -248,7 +251,12 @@ function isNavItemVisible(
   if ('items' in item && item.items) {
     // If has sub-items, show this collapsible item if at least one sub-item is visible
     return item.items.some((subItem) =>
-      isModuleEnabled(subItem.url as string, adminConfig, userConfig, item.groupId)
+      isModuleEnabled(
+        subItem.url as string,
+        adminConfig,
+        userConfig,
+        item.groupId
+      )
     )
   }
 
@@ -262,14 +270,22 @@ function filterNavItems(
   items: NavItem[],
   adminConfig: SidebarModulesAdminConfig,
   userConfig: SidebarModulesUserConfig,
+  userRole: number,
   groupId?: string
 ): NavItem[] {
   return items
     .map((item) => {
       // If collapsible item, also filter its sub-items
       if ('items' in item && item.items) {
-        const filteredSubItems = item.items.filter((subItem) =>
-          isModuleEnabled(subItem.url as string, adminConfig, userConfig, groupId)
+        const filteredSubItems = item.items.filter(
+          (subItem) =>
+            (!subItem.rootOnly || userRole === ROLE.SUPER_ADMIN) &&
+            isModuleEnabled(
+              subItem.url as string,
+              adminConfig,
+              userConfig,
+              groupId
+            )
         )
 
         return {
@@ -279,7 +295,9 @@ function filterNavItems(
       }
       return item
     })
-    .filter((item) => isNavItemVisible({ ...item, groupId }, adminConfig, userConfig))
+    .filter((item) =>
+      isNavItemVisible({ ...item, groupId }, adminConfig, userConfig, userRole)
+    )
 }
 
 /**
@@ -333,12 +351,21 @@ export function useSidebarConfig(navGroups: NavGroup[]): NavGroup[] {
           return true
         })
         .map((group) => {
-          const items = filterNavItems(group.items, adminConfig, userConfig, group.id)
+          const items = filterNavItems(
+            group.items,
+            adminConfig,
+            userConfig,
+            userRole,
+            group.id
+          )
           return {
             ...group,
             items:
               userRole === ROLE.AGENT && group.id === 'general'
-                ? items.filter((item) => !('url' in item && item.url === '/usage-logs/common'))
+                ? items.filter(
+                    (item) =>
+                      !('url' in item && item.url === '/usage-logs/common')
+                  )
                 : items,
           }
         })
