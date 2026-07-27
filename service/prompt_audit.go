@@ -111,6 +111,9 @@ func ApplyPromptAudit(c *gin.Context, request dto.Request, relayFormat types.Rel
 	if prompt == "" {
 		return nil
 	}
+	if shouldSkipPromptAuditText(c, prompt) {
+		return nil
+	}
 
 	contains, words := CheckSensitiveText(prompt)
 	action := model.PromptAuditActionRecorded
@@ -168,6 +171,9 @@ func promptAuditDelayMilliseconds(seconds int) int {
 
 func buildPromptAuditLog(c *gin.Context, userId int, modelName string, relayFormat types.RelayFormat, prompt string, words []string, hit bool, action string, delayMs int) *model.PromptAuditLog {
 	storedPrompt, truncated := truncatePromptAuditText(prompt)
+	if words == nil {
+		words = []string{}
+	}
 	matchedWords, err := common.Marshal(words)
 	if err != nil {
 		matchedWords = []byte("[]")
@@ -196,6 +202,61 @@ func buildPromptAuditLog(c *gin.Context, userId int, modelName string, relayForm
 		Truncated:    truncated,
 		CreatedAt:    common.GetTimestamp(),
 	}
+}
+
+func shouldSkipPromptAuditText(c *gin.Context, prompt string) bool {
+	if !isCodexPromptAuditRequest(c) {
+		return false
+	}
+
+	text := strings.ToLower(strings.TrimSpace(prompt))
+	switch {
+	case strings.HasPrefix(text, "calculate and respond with only the number, nothing else."):
+		return true
+	case strings.HasPrefix(text, "# overview") && strings.Contains(text, "hyperpersonalized suggestions"):
+		return true
+	case strings.HasPrefix(text, "you are a helpful assistant.") && strings.Contains(text, "short title for a task"):
+		return true
+	case strings.HasPrefix(text, "<system-reminder>"):
+		return true
+	case strings.HasPrefix(text, "[background task completed]") || strings.HasPrefix(text, "[all background tasks complete]"):
+		return true
+	case strings.HasPrefix(text, "task:"):
+		return true
+	case hasPromptAuditTemporaryRepoPath(text) &&
+		(strings.HasPrefix(text, "inspect the repository") ||
+			strings.HasPrefix(text, "audit the repository") ||
+			strings.HasPrefix(text, "in /var/") ||
+			strings.HasPrefix(text, "in /tmp/") ||
+			strings.HasPrefix(text, "in the checkout")):
+		return true
+	default:
+		return false
+	}
+}
+
+func isCodexPromptAuditRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	if strings.Contains(strings.ToLower(c.GetHeader("originator")), "codex") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(c.GetHeader("User-Agent")), "codex") {
+		return true
+	}
+	for _, header := range []string{"x-codex-window-id", "x-codex-installation-id", "x-codex-turn-metadata"} {
+		if strings.TrimSpace(c.GetHeader(header)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPromptAuditTemporaryRepoPath(text string) bool {
+	return strings.Contains(text, "/var/folders/") ||
+		strings.Contains(text, "/tmp/") ||
+		strings.Contains(text, "\\appdata\\local\\temp\\")
 }
 
 func truncatePromptAuditText(text string) (string, bool) {

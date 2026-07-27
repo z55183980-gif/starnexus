@@ -61,6 +61,47 @@ func TestDeletePromptAuditLogsByUserIdKeepsPolicyAndAllowsNewLogs(t *testing.T) 
 	require.Equal(t, int64(1), newLogs)
 }
 
+func TestListPromptAuditLogsByCursor(t *testing.T) {
+	db := openPromptAuditTestDB(t)
+	setPromptAuditTestDatabases(t, db, db)
+
+	logs := []PromptAuditLog{
+		{UserId: 21, Prompt: "one", PromptHash: "1", MatchedWords: "[]", CreatedAt: 10},
+		{UserId: 21, Prompt: "two", PromptHash: "2", MatchedWords: "[]", CreatedAt: 10},
+		{UserId: 21, Prompt: "three", PromptHash: "3", MatchedWords: "[]", CreatedAt: 11},
+		{UserId: 22, Prompt: "other", PromptHash: "4", MatchedWords: "[]", CreatedAt: 12},
+	}
+	require.NoError(t, db.Create(&logs).Error)
+
+	latest, hasMore, err := ListPromptAuditLogsBeforeId(21, 0, 2)
+	require.NoError(t, err)
+	require.True(t, hasMore)
+	require.Equal(t, []int{logs[2].Id, logs[1].Id}, promptAuditLogIds(latest))
+
+	older, hasMore, err := ListPromptAuditLogsBeforeId(21, logs[1].Id, 2)
+	require.NoError(t, err)
+	require.False(t, hasMore)
+	require.Equal(t, []int{logs[0].Id}, promptAuditLogIds(older))
+
+	newer, hasMore, err := ListPromptAuditLogsAfterId(21, logs[0].Id, 1)
+	require.NoError(t, err)
+	require.True(t, hasMore)
+	require.Equal(t, []int{logs[1].Id}, promptAuditLogIds(newer))
+
+	newest, hasMore, err := ListPromptAuditLogsAfterId(21, logs[1].Id, 2)
+	require.NoError(t, err)
+	require.False(t, hasMore)
+	require.Equal(t, []int{logs[2].Id}, promptAuditLogIds(newest))
+}
+
+func promptAuditLogIds(logs []PromptAuditLog) []int {
+	ids := make([]int, len(logs))
+	for index, log := range logs {
+		ids[index] = log.Id
+	}
+	return ids
+}
+
 func openPromptAuditTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

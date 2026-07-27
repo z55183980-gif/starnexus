@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import type {
   PromptAuditClearLogsResponse,
+  PromptAuditLogCursorResponse,
   PromptAuditLogsResponse,
   PromptAuditPoliciesResponse,
   PromptAuditPolicy,
@@ -75,6 +76,42 @@ export async function listPromptAuditLogs(
   const result = response.data as PromptAuditLogsResponse
   if (!result.success) throw new Error(result.message || 'Failed to load')
   return result
+}
+
+async function listPromptAuditLogsByCursor(
+  userId: number,
+  cursorName: 'before_id' | 'after_id',
+  cursor: number,
+  pageSize: number
+): Promise<PromptAuditLogCursorResponse> {
+  const response = await api.get(
+    `/api/security-audit/users/${userId}/prompts`,
+    {
+      params: {
+        [cursorName]: cursor,
+        page_size: pageSize,
+      },
+    }
+  )
+  const result = response.data as PromptAuditLogCursorResponse
+  if (!result.success) throw new Error(result.message || 'Failed to load')
+  return result
+}
+
+export function listPromptAuditLogsBefore(
+  userId: number,
+  beforeId = 0,
+  pageSize = 50
+): Promise<PromptAuditLogCursorResponse> {
+  return listPromptAuditLogsByCursor(userId, 'before_id', beforeId, pageSize)
+}
+
+export function listPromptAuditLogsAfter(
+  userId: number,
+  afterId: number,
+  pageSize = 100
+): Promise<PromptAuditLogCursorResponse> {
+  return listPromptAuditLogsByCursor(userId, 'after_id', afterId, pageSize)
 }
 
 export async function clearPromptAuditLogs(

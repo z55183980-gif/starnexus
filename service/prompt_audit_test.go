@@ -1,12 +1,16 @@
 package service
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 )
 
 func TestExtractPromptAuditUserTextOpenAIUsesLatestUserMessage(t *testing.T) {
@@ -226,5 +230,96 @@ func TestPromptAuditDelayMilliseconds(t *testing.T) {
 		if got := promptAuditDelayMilliseconds(seconds); got != want {
 			t.Fatalf("unexpected delay for %d seconds: got %d, want %d", seconds, got, want)
 		}
+	}
+}
+
+func TestShouldSkipPromptAuditText(t *testing.T) {
+	tests := []struct {
+		name       string
+		headerName string
+		header     string
+		prompt     string
+		want       bool
+	}{
+		{
+			name:       "codex math probe",
+			headerName: "originator",
+			header:     "codex_cli_rs",
+			prompt:     "Calculate and respond with ONLY the number, nothing else.\nQ: 3 + 5 = ?",
+			want:       true,
+		},
+		{
+			name:       "codex title generator",
+			headerName: "User-Agent",
+			header:     "codex-cli/1.0",
+			prompt:     "You are a helpful assistant. You will be presented with a user prompt, and your job is to provide a short title for a task.",
+			want:       true,
+		},
+		{
+			name:       "codex background reminder",
+			headerName: "x-codex-window-id",
+			header:     "window-1",
+			prompt:     "<system-reminder>\n[BACKGROUND TASK COMPLETED]",
+			want:       true,
+		},
+		{
+			name:       "codex task assignment",
+			headerName: "originator",
+			header:     "Codex CLI",
+			prompt:     "TASK: Audit cryptographic primitives in the repository.",
+			want:       true,
+		},
+		{
+			name:       "codex temporary repo assignment",
+			headerName: "originator",
+			header:     "Codex CLI",
+			prompt:     "Inspect the repository at /var/folders/a/T/opencode/repo without editing it.",
+			want:       true,
+		},
+		{
+			name:       "ordinary client keeps same text",
+			headerName: "User-Agent",
+			header:     "custom-client/1.0",
+			prompt:     "TASK: Audit cryptographic primitives in the repository.",
+			want:       false,
+		},
+		{
+			name:       "codex normal user prompt",
+			headerName: "originator",
+			header:     "codex_cli_rs",
+			prompt:     "请检查登录接口为什么返回 500",
+			want:       false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+			c.Request.Header.Set(test.headerName, test.header)
+			if got := shouldSkipPromptAuditText(c, test.prompt); got != test.want {
+				t.Fatalf("unexpected skip result: got %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestBuildPromptAuditLogUsesEmptyMatchedWordsArray(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+
+	log := buildPromptAuditLog(
+		c,
+		1,
+		"gpt-test",
+		types.RelayFormatOpenAIResponses,
+		"hello",
+		nil,
+		false,
+		model.PromptAuditActionRecorded,
+		0,
+	)
+	if log.MatchedWords != "[]" {
+		t.Fatalf("unexpected matched words: %q", log.MatchedWords)
 	}
 }

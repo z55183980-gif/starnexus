@@ -16,7 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import type { InfiniteData } from '@tanstack/react-query'
 import {
   useInfiniteQuery,
   useQuery,
@@ -27,6 +28,7 @@ import {
   Eye,
   LoaderCircle,
   Plus,
+  RefreshCw,
   Search,
   ShieldCheck,
   Trash2,
@@ -82,6 +84,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import {
   Table,
@@ -97,11 +100,16 @@ import {
   clearPromptAuditLogs,
   createPromptAuditPolicy,
   deletePromptAuditPolicy,
-  listPromptAuditLogs,
+  listPromptAuditLogsAfter,
+  listPromptAuditLogsBefore,
   listPromptAuditPolicies,
   updatePromptAuditPolicy,
 } from './api'
-import type { PromptAuditLog, PromptAuditPolicy } from './types'
+import type {
+  PromptAuditLog,
+  PromptAuditLogCursorResponse,
+  PromptAuditPolicy,
+} from './types'
 
 const policiesQueryKey = ['security-audit', 'policies'] as const
 const delaySecondsOptions = [3, 5, 9, 15, 20, 30, 45] as const
@@ -212,22 +220,97 @@ function PromptLogSheet({
   onOpenChange: (open: boolean) => void
 }) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
   const [isClearing, setIsClearing] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const refreshCursorRef = useRef(0)
+  const logsQueryKey = ['security-audit', 'prompts', policy?.user_id] as const
   const logsQuery = useInfiniteQuery({
-    queryKey: ['security-audit', 'prompts', policy?.user_id],
+    queryKey: logsQueryKey,
     queryFn: ({ pageParam }) =>
-      listPromptAuditLogs(policy!.user_id, pageParam, 50),
+      listPromptAuditLogsBefore(policy!.user_id, pageParam, 50),
     enabled: open && policy !== null,
-    initialPageParam: 1,
+    initialPageParam: 0,
     getNextPageParam: (lastPage) => {
       const page = lastPage.data
-      if (!page || page.page * page.page_size >= page.total) return undefined
-      return page.page + 1
+      if (!page?.has_more) return undefined
+      return page.next_cursor
     },
   })
   const logs =
     logsQuery.data?.pages.flatMap((page) => page.data?.items ?? []) ?? []
+
+  useEffect(() => {
+    refreshCursorRef.current = 0
+  }, [policy?.user_id])
+
+  useEffect(() => {
+    const latestId = logs.reduce((maximum, log) => Math.max(maximum, log.id), 0)
+    refreshCursorRef.current = Math.max(refreshCursorRef.current, latestId)
+  }, [logs])
+
+  const handleRefresh = async () => {
+    if (!policy || isRefreshing) return
+    setIsRefreshing(true)
+    try {
+      let cursor = refreshCursorRef.current
+      let hasMore = true
+      const incoming: PromptAuditLog[] = []
+      while (hasMore) {
+        const response = await listPromptAuditLogsAfter(policy.user_id, cursor)
+        const page = response.data
+        if (!page) break
+        incoming.push(...page.items)
+        if (page.next_cursor <= cursor && page.has_more) {
+          throw new Error('Prompt audit cursor did not advance')
+        }
+        cursor = Math.max(cursor, page.next_cursor)
+        hasMore = page.has_more
+      }
+      refreshCursorRef.current = cursor
+
+      if (incoming.length > 0) {
+        queryClient.setQueryData<
+          InfiniteData<PromptAuditLogCursorResponse, number>
+        >(logsQueryKey, (current) => {
+          if (!current || current.pages.length === 0) return current
+          const knownIds = new Set(
+            current.pages.flatMap((page) =>
+              (page.data?.items ?? []).map((log) => log.id)
+            )
+          )
+          const additions = incoming
+            .filter((log) => !knownIds.has(log.id))
+            .sort(
+              (left, right) =>
+                right.created_at - left.created_at || right.id - left.id
+            )
+          if (additions.length === 0) return current
+
+          const firstPage = current.pages[0]
+          if (!firstPage.data) return current
+          return {
+            ...current,
+            pages: [
+              {
+                ...firstPage,
+                data: {
+                  ...firstPage.data,
+                  items: [...additions, ...firstPage.data.items],
+                },
+              },
+              ...current.pages.slice(1),
+            ],
+          }
+        })
+      }
+    } catch {
+      toast.error(t('Failed to load'))
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
 
   const handleClear = async () => {
     if (!policy) return
@@ -240,7 +323,27 @@ function PromptLogSheet({
       }
       toast.success(t('Prompt records cleared'))
       setClearDialogOpen(false)
-      await logsQuery.refetch()
+      refreshCursorRef.current = 0
+      queryClient.setQueryData<
+        InfiniteData<PromptAuditLogCursorResponse, number>
+      >(logsQueryKey, (current) => {
+        const firstPage = current?.pages[0]
+        if (!current || !firstPage?.data) return current
+        return {
+          pages: [
+            {
+              ...firstPage,
+              data: {
+                ...firstPage.data,
+                items: [],
+                has_more: false,
+                next_cursor: 0,
+              },
+            },
+          ],
+          pageParams: [0],
+        }
+      })
     } catch {
       toast.error(t('Failed to clear prompt records'))
     } finally {
@@ -253,7 +356,7 @@ function PromptLogSheet({
       <Sheet open={open} onOpenChange={onOpenChange}>
         <SheetContent className='w-full sm:max-w-2xl'>
           <SheetHeader className='border-b pr-12'>
-            <div className='flex items-start justify-between gap-4'>
+            <div className='flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between'>
               <div className='min-w-0'>
                 <SheetTitle>
                   {t('Prompt records for {{username}}', {
@@ -264,17 +367,35 @@ function PromptLogSheet({
                   {t('Latest user prompts are shown first')}
                 </SheetDescription>
               </div>
-              <Button
-                variant='destructive'
-                size='sm'
-                disabled={
-                  logsQuery.isLoading || logs.length === 0 || isClearing
-                }
-                onClick={() => setClearDialogOpen(true)}
-              >
-                <Trash2 data-icon='inline-start' />
-                {t('Clear')}
-              </Button>
+              <div className='flex shrink-0 items-center gap-2 self-end sm:self-auto'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  disabled={logsQuery.isLoading || isClearing || isRefreshing}
+                  onClick={() => void handleRefresh()}
+                >
+                  {isRefreshing ? (
+                    <Spinner data-icon='inline-start' />
+                  ) : (
+                    <RefreshCw data-icon='inline-start' />
+                  )}
+                  {t('Refresh')}
+                </Button>
+                <Button
+                  variant='destructive'
+                  size='sm'
+                  disabled={
+                    logsQuery.isLoading ||
+                    logs.length === 0 ||
+                    isClearing ||
+                    isRefreshing
+                  }
+                  onClick={() => setClearDialogOpen(true)}
+                >
+                  <Trash2 data-icon='inline-start' />
+                  {t('Clear')}
+                </Button>
+              </div>
             </div>
           </SheetHeader>
           <div className='min-h-0 flex-1 overflow-y-auto px-4 pb-4'>

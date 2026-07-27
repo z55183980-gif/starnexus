@@ -225,3 +225,61 @@ func ListPromptAuditLogsByUserId(userId int, pageInfo *common.PageInfo) ([]Promp
 		Find(&logs).Error
 	return logs, total, err
 }
+
+func ListPromptAuditLogsBeforeId(userId int, beforeId int, limit int) ([]PromptAuditLog, bool, error) {
+	if userId <= 0 {
+		return nil, false, errors.New("invalid user id")
+	}
+	if beforeId < 0 {
+		return nil, false, errors.New("invalid prompt audit log cursor")
+	}
+	limit = normalizePromptAuditLogLimit(limit)
+
+	query := LOG_DB.Where("user_id = ?", userId)
+	if beforeId > 0 {
+		query = query.Where("id < ?", beforeId)
+	}
+	logs := make([]PromptAuditLog, 0, limit+1)
+	if err := query.Order("id DESC").Limit(limit + 1).Find(&logs).Error; err != nil {
+		return nil, false, err
+	}
+	hasMore := len(logs) > limit
+	if hasMore {
+		logs = logs[:limit]
+	}
+	return logs, hasMore, nil
+}
+
+func ListPromptAuditLogsAfterId(userId int, afterId int, limit int) ([]PromptAuditLog, bool, error) {
+	if userId <= 0 {
+		return nil, false, errors.New("invalid user id")
+	}
+	if afterId < 0 {
+		return nil, false, errors.New("invalid prompt audit log cursor")
+	}
+	limit = normalizePromptAuditLogLimit(limit)
+
+	logs := make([]PromptAuditLog, 0, limit+1)
+	err := LOG_DB.Where("user_id = ? AND id > ?", userId, afterId).
+		Order("id ASC").
+		Limit(limit + 1).
+		Find(&logs).Error
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(logs) > limit
+	if hasMore {
+		logs = logs[:limit]
+	}
+	return logs, hasMore, nil
+}
+
+func normalizePromptAuditLogLimit(limit int) int {
+	if limit <= 0 {
+		return common.ItemsPerPage
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}

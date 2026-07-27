@@ -60,7 +60,14 @@ export interface PromptAuditLogPage {
   items: PromptAuditLog[]
 }
 
+export interface PromptAuditLogCursorPage {
+  items: PromptAuditLog[]
+  has_more: boolean
+  next_cursor: number
+}
+
 export type PromptAuditPolicyResponse = ApiResponse<PromptAuditPolicy>
 export type PromptAuditPoliciesResponse = ApiResponse<PromptAuditPolicy[]>
 export type PromptAuditLogsResponse = ApiResponse<PromptAuditLogPage>
+export type PromptAuditLogCursorResponse = ApiResponse<PromptAuditLogCursorPage>
 export type PromptAuditClearLogsResponse = ApiResponse<{ deleted: number }>

@@ -22,6 +22,12 @@ type updatePromptAuditPolicyRequest struct {
 	BlockOnHit     *bool `json:"block_on_hit"`
 }
 
+type promptAuditLogCursorPage struct {
+	Items      []model.PromptAuditLog `json:"items"`
+	HasMore    bool                   `json:"has_more"`
+	NextCursor int                    `json:"next_cursor"`
+}
+
 func ListPromptAuditPolicies(c *gin.Context) {
 	policies, err := model.ListPromptAuditPolicies()
 	if err != nil {
@@ -121,6 +127,22 @@ func ListPromptAuditLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if beforeId, exists, cursorErr := getPromptAuditLogCursor(c, "before_id"); exists {
+		if cursorErr != nil {
+			common.ApiError(c, cursorErr)
+			return
+		}
+		listPromptAuditLogsBeforeId(c, userId, beforeId)
+		return
+	}
+	if afterId, exists, cursorErr := getPromptAuditLogCursor(c, "after_id"); exists {
+		if cursorErr != nil {
+			common.ApiError(c, cursorErr)
+			return
+		}
+		listPromptAuditLogsAfterId(c, userId, afterId)
+		return
+	}
 	pageInfo := common.GetPageQuery(c)
 	logs, total, err := model.ListPromptAuditLogsByUserId(userId, pageInfo)
 	if err != nil {
@@ -130,6 +152,54 @@ func ListPromptAuditLogs(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func getPromptAuditLogCursor(c *gin.Context, name string) (int, bool, error) {
+	raw, exists := c.GetQuery(name)
+	if !exists {
+		return 0, false, nil
+	}
+	cursor, err := strconv.Atoi(raw)
+	if err != nil || cursor < 0 {
+		return 0, true, errors.New("invalid prompt audit log cursor")
+	}
+	return cursor, true, nil
+}
+
+func listPromptAuditLogsBeforeId(c *gin.Context, userId int, beforeId int) {
+	pageInfo := common.GetPageQuery(c)
+	logs, hasMore, err := model.ListPromptAuditLogsBeforeId(userId, beforeId, pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	nextCursor := beforeId
+	if len(logs) > 0 {
+		nextCursor = logs[len(logs)-1].Id
+	}
+	common.ApiSuccess(c, promptAuditLogCursorPage{
+		Items:      logs,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
+	})
+}
+
+func listPromptAuditLogsAfterId(c *gin.Context, userId int, afterId int) {
+	pageInfo := common.GetPageQuery(c)
+	logs, hasMore, err := model.ListPromptAuditLogsAfterId(userId, afterId, pageInfo.GetPageSize())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	nextCursor := afterId
+	if len(logs) > 0 {
+		nextCursor = logs[len(logs)-1].Id
+	}
+	common.ApiSuccess(c, promptAuditLogCursorPage{
+		Items:      logs,
+		HasMore:    hasMore,
+		NextCursor: nextCursor,
+	})
 }
 
 func DeletePromptAuditLogs(c *gin.Context) {
