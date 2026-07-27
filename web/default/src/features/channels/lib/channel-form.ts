@@ -88,6 +88,7 @@ const channelFormBaseSchema = z.object({
   allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
   disable_store: z.boolean().optional(), // OpenAI only
   responses_websocket_v2_enabled: z.boolean().optional(), // OpenAI/Sub2API Responses WSv2
+  responses_websocket_v2_replay_enabled: z.boolean().optional(), // Explicit at-least-once retry opt-in
   alpha_search_enabled: z.boolean().optional(), // OpenAI-compatible Alpha Search endpoint
   allow_safety_identifier: z.boolean().optional(), // OpenAI only
   allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
@@ -174,6 +175,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_service_tier: false,
   disable_store: false,
   responses_websocket_v2_enabled: false,
+  responses_websocket_v2_replay_enabled: false,
   alpha_search_enabled: false,
   allow_safety_identifier: false,
   allow_include_obfuscation: false,
@@ -230,6 +232,7 @@ export function transformChannelToFormDefaults(
   let allowServiceTier = false
   let disableStore = false
   let responsesWebSocketV2Enabled = false
+  let responsesWebSocketV2ReplayEnabled = false
   let alphaSearchEnabled = false
   let allowSafetyIdentifier = false
   let allowIncludeObfuscation = false
@@ -252,6 +255,8 @@ export function transformChannelToFormDefaults(
       disableStore = parsed.disable_store === true
       responsesWebSocketV2Enabled =
         parsed.responses_websocket_v2_enabled === true
+      responsesWebSocketV2ReplayEnabled =
+        parsed.responses_websocket_v2_replay_enabled === true
       alphaSearchEnabled = parsed.alpha_search_enabled === true
       allowSafetyIdentifier = parsed.allow_safety_identifier === true
       allowIncludeObfuscation = parsed.allow_include_obfuscation === true
@@ -317,6 +322,7 @@ export function transformChannelToFormDefaults(
     allow_service_tier: allowServiceTier,
     disable_store: disableStore,
     responses_websocket_v2_enabled: responsesWebSocketV2Enabled,
+    responses_websocket_v2_replay_enabled: responsesWebSocketV2ReplayEnabled,
     alpha_search_enabled: alphaSearchEnabled,
     allow_include_obfuscation: allowIncludeObfuscation,
     allow_inference_geo: allowInferenceGeo,
@@ -408,8 +414,12 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   if (RESPONSES_WEBSOCKET_V2_CHANNEL_TYPES.has(formData.type)) {
     settingsObj.responses_websocket_v2_enabled =
       formData.responses_websocket_v2_enabled === true
-  } else if ('responses_websocket_v2_enabled' in settingsObj) {
+    settingsObj.responses_websocket_v2_replay_enabled =
+      formData.responses_websocket_v2_enabled === true &&
+      formData.responses_websocket_v2_replay_enabled === true
+  } else {
     delete settingsObj.responses_websocket_v2_enabled
+    delete settingsObj.responses_websocket_v2_replay_enabled
   }
 
   if (formData.type === 1) {

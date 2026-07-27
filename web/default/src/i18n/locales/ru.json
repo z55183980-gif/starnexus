@@ -3637,6 +3637,8 @@
     "Response Time": "Время ответа",
     "Responses API Version": "Версия API ответов",
     "Responses WebSocket v2": "Responses WebSocket v2",
+    "Responses WebSocket v2 replay": "Повтор Responses WebSocket v2",
+    "Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.": "Повторить один раз после восстанавливаемого разрыва до получения любого события от вышестоящего сервиса. Доставка выполняется как минимум один раз и может продублировать работу или расходы; включайте только при гарантированно безопасном повторе на стороне сервиса.",
     "Restore defaults": "Сбросить к значениям по умолчанию",
     "Restrict user model request frequency (may impact high concurrency performance)": "Ограничить частоту запросов пользовательских моделей (может повлиять на производительность при высокой конкуренции)",
     "Retain last N days": "Хранить последние N дней",

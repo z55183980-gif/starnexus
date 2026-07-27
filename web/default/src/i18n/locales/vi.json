@@ -3637,6 +3637,8 @@
     "Response Time": "Thời gian phản hồi",
     "Responses API Version": "Phiên bản API Phản hồi",
     "Responses WebSocket v2": "Responses WebSocket v2",
+    "Responses WebSocket v2 replay": "Phát lại Responses WebSocket v2",
+    "Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.": "Thử lại một lần sau khi ngắt kết nối có thể phục hồi và trước khi nhận bất kỳ sự kiện thượng nguồn nào. Cơ chế gửi ít nhất một lần này có thể lặp lại công việc hoặc chi phí thượng nguồn; chỉ bật khi thượng nguồn bảo đảm thử lại an toàn.",
     "Restore defaults": "Khôi phục mặc định",
     "Restrict user model request frequency (may impact high concurrency performance)": "Hạn chế tần suất yêu cầu mô hình người dùng (có thể ảnh hưởng đến hiệu suất khi có độ đồng thời cao)",
     "Retain last N days": "Giữ lại N ngày gần nhất",

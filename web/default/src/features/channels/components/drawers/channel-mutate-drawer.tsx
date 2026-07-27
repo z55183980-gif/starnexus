@@ -2922,30 +2922,66 @@ export function ChannelMutateDrawer({
                           )}
 
                           {(currentType === 1 || currentType === 59) && (
-                            <FormField
-                              control={form.control}
-                              name='responses_websocket_v2_enabled'
-                              render={({ field }) => (
-                                <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
-                                  <div className='space-y-0.5'>
-                                    <FormLabel className='text-sm'>
-                                      {t('Responses WebSocket v2')}
-                                    </FormLabel>
-                                    <FormDescription>
-                                      {t(
-                                        'Enable persistent Responses API WebSocket proxying for compatible upstreams'
-                                      )}
-                                    </FormDescription>
-                                  </div>
-                                  <FormControl>
-                                    <Switch
-                                      checked={field.value}
-                                      onCheckedChange={field.onChange}
-                                    />
-                                  </FormControl>
-                                </FormItem>
+                            <>
+                              <FormField
+                                control={form.control}
+                                name='responses_websocket_v2_enabled'
+                                render={({ field }) => (
+                                  <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                    <div className='space-y-0.5'>
+                                      <FormLabel className='text-sm'>
+                                        {t('Responses WebSocket v2')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Enable persistent Responses API WebSocket proxying for compatible upstreams'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value}
+                                        onCheckedChange={(checked) => {
+                                          field.onChange(checked)
+                                          if (!checked) {
+                                            form.setValue(
+                                              'responses_websocket_v2_replay_enabled',
+                                              false
+                                            )
+                                          }
+                                        }}
+                                      />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+                              {form.watch('responses_websocket_v2_enabled') && (
+                                <FormField
+                                  control={form.control}
+                                  name='responses_websocket_v2_replay_enabled'
+                                  render={({ field }) => (
+                                    <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                      <div className='space-y-0.5'>
+                                        <FormLabel className='text-sm'>
+                                          {t('Responses WebSocket v2 replay')}
+                                        </FormLabel>
+                                        <FormDescription>
+                                          {t(
+                                            'Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.'
+                                          )}
+                                        </FormDescription>
+                                      </div>
+                                      <FormControl>
+                                        <Switch
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                        />
+                                      </FormControl>
+                                    </FormItem>
+                                  )}
+                                />
                               )}
-                            />
+                            </>
                           )}
 
                           {currentType === 1 && (

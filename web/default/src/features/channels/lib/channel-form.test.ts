@@ -5,7 +5,12 @@ import {
   transformFormDataToUpdatePayload,
 } from './channel-form'
 
-function buildSettings(type: number, enabled: boolean, settings = '{}') {
+function buildSettings(
+  type: number,
+  enabled: boolean,
+  settings = '{}',
+  replayEnabled = false
+) {
   const payload = transformFormDataToUpdatePayload(
     {
       ...CHANNEL_FORM_DEFAULT_VALUES,
@@ -15,6 +20,7 @@ function buildSettings(type: number, enabled: boolean, settings = '{}') {
       group: ['test3'],
       settings,
       responses_websocket_v2_enabled: enabled,
+      responses_websocket_v2_replay_enabled: replayEnabled,
     },
     44
   )
@@ -35,6 +41,14 @@ describe('Responses WebSocket v2 channel settings', () => {
     assert.equal(settings.responses_websocket_v2_enabled, false)
   })
 
+  test('persists replay only when Responses WebSocket v2 is enabled', () => {
+    const enabled = buildSettings(59, true, '{}', true)
+    const disabled = buildSettings(59, false, '{}', true)
+
+    assert.equal(enabled.responses_websocket_v2_replay_enabled, true)
+    assert.equal(disabled.responses_websocket_v2_replay_enabled, false)
+  })
+
   test('removes the flag from unsupported channel types', () => {
     const settings = buildSettings(
       14,
@@ -43,6 +57,7 @@ describe('Responses WebSocket v2 channel settings', () => {
     )
 
     assert.equal('responses_websocket_v2_enabled' in settings, false)
+    assert.equal('responses_websocket_v2_replay_enabled' in settings, false)
   })
 })
 

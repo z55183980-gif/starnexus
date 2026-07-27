@@ -3637,6 +3637,8 @@
     "Response Time": "Response Time",
     "Responses API Version": "Responses API Version",
     "Responses WebSocket v2": "Responses WebSocket v2",
+    "Responses WebSocket v2 replay": "Responses WebSocket v2 replay",
+    "Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.": "Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.",
     "Restore defaults": "Restore defaults",
     "Restrict user model request frequency (may impact high concurrency performance)": "Restrict user model request frequency (may impact high concurrency performance)",
     "Retain last N days": "Retain last N days",

@@ -3637,6 +3637,8 @@
     "Response Time": "応答時間",
     "Responses API Version": "応答APIバージョン",
     "Responses WebSocket v2": "Responses WebSocket v2",
+    "Responses WebSocket v2 replay": "Responses WebSocket v2 再実行",
+    "Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.": "復旧可能な切断後、上流イベントを受信する前に 1 回だけ再試行します。少なくとも 1 回の配信となるため、上流処理や料金が重複する可能性があります。上流が安全な再試行を保証する場合のみ有効にしてください。",
     "Restore defaults": "既定に戻す",
     "Restrict user model request frequency (may impact high concurrency performance)": "ユーザーモデルのリクエスト頻度を制限する（高並行性パフォーマンスに影響を与える可能性があります）",
     "Retain last N days": "最新N日間を保持",

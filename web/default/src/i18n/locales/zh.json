@@ -3637,6 +3637,8 @@
     "Response Time": "响应时间",
     "Responses API Version": "响应 API 版本",
     "Responses WebSocket v2": "Responses WebSocket v2",
+    "Responses WebSocket v2 replay": "Responses WebSocket v2 自动重放",
+    "Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.": "发生可恢复断线且尚未收到任何上游事件时自动重试一次。此模式采用至少一次投递，可能重复上游任务或费用；仅在上游保证重试安全时启用。",
     "Restore defaults": "恢复默认",
     "Restrict user model request frequency (may impact high concurrency performance)": "限制用户模型请求频率（可能会影响高并发性能）",
     "Retain last N days": "保留最近N天",
