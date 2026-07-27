@@ -56,3 +56,29 @@ func TestResponsesEventAccumulatorErrorIsTerminal(t *testing.T) {
 	require.True(t, accumulator.Failed())
 	require.False(t, accumulator.Successful())
 }
+
+func TestIsResponsesFirstOutputEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		event *dto.ResponsesStreamResponse
+		want  bool
+	}{
+		{name: "nil event", event: nil, want: false},
+		{name: "response created", event: &dto.ResponsesStreamResponse{Type: "response.created"}, want: false},
+		{name: "response in progress", event: &dto.ResponsesStreamResponse{Type: "response.in_progress"}, want: false},
+		{name: "empty text delta", event: &dto.ResponsesStreamResponse{Type: "response.output_text.delta"}, want: false},
+		{name: "text delta", event: &dto.ResponsesStreamResponse{Type: "response.output_text.delta", Delta: "hello"}, want: true},
+		{name: "reasoning summary delta", event: &dto.ResponsesStreamResponse{Type: "response.reasoning_summary_text.delta", Delta: "thinking"}, want: true},
+		{name: "function arguments delta", event: &dto.ResponsesStreamResponse{Type: "response.function_call_arguments.delta", Delta: "{"}, want: true},
+		{name: "non delta with text", event: &dto.ResponsesStreamResponse{Type: "response.output_text.done", Delta: "hello"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, IsResponsesFirstOutputEvent(tt.event))
+		})
+	}
+}

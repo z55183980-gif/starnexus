@@ -497,14 +497,18 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 			}
 			turn := s.activeTurn
 			if turn != nil {
-				turn.info.SetFirstResponseTime()
 				event, consumeErr := turn.accumulator.Consume(turn.ctx, turn.info, data)
 				if consumeErr != nil {
 					logger.LogError(turn.ctx, "failed to parse Responses WebSocket event: "+consumeErr.Error())
-				} else if event != nil && turn.accumulator.Terminal() {
-					finished = turn
-					successful = turn.accumulator.Successful()
-					s.activeTurn = nil
+				} else {
+					if openairelay.IsResponsesFirstOutputEvent(event) {
+						turn.info.SetFirstResponseTime()
+					}
+					if event != nil && turn.accumulator.Terminal() {
+						finished = turn
+						successful = turn.accumulator.Successful()
+						s.activeTurn = nil
+					}
 				}
 			}
 			s.mu.Unlock()

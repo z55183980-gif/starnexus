@@ -24,6 +24,14 @@ func NewResponsesEventAccumulator() *ResponsesEventAccumulator {
 	return &ResponsesEventAccumulator{}
 }
 
+// IsResponsesFirstOutputEvent reports whether an event contains the first
+// generated output that should be used for first-response timing. Responses
+// WebSocket lifecycle events can arrive immediately on a persistent
+// connection, so they must not be treated as model output.
+func IsResponsesFirstOutputEvent(event *dto.ResponsesStreamResponse) bool {
+	return event != nil && event.Delta != "" && strings.HasSuffix(event.Type, ".delta")
+}
+
 func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.RelayInfo, data []byte) (*dto.ResponsesStreamResponse, error) {
 	var event dto.ResponsesStreamResponse
 	if err := common.Unmarshal(data, &event); err != nil {

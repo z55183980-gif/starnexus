@@ -129,6 +129,16 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	session.mu.Lock()
 	hasFirstResponse := info.HasSendResponse()
 	session.mu.Unlock()
+	require.False(t, hasFirstResponse)
+
+	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_text.delta","delta":"hello"}`)))
+	messageType, data, err = clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.JSONEq(t, `{"type":"response.output_text.delta","delta":"hello"}`, string(data))
+	session.mu.Lock()
+	hasFirstResponse = info.HasSendResponse()
+	session.mu.Unlock()
 	require.True(t, hasFirstResponse)
 
 	session.mu.Lock()
