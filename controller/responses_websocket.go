@@ -59,6 +59,31 @@ type responsesWebSocketTurn struct {
 	finishOnce      sync.Once
 }
 
+type responsesWSUpstreamConnection struct {
+	conn      *websocket.Conn
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func newResponsesWSUpstreamConnection(conn *websocket.Conn) *responsesWSUpstreamConnection {
+	return &responsesWSUpstreamConnection{
+		conn: conn,
+		done: make(chan struct{}),
+	}
+}
+
+func (u *responsesWSUpstreamConnection) close() {
+	if u == nil {
+		return
+	}
+	u.closeOnce.Do(func() {
+		close(u.done)
+		if u.conn != nil {
+			_ = u.conn.Close()
+		}
+	})
+}
+
 func (t *responsesWebSocketTurn) finish(success bool) {
 	if t == nil {
 		return
@@ -85,7 +110,7 @@ func (t *responsesWebSocketTurn) finish(success bool) {
 type responsesWebSocketSession struct {
 	baseCtx         *gin.Context
 	client          *websocket.Conn
-	upstream        *websocket.Conn
+	upstream        *responsesWSUpstreamConnection
 	channel         *model.Channel
 	lockedModel     string
 	activeTurn      *responsesWebSocketTurn
@@ -120,6 +145,8 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		session.close()
 		session.wg.Wait()
 	}()
+	session.configureClientLiveness()
+	session.startSessionBackgroundLoops()
 
 	for {
 		messageType, data, readErr := client.ReadMessage()
@@ -192,9 +219,10 @@ func RelayResponsesWebSocket(c *gin.Context) {
 			continue
 		}
 
-		startBackgroundLoops := false
-		if session.upstream == nil {
-			upstream, resp, dialErr := channel.DoResponsesWssRequest(adaptor, turn.ctx, turn.info)
+		upstream := session.getUpstream()
+		connectedUpstream := false
+		if upstream == nil {
+			upstreamConn, resp, dialErr := channel.DoResponsesWssRequest(adaptor, turn.ctx, turn.info)
 			if dialErr != nil {
 				turn.finish(false)
 				status := http.StatusBadGateway
@@ -206,29 +234,29 @@ func RelayResponsesWebSocket(c *gin.Context) {
 				apiErr := types.NewErrorWithStatusCode(dialErr, types.ErrorCodeDoRequestFailed, status, types.ErrOptionWithSkipRetry())
 				processChannelError(turn.ctx, *types.NewChannelError(session.channel.Id, session.channel.Type, session.channel.Name, session.channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), session.channel.GetAutoBan()), apiErr)
 				session.sendError(apiErr)
+				continue
+			}
+			upstream = session.attachUpstream(upstreamConn)
+			if upstream == nil {
+				turn.finish(false)
 				return
 			}
-			session.upstream = upstream
-			session.configureConnectionLiveness()
-			startBackgroundLoops = true
+			connectedUpstream = true
 		}
 
-		session.mu.Lock()
-		session.activeTurn = turn
-		session.mu.Unlock()
-		if startBackgroundLoops {
-			session.startBackgroundLoops()
+		if !session.activateTurn(upstream, turn) {
+			turn.finish(false)
+			session.sendError(types.NewErrorWithStatusCode(errors.New("upstream Responses WebSocket disconnected before request dispatch"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+			continue
 		}
 		session.upstreamWriteMu.Lock()
-		writeErr := session.upstream.WriteMessage(websocket.TextMessage, outbound)
+		writeErr := upstream.conn.WriteMessage(websocket.TextMessage, outbound)
 		session.upstreamWriteMu.Unlock()
 		if writeErr != nil {
-			session.clearActiveTurn(turn)
-			turn.finish(false)
-			session.sendError(types.NewErrorWithStatusCode(writeErr, types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
-			return
+			session.handleUpstreamFailure(upstream, writeErr)
+			continue
 		}
-		if startBackgroundLoops {
+		if connectedUpstream {
 			service.RecordChannelAffinity(c, session.channel.Id)
 		}
 	}
@@ -388,31 +416,31 @@ func newResponsesWSTurnContext(base *gin.Context, modelName string) *gin.Context
 	return turnCtx
 }
 
-func (s *responsesWebSocketSession) configureConnectionLiveness() {
-	now := time.Now()
-	_ = s.client.SetReadDeadline(now.Add(responsesWSPongTimeout))
-	_ = s.upstream.SetReadDeadline(now.Add(responsesWSPongTimeout))
+func (s *responsesWebSocketSession) configureClientLiveness() {
 	s.client.SetPongHandler(func(string) error {
 		return s.client.SetReadDeadline(time.Now().Add(responsesWSPongTimeout))
 	})
-	s.upstream.SetPongHandler(func(string) error {
-		return s.upstream.SetReadDeadline(time.Now().Add(responsesWSPongTimeout))
+}
+
+func (s *responsesWebSocketSession) configureUpstreamLiveness(upstream *responsesWSUpstreamConnection) {
+	if upstream == nil || upstream.conn == nil {
+		return
+	}
+	_ = upstream.conn.SetReadDeadline(time.Now().Add(responsesWSPongTimeout))
+	upstream.conn.SetPongHandler(func(string) error {
+		return upstream.conn.SetReadDeadline(time.Now().Add(responsesWSPongTimeout))
 	})
 	maxMessageBytes := int64(appconstant.MaxRequestBodyMB) * 1024 * 1024
 	if maxMessageBytes > 0 {
-		s.upstream.SetReadLimit(maxMessageBytes)
+		upstream.conn.SetReadLimit(maxMessageBytes)
 	}
 }
 
-func (s *responsesWebSocketSession) startBackgroundLoops() {
-	s.wg.Add(3)
+func (s *responsesWebSocketSession) startSessionBackgroundLoops() {
+	s.wg.Add(2)
 	go func() {
 		defer s.wg.Done()
-		s.readUpstream()
-	}()
-	go func() {
-		defer s.wg.Done()
-		s.heartbeat()
+		s.clientHeartbeat()
 	}()
 	go func() {
 		defer s.wg.Done()
@@ -426,24 +454,41 @@ func (s *responsesWebSocketSession) startBackgroundLoops() {
 	}()
 }
 
-func (s *responsesWebSocketSession) readUpstream() {
+func (s *responsesWebSocketSession) startUpstreamLoops(upstream *responsesWSUpstreamConnection) {
+	s.wg.Add(2)
+	go func() {
+		defer s.wg.Done()
+		s.readUpstream(upstream)
+	}()
+	go func() {
+		defer s.wg.Done()
+		s.upstreamHeartbeat(upstream)
+	}()
+}
+
+func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamConnection) {
 	for {
-		messageType, data, err := s.upstream.ReadMessage()
+		messageType, data, err := upstream.conn.ReadMessage()
 		if err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				logger.LogDebug(s.baseCtx, "responses websocket upstream read ended: %v", err)
-			}
-			s.close()
+			s.handleUpstreamFailure(upstream, err)
 			return
 		}
-		_ = s.upstream.SetReadDeadline(time.Now().Add(responsesWSPongTimeout))
+		if !s.isCurrentUpstream(upstream) {
+			return
+		}
+		_ = upstream.conn.SetReadDeadline(time.Now().Add(responsesWSPongTimeout))
 
 		var finished *responsesWebSocketTurn
 		var successful bool
 		if messageType == websocket.TextMessage {
 			s.mu.Lock()
+			if s.upstream != upstream {
+				s.mu.Unlock()
+				return
+			}
 			turn := s.activeTurn
 			if turn != nil {
+				turn.info.SetFirstResponseTime()
 				event, consumeErr := turn.accumulator.Consume(turn.ctx, turn.info, data)
 				if consumeErr != nil {
 					logger.LogError(turn.ctx, "failed to parse Responses WebSocket event: "+consumeErr.Error())
@@ -469,7 +514,7 @@ func (s *responsesWebSocketSession) readUpstream() {
 	}
 }
 
-func (s *responsesWebSocketSession) heartbeat() {
+func (s *responsesWebSocketSession) clientHeartbeat() {
 	ticker := time.NewTicker(responsesWSHeartbeatInterval)
 	defer ticker.Stop()
 	for {
@@ -479,10 +524,7 @@ func (s *responsesWebSocketSession) heartbeat() {
 			s.clientWriteMu.Lock()
 			clientErr := s.client.WriteControl(websocket.PingMessage, nil, deadline)
 			s.clientWriteMu.Unlock()
-			s.upstreamWriteMu.Lock()
-			upstreamErr := s.upstream.WriteControl(websocket.PingMessage, nil, deadline)
-			s.upstreamWriteMu.Unlock()
-			if clientErr != nil || upstreamErr != nil {
+			if clientErr != nil {
 				s.close()
 				return
 			}
@@ -492,12 +534,112 @@ func (s *responsesWebSocketSession) heartbeat() {
 	}
 }
 
-func (s *responsesWebSocketSession) clearActiveTurn(turn *responsesWebSocketTurn) {
-	s.mu.Lock()
-	if s.activeTurn == turn {
-		s.activeTurn = nil
+func (s *responsesWebSocketSession) upstreamHeartbeat(upstream *responsesWSUpstreamConnection) {
+	ticker := time.NewTicker(responsesWSHeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case now := <-ticker.C:
+			if !s.isCurrentUpstream(upstream) {
+				return
+			}
+			s.upstreamWriteMu.Lock()
+			err := upstream.conn.WriteControl(websocket.PingMessage, nil, now.Add(10*time.Second))
+			s.upstreamWriteMu.Unlock()
+			if err != nil {
+				s.handleUpstreamFailure(upstream, err)
+				return
+			}
+		case <-upstream.done:
+			return
+		case <-s.closed:
+			return
+		}
 	}
+}
+
+func (s *responsesWebSocketSession) getUpstream() *responsesWSUpstreamConnection {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.upstream
+}
+
+func (s *responsesWebSocketSession) attachUpstream(conn *websocket.Conn) *responsesWSUpstreamConnection {
+	if conn == nil {
+		return nil
+	}
+	upstream := newResponsesWSUpstreamConnection(conn)
+	s.configureUpstreamLiveness(upstream)
+
+	s.mu.Lock()
+	select {
+	case <-s.closed:
+		s.mu.Unlock()
+		upstream.close()
+		return nil
+	default:
+	}
+	if s.upstream != nil {
+		existing := s.upstream
+		s.mu.Unlock()
+		upstream.close()
+		return existing
+	}
+	s.upstream = upstream
 	s.mu.Unlock()
+
+	s.startUpstreamLoops(upstream)
+	return upstream
+}
+
+func (s *responsesWebSocketSession) activateTurn(upstream *responsesWSUpstreamConnection, turn *responsesWebSocketTurn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upstream != upstream || s.activeTurn != nil {
+		return false
+	}
+	s.activeTurn = turn
+	return true
+}
+
+func (s *responsesWebSocketSession) isCurrentUpstream(upstream *responsesWSUpstreamConnection) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.upstream == upstream
+}
+
+func (s *responsesWebSocketSession) detachUpstream(upstream *responsesWSUpstreamConnection) (*responsesWebSocketTurn, bool) {
+	s.mu.Lock()
+	if s.upstream != upstream {
+		s.mu.Unlock()
+		return nil, false
+	}
+	s.upstream = nil
+	turn := s.activeTurn
+	s.activeTurn = nil
+	s.mu.Unlock()
+
+	s.upstreamWriteMu.Lock()
+	upstream.close()
+	s.upstreamWriteMu.Unlock()
+	return turn, true
+}
+
+func (s *responsesWebSocketSession) handleUpstreamFailure(upstream *responsesWSUpstreamConnection, err error) {
+	turn, detached := s.detachUpstream(upstream)
+	if !detached {
+		return
+	}
+	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		logger.LogDebug(s.baseCtx, "responses websocket upstream closed: %v", err)
+	} else {
+		logger.LogWarn(s.baseCtx, fmt.Sprintf("responses websocket upstream disconnected; client session retained: %v", err))
+	}
+	if turn == nil {
+		return
+	}
+	turn.finish(false)
+	s.sendError(types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses WebSocket disconnected: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
 }
 
 func (s *responsesWebSocketSession) sendError(apiErr *types.NewAPIError) {
@@ -526,12 +668,16 @@ func (s *responsesWebSocketSession) close() {
 		s.mu.Lock()
 		turn := s.activeTurn
 		s.activeTurn = nil
+		upstream := s.upstream
+		s.upstream = nil
 		s.mu.Unlock()
 		if turn != nil {
 			turn.finish(false)
 		}
-		if s.upstream != nil {
-			_ = s.upstream.Close()
+		if upstream != nil {
+			s.upstreamWriteMu.Lock()
+			upstream.close()
+			s.upstreamWriteMu.Unlock()
 		}
 		if s.client != nil {
 			_ = s.client.Close()
