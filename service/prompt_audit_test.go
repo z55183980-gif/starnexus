@@ -20,7 +20,6 @@ func TestExtractPromptAuditUserTextOpenAIUsesLatestUserMessage(t *testing.T) {
 				map[string]any{"type": "image_url", "image_url": "data:image/png;base64,abc"},
 				map[string]any{"type": "text", "text": "latest line two"},
 			}},
-			{Role: "tool", Content: "tool result"},
 		},
 	}
 
@@ -28,6 +27,20 @@ func TestExtractPromptAuditUserTextOpenAIUsesLatestUserMessage(t *testing.T) {
 	want := "latest line one\nlatest line two"
 	if got != want {
 		t.Fatalf("unexpected prompt: got %q, want %q", got, want)
+	}
+}
+
+func TestExtractPromptAuditUserTextOpenAISkipsToolContinuation(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{
+		Messages: []dto.Message{
+			{Role: "user", Content: "historical user prompt"},
+			{Role: "assistant", Content: "tool call"},
+			{Role: "tool", Content: "tool result"},
+		},
+	}
+
+	if got := ExtractPromptAuditUserText(request); got != "" {
+		t.Fatalf("unexpected historical prompt: %q", got)
 	}
 }
 
@@ -59,6 +72,30 @@ func TestExtractPromptAuditUserTextResponses(t *testing.T) {
 				map[string]any{"type": "input_text", "text": "direct text"},
 			},
 			want: "direct text",
+		},
+		{
+			name: "tool continuation",
+			input: []any{
+				map[string]any{"role": "user", "content": "historical user prompt"},
+				map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "tool result"},
+			},
+			want: "",
+		},
+		{
+			name: "assistant tail",
+			input: []any{
+				map[string]any{"role": "user", "content": "historical user prompt"},
+				map[string]any{"role": "assistant", "content": "assistant reply"},
+			},
+			want: "",
+		},
+		{
+			name: "roleless content is not user input",
+			input: []any{
+				map[string]any{"role": "user", "content": "historical user prompt"},
+				map[string]any{"type": "custom_tool_call_output", "content": "tool result"},
+			},
+			want: "",
 		},
 	}
 
@@ -103,8 +140,8 @@ func TestExtractPromptAuditUserTextOtherProtocols(t *testing.T) {
 		{
 			name: "claude",
 			request: &dto.ClaudeRequest{Messages: []dto.ClaudeMessage{
-				{Role: "user", Content: "claude user prompt"},
 				{Role: "assistant", Content: "ignore"},
+				{Role: "user", Content: "claude user prompt"},
 			}},
 			want: "claude user prompt",
 		},
@@ -127,6 +164,36 @@ func TestExtractPromptAuditUserTextOtherProtocols(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := ExtractPromptAuditUserText(test.request); got != test.want {
 				t.Fatalf("unexpected prompt: got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestExtractPromptAuditUserTextOtherProtocolsSkipHistory(t *testing.T) {
+	tests := []struct {
+		name    string
+		request dto.Request
+	}{
+		{
+			name: "claude assistant tail",
+			request: &dto.ClaudeRequest{Messages: []dto.ClaudeMessage{
+				{Role: "user", Content: "historical user prompt"},
+				{Role: "assistant", Content: "assistant reply"},
+			}},
+		},
+		{
+			name: "gemini model tail",
+			request: &dto.GeminiChatRequest{Contents: []dto.GeminiChatContent{
+				{Role: "user", Parts: []dto.GeminiPart{{Text: "historical user prompt"}}},
+				{Role: "model", Parts: []dto.GeminiPart{{Text: "model reply"}}},
+			}},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ExtractPromptAuditUserText(test.request); got != "" {
+				t.Fatalf("unexpected historical prompt: %q", got)
 			}
 		})
 	}

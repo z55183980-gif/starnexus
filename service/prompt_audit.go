@@ -205,9 +205,9 @@ func truncatePromptAuditText(text string) (string, bool) {
 	return string([]rune(text)[:promptAuditMaxPromptRunes]), true
 }
 
-// ExtractPromptAuditUserText returns only the latest user-provided text. It
-// intentionally excludes system/developer prompts, tools, assistant messages,
-// and earlier conversation history.
+// ExtractPromptAuditUserText returns only user text introduced by the current
+// request turn. It intentionally excludes system/developer prompts, tools,
+// assistant messages, and user text repeated as earlier conversation history.
 func ExtractPromptAuditUserText(request dto.Request) string {
 	var text string
 	switch req := request.(type) {
@@ -252,10 +252,10 @@ func extractAlphaSearchUserText(req *dto.AlphaSearchRequest) string {
 }
 
 func extractOpenAIUserText(req *dto.GeneralOpenAIRequest) string {
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		message := &req.Messages[i]
+	if len(req.Messages) > 0 {
+		message := &req.Messages[len(req.Messages)-1]
 		if message.Role != "user" {
-			continue
+			return ""
 		}
 		var parts []string
 		for _, content := range message.ParseContent() {
@@ -294,41 +294,42 @@ func extractResponsesUserText(req *dto.OpenAIResponsesRequest) string {
 	if err := common.Unmarshal(req.Input, &inputs); err != nil {
 		return ""
 	}
-	for i := len(inputs) - 1; i >= 0; i-- {
-		input := inputs[i]
-		if input.Type == "input_text" && input.Text != "" {
-			return input.Text
+	if len(inputs) == 0 {
+		return ""
+	}
+	input := inputs[len(inputs)-1]
+	if input.Type == "input_text" && input.Text != "" {
+		return input.Text
+	}
+	if input.Role != "user" {
+		return ""
+	}
+	if common.GetJsonType(input.Content) == "string" {
+		var value string
+		_ = common.Unmarshal(input.Content, &value)
+		return value
+	}
+	if common.GetJsonType(input.Content) == "array" {
+		var content []dto.MediaInput
+		if err := common.Unmarshal(input.Content, &content); err != nil {
+			return ""
 		}
-		if input.Role != "" && input.Role != "user" {
-			continue
-		}
-		if common.GetJsonType(input.Content) == "string" {
-			var value string
-			_ = common.Unmarshal(input.Content, &value)
-			return value
-		}
-		if common.GetJsonType(input.Content) == "array" {
-			var content []dto.MediaInput
-			if err := common.Unmarshal(input.Content, &content); err != nil {
-				continue
+		var parts []string
+		for _, item := range content {
+			if item.Type == "input_text" && item.Text != "" {
+				parts = append(parts, item.Text)
 			}
-			var parts []string
-			for _, item := range content {
-				if item.Type == "input_text" && item.Text != "" {
-					parts = append(parts, item.Text)
-				}
-			}
-			return strings.Join(parts, "\n")
 		}
+		return strings.Join(parts, "\n")
 	}
 	return ""
 }
 
 func extractClaudeUserText(req *dto.ClaudeRequest) string {
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		message := &req.Messages[i]
+	if len(req.Messages) > 0 {
+		message := &req.Messages[len(req.Messages)-1]
 		if message.Role != "user" {
-			continue
+			return ""
 		}
 		if message.IsStringContent() {
 			return message.GetStringContent()
@@ -349,20 +350,20 @@ func extractClaudeUserText(req *dto.ClaudeRequest) string {
 }
 
 func extractGeminiUserText(req *dto.GeminiChatRequest) string {
-	for i := len(req.Contents) - 1; i >= 0; i-- {
-		content := req.Contents[i]
-		if content.Role != "" && content.Role != "user" {
-			continue
-		}
-		var parts []string
-		for _, part := range content.Parts {
-			if part.Text != "" && !part.Thought {
-				parts = append(parts, part.Text)
-			}
-		}
-		return strings.Join(parts, "\n")
+	if len(req.Contents) == 0 {
+		return ""
 	}
-	return ""
+	content := req.Contents[len(req.Contents)-1]
+	if content.Role != "" && content.Role != "user" {
+		return ""
+	}
+	var parts []string
+	for _, part := range content.Parts {
+		if part.Text != "" && !part.Thought {
+			parts = append(parts, part.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func stringValue(value any) string {
