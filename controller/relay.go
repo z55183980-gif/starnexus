@@ -347,7 +347,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
-	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannelFiltered(retryParam, service.ChannelFilterForRequestPath(c.Request.URL.Path))
+	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannelFiltered(retryParam, service.ChannelFilterForRequestPath(c.Request.URL.Path, info.OriginModelName))
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 

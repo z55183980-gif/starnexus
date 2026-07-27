@@ -28,6 +28,27 @@ func TestAlphaSearchHelperRejectsUnsupportedChannelWithoutRetry(t *testing.T) {
 	assert.True(t, types.IsSkipRetryError(err))
 }
 
+func TestAlphaSearchHelperAcceptsSupportedChannelTypes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, channelType := range []int{
+		constant.ChannelTypeCodex,
+		constant.ChannelTypeSub2API,
+		constant.ChannelTypeNewAPI,
+		constant.ChannelTypeAdvancedCustom,
+	} {
+		t.Run(constant.GetChannelTypeName(channelType), func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+			common.SetContextKey(c, constant.ContextKeyChannelType, channelType)
+
+			err := AlphaSearchHelper(c, &relaycommon.RelayInfo{Request: &dto.AlphaSearchRequest{Model: "gpt-5.6-sol"}})
+
+			require.NotNil(t, err)
+			assert.Contains(t, err.Error(), "empty alpha search request body")
+		})
+	}
+}
+
 func TestBuildAlphaSearchRequestBodyPreservesUnknownFields(t *testing.T) {
 	raw := []byte(`{
 		"id":"req_1",

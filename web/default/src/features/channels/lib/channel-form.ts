@@ -24,7 +24,22 @@ import type { Channel } from '../types'
 // Form Validation Schema
 // ============================================================================
 
-export const channelFormSchema = z.object({
+export const ADVANCED_CUSTOM_DEFAULT_CONFIG = JSON.stringify(
+  {
+    advanced_routes: [
+      {
+        incoming_path: '/v1/alpha/search',
+        upstream_path: '/v1/alpha/search',
+        converter: 'none',
+        models: [],
+      },
+    ],
+  },
+  null,
+  2
+)
+
+const channelFormBaseSchema = z.object({
   name: z.string().min(1, 'Channel name is required'),
   type: z.number().min(0, 'Channel type is required'),
   base_url: z.string().optional(),
@@ -48,6 +63,7 @@ export const channelFormSchema = z.object({
   param_override: z.string().optional(),
   header_override: z.string().optional(),
   settings: z.string().optional(),
+  advanced_custom_config: z.string().optional(),
   other: z.string().optional(),
   // Multi-key options (not sent to backend directly)
   multi_key_mode: z.enum(['single', 'batch', 'multi_to_single']).optional(),
@@ -81,6 +97,31 @@ export const channelFormSchema = z.object({
   upstream_model_update_ignored_models: z.string().optional(),
 })
 
+export const channelFormSchema = channelFormBaseSchema.superRefine(
+  (data, ctx) => {
+    if (data.type !== 58) return
+
+    try {
+      const config = JSON.parse(data.advanced_custom_config || '')
+      if (
+        !config ||
+        typeof config !== 'object' ||
+        Array.isArray(config) ||
+        !Array.isArray(config.advanced_routes) ||
+        config.advanced_routes.length === 0
+      ) {
+        throw new Error('missing routes')
+      }
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['advanced_custom_config'],
+        message: 'Advanced Custom requires valid route JSON',
+      })
+    }
+  }
+)
+
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
 
 // ============================================================================
@@ -108,6 +149,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   param_override: '',
   header_override: '',
   settings: '{}',
+  advanced_custom_config: ADVANCED_CUSTOM_DEFAULT_CONFIG,
   other: '',
   multi_key_mode: 'single',
   multi_key_type: 'random',
@@ -192,6 +234,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
+  let advancedCustomConfig = ADVANCED_CUSTOM_DEFAULT_CONFIG
 
   if (channel.settings) {
     try {
@@ -218,6 +261,13 @@ export function transformChannelToFormDefaults(
       )
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
+      if (
+        parsed.advanced_custom &&
+        typeof parsed.advanced_custom === 'object' &&
+        !Array.isArray(parsed.advanced_custom)
+      ) {
+        advancedCustomConfig = JSON.stringify(parsed.advanced_custom, null, 2)
+      }
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Failed to parse channel settings:', error)
@@ -245,6 +295,7 @@ export function transformChannelToFormDefaults(
     param_override: channel.param_override || '',
     header_override: channel.header_override || '',
     settings: channel.settings || '{}',
+    advanced_custom_config: advancedCustomConfig,
     other: channel.other || '',
     multi_key_mode: 'single',
     multi_key_type: channel.channel_info.multi_key_mode || 'random',
@@ -328,6 +379,14 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.aws_key_type = formData.aws_key_type || 'ak_sk'
   } else if ('aws_key_type' in settingsObj) {
     delete settingsObj.aws_key_type
+  }
+
+  if (formData.type === 58) {
+    settingsObj.advanced_custom = JSON.parse(
+      formData.advanced_custom_config || ADVANCED_CUSTOM_DEFAULT_CONFIG
+    )
+  } else if ('advanced_custom' in settingsObj) {
+    delete settingsObj.advanced_custom
   }
 
   // Field passthrough controls:

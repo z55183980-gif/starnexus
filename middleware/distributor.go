@@ -53,7 +53,7 @@ func Distribute() func(c *gin.Context) {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
 				return
 			}
-			if !service.ChannelSupportsRequestPath(channel, c.Request.URL.Path) {
+			if !service.ChannelSupportsRequestPath(channel, c.Request.URL.Path, modelRequest.Model) {
 				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorChannelEndpointUnsupported, map[string]any{"Path": c.Request.URL.Path}), types.ErrorCodeInvalidRequest)
 				return
 			}
@@ -107,7 +107,7 @@ func Distribute() func(c *gin.Context) {
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && service.ChannelSupportsRequestPath(preferred, c.Request.URL.Path) {
+					if err == nil && service.ChannelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
 						if preferred.Status != common.ChannelStatusEnabled {
 							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
@@ -139,7 +139,7 @@ func Distribute() func(c *gin.Context) {
 						ModelName:  modelRequest.Model,
 						TokenGroup: usingGroup,
 						Retry:      common.GetPointer(0),
-					}, service.ChannelFilterForRequestPath(c.Request.URL.Path))
+					}, service.ChannelFilterForRequestPath(c.Request.URL.Path, modelRequest.Model))
 					if err != nil {
 						showGroup := usingGroup
 						if usingGroup == "auto" {

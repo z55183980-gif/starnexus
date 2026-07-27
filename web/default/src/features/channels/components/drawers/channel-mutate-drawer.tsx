@@ -1829,6 +1829,26 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
+                {currentType === 58 && (
+                  <FormField
+                    control={form.control}
+                    name='advanced_custom_config'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Advanced Custom Routes')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            className='min-h-56 font-mono text-xs'
+                            spellCheck={false}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
                 <div className='border-border/60 border-t pt-4'>
                   <SubHeading
                     title={t('Authentication')}

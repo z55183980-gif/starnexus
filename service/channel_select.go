@@ -16,22 +16,28 @@ const alphaSearchRequestPath = "/v1/alpha/search"
 
 // ChannelSupportsRequestPath keeps endpoint-specific channel requirements in
 // one place so initial distribution, affinity selection, and retries agree.
-func ChannelSupportsRequestPath(channel *model.Channel, requestPath string) bool {
+func ChannelSupportsRequestPath(channel *model.Channel, requestPath string, modelName string) bool {
 	if channel == nil {
 		return false
 	}
+	if channel.Type == constant.ChannelTypeAdvancedCustom {
+		config := channel.GetOtherSettings().AdvancedCustom
+		return config != nil && config.SupportsPathForModel(requestPath, modelName)
+	}
 	if strings.HasPrefix(requestPath, alphaSearchRequestPath) {
-		return channel.Type == constant.ChannelTypeCodex
+		switch channel.Type {
+		case constant.ChannelTypeCodex, constant.ChannelTypeSub2API, constant.ChannelTypeNewAPI:
+			return true
+		default:
+			return false
+		}
 	}
 	return true
 }
 
-func ChannelFilterForRequestPath(requestPath string) func(*model.Channel) bool {
-	if !strings.HasPrefix(requestPath, alphaSearchRequestPath) {
-		return nil
-	}
+func ChannelFilterForRequestPath(requestPath string, modelName string) func(*model.Channel) bool {
 	return func(channel *model.Channel) bool {
-		return ChannelSupportsRequestPath(channel, requestPath)
+		return ChannelSupportsRequestPath(channel, requestPath, modelName)
 	}
 }
 

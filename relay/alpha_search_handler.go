@@ -21,7 +21,12 @@ import (
 func AlphaSearchHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
 
-	if info.ChannelType != constant.ChannelTypeCodex {
+	switch info.ChannelType {
+	case constant.ChannelTypeCodex,
+		constant.ChannelTypeSub2API,
+		constant.ChannelTypeNewAPI,
+		constant.ChannelTypeAdvancedCustom:
+	default:
 		return types.NewErrorWithStatusCode(
 			errors.New("channel does not support /v1/alpha/search"),
 			types.ErrorCodeInvalidRequest,

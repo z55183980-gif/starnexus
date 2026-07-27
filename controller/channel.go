@@ -511,6 +511,12 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
+	if channel.Type == constant.ChannelTypeAdvancedCustom {
+		if err := channel.GetOtherSettings().AdvancedCustom.Validate(); err != nil {
+			return fmt.Errorf("Advanced Custom settings are invalid: %w", err)
+		}
+	}
+
 	return nil
 }
 

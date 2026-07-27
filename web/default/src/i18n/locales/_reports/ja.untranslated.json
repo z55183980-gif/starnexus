@@ -195,6 +195,7 @@
   "Stripe Product ID (optional)": "Stripe 产品 ID（可选）",
   "Stripe settlement currency": "Stripe 结算币种",
   "Submodel": "Submodel",
+  "Sub2API": "Sub2API",
   "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.": "Subscription plan creation and changes are locked until the administrator confirms compliance terms in Payment Gateway settings.",
   "Subscription plans do NOT use the bound Product — each plan has its own dedicated Pancake product, set in the Subscriptions admin (or auto-minted via the \"+ Create\" button there).": "Subscription plans do NOT use the bound Product — each plan has its own dedicated Pancake product, set in the Subscriptions admin (or auto-minted via the \"+ Create\" button there).",
   "SunoAPI": "SunoAPI",
