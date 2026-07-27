@@ -57,6 +57,18 @@ func TestResponsesEventAccumulatorErrorIsTerminal(t *testing.T) {
 	require.False(t, accumulator.Successful())
 }
 
+func TestResponsesEventAccumulatorCapturesCreatedResponseID(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	accumulator := NewResponsesEventAccumulator()
+	_, err := accumulator.Consume(ctx, &relaycommon.RelayInfo{}, []byte(`{"type":"response.created","response":{"id":"resp_created"}}`))
+	require.NoError(t, err)
+	require.Equal(t, "resp_created", accumulator.ResponseID())
+	require.False(t, accumulator.Terminal())
+}
+
 func TestIsResponsesFirstOutputEvent(t *testing.T) {
 	t.Parallel()
 

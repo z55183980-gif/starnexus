@@ -50,6 +50,9 @@ func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.Re
 	if err := common.Unmarshal(data, &event); err != nil {
 		return nil, err
 	}
+	if event.Response != nil && event.Response.ID != "" {
+		a.responseID = event.Response.ID
+	}
 
 	switch event.Type {
 	case "response.completed", "response.failed", "response.incomplete", "error":
@@ -57,7 +60,6 @@ func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.Re
 		a.successful = event.Type == "response.completed" || event.Type == "response.incomplete"
 		a.failed = event.Type == "response.failed" || event.Type == "error"
 		if event.Response != nil {
-			a.responseID = event.Response.ID
 			a.applyResponseUsage(event.Response)
 			if event.Response.HasImageGenerationCall() {
 				c.Set("image_generation_call", true)

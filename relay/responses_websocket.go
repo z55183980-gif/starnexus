@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -16,24 +17,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) ([]byte, channel.Adaptor, *types.NewAPIError) {
+func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest, forceStream bool) ([]byte, channel.Adaptor, *types.NewAPIError) {
 	if info == nil || request == nil {
 		return nil, nil, types.NewErrorWithStatusCode(fmt.Errorf("responses websocket request is nil"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 
 	info.InitChannelMeta(c)
-	if !info.ChannelOtherSettings.ResponsesWebSocketV2Enabled {
-		return nil, nil, types.NewErrorWithStatusCode(
-			fmt.Errorf("channel %d does not enable Responses WebSocket v2", info.ChannelId),
-			types.ErrorCodeInvalidRequest,
-			http.StatusBadRequest,
-			types.ErrOptionWithSkipRetry(),
-		)
-	}
 
 	convertedRequest, err := common.DeepCopy(request)
 	if err != nil {
 		return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	if forceStream {
+		stream := true
+		convertedRequest.Stream = &stream
 	}
 	if err := helper.ModelMappedHelper(c, info, convertedRequest); err != nil {
 		return nil, nil, types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
@@ -68,6 +65,25 @@ func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInf
 			return nil, nil, newAPIErrorFromParamOverride(err)
 		}
 	}
-	logger.LogDebug(c, "responses websocket request prepared: %d bytes", len(jsonData))
+	if forceStream {
+		jsonData, err = forceResponsesRequestStream(jsonData)
+		if err != nil {
+			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+	}
+	logger.LogDebug(c, "responses websocket client request prepared: %d bytes", len(jsonData))
 	return jsonData, adaptor, nil
+}
+
+func forceResponsesRequestStream(jsonData []byte) ([]byte, error) {
+	var payload map[string]json.RawMessage
+	if err := common.Unmarshal(jsonData, &payload); err != nil {
+		return nil, err
+	}
+	stream, err := common.Marshal(true)
+	if err != nil {
+		return nil, err
+	}
+	payload["stream"] = stream
+	return common.Marshal(payload)
 }

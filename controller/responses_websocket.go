@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -48,6 +49,27 @@ type responsesWSErrorEvent struct {
 	Error  types.OpenAIError `json:"error"`
 }
 
+type responsesWSFailedEvent struct {
+	Type     string                    `json:"type"`
+	Response responsesWSFailedResponse `json:"response"`
+}
+
+type responsesWSFailedResponse struct {
+	ID        string                 `json:"id"`
+	Object    string                 `json:"object"`
+	CreatedAt int64                  `json:"created_at"`
+	Status    string                 `json:"status"`
+	Error     responsesWSFailedError `json:"error"`
+	Model     string                 `json:"model"`
+	Output    []dto.ResponsesOutput  `json:"output"`
+	Usage     *dto.Usage             `json:"usage"`
+}
+
+type responsesWSFailedError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 var responsesWSRequestJSONFields = responseRequestJSONFieldNames()
 
 type responsesWebSocketTurn struct {
@@ -64,6 +86,7 @@ type responsesWebSocketTurn struct {
 	rateLimitFinish   func(bool)
 	releaseUser       func()
 	releaseBusiness   func()
+	cancel            context.CancelFunc
 	finishOnce        sync.Once
 }
 
@@ -115,6 +138,9 @@ func (t *responsesWebSocketTurn) finish(success bool) {
 		}
 		if t.releaseUser != nil {
 			t.releaseUser()
+		}
+		if t.cancel != nil {
+			t.cancel()
 		}
 	})
 }
@@ -209,15 +235,9 @@ func RelayResponsesWebSocket(c *gin.Context) {
 
 		selectedChannel := session.getChannel()
 		if selectedChannel == nil {
-			candidateChannel, selectErr := middleware.SelectChannelForModelFiltered(c, request.Model, func(candidate *model.Channel) bool {
-				return candidate.GetOtherSettings().ResponsesWebSocketV2Enabled
-			})
+			candidateChannel, selectErr := middleware.SelectChannelForModel(c, request.Model)
 			if selectErr != nil {
 				session.sendError(selectErr)
-				continue
-			}
-			if !candidateChannel.GetOtherSettings().ResponsesWebSocketV2Enabled {
-				session.sendError(types.NewErrorWithStatusCode(fmt.Errorf("selected channel %d does not enable Responses WebSocket v2", candidateChannel.Id), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
 				continue
 			}
 			selectedChannel = candidateChannel
@@ -227,11 +247,24 @@ func RelayResponsesWebSocket(c *gin.Context) {
 			session.lockedModel = request.Model
 		}
 
-		turn, preparedResponse, adaptor, prepareErr := session.prepareTurn(request)
+		upstreamWebSocket := selectedChannel.GetOtherSettings().ResponsesWebSocketV2Enabled
+		turn, preparedResponse, adaptor, prepareErr := session.prepareTurn(request, !upstreamWebSocket)
 		if prepareErr != nil {
 			session.sendError(prepareErr)
 			continue
 		}
+		turn.channel = selectedChannel
+		if !upstreamWebSocket {
+			if !session.activateSSETurn(turn) {
+				turn.finish(false)
+				session.sendError(types.NewErrorWithStatusCode(errors.New("Responses SSE turn could not be activated"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+				continue
+			}
+			logger.LogInfo(turn.ctx, fmt.Sprintf("responses websocket client using upstream SSE on channel #%d", selectedChannel.Id))
+			session.startSSETurn(turn, preparedResponse, adaptor)
+			continue
+		}
+
 		outbound, marshalErr := buildResponsesWSOutboundEvent(envelope, preparedResponse)
 		if marshalErr != nil {
 			turn.finish(false)
@@ -242,7 +275,6 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		// ownership instead of copying a message that may be as large as the
 		// configured WebSocket request limit.
 		turn.outbound = outbound
-		turn.channel = selectedChannel
 		turn.replayEnabled = selectedChannel.GetOtherSettings().ResponsesWebSocketV2ReplayEnabled
 		turn.reconnect = func() (*websocket.Conn, *http.Response, error) {
 			return channel.DoResponsesWssRequest(adaptor, turn.ctx, turn.info)
@@ -263,7 +295,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 				apiErr := types.NewErrorWithStatusCode(dialErr, types.ErrorCodeDoRequestFailed, status, types.ErrOptionWithSkipRetry())
 				processChannelError(turn.ctx, *types.NewChannelError(selectedChannel.Id, selectedChannel.Type, selectedChannel.Name, selectedChannel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), selectedChannel.GetAutoBan()), apiErr)
 				session.clearChannel(selectedChannel)
-				session.sendError(apiErr)
+				session.sendTurnFailure(turn, apiErr)
 				continue
 			}
 			upstream = session.attachUpstream(upstreamConn)
@@ -276,7 +308,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 
 		if !session.activateTurn(upstream, turn) {
 			turn.finish(false)
-			session.sendError(types.NewErrorWithStatusCode(errors.New("upstream Responses WebSocket disconnected before request dispatch"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+			session.sendTurnFailure(turn, types.NewErrorWithStatusCode(errors.New("upstream Responses WebSocket disconnected before request dispatch"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
 			continue
 		}
 		// From this point the request may be observed by the upstream even when
@@ -358,10 +390,11 @@ func responseRequestJSONFieldNames() map[string]struct{} {
 	return fields
 }
 
-func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequest) (*responsesWebSocketTurn, json.RawMessage, channel.Adaptor, *types.NewAPIError) {
-	turnCtx := newResponsesWSTurnContext(s.baseCtx, s.lockedModel)
+func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequest, forceStream bool) (*responsesWebSocketTurn, json.RawMessage, channel.Adaptor, *types.NewAPIError) {
+	turnCtx, cancel := newResponsesWSTurnContext(s.baseCtx, s.lockedModel)
 	rateFinish, rateErr := middleware.AcquireModelRequestRateLimit(turnCtx)
 	if rateErr != nil {
+		cancel()
 		return nil, nil, nil, rateErr
 	}
 	releaseUser, acquired, concurrencyErr := middleware.AcquireUserConcurrency(turnCtx)
@@ -372,6 +405,7 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 	}
 	if !acquired {
 		rateFinish(false)
+		cancel()
 		return nil, nil, nil, types.NewErrorWithStatusCode(errors.New("user concurrency limit exceeded"), types.ErrorCodeAccessDenied, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
 	}
 	releaseBusiness := middleware.AcquireRelayConcurrency(turnCtx.Request.Context())
@@ -380,6 +414,7 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		rateFinish(false)
 		releaseBusiness()
 		releaseUser()
+		cancel()
 	}
 	relayInfo, err := relaycommon.GenRelayInfo(turnCtx, types.RelayFormatOpenAIResponses, request, nil)
 	if err != nil {
@@ -428,8 +463,9 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		rateLimitFinish: rateFinish,
 		releaseUser:     releaseUser,
 		releaseBusiness: releaseBusiness,
+		cancel:          cancel,
 	}
-	prepared, adaptor, apiErr := relay.PrepareResponsesWebSocketRequest(turnCtx, relayInfo, request)
+	prepared, adaptor, apiErr := relay.PrepareResponsesWebSocketRequest(turnCtx, relayInfo, request, forceStream)
 	if apiErr != nil {
 		turn.finish(false)
 		return nil, nil, nil, apiErr
@@ -437,9 +473,10 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 	return turn, json.RawMessage(prepared), adaptor, nil
 }
 
-func newResponsesWSTurnContext(base *gin.Context, modelName string) *gin.Context {
+func newResponsesWSTurnContext(base *gin.Context, modelName string) (*gin.Context, context.CancelFunc) {
 	turnCtx := base.Copy()
-	requestCopy := base.Request.Clone(base.Request.Context())
+	requestContext, cancel := context.WithCancel(base.Request.Context())
+	requestCopy := base.Request.Clone(requestContext)
 	requestURL := *base.Request.URL
 	requestURL.Path = "/v1/responses"
 	requestURL.RawQuery = ""
@@ -451,7 +488,7 @@ func newResponsesWSTurnContext(base *gin.Context, modelName string) *gin.Context
 	turnCtx.Set(common.RequestIdKey, common.GetTimeString()+common.GetRandomString(8))
 	common.SetContextKey(turnCtx, appconstant.ContextKeyRequestStartTime, time.Now())
 	common.SetContextKey(turnCtx, appconstant.ContextKeyOriginalModel, modelName)
-	return turnCtx
+	return turnCtx, cancel
 }
 
 func (s *responsesWebSocketSession) configureClientLiveness() {
@@ -669,6 +706,149 @@ func (s *responsesWebSocketSession) activateTurn(upstream *responsesWSUpstreamCo
 	return true
 }
 
+func (s *responsesWebSocketSession) activateSSETurn(turn *responsesWebSocketTurn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.closed:
+		return false
+	default:
+	}
+	if s.activeTurn != nil {
+		return false
+	}
+	s.activeTurn = turn
+	return true
+}
+
+func (s *responsesWebSocketSession) startSSETurn(turn *responsesWebSocketTurn, requestBody []byte, adaptor channel.Adaptor) {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runSSETurn(turn, requestBody, adaptor)
+	}()
+}
+
+func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn, requestBody []byte, adaptor channel.Adaptor) {
+	turn.info.DisablePing = true
+	turn.info.StreamStatus = relaycommon.NewStreamStatus()
+	turn.info.UpstreamRequestBodySize = int64(len(requestBody))
+	turn.ctx.Request.Header.Set("Accept", "text/event-stream")
+	resp, err := channel.DoApiRequestWithContext(adaptor, turn.ctx, turn.info, bytes.NewReader(requestBody))
+	requestBody = nil
+	if err != nil {
+		turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+		s.failSSETurn(turn, types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses SSE request failed: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+		return
+	}
+	if resp == nil {
+		err = errors.New("upstream Responses SSE returned no HTTP response")
+		turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+		s.failSSETurn(turn, types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		apiErr := service.RelayErrorHandler(turn.ctx.Request.Context(), resp, false)
+		turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, apiErr)
+		s.failSSETurn(turn, apiErr)
+		return
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+	service.RecordChannelAffinity(s.baseCtx, turn.channel.Id)
+
+	terminal := false
+	idleTimeout := time.Duration(appconstant.StreamingTimeout) * time.Second
+	_, scanErr := helper.ScanSSEDataWithIdleTimeout(turn.ctx.Request.Context(), resp.Body, idleTimeout, func(data []byte) (bool, error) {
+		var finished bool
+		var successful bool
+
+		s.clientWriteMu.Lock()
+		s.mu.Lock()
+		if s.activeTurn != turn {
+			s.mu.Unlock()
+			s.clientWriteMu.Unlock()
+			return true, nil
+		}
+		event, consumeErr := turn.accumulator.Consume(turn.ctx, turn.info, data)
+		if consumeErr != nil {
+			s.mu.Unlock()
+			s.clientWriteMu.Unlock()
+			return false, consumeErr
+		}
+		turn.upstreamEvent = true
+		turn.info.ReceivedResponseCount++
+		if openairelay.IsResponsesFirstOutputEvent(event) {
+			turn.info.SetFirstResponseTime()
+		}
+		if turn.accumulator.Terminal() {
+			terminal = true
+			finished = true
+			successful = turn.accumulator.Successful()
+			s.activeTurn = nil
+		}
+		s.mu.Unlock()
+		writeErr := s.client.WriteMessage(websocket.TextMessage, data)
+		s.clientWriteMu.Unlock()
+		if finished {
+			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+			turn.finish(successful)
+		}
+		if writeErr != nil {
+			s.close()
+			return true, writeErr
+		}
+		return finished, nil
+	})
+
+	if terminal {
+		logger.LogInfo(turn.ctx, fmt.Sprintf("responses websocket upstream SSE ended: %s", turn.info.StreamStatus.Summary()))
+		return
+	}
+	if !s.isActiveTurn(turn) {
+		return
+	}
+	if scanErr != nil {
+		status := http.StatusBadGateway
+		if errors.Is(scanErr, helper.ErrSSEIdleTimeout) {
+			status = http.StatusGatewayTimeout
+			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonTimeout, scanErr)
+		} else {
+			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, scanErr)
+		}
+		s.failSSETurn(turn, types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses SSE stream failed: %w", scanErr), types.ErrorCodeDoRequestFailed, status, types.ErrOptionWithSkipRetry()))
+		return
+	}
+	err = errors.New("upstream Responses SSE ended before a terminal event")
+	turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, err)
+	s.failSSETurn(turn, types.NewErrorWithStatusCode(err, types.ErrorCodeBadResponse, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+}
+
+func (s *responsesWebSocketSession) isActiveTurn(turn *responsesWebSocketTurn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.activeTurn == turn
+}
+
+func (s *responsesWebSocketSession) failSSETurn(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) {
+	s.mu.Lock()
+	if s.activeTurn != turn {
+		s.mu.Unlock()
+		return
+	}
+	s.activeTurn = nil
+	if s.channel == turn.channel {
+		s.channel = nil
+	}
+	s.mu.Unlock()
+
+	turn.finish(false)
+	if turn.channel != nil {
+		processChannelError(turn.ctx, *types.NewChannelError(turn.channel.Id, turn.channel.Type, turn.channel.Name, turn.channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), turn.channel.GetAutoBan()), apiErr)
+	}
+	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket upstream SSE turn failed without closing downstream websocket: %v", apiErr))
+	s.sendTurnFailure(turn, apiErr)
+}
+
 func (s *responsesWebSocketSession) isCurrentUpstream(upstream *responsesWSUpstreamConnection) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -724,18 +904,8 @@ func (s *responsesWebSocketSession) handleUpstreamFailure(upstream *responsesWSU
 		logger.LogWarn(s.baseCtx, "responses websocket replay skipped because the upstream request was already acknowledged or delivered")
 	}
 	turn.finish(false)
-	if recoverable {
-		// Do not turn a transient upstream transport failure into a client-visible
-		// Responses API 502 event. Codex already reconnects a WebSocket closed with
-		// Service Restart; using the transport signal preserves that behavior while
-		// avoiding a prominent application-error banner for a short reconnect that
-		// is otherwise invisible to the user. Keep the detailed cause in server logs
-		// and leave non-recoverable failures on the explicit error-event path below.
-		logger.LogWarn(s.baseCtx, "responses websocket recoverable upstream failure; requesting client transport reconnect")
-		s.closeWithCode(websocket.CloseServiceRestart, "")
-		return
-	}
-	s.sendError(types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses WebSocket disconnected: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+	logger.LogWarn(s.baseCtx, "responses websocket upstream turn failed without closing downstream websocket")
+	s.sendTurnFailure(turn, types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses WebSocket disconnected: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
 }
 
 func isRecoverableResponsesWSDisconnect(err error) bool {
@@ -851,6 +1021,53 @@ func (s *responsesWebSocketSession) sendError(apiErr *types.NewAPIError) {
 		return
 	}
 	payload, err := common.Marshal(responsesWSErrorEvent{Type: "error", Status: apiErr.StatusCode, Error: apiErr.ToOpenAIError()})
+	if err != nil {
+		return
+	}
+	s.clientWriteMu.Lock()
+	_ = s.client.WriteMessage(websocket.TextMessage, payload)
+	s.clientWriteMu.Unlock()
+}
+
+func (s *responsesWebSocketSession) sendTurnFailure(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) {
+	if turn == nil || apiErr == nil || s.client == nil {
+		return
+	}
+	responseID := ""
+	if turn.accumulator != nil {
+		responseID = turn.accumulator.ResponseID()
+	}
+	if responseID == "" {
+		responseID = "resp_starnexus_" + common.GetRandomString(16)
+	}
+	modelName := ""
+	if turn.info != nil {
+		modelName = turn.info.OriginModelName
+	}
+	if modelName == "" {
+		modelName = s.lockedModel
+	}
+	openAIError := apiErr.ToOpenAIError()
+	errorCode := strings.TrimSpace(fmt.Sprint(openAIError.Code))
+	if errorCode == "" || errorCode == "<nil>" {
+		errorCode = "upstream_transport_error"
+	}
+	payload, err := common.Marshal(responsesWSFailedEvent{
+		Type: "response.failed",
+		Response: responsesWSFailedResponse{
+			ID:        responseID,
+			Object:    "response",
+			CreatedAt: time.Now().Unix(),
+			Status:    "failed",
+			Error: responsesWSFailedError{
+				Code:    errorCode,
+				Message: openAIError.Message,
+			},
+			Model:  modelName,
+			Output: []dto.ResponsesOutput{},
+			Usage:  nil,
+		},
+	})
 	if err != nil {
 		return
 	}

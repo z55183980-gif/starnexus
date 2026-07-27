@@ -308,12 +308,29 @@ func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]s
 }
 
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	return doApiRequest(a, c, info, requestBody, false)
+}
+
+// DoApiRequestWithContext is used by long-lived transports that proxy a
+// sequence of independent HTTP turns. Binding the upstream request to the
+// turn context lets one failed turn be cancelled without closing the client
+// transport that owns it.
+func DoApiRequestWithContext(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	return doApiRequest(a, c, info, requestBody, true)
+}
+
+func doApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader, bindContext bool) (*http.Response, error) {
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, fmt.Errorf("get request url failed: %w", err)
 	}
 	logger.LogDebug(c, "fullRequestURL: %s", fullRequestURL)
-	req, err := http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	var req *http.Request
+	if bindContext {
+		req, err = http.NewRequestWithContext(c.Request.Context(), c.Request.Method, fullRequestURL, requestBody)
+	} else {
+		req, err = http.NewRequest(c.Request.Method, fullRequestURL, requestBody)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
@@ -330,10 +347,45 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
-	resp, err := doRequest(c, req, info)
+	var resp *http.Response
+	if bindContext {
+		resp, err = doRequestWithoutDownstreamStreamEffects(c, req, info)
+	} else {
+		resp, err = doRequest(c, req, info)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
+	return resp, nil
+}
+
+func doRequestWithoutDownstreamStreamEffects(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	var client *http.Client
+	var err error
+	if info.ChannelSetting.Proxy != "" {
+		client, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
+		if err != nil {
+			return nil, fmt.Errorf("new proxy http client failed: %w", err)
+		}
+	} else {
+		client = service.GetHttpClient()
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		logger.LogError(c, "do request failed: "+err.Error())
+		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+	}
+	if resp == nil {
+		return nil, errors.New("resp is nil")
+	}
+	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {
+		c.Set(common2.UpstreamRequestIdKey, upID)
+	}
+	_ = req.Body.Close()
 	return resp, nil
 }
 

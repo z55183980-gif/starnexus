@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,9 +11,12 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	openairelay "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -51,6 +55,48 @@ func newResponsesWSTestPair(t *testing.T) (*websocket.Conn, *websocket.Conn, fun
 		server.Close()
 	}
 	return serverConn, clientConn, cleanup
+}
+
+func requireResponsesWSTurnFailureAndAlive(t *testing.T, session *responsesWebSocketSession, clientPeer *websocket.Conn, expectedResponseID string) {
+	t.Helper()
+	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
+	messageType, data, err := clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	var failedEvent struct {
+		Type     string `json:"type"`
+		Response struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Error  struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"response"`
+	}
+	require.NoError(t, common.Unmarshal(data, &failedEvent))
+	require.Equal(t, "response.failed", failedEvent.Type)
+	require.NotEmpty(t, failedEvent.Response.ID)
+	if expectedResponseID != "" {
+		require.Equal(t, expectedResponseID, failedEvent.Response.ID)
+	}
+	require.Equal(t, "failed", failedEvent.Response.Status)
+	require.NotEmpty(t, failedEvent.Response.Error.Code)
+	require.NotEmpty(t, failedEvent.Response.Error.Message)
+
+	session.clientWriteMu.Lock()
+	err = session.client.WriteMessage(websocket.TextMessage, []byte(`{"type":"session.alive"}`))
+	session.clientWriteMu.Unlock()
+	require.NoError(t, err)
+	messageType, data, err = clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.JSONEq(t, `{"type":"session.alive"}`, string(data))
+	select {
+	case <-session.closed:
+		t.Fatal("downstream client session closed after upstream turn failure")
+	default:
+	}
 }
 
 func TestParseResponsesWSClientEvent(t *testing.T) {
@@ -178,7 +224,7 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	session.close()
 }
 
-func TestResponsesWSRecoverableUpstreamFailureRequestsClientReconnect(t *testing.T) {
+func TestResponsesWSRecoverableUpstreamFailureKeepsClientSession(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()
 	upstreamServer, _, closeUpstream := newResponsesWSTestPair(t)
@@ -210,17 +256,8 @@ func TestResponsesWSRecoverableUpstreamFailureRequestsClientReconnect(t *testing
 	require.Equal(t, int32(3), released.Load())
 	require.Nil(t, session.getUpstream())
 	require.Nil(t, session.getChannel())
-	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
-	_, _, err := clientPeer.ReadMessage()
-	var closeErr *websocket.CloseError
-	require.ErrorAs(t, err, &closeErr)
-	require.Equal(t, websocket.CloseServiceRestart, closeErr.Code)
-	require.Empty(t, closeErr.Text)
-	select {
-	case <-session.closed:
-	default:
-		t.Fatal("client session remained open after reconnect signal")
-	}
+	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "")
+	session.close()
 }
 
 func TestResponsesWSUpstreamFailureReplaysOnceBeforeDownstreamEvents(t *testing.T) {
@@ -331,11 +368,7 @@ func TestResponsesWSUpstreamFailureDoesNotReplayAfterUpstreamAcknowledgement(t *
 	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_accepted"}}`, string(data))
 
 	require.NoError(t, upstreamPeer.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "keepalive ping timeout"), time.Now().Add(time.Second)))
-	_, _, err = clientPeer.ReadMessage()
-	var closeErr *websocket.CloseError
-	require.ErrorAs(t, err, &closeErr)
-	require.Equal(t, websocket.CloseServiceRestart, closeErr.Code)
-	require.Empty(t, closeErr.Text)
+	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "resp_accepted")
 	require.Zero(t, reconnects.Load())
 	require.True(t, turn.upstreamEvent)
 
@@ -376,12 +409,8 @@ func TestResponsesWSUpstreamFailureDoesNotReplayWhenOptInDisabled(t *testing.T) 
 
 	session.handleUpstreamFailure(upstream, errors.New("broken pipe"))
 	require.Zero(t, reconnects.Load())
-	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
-	_, _, err := clientPeer.ReadMessage()
-	var closeErr *websocket.CloseError
-	require.ErrorAs(t, err, &closeErr)
-	require.Equal(t, websocket.CloseServiceRestart, closeErr.Code)
-	require.Empty(t, closeErr.Text)
+	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "")
+	session.close()
 }
 
 func TestResponsesWSUpstreamFailureDoesNotReplayAfterUpstreamEvent(t *testing.T) {
@@ -421,15 +450,11 @@ func TestResponsesWSUpstreamFailureDoesNotReplayAfterUpstreamEvent(t *testing.T)
 	require.Nil(t, session.getUpstream())
 	require.Nil(t, session.getChannel())
 
-	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
-	_, _, err := clientPeer.ReadMessage()
-	var closeErr *websocket.CloseError
-	require.ErrorAs(t, err, &closeErr)
-	require.Equal(t, websocket.CloseServiceRestart, closeErr.Code)
-	require.Empty(t, closeErr.Text)
+	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "")
+	session.close()
 }
 
-func TestResponsesWSReplayFailureRequestsClientReconnectAndFinishesTurn(t *testing.T) {
+func TestResponsesWSReplayFailureKeepsClientSessionAndFinishesTurn(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()
 	upstreamServer, _, closeUpstream := newResponsesWSTestPair(t)
@@ -471,18 +496,13 @@ func TestResponsesWSReplayFailureRequestsClientReconnectAndFinishesTurn(t *testi
 	require.Nil(t, session.getUpstream())
 	require.Nil(t, session.getChannel())
 
-	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
-	_, _, err := clientPeer.ReadMessage()
-	var closeErr *websocket.CloseError
-	require.ErrorAs(t, err, &closeErr)
-	require.Equal(t, websocket.CloseServiceRestart, closeErr.Code)
-	require.Empty(t, closeErr.Text)
+	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "")
 
 	session.close()
 	require.Equal(t, int32(3), released.Load())
 }
 
-func TestResponsesWSNonRecoverableUpstreamFailureReturnsErrorEvent(t *testing.T) {
+func TestResponsesWSNonRecoverableUpstreamFailureReturnsFailedEvent(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()
 	upstreamServer, _, closeUpstream := newResponsesWSTestPair(t)
@@ -512,13 +532,122 @@ func TestResponsesWSNonRecoverableUpstreamFailureReturnsErrorEvent(t *testing.T)
 	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
 	_, data, err := clientPeer.ReadMessage()
 	require.NoError(t, err)
-	var errorEvent struct {
-		Type   string `json:"type"`
-		Status int    `json:"status"`
+	var failedEvent struct {
+		Type     string `json:"type"`
+		Response struct {
+			Status string `json:"status"`
+		} `json:"response"`
 	}
-	require.NoError(t, common.Unmarshal(data, &errorEvent))
-	require.Equal(t, "error", errorEvent.Type)
-	require.Equal(t, http.StatusBadGateway, errorEvent.Status)
+	require.NoError(t, common.Unmarshal(data, &failedEvent))
+	require.Equal(t, "response.failed", failedEvent.Type)
+	require.Equal(t, "failed", failedEvent.Response.Status)
 
 	session.close()
+}
+
+func TestResponsesWSSSEFailureKeepsSessionAndAllowsNextTurn(t *testing.T) {
+	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+
+	var requests atomic.Int32
+	requestBodies := make(chan string, 2)
+	requestAccepts := make(chan string, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requestBodies <- string(body)
+		requestAccepts <- r.Header.Get("Accept")
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+		if requests.Add(1) == 1 {
+			_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_first\"}}\n\n"))
+			flusher.Flush()
+			return
+		}
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.done\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_second\"}}\n\n"))
+		flusher.Flush()
+	}))
+	defer upstream.Close()
+
+	baseCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	baseCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	selectedChannel := &model.Channel{}
+	var released atomic.Int32
+	session := &responsesWebSocketSession{
+		baseCtx: baseCtx,
+		client:  clientServer,
+		channel: selectedChannel,
+		closed:  make(chan struct{}),
+	}
+
+	newTurn := func() (*responsesWebSocketTurn, *openairelay.Adaptor) {
+		turnCtx, cancel := newResponsesWSTurnContext(baseCtx, "gpt-5")
+		common.SetContextKey(turnCtx, constant.ContextKeyRequestStartTime, time.Now().Add(-time.Second))
+		info := relaycommon.GenRelayInfoOpenAI(turnCtx, nil)
+		info.IsStream = true
+		info.RelayMode = relayconstant.RelayModeResponses
+		info.RelayFormat = types.RelayFormatOpenAIResponses
+		info.RequestURLPath = "/v1/responses"
+		info.ChannelMeta = &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			ChannelBaseUrl:    upstream.URL,
+			ApiKey:            "test-key",
+			UpstreamModelName: "gpt-5",
+		}
+		adaptor := &openairelay.Adaptor{}
+		adaptor.Init(info)
+		return &responsesWebSocketTurn{
+			ctx:             turnCtx,
+			info:            info,
+			accumulator:     openairelay.NewResponsesEventAccumulator(),
+			channel:         selectedChannel,
+			cancel:          cancel,
+			rateLimitFinish: func(bool) { released.Add(1) },
+			releaseUser:     func() { released.Add(1) },
+			releaseBusiness: func() { released.Add(1) },
+		}, adaptor
+	}
+
+	firstTurn, firstAdaptor := newTurn()
+	require.True(t, session.activateSSETurn(firstTurn))
+	session.runSSETurn(firstTurn, []byte(`{"model":"gpt-5","stream":true}`), firstAdaptor)
+	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, data, err := clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_first"}}`, string(data))
+	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "resp_first")
+	require.Nil(t, session.getChannel())
+
+	session.setChannel(selectedChannel)
+	secondTurn, secondAdaptor := newTurn()
+	require.True(t, session.activateSSETurn(secondTurn))
+	session.runSSETurn(secondTurn, []byte(`{"model":"gpt-5","stream":true}`), secondAdaptor)
+	_, data, err = clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"response.output_text.done"}`, string(data))
+	_, data, err = clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"response.failed","response":{"id":"resp_second"}}`, string(data))
+	require.Truef(t, secondTurn.info.HasSendResponse(), "start=%s first=%s", secondTurn.info.StartTime, secondTurn.info.FirstResponseTime)
+	require.False(t, session.isActiveTurn(secondTurn))
+	select {
+	case <-session.closed:
+		t.Fatal("downstream websocket closed after the second SSE turn")
+	default:
+	}
+
+	for i := 0; i < 2; i++ {
+		var request map[string]any
+		require.NoError(t, common.Unmarshal([]byte(<-requestBodies), &request))
+		require.Equal(t, true, request["stream"])
+		require.NotContains(t, request, "type")
+		require.Equal(t, "text/event-stream", <-requestAccepts)
+	}
+	require.Equal(t, int32(6), released.Load())
+	session.close()
+	require.Equal(t, int32(6), released.Load())
 }
