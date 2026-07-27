@@ -20,6 +20,8 @@ import { z } from 'zod'
 import { CHANNEL_STATUS, MODEL_FETCHABLE_TYPES } from '../constants'
 import type { Channel } from '../types'
 
+const RESPONSES_WEBSOCKET_V2_CHANNEL_TYPES = new Set([1, 59])
+
 // ============================================================================
 // Form Validation Schema
 // ============================================================================
@@ -85,7 +87,7 @@ const channelFormBaseSchema = z.object({
   // Field passthrough controls (stored in settings JSON)
   allow_service_tier: z.boolean().optional(), // OpenAI/Anthropic
   disable_store: z.boolean().optional(), // OpenAI only
-  responses_websocket_v2_enabled: z.boolean().optional(), // OpenAI Responses WSv2
+  responses_websocket_v2_enabled: z.boolean().optional(), // OpenAI/Sub2API Responses WSv2
   allow_safety_identifier: z.boolean().optional(), // OpenAI only
   allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
   allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
@@ -398,10 +400,15 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     delete settingsObj.allow_service_tier
   }
 
-  if (formData.type === 1) {
-    settingsObj.disable_store = formData.disable_store === true
+  if (RESPONSES_WEBSOCKET_V2_CHANNEL_TYPES.has(formData.type)) {
     settingsObj.responses_websocket_v2_enabled =
       formData.responses_websocket_v2_enabled === true
+  } else if ('responses_websocket_v2_enabled' in settingsObj) {
+    delete settingsObj.responses_websocket_v2_enabled
+  }
+
+  if (formData.type === 1) {
+    settingsObj.disable_store = formData.disable_store === true
     settingsObj.allow_safety_identifier =
       formData.allow_safety_identifier === true
     settingsObj.allow_include_obfuscation =
@@ -409,8 +416,6 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
   } else {
     if ('disable_store' in settingsObj) delete settingsObj.disable_store
-    if ('responses_websocket_v2_enabled' in settingsObj)
-      delete settingsObj.responses_websocket_v2_enabled
     if ('allow_safety_identifier' in settingsObj)
       delete settingsObj.allow_safety_identifier
     if ('allow_include_obfuscation' in settingsObj)

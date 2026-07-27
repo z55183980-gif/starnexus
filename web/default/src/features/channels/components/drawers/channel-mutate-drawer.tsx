@@ -2886,7 +2886,9 @@ export function ChannelMutateDrawer({
                       title={t('Channel Extra Settings')}
                       icon={<Settings className='h-4 w-4' />}
                     />
-                    {(currentType === 1 || currentType === 14) && (
+                    {(currentType === 1 ||
+                      currentType === 14 ||
+                      currentType === 59) && (
                       <div className='space-y-3 rounded-lg border p-4'>
                         <SubHeading
                           title={t('Field passthrough controls')}
@@ -2894,28 +2896,57 @@ export function ChannelMutateDrawer({
                         />
 
                         <div className='divide-border space-y-0 divide-y border-y'>
-                          <FormField
-                            control={form.control}
-                            name='allow_service_tier'
-                            render={({ field }) => (
-                              <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
-                                <div className='space-y-0.5'>
-                                  <FormLabel className='text-sm'>
-                                    {t('Allow service_tier passthrough')}
-                                  </FormLabel>
-                                  <FormDescription>
-                                    {t('Pass through the service_tier field')}
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  <Switch
-                                    checked={field.value}
-                                    onCheckedChange={field.onChange}
-                                  />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
+                          {(currentType === 1 || currentType === 14) && (
+                            <FormField
+                              control={form.control}
+                              name='allow_service_tier'
+                              render={({ field }) => (
+                                <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                  <div className='space-y-0.5'>
+                                    <FormLabel className='text-sm'>
+                                      {t('Allow service_tier passthrough')}
+                                    </FormLabel>
+                                    <FormDescription>
+                                      {t('Pass through the service_tier field')}
+                                    </FormDescription>
+                                  </div>
+                                  <FormControl>
+                                    <Switch
+                                      checked={field.value}
+                                      onCheckedChange={field.onChange}
+                                    />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                          )}
+
+                          {(currentType === 1 || currentType === 59) && (
+                            <FormField
+                              control={form.control}
+                              name='responses_websocket_v2_enabled'
+                              render={({ field }) => (
+                                <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                  <div className='space-y-0.5'>
+                                    <FormLabel className='text-sm'>
+                                      {t('Responses WebSocket v2')}
+                                    </FormLabel>
+                                    <FormDescription>
+                                      {t(
+                                        'Enable persistent Responses API WebSocket proxying for compatible upstreams'
+                                      )}
+                                    </FormDescription>
+                                  </div>
+                                  <FormControl>
+                                    <Switch
+                                      checked={field.value}
+                                      onCheckedChange={field.onChange}
+                                    />
+                                  </FormControl>
+                                </FormItem>
+                              )}
+                            />
+                          )}
 
                           {currentType === 1 && (
                             <>
@@ -2931,31 +2962,6 @@ export function ChannelMutateDrawer({
                                       <FormDescription>
                                         {t(
                                           'When enabled, the store field will be blocked'
-                                        )}
-                                      </FormDescription>
-                                    </div>
-                                    <FormControl>
-                                      <Switch
-                                        checked={field.value}
-                                        onCheckedChange={field.onChange}
-                                      />
-                                    </FormControl>
-                                  </FormItem>
-                                )}
-                              />
-
-                              <FormField
-                                control={form.control}
-                                name='responses_websocket_v2_enabled'
-                                render={({ field }) => (
-                                  <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
-                                    <div className='space-y-0.5'>
-                                      <FormLabel className='text-sm'>
-                                        {t('Responses WebSocket v2')}
-                                      </FormLabel>
-                                      <FormDescription>
-                                        {t(
-                                          'Enable persistent Responses API WebSocket proxying for compatible upstreams'
                                         )}
                                       </FormDescription>
                                     </div>
