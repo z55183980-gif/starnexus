@@ -537,7 +537,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 					logger.LogError(turn.ctx, "failed to parse Responses WebSocket event: "+consumeErr.Error())
 				} else {
 					turn.upstreamEvent = true
-					if openairelay.IsResponsesFirstFrameEvent(event) {
+					if openairelay.IsResponsesFirstOutputEvent(event) {
 						turn.info.SetFirstResponseTime()
 					}
 					if event != nil && turn.accumulator.Terminal() {
@@ -709,7 +709,7 @@ func (s *responsesWebSocketSession) handleUpstreamFailure(upstream *responsesWSU
 	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 		logger.LogDebug(s.baseCtx, "responses websocket upstream closed: %v", err)
 	} else {
-		logger.LogWarn(s.baseCtx, fmt.Sprintf("responses websocket upstream disconnected; client session retained: %v", err))
+		logger.LogWarn(s.baseCtx, fmt.Sprintf("responses websocket upstream disconnected: %v", err))
 	}
 	if turn == nil {
 		return
@@ -724,6 +724,17 @@ func (s *responsesWebSocketSession) handleUpstreamFailure(upstream *responsesWSU
 		logger.LogWarn(s.baseCtx, "responses websocket replay skipped because the upstream request was already acknowledged or delivered")
 	}
 	turn.finish(false)
+	if recoverable {
+		// Do not turn a transient upstream transport failure into a client-visible
+		// Responses API 502 event. Codex already reconnects a WebSocket closed with
+		// Service Restart; using the transport signal preserves that behavior while
+		// avoiding a prominent application-error banner for a short reconnect that
+		// is otherwise invisible to the user. Keep the detailed cause in server logs
+		// and leave non-recoverable failures on the explicit error-event path below.
+		logger.LogWarn(s.baseCtx, "responses websocket recoverable upstream failure; requesting client transport reconnect")
+		s.closeWithCode(websocket.CloseServiceRestart, "")
+		return
+	}
 	s.sendError(types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses WebSocket disconnected: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
 }
 

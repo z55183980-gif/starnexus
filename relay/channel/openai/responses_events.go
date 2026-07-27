@@ -24,20 +24,25 @@ func NewResponsesEventAccumulator() *ResponsesEventAccumulator {
 	return &ResponsesEventAccumulator{}
 }
 
-// IsResponsesFirstOutputEvent reports whether an event contains the first
-// generated output that should be used for first-response timing. Responses
-// WebSocket lifecycle events can arrive immediately on a persistent
-// connection, so they must not be treated as model output.
+// IsResponsesFirstOutputEvent reports whether an event starts client output
+// and should be used for time-to-first-token measurement. Transport prelude,
+// response lifecycle, item lifecycle, and terminal events are excluded.
 func IsResponsesFirstOutputEvent(event *dto.ResponsesStreamResponse) bool {
-	return event != nil && event.Delta != "" && strings.HasSuffix(event.Type, ".delta")
-}
-
-// IsResponsesFirstFrameEvent reports whether an event belongs to the standard
-// Responses event stream. Transport and vendor prelude events are forwarded to
-// the client but excluded from first-response timing so the WebSocket metric
-// matches the first SSE response event rather than connection setup metadata.
-func IsResponsesFirstFrameEvent(event *dto.ResponsesStreamResponse) bool {
-	return event != nil && (event.Type == "error" || strings.HasPrefix(event.Type, "response."))
+	if event == nil {
+		return false
+	}
+	eventType := strings.TrimSpace(event.Type)
+	if eventType == "" {
+		return false
+	}
+	switch eventType {
+	case "response.created", "response.in_progress", dto.ResponsesOutputTypeItemAdded, dto.ResponsesOutputTypeItemDone:
+		return false
+	}
+	if strings.Contains(eventType, ".delta") {
+		return true
+	}
+	return strings.HasPrefix(eventType, "response.output_text") || strings.HasPrefix(eventType, "response.output")
 }
 
 func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.RelayInfo, data []byte) (*dto.ResponsesStreamResponse, error) {

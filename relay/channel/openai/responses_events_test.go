@@ -66,45 +66,26 @@ func TestIsResponsesFirstOutputEvent(t *testing.T) {
 		want  bool
 	}{
 		{name: "nil event", event: nil, want: false},
+		{name: "empty type", event: &dto.ResponsesStreamResponse{}, want: false},
+		{name: "websocket timing", event: &dto.ResponsesStreamResponse{Type: "responsesapi.websocket_timing"}, want: false},
 		{name: "response created", event: &dto.ResponsesStreamResponse{Type: "response.created"}, want: false},
 		{name: "response in progress", event: &dto.ResponsesStreamResponse{Type: "response.in_progress"}, want: false},
-		{name: "empty text delta", event: &dto.ResponsesStreamResponse{Type: "response.output_text.delta"}, want: false},
+		{name: "output item added", event: &dto.ResponsesStreamResponse{Type: dto.ResponsesOutputTypeItemAdded}, want: false},
+		{name: "output item done", event: &dto.ResponsesStreamResponse{Type: dto.ResponsesOutputTypeItemDone}, want: false},
+		{name: "empty text delta", event: &dto.ResponsesStreamResponse{Type: "response.output_text.delta"}, want: true},
 		{name: "text delta", event: &dto.ResponsesStreamResponse{Type: "response.output_text.delta", Delta: "hello"}, want: true},
 		{name: "reasoning summary delta", event: &dto.ResponsesStreamResponse{Type: "response.reasoning_summary_text.delta", Delta: "thinking"}, want: true},
 		{name: "function arguments delta", event: &dto.ResponsesStreamResponse{Type: "response.function_call_arguments.delta", Delta: "{"}, want: true},
-		{name: "non delta with text", event: &dto.ResponsesStreamResponse{Type: "response.output_text.done", Delta: "hello"}, want: false},
+		{name: "output text done", event: &dto.ResponsesStreamResponse{Type: "response.output_text.done"}, want: true},
+		{name: "generic response output", event: &dto.ResponsesStreamResponse{Type: "response.output"}, want: true},
+		{name: "response completed", event: &dto.ResponsesStreamResponse{Type: "response.completed"}, want: false},
+		{name: "error", event: &dto.ResponsesStreamResponse{Type: "error"}, want: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tt.want, IsResponsesFirstOutputEvent(tt.event))
-		})
-	}
-}
-
-func TestIsResponsesFirstFrameEvent(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		event *dto.ResponsesStreamResponse
-		want  bool
-	}{
-		{name: "nil event", event: nil, want: false},
-		{name: "empty type", event: &dto.ResponsesStreamResponse{}, want: false},
-		{name: "websocket timing", event: &dto.ResponsesStreamResponse{Type: "responsesapi.websocket_timing"}, want: false},
-		{name: "codex rate limits", event: &dto.ResponsesStreamResponse{Type: "codex.rate_limits"}, want: false},
-		{name: "response created", event: &dto.ResponsesStreamResponse{Type: "response.created"}, want: true},
-		{name: "response in progress", event: &dto.ResponsesStreamResponse{Type: "response.in_progress"}, want: true},
-		{name: "response output delta", event: &dto.ResponsesStreamResponse{Type: "response.output_text.delta"}, want: true},
-		{name: "error", event: &dto.ResponsesStreamResponse{Type: "error"}, want: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			require.Equal(t, tt.want, IsResponsesFirstFrameEvent(tt.event))
 		})
 	}
 }
