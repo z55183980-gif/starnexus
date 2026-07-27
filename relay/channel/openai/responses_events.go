@@ -32,6 +32,14 @@ func IsResponsesFirstOutputEvent(event *dto.ResponsesStreamResponse) bool {
 	return event != nil && event.Delta != "" && strings.HasSuffix(event.Type, ".delta")
 }
 
+// IsResponsesFirstFrameEvent reports whether an event belongs to the standard
+// Responses event stream. Transport and vendor prelude events are forwarded to
+// the client but excluded from first-response timing so the WebSocket metric
+// matches the first SSE response event rather than connection setup metadata.
+func IsResponsesFirstFrameEvent(event *dto.ResponsesStreamResponse) bool {
+	return event != nil && (event.Type == "error" || strings.HasPrefix(event.Type, "response."))
+}
+
 func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.RelayInfo, data []byte) (*dto.ResponsesStreamResponse, error) {
 	var event dto.ResponsesStreamResponse
 	if err := common.Unmarshal(data, &event); err != nil {

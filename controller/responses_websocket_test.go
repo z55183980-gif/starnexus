@@ -120,8 +120,8 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	}
 	go session.readUpstream(upstream)
 
-	// S4's HTTP/SSE metric starts on the first valid data event without
-	// filtering by event type. WebSocket timing events use the same standard.
+	// Transport prelude events are client-visible but are not equivalent to
+	// S4's first Responses SSE event.
 	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"responsesapi.websocket_timing"}`)))
 	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
 	messageType, data, err := clientPeer.ReadMessage()
@@ -130,9 +130,8 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	require.JSONEq(t, `{"type":"responsesapi.websocket_timing"}`, string(data))
 	session.mu.Lock()
 	hasFirstResponse := info.HasSendResponse()
-	firstResponseTime := info.FirstResponseTime
 	session.mu.Unlock()
-	require.True(t, hasFirstResponse)
+	require.False(t, hasFirstResponse)
 
 	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.created","response":{"id":"resp_1"}}`)))
 	messageType, data, err = clientPeer.ReadMessage()
@@ -141,9 +140,18 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_1"}}`, string(data))
 	session.mu.Lock()
 	hasFirstResponse = info.HasSendResponse()
-	recordedFirstResponseTime := info.FirstResponseTime
+	firstResponseTime := info.FirstResponseTime
 	session.mu.Unlock()
 	require.True(t, hasFirstResponse)
+
+	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_text.delta","delta":"hello"}`)))
+	messageType, data, err = clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.JSONEq(t, `{"type":"response.output_text.delta","delta":"hello"}`, string(data))
+	session.mu.Lock()
+	recordedFirstResponseTime := info.FirstResponseTime
+	session.mu.Unlock()
 	require.Equal(t, firstResponseTime, recordedFirstResponseTime)
 
 	session.mu.Lock()

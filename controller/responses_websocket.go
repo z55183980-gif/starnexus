@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -533,16 +532,14 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 		turn = s.activeTurn
 		if messageType == websocket.TextMessage {
 			if turn != nil {
-				// Match the HTTP/SSE scanner: record the first non-empty data frame
-				// before forwarding it, without waiting for a particular event type.
-				if len(bytes.TrimSpace(data)) > 0 {
-					turn.upstreamEvent = true
-					turn.info.SetFirstResponseTime()
-				}
 				event, consumeErr := turn.accumulator.Consume(turn.ctx, turn.info, data)
 				if consumeErr != nil {
 					logger.LogError(turn.ctx, "failed to parse Responses WebSocket event: "+consumeErr.Error())
 				} else {
+					turn.upstreamEvent = true
+					if openairelay.IsResponsesFirstFrameEvent(event) {
+						turn.info.SetFirstResponseTime()
+					}
 					if event != nil && turn.accumulator.Terminal() {
 						finished = turn
 						successful = turn.accumulator.Successful()

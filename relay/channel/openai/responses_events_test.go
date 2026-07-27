@@ -82,3 +82,29 @@ func TestIsResponsesFirstOutputEvent(t *testing.T) {
 		})
 	}
 }
+
+func TestIsResponsesFirstFrameEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		event *dto.ResponsesStreamResponse
+		want  bool
+	}{
+		{name: "nil event", event: nil, want: false},
+		{name: "empty type", event: &dto.ResponsesStreamResponse{}, want: false},
+		{name: "websocket timing", event: &dto.ResponsesStreamResponse{Type: "responsesapi.websocket_timing"}, want: false},
+		{name: "codex rate limits", event: &dto.ResponsesStreamResponse{Type: "codex.rate_limits"}, want: false},
+		{name: "response created", event: &dto.ResponsesStreamResponse{Type: "response.created"}, want: true},
+		{name: "response in progress", event: &dto.ResponsesStreamResponse{Type: "response.in_progress"}, want: true},
+		{name: "response output delta", event: &dto.ResponsesStreamResponse{Type: "response.output_text.delta"}, want: true},
+		{name: "error", event: &dto.ResponsesStreamResponse{Type: "error"}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, IsResponsesFirstFrameEvent(tt.event))
+		})
+	}
+}
