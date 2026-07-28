@@ -102,6 +102,25 @@ func TestUpstreamAccountAdminCredentialLifecycleAndSafeDelete(t *testing.T) {
 	require.NoError(t, DeleteUpstreamProxy(proxyInput.Proxy.Id))
 }
 
+func TestCreateUpstreamAccountPreservesExplicitZeroValues(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "paused-account", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+			Extra: "{}", Concurrency: 1, Priority: 0, Weight: 1,
+			Status: constant.UpstreamStatusError, Schedulable: false, AutoPauseOnExpired: false,
+		},
+		Credentials: map[string]any{"api_key": "secret"},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	var stored model.UpstreamAccount
+	require.NoError(t, model.DB.First(&stored, input.Account.Id).Error)
+	require.Zero(t, stored.Priority)
+	require.False(t, stored.Schedulable)
+	require.False(t, stored.AutoPauseOnExpired)
+}
+
 func TestUpstreamAccountPoolRuntimeStats(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	pool := model.UpstreamAccountPool{

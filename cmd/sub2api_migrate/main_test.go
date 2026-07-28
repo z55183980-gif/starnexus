@@ -151,6 +151,16 @@ func TestImportSnapshotIsIdempotentAndRollbackSafe(t *testing.T) {
 	require.EqualValues(t, 1, rolledBack.RemovedProxies)
 }
 
+func TestMigrateDestinationSchemaAddsChannelAccountPoolColumns(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.Exec("CREATE TABLE channels (id integer PRIMARY KEY)").Error)
+
+	require.NoError(t, migrateDestinationSchema(db))
+	require.True(t, db.Migrator().HasColumn(&model.Channel{}, "credential_source"))
+	require.True(t, db.Migrator().HasColumn(&model.Channel{}, "upstream_account_pool_id"))
+}
+
 func TestUniqueImportedPoolNameHandlesRepeatedCollisions(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/names.db"), &gorm.Config{})
 	require.NoError(t, err)

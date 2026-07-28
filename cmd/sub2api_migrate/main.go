@@ -134,6 +134,16 @@ type migrationReport struct {
 	RemovedProxies      int64  `json:"removed_proxies"`
 }
 
+// destinationChannelAccountPoolColumns limits the migration tool to the two
+// channel columns it owns, without asking GORM to reconcile the full table.
+type destinationChannelAccountPoolColumns struct {
+	Id                    int    `gorm:"column:id;primaryKey"`
+	CredentialSource      string `gorm:"column:credential_source;type:varchar(32);not null;default:'channel_key';index"`
+	UpstreamAccountPoolId *int   `gorm:"column:upstream_account_pool_id;index"`
+}
+
+func (destinationChannelAccountPoolColumns) TableName() string { return "channels" }
+
 func main() {
 	var opts options
 	flag.StringVar(&opts.Mode, "mode", "plan", "plan, import, verify, or rollback")
@@ -164,10 +174,7 @@ func run(opts options) error {
 	}
 	model.DB = destination
 	if opts.AutoMigrateSchema {
-		if err := destination.AutoMigrate(
-			&model.UpstreamProxy{}, &model.UpstreamAccountPool{}, &model.UpstreamAccount{},
-			&model.UpstreamAccountPoolMember{}, &model.UpstreamAccountEvent{}, &model.UpstreamOAuthSession{},
-		); err != nil {
+		if err := migrateDestinationSchema(destination); err != nil {
 			return fmt.Errorf("migrate destination schema: %w", err)
 		}
 	}
@@ -209,6 +216,17 @@ func run(opts options) error {
 	default:
 		return errors.New("mode must be plan, import, verify, or rollback")
 	}
+}
+
+func migrateDestinationSchema(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&model.Channel{}) {
+		return errors.New("destination channels table is missing")
+	}
+	return db.AutoMigrate(
+		&destinationChannelAccountPoolColumns{},
+		&model.UpstreamProxy{}, &model.UpstreamAccountPool{}, &model.UpstreamAccount{},
+		&model.UpstreamAccountPoolMember{}, &model.UpstreamAccountEvent{}, &model.UpstreamOAuthSession{},
+	)
 }
 
 func openDatabase(dsn string) (*gorm.DB, error) {
@@ -674,7 +692,8 @@ func verifySingleSourceRecord(db *gorm.DB, destination any, sourceID int64) erro
 func verifyImportedAccount(db *gorm.DB, source sourceAccount, account *model.UpstreamAccount) error {
 	if account.Platform != constant.UpstreamPlatformOpenAI || account.Type != mapAccountType(source.Type) ||
 		account.Concurrency != max(1, source.Concurrency) || account.Priority != source.Priority ||
-		account.Status != mapAccountStatus(source.Status) || account.Schedulable != source.Schedulable {
+		account.Status != mapAccountStatus(source.Status) || account.Schedulable != source.Schedulable ||
+		account.AutoPauseOnExpired != source.AutoPauseOnExpired {
 		return errors.New("destination fields do not match source")
 	}
 	credentials, err := service.DecryptUpstreamAccountCredentials(account)

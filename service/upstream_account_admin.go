@@ -437,7 +437,22 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 		input.Account.CredentialKeyVersion = keyring.ActiveVersion()
 		input.Account.CredentialCiphertext = ""
 		input.Account.CredentialNonce = ""
+		explicitPriority := input.Account.Priority
+		explicitSchedulable := input.Account.Schedulable
+		explicitAutoPauseOnExpired := input.Account.AutoPauseOnExpired
 		if err := tx.Create(&input.Account).Error; err != nil {
+			return err
+		}
+		// GORM applies default tags to zero values on Create. Re-apply fields
+		// where zero/false is an explicit administrative choice.
+		input.Account.Priority = explicitPriority
+		input.Account.Schedulable = explicitSchedulable
+		input.Account.AutoPauseOnExpired = explicitAutoPauseOnExpired
+		if err := tx.Model(&model.UpstreamAccount{}).Where("id = ?", input.Account.Id).Updates(map[string]any{
+			"priority":              explicitPriority,
+			"schedulable":           explicitSchedulable,
+			"auto_pause_on_expired": explicitAutoPauseOnExpired,
+		}).Error; err != nil {
 			return err
 		}
 		envelope, err := keyring.EncryptJSON(upstreamAccountCredentialRecordKind, input.Account.Id, input.Account.CredentialVersion, input.Credentials)
