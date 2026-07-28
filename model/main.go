@@ -143,7 +143,9 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 				DSN:                  dsn,
 				PreferSimpleProtocol: true, // disables implicit prepared statement usage
 			}), &gorm.Config{
-				PrepareStmt: true, // precompile SQL
+				// PgBouncer may retain server plans across application connections.
+				// Explicit GORM statement caching can then fail after schema changes.
+				PrepareStmt: false,
 			})
 		}
 		if strings.HasPrefix(dsn, "local") {

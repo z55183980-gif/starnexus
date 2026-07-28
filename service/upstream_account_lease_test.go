@@ -53,3 +53,15 @@ func TestLocalUpstreamAccountLeaseBatchCount(t *testing.T) {
 	require.NoError(t, second.Release(ctx))
 	require.NoError(t, third.Release(ctx))
 }
+
+func TestUpstreamAccountLeaseBatchKeysDeduplicatesInOrder(t *testing.T) {
+	ids, keys, err := upstreamAccountLeaseBatchKeys([]int{21, 22, 21, 23})
+	require.NoError(t, err)
+	require.Equal(t, []int{21, 22, 23}, ids)
+	require.Equal(t, []string{
+		upstreamAccountLeaseKey(21), upstreamAccountLeaseKey(22), upstreamAccountLeaseKey(23),
+	}, keys)
+
+	_, _, err = upstreamAccountLeaseBatchKeys([]int{21, 0})
+	require.Error(t, err)
+}

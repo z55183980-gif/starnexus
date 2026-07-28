@@ -111,6 +111,16 @@ local nowMs = tonumber(nowParts[1]) * 1000 + math.floor(tonumber(nowParts[2]) / 
 redis.call('ZREMRANGEBYSCORE', key, '-inf', nowMs)
 return redis.call('ZCARD', key)
 `)
+	upstreamAccountLeaseCountBatchScript = redis.NewScript(`
+local nowParts = redis.call('TIME')
+local nowMs = tonumber(nowParts[1]) * 1000 + math.floor(tonumber(nowParts[2]) / 1000)
+local counts = {}
+for index, key in ipairs(KEYS) do
+  redis.call('ZREMRANGEBYSCORE', key, '-inf', nowMs)
+  counts[index] = redis.call('ZCARD', key)
+end
+return counts
+`)
 )
 
 type redisUpstreamAccountLeaseManager struct {
@@ -144,31 +154,43 @@ func (manager *redisUpstreamAccountLeaseManager) CountBatch(ctx context.Context,
 	if manager == nil || manager.client == nil {
 		return nil, errors.New("invalid upstream account lease batch count request")
 	}
-	commands := make(map[int]*redis.Cmd, len(accountIds))
-	_, err := manager.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-		for _, accountId := range accountIds {
-			if accountId <= 0 {
-				return errors.New("invalid upstream account id in lease batch count request")
-			}
-			if _, exists := commands[accountId]; exists {
-				continue
-			}
-			commands[accountId] = upstreamAccountLeaseCountScript.Run(ctx, pipe, []string{upstreamAccountLeaseKey(accountId)})
-		}
-		return nil
-	})
+	uniqueIds, keys, err := upstreamAccountLeaseBatchKeys(accountIds)
+	if err != nil {
+		return nil, err
+	}
+	if len(uniqueIds) == 0 {
+		return map[int]int{}, nil
+	}
+	values, err := upstreamAccountLeaseCountBatchScript.Run(ctx, manager.client, keys).Slice()
 	if err != nil {
 		return nil, fmt.Errorf("failed to count upstream account leases: %w", err)
 	}
-	counts := make(map[int]int, len(commands))
-	for accountId, command := range commands {
-		count, commandErr := command.Int()
-		if commandErr != nil {
-			return nil, fmt.Errorf("failed to count upstream account %d leases: %w", accountId, commandErr)
-		}
-		counts[accountId] = count
+	if len(values) != len(uniqueIds) {
+		return nil, errors.New("upstream account lease batch count returned an unexpected result")
+	}
+	counts := make(map[int]int, len(uniqueIds))
+	for index, accountId := range uniqueIds {
+		counts[accountId] = int(toInt64(values[index]))
 	}
 	return counts, nil
+}
+
+func upstreamAccountLeaseBatchKeys(accountIds []int) ([]int, []string, error) {
+	uniqueIds := make([]int, 0, len(accountIds))
+	keys := make([]string, 0, len(accountIds))
+	seen := make(map[int]struct{}, len(accountIds))
+	for _, accountId := range accountIds {
+		if accountId <= 0 {
+			return nil, nil, errors.New("invalid upstream account id in lease batch count request")
+		}
+		if _, exists := seen[accountId]; exists {
+			continue
+		}
+		seen[accountId] = struct{}{}
+		uniqueIds = append(uniqueIds, accountId)
+		keys = append(keys, upstreamAccountLeaseKey(accountId))
+	}
+	return uniqueIds, keys, nil
 }
 
 func (manager *redisUpstreamAccountLeaseManager) refresh(ctx context.Context, lease *UpstreamAccountLease, ttl time.Duration) error {
