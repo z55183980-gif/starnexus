@@ -35,7 +35,15 @@ func getScannerBufferSize() int {
 	return DefaultMaxScannerBufferSize
 }
 
+type StreamScannerOptions struct {
+	DisableAutoFirstResponseTime bool
+}
+
 func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, dataHandler func(data string, sr *StreamResult)) {
+	StreamScannerHandlerWithOptions(c, resp, info, StreamScannerOptions{}, dataHandler)
+}
+
+func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo, options StreamScannerOptions, dataHandler func(data string, sr *StreamResult)) {
 
 	if resp == nil || dataHandler == nil {
 		return
@@ -244,7 +252,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 				continue
 			}
 			if !strings.HasPrefix(data, "[DONE]") {
-				info.SetFirstResponseTime()
+				if !options.DisableAutoFirstResponseTime {
+					info.SetFirstResponseTime()
+				}
 				info.ReceivedResponseCount++
 
 				select {

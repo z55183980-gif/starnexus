@@ -128,10 +128,14 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if chunk == nil {
 			return true
 		}
+		visibleOutput := chatStreamChunkHasVisibleOutput(chunk)
 		if info.RelayFormat == types.RelayFormatOpenAI {
 			if err := helper.ObjectData(c, chunk); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 				return false
+			}
+			if visibleOutput {
+				info.SetFirstResponseTime()
 			}
 			return true
 		}
@@ -144,6 +148,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if err := HandleStreamFormat(c, info, string(chunkData), false, false); err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			return false
+		}
+		if visibleOutput {
+			info.SetFirstResponseTime()
 		}
 		return true
 	}
@@ -296,7 +303,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return true
 	}
 
-	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+	helper.StreamScannerHandlerWithOptions(c, resp, info, helper.StreamScannerOptions{
+		DisableAutoFirstResponseTime: true,
+	}, func(data string, sr *helper.StreamResult) {
 		if streamErr != nil {
 			sr.Stop(streamErr)
 			return
@@ -552,4 +561,17 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		helper.Done(c)
 	}
 	return usage, nil
+}
+
+func chatStreamChunkHasVisibleOutput(chunk *dto.ChatCompletionsStreamResponse) bool {
+	if chunk == nil {
+		return false
+	}
+	for _, choice := range chunk.Choices {
+		delta := choice.Delta
+		if delta.GetContentString() != "" || delta.GetReasoningContent() != "" || len(delta.ToolCalls) > 0 {
+			return true
+		}
+	}
+	return false
 }

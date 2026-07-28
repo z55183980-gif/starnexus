@@ -8,13 +8,27 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestStreamStatus_SetEndReason_FirstWins(t *testing.T) {
+func TestStreamStatus_SetEndReason_HandlerFailureOverridesNormalEnd(t *testing.T) {
 	t.Parallel()
 	s := NewStreamStatus()
 
 	s.SetEndReason(StreamEndReasonDone, nil)
+	expectedErr := fmt.Errorf("handler failed")
+	s.SetEndReason(StreamEndReasonHandlerStop, expectedErr)
 	s.SetEndReason(StreamEndReasonTimeout, nil)
-	s.SetEndReason(StreamEndReasonClientGone, fmt.Errorf("context canceled"))
+	s.SetEndReason(StreamEndReasonEOF, nil)
+
+	assert.Equal(t, StreamEndReasonHandlerStop, s.EndReason)
+	assert.Equal(t, expectedErr, s.EndError)
+}
+
+func TestStreamStatus_SetEndReason_LateTransportSignalDoesNotOverrideDone(t *testing.T) {
+	t.Parallel()
+	s := NewStreamStatus()
+
+	s.SetEndReason(StreamEndReasonDone, nil)
+	s.SetEndReason(StreamEndReasonTimeout, fmt.Errorf("late timeout"))
+	s.SetEndReason(StreamEndReasonClientGone, fmt.Errorf("late disconnect"))
 
 	assert.Equal(t, StreamEndReasonDone, s.EndReason)
 	assert.Nil(t, s.EndError)

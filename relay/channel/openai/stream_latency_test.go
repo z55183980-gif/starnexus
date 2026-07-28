@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
@@ -116,6 +117,113 @@ func TestResponsesCreatedFlushesChatStartBeforeNextUpstreamEvent(t *testing.T) {
 
 	require.True(t, flushedBeforeNextEvent, "response.created must flush the Chat start chunk without waiting for another upstream event")
 	require.Contains(t, recorder.BodyString(), `"role":"assistant"`)
+}
+
+func TestResponsesToChatRecordsFirstVisibleOutputInsteadOfStartChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setStreamTestTimeout(t)
+
+	recorder := newStreamFlushRecorder()
+	c := newOpenAIStreamTestContext(recorder)
+	info := relaycommon.GenRelayInfoOpenAI(c, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"}
+	info.StartTime = time.Now().Add(-time.Second)
+	info.FirstResponseTime = info.StartTime.Add(-time.Second)
+	reader, writer := io.Pipe()
+	done := make(chan *types.NewAPIError, 1)
+	go func() {
+		_, apiErr := OaiResponsesToChatStreamHandler(c, info, &http.Response{Body: reader})
+		done <- apiErr
+	}()
+
+	_, err := io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.6-sol\",\"created_at\":123}}\n\n")
+	require.NoError(t, err)
+	select {
+	case <-recorder.flushCh:
+	case <-time.After(time.Second):
+		t.Fatal("start chunk was not flushed")
+	}
+	require.False(t, info.HasSendResponse(), "empty Chat start chunk must not count as visible output")
+
+	_, err = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
+	require.NoError(t, err)
+	select {
+	case <-recorder.flushCh:
+	case <-time.After(time.Second):
+		t.Fatal("visible Chat chunk was not flushed")
+	}
+	require.Eventually(t, info.HasSendResponse, time.Second, time.Millisecond, "non-empty Chat content must record first visible output")
+
+	_, err = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n")
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	select {
+	case apiErr := <-done:
+		require.Nil(t, apiErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("responses-to-chat stream handler did not finish")
+	}
+}
+
+func TestResponsesStreamRecordsFirstOutputInsteadOfLifecycleEvent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setStreamTestTimeout(t)
+
+	recorder := newStreamFlushRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := relaycommon.GenRelayInfoOpenAI(c, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"}
+	info.StartTime = time.Now().Add(-time.Second)
+	info.FirstResponseTime = info.StartTime.Add(-time.Second)
+	reader, writer := io.Pipe()
+	done := make(chan *types.NewAPIError, 1)
+	go func() {
+		_, apiErr := OaiResponsesStreamHandler(c, info, &http.Response{Body: reader})
+		done <- apiErr
+	}()
+
+	_, err := io.WriteString(writer, "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n")
+	require.NoError(t, err)
+	select {
+	case <-recorder.flushCh:
+	case <-time.After(time.Second):
+		t.Fatal("Responses lifecycle event was not flushed")
+	}
+	require.False(t, info.HasSendResponse(), "Responses lifecycle event must not count as visible output")
+
+	_, err = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
+	require.NoError(t, err)
+	select {
+	case <-recorder.flushCh:
+	case <-time.After(time.Second):
+		t.Fatal("Responses output event was not flushed")
+	}
+
+	_, err = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n")
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	select {
+	case apiErr := <-done:
+		require.Nil(t, apiErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Responses stream handler did not finish")
+	}
+	require.True(t, info.HasSendResponse(), "Responses output delta must record first visible output")
+}
+
+func TestChatStreamChunkHasVisibleOutput(t *testing.T) {
+	empty := ""
+	visible := "hello"
+	require.False(t, chatStreamChunkHasVisibleOutput(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{Role: "assistant", Content: &empty}}},
+	}))
+	require.True(t, chatStreamChunkHasVisibleOutput(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{Content: &visible}}},
+	}))
+	require.True(t, chatStreamChunkHasVisibleOutput(&dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{{ID: "call_1"}}}}},
+	}))
 }
 
 func TestOpenAIStreamFlushesCurrentFrameWithoutWaitingForNextFrame(t *testing.T) {

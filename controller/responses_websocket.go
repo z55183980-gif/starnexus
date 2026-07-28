@@ -76,6 +76,7 @@ type responsesWebSocketTurn struct {
 	ctx               *gin.Context
 	info              *relaycommon.RelayInfo
 	accumulator       *openairelay.ResponsesEventAccumulator
+	replayMu          sync.Mutex
 	outbound          []byte
 	channel           *model.Channel
 	reconnect         func() (*websocket.Conn, *http.Response, error)
@@ -88,6 +89,47 @@ type responsesWebSocketTurn struct {
 	releaseBusiness   func()
 	cancel            context.CancelFunc
 	finishOnce        sync.Once
+}
+
+func (t *responsesWebSocketTurn) setReplayState(outbound []byte, reconnect func() (*websocket.Conn, *http.Response, error)) {
+	if t == nil {
+		return
+	}
+	t.replayMu.Lock()
+	t.outbound = outbound
+	t.reconnect = reconnect
+	t.replayMu.Unlock()
+}
+
+func (t *responsesWebSocketTurn) replayStateAvailable() bool {
+	if t == nil {
+		return false
+	}
+	t.replayMu.Lock()
+	defer t.replayMu.Unlock()
+	return len(t.outbound) > 0 && t.reconnect != nil
+}
+
+func (t *responsesWebSocketTurn) replaySnapshot() ([]byte, func() (*websocket.Conn, *http.Response, error), bool) {
+	if t == nil {
+		return nil, nil, false
+	}
+	t.replayMu.Lock()
+	defer t.replayMu.Unlock()
+	if len(t.outbound) == 0 || t.reconnect == nil {
+		return nil, nil, false
+	}
+	return t.outbound, t.reconnect, true
+}
+
+func (t *responsesWebSocketTurn) clearReplayState() {
+	if t == nil {
+		return
+	}
+	t.replayMu.Lock()
+	t.outbound = nil
+	t.reconnect = nil
+	t.replayMu.Unlock()
 }
 
 type responsesWSUpstreamConnection struct {
@@ -122,8 +164,7 @@ func (t *responsesWebSocketTurn) finish(success bool) {
 	t.finishOnce.Do(func() {
 		// The replay decision is finished with the turn. Drop retained request and
 		// adaptor state before quota settlement and concurrency release.
-		t.outbound = nil
-		t.reconnect = nil
+		t.clearReplayState()
 		usage := t.accumulator.Usage(t.info)
 		if success || usage.TotalTokens > 0 {
 			service.PostTextConsumeQuota(t.ctx, t.info, usage, nil)
@@ -235,7 +276,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 
 		selectedChannel := session.getChannel()
 		if selectedChannel == nil {
-			candidateChannel, selectErr := middleware.SelectChannelForModel(c, request.Model)
+			candidateChannel, selectErr := middleware.SelectChannelForModelFiltered(c, request.Model, supportsResponsesWebSocketChannel)
 			if selectErr != nil {
 				session.sendError(selectErr)
 				continue
@@ -274,14 +315,12 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		// outbound is newly marshaled for this turn and is never mutated. Transfer
 		// ownership instead of copying a message that may be as large as the
 		// configured WebSocket request limit.
-		turn.outbound = outbound
-		turn.replayEnabled = selectedChannel.GetOtherSettings().ResponsesWebSocketV2ReplayEnabled
-		turn.reconnect = func() (*websocket.Conn, *http.Response, error) {
+		turn.setReplayState(outbound, func() (*websocket.Conn, *http.Response, error) {
 			return channel.DoResponsesWssRequest(adaptor, turn.ctx, turn.info)
-		}
+		})
+		turn.replayEnabled = selectedChannel.GetOtherSettings().ResponsesWebSocketV2ReplayEnabled
 
 		upstream := session.getUpstream()
-		connectedUpstream := false
 		if upstream == nil {
 			upstreamConn, resp, dialErr := channel.DoResponsesWssRequest(adaptor, turn.ctx, turn.info)
 			if dialErr != nil {
@@ -303,7 +342,6 @@ func RelayResponsesWebSocket(c *gin.Context) {
 				turn.finish(false)
 				return
 			}
-			connectedUpstream = true
 		}
 
 		if !session.activateTurn(upstream, turn) {
@@ -326,9 +364,21 @@ func RelayResponsesWebSocket(c *gin.Context) {
 			session.handleUpstreamFailure(upstream, writeErr)
 			continue
 		}
-		if connectedUpstream {
-			service.RecordChannelAffinity(c, selectedChannel.Id)
-		}
+	}
+}
+
+func supportsResponsesWebSocketChannel(candidate *model.Channel) bool {
+	if candidate == nil {
+		return false
+	}
+	if candidate.GetOtherSettings().ResponsesWebSocketV2Enabled {
+		return true
+	}
+	switch candidate.Type {
+	case appconstant.ChannelTypeOpenAI, appconstant.ChannelTypeSub2API:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -580,17 +630,20 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 					if event != nil && turn.accumulator.Terminal() {
 						finished = turn
 						successful = turn.accumulator.Successful()
-						s.activeTurn = nil
 					}
 				}
 			}
 		}
+		if finished != nil {
+			finished.finish(successful)
+			if successful && finished.channel != nil {
+				service.RecordChannelAffinity(s.baseCtx, finished.channel.Id)
+			}
+			s.activeTurn = nil
+		}
 		s.mu.Unlock()
 		writeErr := s.client.WriteMessage(messageType, data)
 		s.clientWriteMu.Unlock()
-		if finished != nil {
-			finished.finish(successful)
-		}
 		if writeErr != nil {
 			s.close()
 			return
@@ -754,7 +807,6 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn, req
 		return
 	}
 	defer service.CloseResponseBodyGracefully(resp)
-	service.RecordChannelAffinity(s.baseCtx, turn.channel.Id)
 
 	terminal := false
 	idleTimeout := time.Duration(appconstant.StreamingTimeout) * time.Second
@@ -784,15 +836,16 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn, req
 			terminal = true
 			finished = true
 			successful = turn.accumulator.Successful()
+			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+			turn.finish(successful)
+			if successful && turn.channel != nil {
+				service.RecordChannelAffinity(s.baseCtx, turn.channel.Id)
+			}
 			s.activeTurn = nil
 		}
 		s.mu.Unlock()
 		writeErr := s.client.WriteMessage(websocket.TextMessage, data)
 		s.clientWriteMu.Unlock()
-		if finished {
-			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
-			turn.finish(successful)
-		}
 		if writeErr != nil {
 			s.close()
 			return true, writeErr
@@ -865,7 +918,7 @@ func (s *responsesWebSocketSession) detachUpstream(upstream *responsesWSUpstream
 	s.channel = nil
 	turn := s.activeTurn
 	replay := allowReplay && turn != nil && turn.replayEnabled && turn.requestDispatched && !turn.upstreamEvent && turn.replayCount == 0 &&
-		len(turn.outbound) > 0 && turn.channel != nil && turn.reconnect != nil
+		turn.channel != nil && turn.replayStateAvailable()
 	if replay {
 		turn.replayCount++
 		turn.accumulator = openairelay.NewResponsesEventAccumulator()
@@ -943,10 +996,11 @@ func isRecoverableResponsesWSDisconnect(err error) bool {
 }
 
 func (s *responsesWebSocketSession) replayTurn(turn *responsesWebSocketTurn) bool {
-	if turn == nil || turn.reconnect == nil {
+	outbound, reconnect, ok := turn.replaySnapshot()
+	if !ok {
 		return false
 	}
-	conn, resp, err := turn.reconnect()
+	conn, resp, err := reconnect()
 	status := 0
 	if resp != nil {
 		status = resp.StatusCode
@@ -977,7 +1031,7 @@ func (s *responsesWebSocketSession) replayTurn(turn *responsesWebSocketTurn) boo
 		return false
 	}
 	s.upstreamWriteMu.Lock()
-	err = upstream.conn.WriteMessage(websocket.TextMessage, turn.outbound)
+	err = upstream.conn.WriteMessage(websocket.TextMessage, outbound)
 	s.upstreamWriteMu.Unlock()
 	if err != nil {
 		// replayCount is already one, so this second failure follows the normal
@@ -990,14 +1044,8 @@ func (s *responsesWebSocketSession) replayTurn(turn *responsesWebSocketTurn) boo
 	}
 	// This is the only replay attempt. Once it has been dispatched, retaining the
 	// request body cannot enable another retry and only increases memory usage.
-	s.mu.Lock()
-	if s.activeTurn == turn {
-		turn.outbound = nil
-		turn.reconnect = nil
-	}
-	s.mu.Unlock()
+	turn.clearReplayState()
 	logger.LogInfo(s.baseCtx, fmt.Sprintf("responses websocket internal replay connected on channel #%d", turn.channel.Id))
-	service.RecordChannelAffinity(s.baseCtx, turn.channel.Id)
 	return true
 }
 

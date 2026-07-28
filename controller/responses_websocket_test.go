@@ -139,6 +139,102 @@ func TestBuildResponsesWSOutboundEvent(t *testing.T) {
 	}`, string(outbound))
 }
 
+func TestSupportsResponsesWebSocketChannel(t *testing.T) {
+	t.Parallel()
+
+	require.False(t, supportsResponsesWebSocketChannel(nil))
+	require.True(t, supportsResponsesWebSocketChannel(&model.Channel{Type: constant.ChannelTypeOpenAI}))
+	require.True(t, supportsResponsesWebSocketChannel(&model.Channel{Type: constant.ChannelTypeSub2API}))
+	require.False(t, supportsResponsesWebSocketChannel(&model.Channel{Type: constant.ChannelTypeCodex}))
+	require.True(t, supportsResponsesWebSocketChannel(&model.Channel{
+		Type:          constant.ChannelTypeCodex,
+		OtherSettings: `{"responses_websocket_v2_enabled":true}`,
+	}))
+}
+
+func TestResponsesWSTurnReplaySnapshotSurvivesFinish(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	turn := &responsesWebSocketTurn{
+		ctx:         ctx,
+		info:        relaycommon.GenRelayInfoOpenAI(ctx, nil),
+		accumulator: openairelay.NewResponsesEventAccumulator(),
+	}
+	var reconnects atomic.Int32
+	turn.setReplayState([]byte(`{"type":"response.create"}`), func() (*websocket.Conn, *http.Response, error) {
+		reconnects.Add(1)
+		return nil, nil, errors.New("snapshot reconnect")
+	})
+
+	outbound, reconnect, ok := turn.replaySnapshot()
+	require.True(t, ok)
+	turn.finish(false)
+	require.False(t, turn.replayStateAvailable())
+	require.JSONEq(t, `{"type":"response.create"}`, string(outbound))
+	_, _, err := reconnect()
+	require.EqualError(t, err, "snapshot reconnect")
+	require.Equal(t, int32(1), reconnects.Load())
+}
+
+func TestResponsesWSTerminalEventWaitsForTurnRelease(t *testing.T) {
+	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+	upstreamServer, upstreamPeer, closeUpstream := newResponsesWSTestPair(t)
+	defer closeUpstream()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	releaseStarted := make(chan struct{})
+	releaseGate := make(chan struct{})
+	upstream := newResponsesWSUpstreamConnection(upstreamServer)
+	turn := &responsesWebSocketTurn{
+		ctx:         ctx,
+		info:        relaycommon.GenRelayInfoOpenAI(ctx, nil),
+		accumulator: openairelay.NewResponsesEventAccumulator(),
+		releaseUser: func() {
+			close(releaseStarted)
+			<-releaseGate
+		},
+	}
+	session := &responsesWebSocketSession{
+		baseCtx:    ctx,
+		client:     clientServer,
+		upstream:   upstream,
+		activeTurn: turn,
+		closed:     make(chan struct{}),
+	}
+	go session.readUpstream(upstream)
+
+	readResult := make(chan error, 1)
+	go func() {
+		_, _, err := clientPeer.ReadMessage()
+		readResult <- err
+	}()
+	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.failed","response":{"id":"resp_failed"}}`)))
+
+	select {
+	case <-releaseStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("turn release did not start")
+	}
+	select {
+	case err := <-readResult:
+		t.Fatalf("terminal event became visible before release completed: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseGate)
+	select {
+	case err := <-readResult:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("terminal event was not delivered after release completed")
+	}
+
+	session.close()
+}
+
 func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()
