@@ -37,6 +37,17 @@ const (
 	ContextKeyChannelIsMultiKey        ContextKey = "channel_is_multi_key"
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
+	ContextKeyChannelCredentialSource  ContextKey = "channel_credential_source"
+
+	/* local upstream account related keys */
+	ContextKeyUpstreamAccountPoolId    ContextKey = "upstream_account_pool_id"
+	ContextKeyUpstreamAccountId        ContextKey = "upstream_account_id"
+	ContextKeyUpstreamAccountName      ContextKey = "upstream_account_name"
+	ContextKeyUpstreamAccountType      ContextKey = "upstream_account_type"
+	ContextKeyUpstreamProxyId          ContextKey = "upstream_proxy_id"
+	ContextKeyUpstreamAccountLeaseId   ContextKey = "upstream_account_lease_id"
+	ContextKeyUpstreamAccountSelection ContextKey = "upstream_account_selection"
+	ContextKeyUpstreamAccountExcluded  ContextKey = "upstream_account_excluded_ids"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

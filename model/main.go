@@ -275,6 +275,12 @@ func migrateDB() error {
 
 	models := []interface{}{
 		&Channel{},
+		&UpstreamProxy{},
+		&UpstreamAccountPool{},
+		&UpstreamAccount{},
+		&UpstreamAccountPoolMember{},
+		&UpstreamAccountEvent{},
+		&UpstreamOAuthSession{},
 		&Token{},
 		&User{},
 		&UserNodeBinding{},
@@ -362,6 +368,12 @@ func migrateDBFast() error {
 		name  string
 	}{
 		{&Channel{}, "Channel"},
+		{&UpstreamProxy{}, "UpstreamProxy"},
+		{&UpstreamAccountPool{}, "UpstreamAccountPool"},
+		{&UpstreamAccount{}, "UpstreamAccount"},
+		{&UpstreamAccountPoolMember{}, "UpstreamAccountPoolMember"},
+		{&UpstreamAccountEvent{}, "UpstreamAccountEvent"},
+		{&UpstreamOAuthSession{}, "UpstreamOAuthSession"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
 		{&UserNodeBinding{}, "UserNodeBinding"},

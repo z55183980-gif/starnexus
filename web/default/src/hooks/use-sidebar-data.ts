@@ -34,6 +34,8 @@ import {
   ShieldCheck,
   Ticket,
   User,
+  UserRoundCog,
+  Globe2,
   Share2,
   Users,
   Wallet,
@@ -173,6 +175,18 @@ export function useSidebarData(): SidebarData {
             title: t('Channels'),
             url: '/channels',
             icon: Radio,
+          },
+          {
+            title: t('Account Management'),
+            url: '/upstream-accounts',
+            icon: UserRoundCog,
+            rootOnly: true,
+          },
+          {
+            title: t('IP Management'),
+            url: '/upstream-proxies',
+            icon: Globe2,
+            rootOnly: true,
           },
           {
             title: t('Models'),

@@ -52,7 +52,9 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useAuthStore } from '@/stores/auth-store'
 import { getLobeIcon } from '@/lib/lobe-icon'
+import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
@@ -105,6 +107,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { listUpstreamPools } from '@/features/upstream-accounts'
 import {
   createChannel,
   fetchModels,
@@ -327,6 +330,9 @@ export function ChannelMutateDrawer({
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
+  const isRoot =
+    useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST) ===
+    ROLE.SUPER_ADMIN
 
   // Fetch channel details if editing
   const { data: channelData } = useQuery({
@@ -351,6 +357,12 @@ export function ChannelMutateDrawer({
   const { data: prefillGroupsData } = useQuery({
     queryKey: ['prefill_groups', 'model'],
     queryFn: () => getPrefillGroups('model'),
+  })
+
+  const { data: upstreamPoolsData } = useQuery({
+    queryKey: ['upstream-account-pools', 'channel-form'],
+    queryFn: listUpstreamPools,
+    enabled: open && isRoot,
   })
 
   const { copyToClipboard } = useCopyToClipboard()
@@ -391,6 +403,7 @@ export function ChannelMutateDrawer({
   const keyMode = form.watch('key_mode')
   const currentGroups = form.watch('group')
   const currentType = form.watch('type')
+  const credentialSource = form.watch('credential_source')
   const currentBaseUrl = form.watch('base_url')
   const currentModels = form.watch('models')
   const currentModelMapping = form.watch('model_mapping')
@@ -420,6 +433,28 @@ export function ChannelMutateDrawer({
   // Helper computed values
   const isBatchMode =
     multiKeyMode === 'batch' || multiKeyMode === 'multi_to_single'
+
+  const compatibleAccountPools = useMemo(() => {
+    const pools = upstreamPoolsData?.data ?? []
+    return pools.filter((pool) => {
+      if (pool.status !== 'active') return false
+      if (currentType === 57) return pool.credential_type !== 'apikey'
+      if (currentType === 1) return pool.credential_type !== 'oauth'
+      return false
+    })
+  }, [currentType, upstreamPoolsData?.data])
+
+  useEffect(() => {
+    if (credentialSource !== 'local_account_pool') return
+    if (currentType !== 1 && currentType !== 57) {
+      form.setValue('credential_source', 'channel_key')
+      form.setValue('upstream_account_pool_id', null)
+      return
+    }
+    form.setValue('multi_key_mode', 'single')
+    form.setValue('responses_websocket_v2_enabled', false)
+    form.setValue('responses_websocket_v2_replay_enabled', false)
+  }, [credentialSource, currentType, form])
 
   // Get all models list
   const allModelsList = useMemo(
@@ -1855,7 +1890,100 @@ export function ChannelMutateDrawer({
                     icon={<KeyRound className='h-3.5 w-3.5' />}
                   />
                 </div>
-                {!isEditing && (
+                {(currentType === 1 || currentType === 57) && (
+                  <FormField
+                    control={form.control}
+                    name='credential_source'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Credential source')}</FormLabel>
+                        <Select
+                          value={field.value}
+                          onValueChange={field.onChange}
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectItem value='channel_key'>
+                              {t('Channel key')}
+                            </SelectItem>
+                            {isRoot && (
+                              <SelectItem value='local_account_pool'>
+                                {t('Local account pool')}
+                              </SelectItem>
+                            )}
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {t(
+                            'A local account pool is managed independently and can be reused by multiple channels.'
+                          )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+
+                {credentialSource === 'local_account_pool' && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name='upstream_account_pool_id'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Local account pool')}</FormLabel>
+                          <Select
+                            value={field.value ? String(field.value) : ''}
+                            onValueChange={(value) =>
+                              field.onChange(Number(value))
+                            }
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue
+                                  placeholder={t('Select an account pool')}
+                                />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              {compatibleAccountPools.map((pool) => (
+                                <SelectItem
+                                  key={pool.id}
+                                  value={String(pool.id)}
+                                >
+                                  {pool.name} ({pool.account_count})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            {compatibleAccountPools.length === 0
+                              ? t(
+                                  'No compatible active account pools are available'
+                                )
+                              : t(
+                                  'New accounts added to this pool become available to the channel automatically.'
+                                )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <Alert>
+                      <AlertDescription>
+                        {t(
+                          'Codex to StarNexus can still use WebSocket. StarNexus uses HTTP/SSE for this upstream account pool, so upstream reconnects do not close the client WebSocket session.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  </>
+                )}
+
+                {credentialSource !== 'local_account_pool' && !isEditing && (
                   <FormField
                     control={form.control}
                     name='multi_key_mode'
@@ -1899,198 +2027,201 @@ export function ChannelMutateDrawer({
                   />
                 )}
 
-                <FormField
-                  control={form.control}
-                  name='key'
-                  render={({ field }) => {
-                    const keyPlaceholder = (() => {
-                      if (isEditing) {
-                        return t('Leave empty to keep existing key')
-                      }
-                      if (currentType === 33) {
-                        if (awsKeyType === 'api_key') {
+                {credentialSource !== 'local_account_pool' && (
+                  <FormField
+                    control={form.control}
+                    name='key'
+                    render={({ field }) => {
+                      const keyPlaceholder = (() => {
+                        if (isEditing) {
+                          return t('Leave empty to keep existing key')
+                        }
+                        if (currentType === 33) {
+                          if (awsKeyType === 'api_key') {
+                            return isBatchMode
+                              ? t(
+                                  'Enter API Key, one per line, format: APIKey|Region'
+                                )
+                              : t('Enter API Key, format: APIKey|Region')
+                          }
                           return isBatchMode
                             ? t(
-                                'Enter API Key, one per line, format: APIKey|Region'
+                                'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
                               )
-                            : t('Enter API Key, format: APIKey|Region')
+                            : t(
+                                'Enter key, format: AccessKey|SecretAccessKey|Region'
+                              )
                         }
-                        return isBatchMode
-                          ? t(
-                              'Enter key, one per line, format: AccessKey|SecretAccessKey|Region'
-                            )
-                          : t(
-                              'Enter key, format: AccessKey|SecretAccessKey|Region'
-                            )
-                      }
-                      if (isBatchMode) {
-                        return t('Enter one key per line for batch creation')
-                      }
-                      return t(getKeyPromptForType(currentType))
-                    })()
-                    return (
-                      <FormItem>
-                        <FormLabel>{t('API Key *')}</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            placeholder={keyPlaceholder}
-                            rows={isBatchMode ? 8 : 4}
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          <div className='flex flex-col gap-2'>
-                            <span>
-                              {isEditing ? (
-                                <>
-                                  {t(
-                                    'Enter new key to update, or leave empty to keep current key'
-                                  )}
-                                  {isMultiKeyChannel && (
-                                    <span className='text-warning mt-1 block'>
-                                      {t('Multi-key channel: Keys will be')}{' '}
-                                      {keyMode === 'replace'
-                                        ? t('replaced')
-                                        : t('appended')}
-                                    </span>
-                                  )}
-                                </>
-                              ) : isBatchMode ? (
-                                t(
-                                  'Enter one API key per line for batch creation'
-                                )
-                              ) : (
-                                t(FIELD_DESCRIPTIONS.KEY)
-                              )}
-                            </span>
-                            {isBatchMode && (
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleDeduplicateKeys}
-                                className='w-fit'
-                              >
-                                <Trash2 className='mr-2 h-4 w-4' />
-                                {t('Remove Duplicates')}
-                              </Button>
-                            )}
-                          </div>
-                        </FormDescription>
-                        {isEditing && (
-                          <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
-                            <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                              <div>
-                                <p className='text-sm font-medium'>
-                                  {t('Current key')}
-                                </p>
-                                <p className='text-muted-foreground text-xs'>
-                                  {t(
-                                    'Verification required to reveal the saved key.'
-                                  )}
-                                </p>
-                              </div>
-                              <div className='flex items-center gap-2'>
+                        if (isBatchMode) {
+                          return t('Enter one key per line for batch creation')
+                        }
+                        return t(getKeyPromptForType(currentType))
+                      })()
+                      return (
+                        <FormItem>
+                          <FormLabel>{t('API Key *')}</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              placeholder={keyPlaceholder}
+                              rows={isBatchMode ? 8 : 4}
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            <div className='flex flex-col gap-2'>
+                              <span>
+                                {isEditing ? (
+                                  <>
+                                    {t(
+                                      'Enter new key to update, or leave empty to keep current key'
+                                    )}
+                                    {isMultiKeyChannel && (
+                                      <span className='text-warning mt-1 block'>
+                                        {t('Multi-key channel: Keys will be')}{' '}
+                                        {keyMode === 'replace'
+                                          ? t('replaced')
+                                          : t('appended')}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : isBatchMode ? (
+                                  t(
+                                    'Enter one API key per line for batch creation'
+                                  )
+                                ) : (
+                                  t(FIELD_DESCRIPTIONS.KEY)
+                                )}
+                              </span>
+                              {isBatchMode && (
                                 <Button
                                   type='button'
                                   variant='outline'
                                   size='sm'
-                                  onClick={handleRevealKey}
-                                  disabled={
-                                    isChannelKeyLoading ||
-                                    verificationState.loading
-                                  }
+                                  onClick={handleDeduplicateKeys}
+                                  className='w-fit'
                                 >
-                                  {isChannelKeyLoading ||
-                                  verificationState.loading ? (
-                                    <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                                  ) : (
-                                    <Eye className='mr-2 h-4 w-4' />
-                                  )}
-                                  {t('Reveal key')}
+                                  <Trash2 className='mr-2 h-4 w-4' />
+                                  {t('Remove Duplicates')}
                                 </Button>
-                                <Button
-                                  type='button'
-                                  variant='ghost'
-                                  size='sm'
-                                  onClick={async () => {
-                                    if (channelKey) {
-                                      await copyToClipboard(channelKey)
-                                    }
-                                  }}
-                                  disabled={!channelKey}
-                                >
-                                  <Copy className='mr-2 h-4 w-4' />
-                                  {t('Copy')}
-                                </Button>
-                              </div>
+                              )}
                             </div>
-                            <Input
-                              readOnly
-                              value={channelKey ?? ''}
-                              placeholder={t('Hidden — verify to reveal')}
-                              className='font-mono'
-                            />
-                          </div>
-                        )}
-                        <FormMessage />
-                      </FormItem>
-                    )
-                  }}
-                />
-
-                {currentType === 57 && (
-                  <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
-                    <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-                      <div className='space-y-0.5'>
-                        <div className='text-sm font-semibold'>
-                          {t('Codex Authorization')}
-                        </div>
-                        <div className='text-muted-foreground text-xs'>
-                          {t(
-                            'Codex channels use an OAuth JSON credential as the key.'
+                          </FormDescription>
+                          {isEditing && (
+                            <div className='mt-4 space-y-3 rounded-lg border border-dashed p-4'>
+                              <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                                <div>
+                                  <p className='text-sm font-medium'>
+                                    {t('Current key')}
+                                  </p>
+                                  <p className='text-muted-foreground text-xs'>
+                                    {t(
+                                      'Verification required to reveal the saved key.'
+                                    )}
+                                  </p>
+                                </div>
+                                <div className='flex items-center gap-2'>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={handleRevealKey}
+                                    disabled={
+                                      isChannelKeyLoading ||
+                                      verificationState.loading
+                                    }
+                                  >
+                                    {isChannelKeyLoading ||
+                                    verificationState.loading ? (
+                                      <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                                    ) : (
+                                      <Eye className='mr-2 h-4 w-4' />
+                                    )}
+                                    {t('Reveal key')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='ghost'
+                                    size='sm'
+                                    onClick={async () => {
+                                      if (channelKey) {
+                                        await copyToClipboard(channelKey)
+                                      }
+                                    }}
+                                    disabled={!channelKey}
+                                  >
+                                    <Copy className='mr-2 h-4 w-4' />
+                                    {t('Copy')}
+                                  </Button>
+                                </div>
+                              </div>
+                              <Input
+                                readOnly
+                                value={channelKey ?? ''}
+                                placeholder={t('Hidden — verify to reveal')}
+                                className='font-mono'
+                              />
+                            </div>
                           )}
+                          <FormMessage />
+                        </FormItem>
+                      )
+                    }}
+                  />
+                )}
+
+                {currentType === 57 &&
+                  credentialSource !== 'local_account_pool' && (
+                    <div className='bg-muted/20 space-y-3 rounded-lg border p-4'>
+                      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                        <div className='space-y-0.5'>
+                          <div className='text-sm font-semibold'>
+                            {t('Codex Authorization')}
+                          </div>
+                          <div className='text-muted-foreground text-xs'>
+                            {t(
+                              'Codex channels use an OAuth JSON credential as the key.'
+                            )}
+                          </div>
                         </div>
-                      </div>
-                      <div className='flex flex-wrap items-center gap-2'>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          onClick={() => setCodexOAuthDialogOpen(true)}
-                        >
-                          <Link2 className='mr-2 h-4 w-4' />
-                          {t('Authorize')}
-                        </Button>
-                        {isEditing && channelId && (
+                        <div className='flex flex-wrap items-center gap-2'>
                           <Button
                             type='button'
                             variant='outline'
                             size='sm'
-                            onClick={handleRefreshCodexCredential}
-                            disabled={isCodexCredentialRefreshing}
+                            onClick={() => setCodexOAuthDialogOpen(true)}
                           >
-                            {isCodexCredentialRefreshing ? (
-                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
-                            ) : (
-                              <RefreshCw className='mr-2 h-4 w-4' />
-                            )}
-                            {isCodexCredentialRefreshing
-                              ? t('Refreshing...')
-                              : t('Refresh credential')}
+                            <Link2 className='mr-2 h-4 w-4' />
+                            {t('Authorize')}
                           </Button>
-                        )}
+                          {isEditing && channelId && (
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={handleRefreshCodexCredential}
+                              disabled={isCodexCredentialRefreshing}
+                            >
+                              {isCodexCredentialRefreshing ? (
+                                <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                              ) : (
+                                <RefreshCw className='mr-2 h-4 w-4' />
+                              )}
+                              {isCodexCredentialRefreshing
+                                ? t('Refreshing...')
+                                : t('Refresh credential')}
+                            </Button>
+                          )}
+                        </div>
                       </div>
+                      <Alert>
+                        <AlertDescription>
+                          {t(
+                            'If authorization succeeds, the generated JSON will be inserted into the key field. You still need to save the channel to persist it.'
+                          )}
+                        </AlertDescription>
+                      </Alert>
                     </div>
-                    <Alert>
-                      <AlertDescription>
-                        {t(
-                          'If authorization succeeds, the generated JSON will be inserted into the key field. You still need to save the channel to persist it.'
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  </div>
-                )}
+                  )}
 
                 <CodexOAuthDialog
                   open={codexOAuthDialogOpen}
@@ -2921,68 +3052,71 @@ export function ChannelMutateDrawer({
                             />
                           )}
 
-                          {(currentType === 1 || currentType === 59) && (
-                            <>
-                              <FormField
-                                control={form.control}
-                                name='responses_websocket_v2_enabled'
-                                render={({ field }) => (
-                                  <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
-                                    <div className='space-y-0.5'>
-                                      <FormLabel className='text-sm'>
-                                        {t('Responses WebSocket v2')}
-                                      </FormLabel>
-                                      <FormDescription>
-                                        {t(
-                                          'Enable persistent Responses API WebSocket proxying for compatible upstreams'
-                                        )}
-                                      </FormDescription>
-                                    </div>
-                                    <FormControl>
-                                      <Switch
-                                        checked={field.value}
-                                        onCheckedChange={(checked) => {
-                                          field.onChange(checked)
-                                          if (!checked) {
-                                            form.setValue(
-                                              'responses_websocket_v2_replay_enabled',
-                                              false
-                                            )
-                                          }
-                                        }}
-                                      />
-                                    </FormControl>
-                                  </FormItem>
-                                )}
-                              />
-                              {form.watch('responses_websocket_v2_enabled') && (
+                          {(currentType === 1 || currentType === 59) &&
+                            credentialSource !== 'local_account_pool' && (
+                              <>
                                 <FormField
                                   control={form.control}
-                                  name='responses_websocket_v2_replay_enabled'
+                                  name='responses_websocket_v2_enabled'
                                   render={({ field }) => (
                                     <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
                                       <div className='space-y-0.5'>
                                         <FormLabel className='text-sm'>
-                                          {t('Responses WebSocket v2 replay')}
+                                          {t('Responses WebSocket v2')}
                                         </FormLabel>
                                         <FormDescription>
                                           {t(
-                                            'Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.'
+                                            'Enable persistent Responses API WebSocket proxying for compatible upstreams'
                                           )}
                                         </FormDescription>
                                       </div>
                                       <FormControl>
                                         <Switch
                                           checked={field.value}
-                                          onCheckedChange={field.onChange}
+                                          onCheckedChange={(checked) => {
+                                            field.onChange(checked)
+                                            if (!checked) {
+                                              form.setValue(
+                                                'responses_websocket_v2_replay_enabled',
+                                                false
+                                              )
+                                            }
+                                          }}
                                         />
                                       </FormControl>
                                     </FormItem>
                                   )}
                                 />
-                              )}
-                            </>
-                          )}
+                                {form.watch(
+                                  'responses_websocket_v2_enabled'
+                                ) && (
+                                  <FormField
+                                    control={form.control}
+                                    name='responses_websocket_v2_replay_enabled'
+                                    render={({ field }) => (
+                                      <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                        <div className='space-y-0.5'>
+                                          <FormLabel className='text-sm'>
+                                            {t('Responses WebSocket v2 replay')}
+                                          </FormLabel>
+                                          <FormDescription>
+                                            {t(
+                                              'Retry once before any upstream event after a recoverable disconnect. This is at-least-once delivery and may duplicate upstream work or charges; enable only when the upstream guarantees safe retry.'
+                                            )}
+                                          </FormDescription>
+                                        </div>
+                                        <FormControl>
+                                          <Switch
+                                            checked={field.value}
+                                            onCheckedChange={field.onChange}
+                                          />
+                                        </FormControl>
+                                      </FormItem>
+                                    )}
+                                  />
+                                )}
+                              </>
+                            )}
 
                           {currentType === 1 && (
                             <>

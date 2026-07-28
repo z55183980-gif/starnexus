@@ -78,6 +78,8 @@ type responsesWebSocketTurn struct {
 	accumulator       *openairelay.ResponsesEventAccumulator
 	replayMu          sync.Mutex
 	outbound          []byte
+	sseRequestBody    []byte
+	sseAdaptor        channel.Adaptor
 	channel           *model.Channel
 	reconnect         func() (*websocket.Conn, *http.Response, error)
 	replayEnabled     bool
@@ -98,6 +100,38 @@ func (t *responsesWebSocketTurn) setReplayState(outbound []byte, reconnect func(
 	t.replayMu.Lock()
 	t.outbound = outbound
 	t.reconnect = reconnect
+	t.replayMu.Unlock()
+}
+
+func (t *responsesWebSocketTurn) setSSEReplayState(requestBody []byte, adaptor channel.Adaptor) {
+	if t == nil {
+		return
+	}
+	t.replayMu.Lock()
+	t.sseRequestBody = requestBody
+	t.sseAdaptor = adaptor
+	t.replayMu.Unlock()
+}
+
+func (t *responsesWebSocketTurn) sseReplaySnapshot() ([]byte, channel.Adaptor, bool) {
+	if t == nil {
+		return nil, nil, false
+	}
+	t.replayMu.Lock()
+	defer t.replayMu.Unlock()
+	if len(t.sseRequestBody) == 0 || t.sseAdaptor == nil {
+		return nil, nil, false
+	}
+	return t.sseRequestBody, t.sseAdaptor, true
+}
+
+func (t *responsesWebSocketTurn) clearSSEReplayState() {
+	if t == nil {
+		return
+	}
+	t.replayMu.Lock()
+	t.sseRequestBody = nil
+	t.sseAdaptor = nil
 	t.replayMu.Unlock()
 }
 
@@ -129,6 +163,8 @@ func (t *responsesWebSocketTurn) clearReplayState() {
 	t.replayMu.Lock()
 	t.outbound = nil
 	t.reconnect = nil
+	t.sseRequestBody = nil
+	t.sseAdaptor = nil
 	t.replayMu.Unlock()
 }
 
@@ -183,6 +219,7 @@ func (t *responsesWebSocketTurn) finish(success bool) {
 		if t.cancel != nil {
 			t.cancel()
 		}
+		middleware.ReleaseUpstreamAccountSelection(t.ctx)
 	})
 }
 
@@ -289,7 +326,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		}
 
 		upstreamWebSocket := selectedChannel.GetOtherSettings().ResponsesWebSocketV2Enabled
-		turn, preparedResponse, adaptor, prepareErr := session.prepareTurn(request, !upstreamWebSocket)
+		turn, preparedResponse, adaptor, prepareErr := session.prepareTurn(request, selectedChannel, !upstreamWebSocket)
 		if prepareErr != nil {
 			session.sendError(prepareErr)
 			continue
@@ -310,7 +347,8 @@ func RelayResponsesWebSocket(c *gin.Context) {
 				continue
 			}
 			logger.LogInfo(turn.ctx, fmt.Sprintf("responses websocket client using upstream SSE on channel #%d", selectedChannel.Id))
-			session.startSSETurn(turn, preparedResponse, adaptor)
+			turn.setSSEReplayState(preparedResponse, adaptor)
+			session.startSSETurn(turn)
 			continue
 		}
 
@@ -385,6 +423,10 @@ func supportsResponsesWebSocketChannel(candidate *model.Channel) bool {
 	if candidate.GetOtherSettings().ResponsesWebSocketV2Enabled {
 		return true
 	}
+	if candidate.Type == appconstant.ChannelTypeCodex &&
+		candidate.CredentialSource == appconstant.ChannelCredentialSourceAccountPool {
+		return true
+	}
 	switch candidate.Type {
 	case appconstant.ChannelTypeOpenAI, appconstant.ChannelTypeSub2API:
 		return true
@@ -451,7 +493,7 @@ func responseRequestJSONFieldNames() map[string]struct{} {
 	return fields
 }
 
-func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequest, forceStream bool) (*responsesWebSocketTurn, json.RawMessage, channel.Adaptor, *types.NewAPIError) {
+func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequest, selectedChannel *model.Channel, forceStream bool) (*responsesWebSocketTurn, json.RawMessage, channel.Adaptor, *types.NewAPIError) {
 	turnCtx, cancel := newResponsesWSTurnContext(s.baseCtx, s.lockedModel)
 	rateFinish, rateErr := middleware.AcquireModelRequestRateLimit(turnCtx)
 	if rateErr != nil {
@@ -476,6 +518,11 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		releaseBusiness()
 		releaseUser()
 		cancel()
+		middleware.ReleaseUpstreamAccountSelection(turnCtx)
+	}
+	if apiErr := middleware.SetupContextForSelectedChannel(turnCtx, selectedChannel, request.Model); apiErr != nil {
+		cleanup()
+		return nil, nil, nil, apiErr
 	}
 	relayInfo, err := relaycommon.GenRelayInfo(turnCtx, types.RelayFormatOpenAIResponses, request, nil)
 	if err != nil {
@@ -789,15 +836,20 @@ func (s *responsesWebSocketSession) activateSSETurn(turn *responsesWebSocketTurn
 	return true
 }
 
-func (s *responsesWebSocketSession) startSSETurn(turn *responsesWebSocketTurn, requestBody []byte, adaptor channel.Adaptor) {
+func (s *responsesWebSocketSession) startSSETurn(turn *responsesWebSocketTurn) {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		s.runSSETurn(turn, requestBody, adaptor)
+		s.runSSETurn(turn)
 	}()
 }
 
-func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn, requestBody []byte, adaptor channel.Adaptor) {
+func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn) {
+	requestBody, adaptor, ok := turn.sseReplaySnapshot()
+	if !ok {
+		s.failSSETurn(turn, types.NewErrorWithStatusCode(errors.New("upstream Responses SSE replay state is unavailable"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+		return
+	}
 	turn.info.DisablePing = true
 	turn.info.StreamStatus = relaycommon.NewStreamStatus()
 	turn.info.UpstreamRequestBodySize = int64(len(requestBody))
@@ -843,6 +895,7 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn, req
 			return false, consumeErr
 		}
 		turn.upstreamEvent = true
+		turn.clearSSEReplayState()
 		turn.info.ReceivedResponseCount++
 		if openairelay.IsResponsesFirstOutputEvent(event) {
 			turn.info.SetFirstResponseTime()
@@ -853,6 +906,8 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn, req
 			successful = turn.accumulator.Successful()
 			if successful && turn.channel != nil {
 				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+				service.RecordUpstreamAccountSuccess(common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId))
+				recordUpstreamRequestEvent(turn.ctx, "request_success", "success", "")
 				service.RecordChannelAffinity(turn.ctx, turn.channel.Id)
 			} else {
 				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, errors.New("upstream Responses SSE returned a terminal failure"))
@@ -900,6 +955,48 @@ func (s *responsesWebSocketSession) isActiveTurn(turn *responsesWebSocketTurn) b
 }
 
 func (s *responsesWebSocketSession) failSSETurn(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) {
+	if retried, accountOwned := s.retrySSETurnWithAnotherAccount(turn, apiErr); retried {
+		return
+	} else if accountOwned {
+		s.finishFailedSSETurn(turn, apiErr, false)
+		return
+	}
+	s.finishFailedSSETurn(turn, apiErr, true)
+}
+
+func (s *responsesWebSocketSession) retrySSETurnWithAnotherAccount(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) (bool, bool) {
+	if turn == nil || apiErr == nil || turn.upstreamEvent || turn.channel == nil ||
+		turn.channel.CredentialSource != appconstant.ChannelCredentialSourceAccountPool {
+		return false, false
+	}
+	accountId := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId)
+	proxyId := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamProxyId)
+	if !service.ApplyUpstreamAccountError(accountId, proxyId, apiErr) {
+		return false, false
+	}
+	recordUpstreamRequestEvent(turn.ctx, "request_error", "error", service.UpstreamAccountErrorSummary(apiErr))
+	excludedIds, _ := common.GetContextKeyType[map[int]struct{}](turn.ctx, appconstant.ContextKeyUpstreamAccountExcluded)
+	if excludedIds == nil {
+		excludedIds = make(map[int]struct{})
+	}
+	excludedIds[accountId] = struct{}{}
+	common.SetContextKey(turn.ctx, appconstant.ContextKeyUpstreamAccountExcluded, excludedIds)
+	if setupErr := middleware.SetupContextForSelectedChannel(turn.ctx, turn.channel, turn.info.OriginModelName); setupErr != nil {
+		return false, true
+	}
+	if !s.isActiveTurn(turn) {
+		middleware.ReleaseUpstreamAccountSelection(turn.ctx)
+		return false, true
+	}
+	turn.accumulator = openairelay.NewResponsesEventAccumulator()
+	turn.info.InitChannelMeta(turn.ctx)
+	turn.info.StreamStatus = relaycommon.NewStreamStatus()
+	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket upstream SSE retrying with another local account on channel #%d", turn.channel.Id))
+	s.startSSETurn(turn)
+	return true, true
+}
+
+func (s *responsesWebSocketSession) finishFailedSSETurn(turn *responsesWebSocketTurn, apiErr *types.NewAPIError, processChannel bool) {
 	s.mu.Lock()
 	if s.activeTurn != turn {
 		s.mu.Unlock()
@@ -912,7 +1009,7 @@ func (s *responsesWebSocketSession) failSSETurn(turn *responsesWebSocketTurn, ap
 	s.mu.Unlock()
 
 	turn.finish(false)
-	if turn.channel != nil {
+	if processChannel && turn.channel != nil {
 		processChannelError(turn.ctx, *types.NewChannelError(turn.channel.Id, turn.channel.Type, turn.channel.Name, turn.channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), turn.channel.GetAutoBan()), apiErr)
 	}
 	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket upstream SSE turn failed without closing downstream websocket: %v", apiErr))

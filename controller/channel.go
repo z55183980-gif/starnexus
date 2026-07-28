@@ -456,6 +456,11 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
+	if channel == nil {
+		return fmt.Errorf("channel cannot be empty")
+	}
+	normalizeChannelCredentialSource(channel)
+
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
@@ -463,7 +468,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel == nil || channel.Key == "" {
+		if channel.CredentialSource != constant.ChannelCredentialSourceAccountPool && channel.Key == "" {
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -473,6 +478,13 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 				return fmt.Errorf("模型名称过长: %s", m)
 			}
 		}
+	}
+	if channel.CredentialSource != constant.ChannelCredentialSourceAccountPool && strings.TrimSpace(channel.Key) == "" {
+		return fmt.Errorf("channel key is required")
+	}
+
+	if err := validateChannelCredentialSource(channel); err != nil {
+		return err
 	}
 
 	// VertexAI 特殊校验
@@ -492,7 +504,7 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	// Codex OAuth key validation (optional, only when JSON object is provided)
-	if channel.Type == constant.ChannelTypeCodex {
+	if channel.Type == constant.ChannelTypeCodex && channel.CredentialSource != constant.ChannelCredentialSourceAccountPool {
 		trimmedKey := strings.TrimSpace(channel.Key)
 		if isAdd || trimmedKey != "" {
 			if !strings.HasPrefix(trimmedKey, "{") {
@@ -517,6 +529,65 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
+	return nil
+}
+
+func normalizeChannelCredentialSource(channel *model.Channel) {
+	if channel == nil {
+		return
+	}
+	channel.CredentialSource = strings.ToLower(strings.TrimSpace(channel.CredentialSource))
+	if channel.CredentialSource == "" {
+		if channel.ChannelInfo.IsMultiKey {
+			channel.CredentialSource = constant.ChannelCredentialSourceMultiKey
+		} else {
+			channel.CredentialSource = constant.ChannelCredentialSourceKey
+		}
+	}
+	if channel.CredentialSource != constant.ChannelCredentialSourceAccountPool {
+		channel.UpstreamAccountPoolId = nil
+	}
+}
+
+func validateChannelCredentialSource(channel *model.Channel) error {
+	switch channel.CredentialSource {
+	case constant.ChannelCredentialSourceKey:
+		if channel.ChannelInfo.IsMultiKey {
+			return fmt.Errorf("multi-key channel must use channel_multi_key credential source")
+		}
+	case constant.ChannelCredentialSourceMultiKey:
+		if !channel.ChannelInfo.IsMultiKey {
+			return fmt.Errorf("channel_multi_key credential source requires multi-key mode")
+		}
+	case constant.ChannelCredentialSourceAccountPool:
+		if channel.UpstreamAccountPoolId == nil || *channel.UpstreamAccountPoolId <= 0 {
+			return fmt.Errorf("local account pool credential source requires an account pool")
+		}
+		if channel.ChannelInfo.IsMultiKey {
+			return fmt.Errorf("local account pool cannot be combined with channel multi-key mode")
+		}
+		if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex {
+			return fmt.Errorf("local account pool currently supports only OpenAI and Codex channels")
+		}
+		pool, err := service.GetUpstreamAccountPool(*channel.UpstreamAccountPoolId)
+		if err != nil {
+			return fmt.Errorf("failed to load local account pool: %w", err)
+		}
+		if pool.Status != constant.UpstreamStatusActive || pool.Platform != constant.UpstreamPlatformOpenAI {
+			return fmt.Errorf("local account pool is not active or compatible")
+		}
+		if channel.Type == constant.ChannelTypeCodex && pool.CredentialType == constant.UpstreamAccountTypeAPIKey {
+			return fmt.Errorf("Codex channel requires an OAuth or mixed account pool")
+		}
+		if channel.Type == constant.ChannelTypeOpenAI && pool.CredentialType == constant.UpstreamAccountTypeOAuth {
+			return fmt.Errorf("OpenAI channel requires an API key or mixed account pool")
+		}
+		if channel.GetOtherSettings().ResponsesWebSocketV2Enabled {
+			return fmt.Errorf("local account pool channels must use upstream HTTP/SSE")
+		}
+	default:
+		return fmt.Errorf("unsupported channel credential source")
+	}
 	return nil
 }
 
@@ -575,7 +646,7 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		case string:
 			keyStr = strings.TrimSpace(v)
 		default:
-			bytes, err := json.Marshal(v)
+			bytes, err := common.Marshal(v)
 			if err != nil {
 				return nil, fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
 			}
@@ -598,6 +669,10 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if addChannelRequest.Channel != nil && addChannelRequest.Mode == "multi_to_single" {
+		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
+		addChannelRequest.Channel.CredentialSource = constant.ChannelCredentialSourceMultiKey
+	}
 
 	// 使用统一的校验函数
 	if err := validateChannel(addChannelRequest.Channel, true); err != nil {
@@ -609,6 +684,10 @@ func AddChannel(c *gin.Context) {
 	}
 
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
+	if addChannelRequest.Channel.CredentialSource == constant.ChannelCredentialSourceAccountPool && addChannelRequest.Mode != "single" {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "local account pool channels must use single mode"})
+		return
+	}
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
@@ -664,7 +743,7 @@ func AddChannel(c *gin.Context) {
 
 	channels := make([]model.Channel, 0, len(keys))
 	for _, key := range keys {
-		if key == "" {
+		if key == "" && addChannelRequest.Channel.CredentialSource != constant.ChannelCredentialSourceAccountPool {
 			continue
 		}
 		localChannel := addChannelRequest.Channel
@@ -877,14 +956,6 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	// 使用统一的校验函数
-	if err := validateChannel(&channel.Channel, false); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
@@ -897,10 +968,26 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
+	if strings.TrimSpace(channel.CredentialSource) == "" {
+		channel.CredentialSource = originChannel.CredentialSource
+		channel.UpstreamAccountPoolId = originChannel.UpstreamAccountPoolId
+	}
+	if channel.CredentialSource != constant.ChannelCredentialSourceAccountPool && strings.TrimSpace(channel.Key) == "" {
+		channel.Key = originChannel.Key
+	}
 
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
 		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
+	}
+
+	// 使用统一的校验函数 after restoring persisted credential and multi-key state.
+	if err := validateChannel(&channel.Channel, false); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
 	}
 
 	// 处理多key模式下的密钥追加/覆盖逻辑
@@ -916,7 +1003,7 @@ func UpdateChannel(c *gin.Context) {
 				if strings.HasPrefix(strings.TrimSpace(originChannel.Key), "[") {
 					// JSON数组格式
 					var arr []json.RawMessage
-					if err := json.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
+					if err := common.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
 						existingKeys = make([]string, len(arr))
 						for i, v := range arr {
 							existingKeys[i] = string(v)
@@ -1117,7 +1204,7 @@ func FetchModels(c *gin.Context) {
 		} `json:"data"`
 	}
 
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+	if err := common.DecodeJson(response.Body, &result); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"message": err.Error(),
@@ -1863,7 +1950,7 @@ func OllamaPullModelStream(c *gin.Context) {
 
 	// 创建进度回调函数
 	progressCallback := func(progress ollama.OllamaPullResponse) {
-		data, _ := json.Marshal(progress)
+		data, _ := common.Marshal(progress)
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
 		c.Writer.Flush()
 	}
@@ -1872,12 +1959,12 @@ func OllamaPullModelStream(c *gin.Context) {
 	err = ollama.PullOllamaModelStream(baseURL, key, req.ModelName, progressCallback)
 
 	if err != nil {
-		errorData, _ := json.Marshal(gin.H{
+		errorData, _ := common.Marshal(gin.H{
 			"error": err.Error(),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(errorData))
 	} else {
-		successData, _ := json.Marshal(gin.H{
+		successData, _ := common.Marshal(gin.H{
 			"message": fmt.Sprintf("Model %s pulled successfully", req.ModelName),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(successData))

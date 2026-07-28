@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
@@ -58,6 +76,32 @@ describe('Responses WebSocket v2 channel settings', () => {
 
     assert.equal('responses_websocket_v2_enabled' in settings, false)
     assert.equal('responses_websocket_v2_replay_enabled' in settings, false)
+  })
+
+  test('forces upstream websocket off for local account pools', () => {
+    const payload = transformFormDataToUpdatePayload(
+      {
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        name: 'local pool channel',
+        type: 1,
+        models: 'gpt-5.6-sol',
+        group: ['test3'],
+        credential_source: 'local_account_pool',
+        upstream_account_pool_id: 9,
+        responses_websocket_v2_enabled: true,
+        responses_websocket_v2_replay_enabled: true,
+      },
+      44
+    )
+    const settings = JSON.parse(payload.settings || '{}') as Record<
+      string,
+      unknown
+    >
+
+    assert.equal(settings.responses_websocket_v2_enabled, false)
+    assert.equal(settings.responses_websocket_v2_replay_enabled, false)
+    assert.equal(payload.credential_source, 'local_account_pool')
+    assert.equal(payload.upstream_account_pool_id, 9)
   })
 })
 

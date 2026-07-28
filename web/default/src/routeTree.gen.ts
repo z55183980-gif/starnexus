@@ -38,6 +38,8 @@ import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$model
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authenticated/usage-logs/index'
+import { Route as AuthenticatedUpstreamProxiesIndexRouteImport } from './routes/_authenticated/upstream-proxies/index'
+import { Route as AuthenticatedUpstreamAccountsIndexRouteImport } from './routes/_authenticated/upstream-accounts/index'
 import { Route as AuthenticatedTopupRecordsIndexRouteImport } from './routes/_authenticated/topup-records/index'
 import { Route as AuthenticatedSystemSettingsIndexRouteImport } from './routes/_authenticated/system-settings/index'
 import { Route as AuthenticatedSubscriptionsIndexRouteImport } from './routes/_authenticated/subscriptions/index'
@@ -219,6 +221,18 @@ const AuthenticatedUsageLogsIndexRoute =
   AuthenticatedUsageLogsIndexRouteImport.update({
     id: '/usage-logs/',
     path: '/usage-logs/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedUpstreamProxiesIndexRoute =
+  AuthenticatedUpstreamProxiesIndexRouteImport.update({
+    id: '/upstream-proxies/',
+    path: '/upstream-proxies/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedUpstreamAccountsIndexRoute =
+  AuthenticatedUpstreamAccountsIndexRouteImport.update({
+    id: '/upstream-accounts/',
+    path: '/upstream-accounts/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedTopupRecordsIndexRoute =
@@ -480,6 +494,8 @@ export interface FileRoutesByFullPath {
   '/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/topup-records/': typeof AuthenticatedTopupRecordsIndexRoute
+  '/upstream-accounts/': typeof AuthenticatedUpstreamAccountsIndexRoute
+  '/upstream-proxies/': typeof AuthenticatedUpstreamProxiesIndexRoute
   '/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/wallet/': typeof AuthenticatedWalletIndexRoute
@@ -544,6 +560,8 @@ export interface FileRoutesByTo {
   '/subscriptions': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-settings': typeof AuthenticatedSystemSettingsIndexRoute
   '/topup-records': typeof AuthenticatedTopupRecordsIndexRoute
+  '/upstream-accounts': typeof AuthenticatedUpstreamAccountsIndexRoute
+  '/upstream-proxies': typeof AuthenticatedUpstreamProxiesIndexRoute
   '/usage-logs': typeof AuthenticatedUsageLogsIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
   '/wallet': typeof AuthenticatedWalletIndexRoute
@@ -612,6 +630,8 @@ export interface FileRoutesById {
   '/_authenticated/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/_authenticated/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/_authenticated/topup-records/': typeof AuthenticatedTopupRecordsIndexRoute
+  '/_authenticated/upstream-accounts/': typeof AuthenticatedUpstreamAccountsIndexRoute
+  '/_authenticated/upstream-proxies/': typeof AuthenticatedUpstreamProxiesIndexRoute
   '/_authenticated/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
@@ -679,6 +699,8 @@ export interface FileRouteTypes {
     | '/subscriptions/'
     | '/system-settings/'
     | '/topup-records/'
+    | '/upstream-accounts/'
+    | '/upstream-proxies/'
     | '/usage-logs/'
     | '/users/'
     | '/wallet/'
@@ -743,6 +765,8 @@ export interface FileRouteTypes {
     | '/subscriptions'
     | '/system-settings'
     | '/topup-records'
+    | '/upstream-accounts'
+    | '/upstream-proxies'
     | '/usage-logs'
     | '/users'
     | '/wallet'
@@ -810,6 +834,8 @@ export interface FileRouteTypes {
     | '/_authenticated/subscriptions/'
     | '/_authenticated/system-settings/'
     | '/_authenticated/topup-records/'
+    | '/_authenticated/upstream-accounts/'
+    | '/_authenticated/upstream-proxies/'
     | '/_authenticated/usage-logs/'
     | '/_authenticated/users/'
     | '/_authenticated/wallet/'
@@ -1055,6 +1081,20 @@ declare module '@tanstack/react-router' {
       path: '/usage-logs'
       fullPath: '/usage-logs/'
       preLoaderRoute: typeof AuthenticatedUsageLogsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/upstream-proxies/': {
+      id: '/_authenticated/upstream-proxies/'
+      path: '/upstream-proxies'
+      fullPath: '/upstream-proxies/'
+      preLoaderRoute: typeof AuthenticatedUpstreamProxiesIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/upstream-accounts/': {
+      id: '/_authenticated/upstream-accounts/'
+      path: '/upstream-accounts'
+      fullPath: '/upstream-accounts/'
+      preLoaderRoute: typeof AuthenticatedUpstreamAccountsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/topup-records/': {
@@ -1418,6 +1458,8 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedSecurityAuditIndexRoute: typeof AuthenticatedSecurityAuditIndexRoute
   AuthenticatedSubscriptionsIndexRoute: typeof AuthenticatedSubscriptionsIndexRoute
   AuthenticatedTopupRecordsIndexRoute: typeof AuthenticatedTopupRecordsIndexRoute
+  AuthenticatedUpstreamAccountsIndexRoute: typeof AuthenticatedUpstreamAccountsIndexRoute
+  AuthenticatedUpstreamProxiesIndexRoute: typeof AuthenticatedUpstreamProxiesIndexRoute
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
@@ -1449,6 +1491,10 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedSecurityAuditIndexRoute: AuthenticatedSecurityAuditIndexRoute,
   AuthenticatedSubscriptionsIndexRoute: AuthenticatedSubscriptionsIndexRoute,
   AuthenticatedTopupRecordsIndexRoute: AuthenticatedTopupRecordsIndexRoute,
+  AuthenticatedUpstreamAccountsIndexRoute:
+    AuthenticatedUpstreamAccountsIndexRoute,
+  AuthenticatedUpstreamProxiesIndexRoute:
+    AuthenticatedUpstreamProxiesIndexRoute,
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/base64"
 	"errors"
 	"io"
 	"net/http"
@@ -12,15 +13,19 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	openairelay "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func newResponsesWSTestPair(t *testing.T) (*websocket.Conn, *websocket.Conn, func()) {
@@ -146,6 +151,10 @@ func TestSupportsResponsesWebSocketChannel(t *testing.T) {
 	require.True(t, supportsResponsesWebSocketChannel(&model.Channel{Type: constant.ChannelTypeOpenAI}))
 	require.True(t, supportsResponsesWebSocketChannel(&model.Channel{Type: constant.ChannelTypeSub2API}))
 	require.False(t, supportsResponsesWebSocketChannel(&model.Channel{Type: constant.ChannelTypeCodex}))
+	require.True(t, supportsResponsesWebSocketChannel(&model.Channel{
+		Type:             constant.ChannelTypeCodex,
+		CredentialSource: constant.ChannelCredentialSourceAccountPool,
+	}))
 	require.True(t, supportsResponsesWebSocketChannel(&model.Channel{
 		Type:          constant.ChannelTypeCodex,
 		OtherSettings: `{"responses_websocket_v2_enabled":true}`,
@@ -710,18 +719,22 @@ func TestResponsesWSSSEFailureKeepsSessionAndAllowsNextTurn(t *testing.T) {
 
 	firstTurn, firstAdaptor := newTurn()
 	require.True(t, session.activateSSETurn(firstTurn))
-	session.runSSETurn(firstTurn, []byte(`{"model":"gpt-5","stream":true}`), firstAdaptor)
+	firstTurn.setSSEReplayState([]byte(`{"model":"gpt-5","stream":true}`), firstAdaptor)
+	session.runSSETurn(firstTurn)
 	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
 	_, data, err := clientPeer.ReadMessage()
 	require.NoError(t, err)
 	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_first"}}`, string(data))
 	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "resp_first")
+	_, _, replayable := firstTurn.sseReplaySnapshot()
+	require.False(t, replayable)
 	require.Nil(t, session.getChannel())
 
 	session.setChannel(selectedChannel)
 	secondTurn, secondAdaptor := newTurn()
 	require.True(t, session.activateSSETurn(secondTurn))
-	session.runSSETurn(secondTurn, []byte(`{"model":"gpt-5","stream":true}`), secondAdaptor)
+	secondTurn.setSSEReplayState([]byte(`{"model":"gpt-5","stream":true}`), secondAdaptor)
+	session.runSSETurn(secondTurn)
 	_, data, err = clientPeer.ReadMessage()
 	require.NoError(t, err)
 	require.JSONEq(t, `{"type":"response.output_text.done"}`, string(data))
@@ -746,4 +759,108 @@ func TestResponsesWSSSEFailureKeepsSessionAndAllowsNextTurn(t *testing.T) {
 	require.Equal(t, int32(6), released.Load())
 	session.close()
 	require.Equal(t, int32(6), released.Load())
+}
+
+func TestResponsesWSSSERetriesAnotherLocalAccountBeforeVisibleEvent(t *testing.T) {
+	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+
+	var requests atomic.Int32
+	authorizations := make(chan string, 2)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authorizations <- r.Header.Get("Authorization")
+		if requests.Add(1) == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"rate limited","type":"rate_limit_error","code":"rate_limit"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_second_account\",\"status\":\"failed\",\"error\":{\"code\":\"upstream_failed\",\"message\":\"second account reached upstream\"}}}\n\n"))
+	}))
+	defer upstream.Close()
+
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{}, &model.UpstreamAccountPool{}, &model.UpstreamAccount{},
+		&model.UpstreamAccountPoolMember{}, &model.UpstreamProxy{}, &model.UpstreamAccountEvent{},
+	))
+	originalDB := model.DB
+	model.DB = db
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	t.Cleanup(func() {
+		model.DB = originalDB
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+	})
+	t.Setenv("UPSTREAM_ACCOUNT_ALLOW_LOCAL_LEASES", "true")
+	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	keyringJSON, err := common.Marshal(map[string]string{"1": key})
+	require.NoError(t, err)
+	t.Setenv("UPSTREAM_ACCOUNT_CREDENTIAL_KEYS", string(keyringJSON))
+	t.Setenv("UPSTREAM_ACCOUNT_ACTIVE_KEY_VERSION", "1")
+
+	pool := model.UpstreamAccountPool{
+		Name: "openai-local", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, service.CreateUpstreamAccountPool(&pool))
+	accounts := []struct {
+		name string
+		key  string
+	}{{name: "account-one", key: "local-key-one"}, {name: "account-two", key: "local-key-two"}}
+	for _, candidate := range accounts {
+		input := service.UpstreamAccountCreateInput{
+			Account: model.UpstreamAccount{
+				Name: candidate.name, Platform: constant.UpstreamPlatformOpenAI,
+				Type: constant.UpstreamAccountTypeAPIKey, Extra: "{}", Concurrency: 1,
+				Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive, Schedulable: true,
+			},
+			Credentials: map[string]any{"api_key": candidate.key},
+			PoolIds:     []int{pool.Id},
+		}
+		require.NoError(t, service.CreateUpstreamAccount(&input))
+	}
+
+	baseURL := upstream.URL
+	selectedChannel := &model.Channel{
+		Id: 77, Type: constant.ChannelTypeOpenAI, Name: "local-pool", BaseURL: &baseURL,
+		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
+	}
+	baseCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	baseCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	turnCtx, cancel := newResponsesWSTurnContext(baseCtx, "gpt-5")
+	require.Nil(t, middleware.SetupContextForSelectedChannel(turnCtx, selectedChannel, "gpt-5"))
+	info := relaycommon.GenRelayInfoOpenAI(turnCtx, nil)
+	info.IsStream = true
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RelayFormat = types.RelayFormatOpenAIResponses
+	info.RequestURLPath = "/v1/responses"
+	info.InitChannelMeta(turnCtx)
+	adaptor := &openairelay.Adaptor{}
+	adaptor.Init(info)
+	turn := &responsesWebSocketTurn{
+		ctx: turnCtx, info: info, accumulator: openairelay.NewResponsesEventAccumulator(),
+		channel: selectedChannel, cancel: cancel,
+	}
+	session := &responsesWebSocketSession{
+		baseCtx: baseCtx, client: clientServer, channel: selectedChannel, closed: make(chan struct{}),
+	}
+	require.True(t, session.activateSSETurn(turn))
+	turn.setSSEReplayState([]byte(`{"model":"gpt-5","stream":true}`), adaptor)
+	session.startSSETurn(turn)
+
+	requireResponsesWSTurnFailureAndAlive(t, session, clientPeer, "resp_second_account")
+	require.Equal(t, int32(2), requests.Load())
+	firstAuthorization := <-authorizations
+	secondAuthorization := <-authorizations
+	require.NotEqual(t, firstAuthorization, secondAuthorization)
+	require.Contains(t, []string{"Bearer local-key-one", "Bearer local-key-two"}, firstAuthorization)
+	require.Contains(t, []string{"Bearer local-key-one", "Bearer local-key-two"}, secondAuthorization)
+	session.close()
 }

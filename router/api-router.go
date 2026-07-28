@@ -182,6 +182,43 @@ func SetApiRouter(router *gin.Engine) {
 			nodeRoutingRoute.POST("/reconcile", middleware.RootAuth(), controller.ReconcileRoutingNodes)
 		}
 
+		upstreamRoute := apiRouter.Group("/upstream")
+		upstreamRoute.Use(middleware.RootAuth())
+		{
+			upstreamRoute.GET("/account-pools", controller.ListUpstreamAccountPools)
+			upstreamRoute.GET("/account-pools/:id", controller.GetUpstreamAccountPool)
+			upstreamRoute.POST("/account-pools", controller.CreateUpstreamAccountPool)
+			upstreamRoute.PUT("/account-pools/:id", controller.UpdateUpstreamAccountPool)
+			upstreamRoute.DELETE("/account-pools/:id", controller.DeleteUpstreamAccountPool)
+			upstreamRoute.GET("/account-pools/:id/members", controller.ListUpstreamAccountPoolMembers)
+			upstreamRoute.PUT("/account-pools/:id/members", controller.ReplaceUpstreamAccountPoolMembers)
+
+			upstreamRoute.GET("/accounts", controller.ListUpstreamAccounts)
+			upstreamRoute.GET("/accounts/:id", controller.GetUpstreamAccount)
+			upstreamRoute.POST("/accounts", controller.CreateUpstreamAccount)
+			upstreamRoute.POST("/accounts/batch", controller.CreateUpstreamAccountsBatch)
+			upstreamRoute.PUT("/accounts/batch", controller.UpdateUpstreamAccountsBatch)
+			upstreamRoute.DELETE("/accounts/batch", controller.DeleteUpstreamAccountsBatch)
+			upstreamRoute.PUT("/accounts/:id", controller.UpdateUpstreamAccount)
+			upstreamRoute.DELETE("/accounts/:id", controller.DeleteUpstreamAccount)
+			upstreamRoute.POST("/accounts/oauth/start", controller.StartUpstreamAccountOAuth)
+			upstreamRoute.POST("/accounts/oauth/complete", controller.CompleteUpstreamAccountOAuth)
+			upstreamRoute.POST("/accounts/:id/oauth/refresh", controller.RefreshUpstreamAccountOAuth)
+			upstreamRoute.POST("/accounts/:id/test", controller.TestUpstreamAccount)
+			upstreamRoute.POST("/accounts/test", controller.TestUpstreamAccountsBatch)
+
+			upstreamRoute.GET("/proxies", controller.ListUpstreamProxies)
+			upstreamRoute.GET("/proxies/:id", controller.GetUpstreamProxy)
+			upstreamRoute.POST("/proxies", controller.CreateUpstreamProxy)
+			upstreamRoute.POST("/proxies/batch", controller.CreateUpstreamProxiesBatch)
+			upstreamRoute.PUT("/proxies/batch", controller.UpdateUpstreamProxiesBatch)
+			upstreamRoute.DELETE("/proxies/batch", controller.DeleteUpstreamProxiesBatch)
+			upstreamRoute.PUT("/proxies/:id", controller.UpdateUpstreamProxy)
+			upstreamRoute.DELETE("/proxies/:id", controller.DeleteUpstreamProxy)
+			upstreamRoute.POST("/proxies/:id/test", controller.TestUpstreamProxy)
+			upstreamRoute.POST("/proxies/test", controller.TestUpstreamProxiesBatch)
+		}
+
 		// Subscription billing (plans, purchase, admin management)
 		subscriptionRoute := apiRouter.Group("/subscription")
 		subscriptionRoute.Use(middleware.UserAuth())

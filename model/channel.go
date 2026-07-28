@@ -53,7 +53,9 @@ type Channel struct {
 	// add after v0.8.5
 	ChannelInfo ChannelInfo `json:"channel_info" gorm:"type:json"`
 
-	OtherSettings string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
+	OtherSettings         string `json:"settings" gorm:"column:settings"` // 其他设置，存储azure版本等不需要检索的信息，详见dto.ChannelOtherSettings
+	CredentialSource      string `json:"credential_source" gorm:"type:varchar(32);not null;default:'channel_key';index"`
+	UpstreamAccountPoolId *int   `json:"upstream_account_pool_id" gorm:"index"`
 
 	// cache info
 	Keys []string `json:"-" gorm:"-"`
@@ -565,6 +567,16 @@ func (channel *Channel) Update() error {
 	var err error
 	err = DB.Model(channel).Updates(channel).Error
 	if err != nil {
+		return err
+	}
+	credentialUpdates := map[string]any{
+		"credential_source":        channel.CredentialSource,
+		"upstream_account_pool_id": channel.UpstreamAccountPoolId,
+	}
+	if channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
+		credentialUpdates["key"] = ""
+	}
+	if err = DB.Model(channel).Updates(credentialUpdates).Error; err != nil {
 		return err
 	}
 	DB.Model(channel).First(channel, "id = ?", channel.Id)

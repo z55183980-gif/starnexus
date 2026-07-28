@@ -221,42 +221,74 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if channelErr != nil {
 			logger.LogError(c, channelErr.Error())
 			newAPIError = channelErr
+			if shouldRetry(c, channelErr, common.RetryTimes-retryParam.GetRetry()) {
+				// Mark the initial channel attempt as consumed so the next iteration
+				// enters the normal channel selector instead of retrying the same
+				// unavailable local account pool from middleware context.
+				relayInfo.InitChannelMeta(c)
+				continue
+			}
 			break
 		}
 
 		addUsedChannel(c, channel.Id)
-		bodyStorage, bodyErr := common.GetBodyStorage(c)
-		if bodyErr != nil {
-			// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
-			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
-				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
-			} else {
-				newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		for {
+			bodyStorage, bodyErr := common.GetBodyStorage(c)
+			if bodyErr != nil {
+				// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
+				if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
+					newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
+				} else {
+					newAPIError = types.NewErrorWithStatusCode(bodyErr, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+				}
+				break
 			}
+			c.Request.Body = io.NopCloser(bodyStorage)
+
+			switch relayFormat {
+			case types.RelayFormatOpenAIRealtime:
+				newAPIError = relay.WssHelper(c, relayInfo)
+			case types.RelayFormatClaude:
+				newAPIError = relay.ClaudeHelper(c, relayInfo)
+			case types.RelayFormatGemini:
+				newAPIError = geminiRelayHandler(c, relayInfo)
+			default:
+				newAPIError = relayHandler(c, relayInfo)
+			}
+
+			if newAPIError == nil {
+				relayInfo.LastError = nil
+				service.RecordUpstreamAccountSuccess(common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId))
+				recordUpstreamRequestEvent(c, "request_success", "success", "")
+				return
+			}
+
+			newAPIError = service.NormalizeViolationFeeError(newAPIError)
+			relayInfo.LastError = newAPIError
+			accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
+			proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
+			if service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError) {
+				recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(newAPIError))
+				if relayInfo.SendResponseCount == 0 {
+					excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
+					if excludedIds == nil {
+						excludedIds = make(map[int]struct{})
+					}
+					excludedIds[accountId] = struct{}{}
+					common.SetContextKey(c, constant.ContextKeyUpstreamAccountExcluded, excludedIds)
+					if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr == nil {
+						continue
+					} else {
+						newAPIError = setupErr
+						relayInfo.LastError = setupErr
+					}
+				}
+				break
+			}
+
+			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 			break
 		}
-		c.Request.Body = io.NopCloser(bodyStorage)
-
-		switch relayFormat {
-		case types.RelayFormatOpenAIRealtime:
-			newAPIError = relay.WssHelper(c, relayInfo)
-		case types.RelayFormatClaude:
-			newAPIError = relay.ClaudeHelper(c, relayInfo)
-		case types.RelayFormatGemini:
-			newAPIError = geminiRelayHandler(c, relayInfo)
-		default:
-			newAPIError = relayHandler(c, relayInfo)
-		}
-
-		if newAPIError == nil {
-			relayInfo.LastError = nil
-			return
-		}
-
-		newAPIError = service.NormalizeViolationFeeError(newAPIError)
-		relayInfo.LastError = newAPIError
-
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
@@ -335,6 +367,20 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
 	if info.ChannelMeta == nil {
+		if common.GetContextKeyString(c, constant.ContextKeyChannelCredentialSource) == constant.ChannelCredentialSourceAccountPool {
+			channelId := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+			channel, err := model.CacheGetChannel(channelId)
+			if err != nil || channel == nil {
+				channel, err = model.GetChannelById(channelId, true)
+			}
+			if err != nil || channel == nil {
+				return nil, types.NewError(errors.New("local account pool channel is unavailable"), types.ErrorCodeGetChannelFailed)
+			}
+			if apiErr := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName); apiErr != nil {
+				return nil, apiErr
+			}
+			return channel, nil
+		}
 		autoBan := c.GetBool("auto_ban")
 		autoBanInt := 1
 		if !autoBan {
@@ -398,6 +444,13 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+	accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
+	proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
+	if service.ApplyUpstreamAccountError(accountId, proxyId, err) {
+		recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(err))
+		logger.LogError(c, fmt.Sprintf("upstream account error (account #%d, channel #%d, status code: %d): %s", accountId, channelError.ChannelId, err.StatusCode, service.UpstreamAccountErrorSummary(err)))
+		return
+	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
 	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
 	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
@@ -442,6 +495,27 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
+}
+
+func recordUpstreamRequestEvent(c *gin.Context, eventType string, result string, message string) {
+	if c == nil {
+		return
+	}
+	accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
+	if accountId <= 0 {
+		return
+	}
+	service.RecordUpstreamAccountEvent(service.UpstreamAccountEventInput{
+		AccountId: accountId,
+		PoolId:    common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountPoolId),
+		ProxyId:   common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId),
+		ChannelId: common.GetContextKeyInt(c, constant.ContextKeyChannelId),
+		RequestId: c.GetString(common.RequestIdKey),
+		LeaseId:   common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountLeaseId),
+		EventType: eventType,
+		Result:    result,
+		Message:   message,
+	})
 }
 
 func RelayMidjourney(c *gin.Context) {

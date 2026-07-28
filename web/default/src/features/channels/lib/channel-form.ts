@@ -46,6 +46,8 @@ const channelFormBaseSchema = z.object({
   type: z.number().min(0, 'Channel type is required'),
   base_url: z.string().optional(),
   key: z.string(),
+  credential_source: z.enum(['channel_key', 'local_account_pool']),
+  upstream_account_pool_id: z.number().nullable().optional(),
   openai_organization: z.string().optional(),
   models: z.string().min(1, 'At least one model is required'),
   group: z.array(z.string()).min(1, 'At least one group is required'),
@@ -103,6 +105,24 @@ const channelFormBaseSchema = z.object({
 
 export const channelFormSchema = channelFormBaseSchema.superRefine(
   (data, ctx) => {
+    if (data.credential_source === 'local_account_pool') {
+      if (data.type !== 1 && data.type !== 57) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['credential_source'],
+          message:
+            'Local account pools currently support only OpenAI and Codex channels',
+        })
+      }
+      if (!data.upstream_account_pool_id) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['upstream_account_pool_id'],
+          message: 'Select a local account pool',
+        })
+      }
+    }
+
     if (data.type !== 58) return
 
     try {
@@ -137,6 +157,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   type: 1,
   base_url: '',
   key: '',
+  credential_source: 'channel_key',
+  upstream_account_pool_id: null,
   openai_organization: '',
   models: '',
   group: ['default'],
@@ -290,6 +312,11 @@ export function transformChannelToFormDefaults(
     type: channel.type,
     base_url: channel.base_url || '',
     key: '', // Never populate key from backend for security
+    credential_source:
+      channel.credential_source === 'local_account_pool'
+        ? 'local_account_pool'
+        : 'channel_key',
+    upstream_account_pool_id: channel.upstream_account_pool_id ?? null,
     openai_organization: channel.openai_organization || '',
     models: channel.models || '',
     group: parseGroups(channel.group || 'default'),
@@ -413,9 +440,10 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 
   if (RESPONSES_WEBSOCKET_V2_CHANNEL_TYPES.has(formData.type)) {
     settingsObj.responses_websocket_v2_enabled =
+      formData.credential_source !== 'local_account_pool' &&
       formData.responses_websocket_v2_enabled === true
     settingsObj.responses_websocket_v2_replay_enabled =
-      formData.responses_websocket_v2_enabled === true &&
+      settingsObj.responses_websocket_v2_enabled === true &&
       formData.responses_websocket_v2_replay_enabled === true
   } else {
     delete settingsObj.responses_websocket_v2_enabled
@@ -490,13 +518,18 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   batch_add_set_key_prefix_2_name?: boolean
   channel: Partial<Channel>
 } {
-  const mode = formData.multi_key_mode || 'single'
+  const useAccountPool = formData.credential_source === 'local_account_pool'
+  const mode = useAccountPool ? 'single' : formData.multi_key_mode || 'single'
 
   const channel: Partial<Channel> = {
     name: formData.name,
     type: formData.type,
     base_url: formData.base_url || null,
-    key: formData.key,
+    key: useAccountPool ? '' : formData.key,
+    credential_source: useAccountPool ? 'local_account_pool' : 'channel_key',
+    upstream_account_pool_id: useAccountPool
+      ? formData.upstream_account_pool_id
+      : null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
@@ -544,6 +577,11 @@ export function transformFormDataToUpdatePayload(
     id: channelId,
     name: formData.name,
     type: formData.type,
+    credential_source: formData.credential_source,
+    upstream_account_pool_id:
+      formData.credential_source === 'local_account_pool'
+        ? formData.upstream_account_pool_id
+        : null,
     base_url: formData.base_url || null,
     openai_organization: formData.openai_organization || null,
     models: formData.models,
@@ -565,7 +603,11 @@ export function transformFormDataToUpdatePayload(
   }
 
   // Only include key if it was changed (not empty)
-  if (formData.key && formData.key.trim()) {
+  if (
+    formData.credential_source !== 'local_account_pool' &&
+    formData.key &&
+    formData.key.trim()
+  ) {
     payload.key = formData.key
   }
 

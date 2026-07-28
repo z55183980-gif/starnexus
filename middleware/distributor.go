@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -162,7 +163,17 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		var setupErr *types.NewAPIError
+		if channel != nil && channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
+			setupErr = SetupContextForSelectedChannelWithoutAccount(c, channel, modelRequest.Model)
+		} else {
+			setupErr = SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		}
+		if setupErr != nil {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, setupErr.Error())
+			return
+		}
+		defer ReleaseUpstreamAccountSelection(c)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
@@ -401,11 +412,30 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 }
 
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	return setupContextForSelectedChannel(c, channel, modelName, true)
+}
+
+func SetupContextForSelectedChannelWithoutAccount(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	return setupContextForSelectedChannel(c, channel, modelName, false)
+}
+
+func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string, acquireAccount bool) *types.NewAPIError {
+	previousChannelId := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+	ReleaseUpstreamAccountSelection(c)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPoolId, 0)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, 0)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, "")
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, "")
+	common.SetContextKey(c, constant.ContextKeyUpstreamProxyId, 0)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountLeaseId, "")
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelId, channel.Id)
+	if previousChannelId != channel.Id {
+		common.SetContextKey(c, constant.ContextKeyUpstreamAccountExcluded, map[int]struct{}{})
+	}
 	common.SetContextKey(c, constant.ContextKeyChannelName, channel.Name)
 	common.SetContextKey(c, constant.ContextKeyChannelType, channel.Type)
 	common.SetContextKey(c, constant.ContextKeyChannelCreateTime, channel.CreatedTime)
@@ -424,6 +454,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, channel.GetAutoBan())
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
+	common.SetContextKey(c, constant.ContextKeyChannelCredentialSource, channel.CredentialSource)
 
 	key, index, newAPIError := channel.GetNextEnabledKey()
 	if newAPIError != nil {
@@ -439,6 +470,11 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	// c.Request.Header.Set("Authorization", fmt.Sprintf("Bearer %s", key))
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, channel.GetBaseURL())
+	if acquireAccount && channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
+		if apiErr := setupLocalUpstreamAccount(c, channel, modelName); apiErr != nil {
+			return apiErr
+		}
+	}
 
 	common.SetContextKey(c, constant.ContextKeySystemPromptOverride, false)
 
@@ -462,6 +498,117 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 		c.Set("bot_id", channel.Other)
 	}
 	return nil
+}
+
+func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	if channel.UpstreamAccountPoolId == nil || *channel.UpstreamAccountPoolId <= 0 {
+		return types.NewErrorWithStatusCode(errors.New("local account pool is not configured"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
+	}
+	router, err := service.GetConfiguredUpstreamAccountRouter()
+	if err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
+	}
+	setting := channel.GetSetting()
+	excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
+	selection, err := router.Select(c.Request.Context(), service.UpstreamAccountSelectionRequest{
+		PoolId: *channel.UpstreamAccountPoolId, ChannelType: channel.Type, Model: modelName,
+		ChannelProxy: setting.Proxy, RequestId: c.GetString(common.RequestIdKey), ExcludedIds: excludedIds,
+	})
+	if err != nil {
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
+	}
+	key, err := localUpstreamChannelKey(channel.Type, selection.Credentials)
+	if err != nil {
+		_ = selection.Release(context.Background())
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
+	}
+	setting.Proxy = selection.ProxyURL
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, setting)
+	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+	if channel.Type == constant.ChannelTypeOpenAI {
+		if baseURL := upstreamCredentialString(selection.Credentials, "base_url"); baseURL != "" {
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, baseURL)
+		}
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPoolId, selection.Pool.Id)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, selection.Account.Id)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, selection.Account.Name)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, selection.Account.Type)
+	proxyId := 0
+	if selection.Proxy != nil {
+		proxyId = selection.Proxy.Id
+		common.SetContextKey(c, constant.ContextKeyUpstreamProxyId, proxyId)
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountLeaseId, selection.Lease.Id)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountSelection, selection)
+	requestId := c.GetString(common.RequestIdKey)
+	service.RecordUpstreamAccountEventAsync(service.UpstreamAccountEventInput{
+		AccountId: selection.Account.Id, PoolId: selection.Pool.Id, ProxyId: proxyId,
+		ChannelId: channel.Id, RequestId: requestId, LeaseId: selection.Lease.Id,
+		EventType: "request_selected", Result: "selected",
+	})
+	leaseRequestContext, cancelLeaseRequest := context.WithCancelCause(c.Request.Context())
+	c.Request = c.Request.WithContext(leaseRequestContext)
+	selection.StartLeaseRefresh(leaseRequestContext, func(leaseErr error) {
+		service.RecordUpstreamAccountEvent(service.UpstreamAccountEventInput{
+			AccountId: selection.Account.Id, PoolId: selection.Pool.Id, ProxyId: proxyId,
+			ChannelId: channel.Id, RequestId: requestId, LeaseId: selection.Lease.Id,
+			EventType: "lease_lost", Result: "error", Message: "upstream account lease lost",
+		})
+		cancelLeaseRequest(leaseErr)
+	})
+	return nil
+}
+
+func ReleaseUpstreamAccountSelection(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	value, ok := common.GetContextKey(c, constant.ContextKeyUpstreamAccountSelection)
+	if !ok {
+		return
+	}
+	selection, ok := value.(*service.UpstreamAccountSelection)
+	if ok && selection != nil {
+		_ = selection.Release(context.Background())
+		service.RecordUpstreamAccountEvent(service.UpstreamAccountEventInput{
+			AccountId: common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId),
+			PoolId:    common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountPoolId),
+			ProxyId:   common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId),
+			ChannelId: common.GetContextKeyInt(c, constant.ContextKeyChannelId),
+			RequestId: c.GetString(common.RequestIdKey),
+			LeaseId:   common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountLeaseId),
+			EventType: "lease_released", Result: "released",
+		})
+	}
+	c.Set(string(constant.ContextKeyUpstreamAccountSelection), nil)
+}
+
+func localUpstreamChannelKey(channelType int, credentials map[string]any) (string, error) {
+	switch channelType {
+	case constant.ChannelTypeCodex:
+		encoded, err := common.Marshal(credentials)
+		if err != nil {
+			return "", errors.New("failed to encode local OAuth credential")
+		}
+		return string(encoded), nil
+	case constant.ChannelTypeOpenAI:
+		key := upstreamCredentialString(credentials, "api_key")
+		if key == "" {
+			return "", errors.New("local API key credential is missing api_key")
+		}
+		return key, nil
+	default:
+		return "", errors.New("channel type does not support local account credentials")
+	}
+}
+
+func upstreamCredentialString(credentials map[string]any, key string) string {
+	value, ok := credentials[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprintf("%v", value))
 }
 
 // SelectChannelForModel selects and initializes a channel without reading an
@@ -555,7 +702,7 @@ func SelectChannelForModelFiltered(c *gin.Context, modelName string, filter func
 	}
 
 	common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-	if apiErr := SetupContextForSelectedChannel(c, channel, modelName); apiErr != nil {
+	if apiErr := SetupContextForSelectedChannelWithoutAccount(c, channel, modelName); apiErr != nil {
 		return nil, apiErr
 	}
 	return channel, nil
