@@ -5008,6 +5008,12 @@
     "No pool members": "No pool members",
     "Scheduler top K": "Scheduler top K",
     "Select an account": "Select an account",
-    "Use 0 to consider every eligible account in the priority tier.": "Use 0 to consider every eligible account in the priority tier."
+    "Use 0 to consider every eligible account in the priority tier.": "Use 0 to consider every eligible account in the priority tier.",
+    "External system": "External system",
+    "Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.": "Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.",
+    "OAuth refresh is managed externally": "OAuth refresh is managed externally",
+    "OAuth refresh owner": "OAuth refresh owner",
+    "StarNexus manages OAuth refresh": "StarNexus manages OAuth refresh",
+    "Enable StarNexus OAuth refresh ownership before reauthorizing this account.": "Enable StarNexus OAuth refresh ownership before reauthorizing this account."
   }
 }

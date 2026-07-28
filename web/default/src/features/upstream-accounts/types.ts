@@ -9,6 +9,7 @@ License, or (at your option) any later version.
 
 export type UpstreamStatus = 'active' | 'inactive' | 'error'
 export type UpstreamAccountType = 'oauth' | 'apikey'
+export type UpstreamOAuthRefreshOwner = 'external' | 'starnexus'
 export type UpstreamProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
 export type UpstreamProxyFallback = 'none' | 'direct' | 'proxy'
 
@@ -68,6 +69,7 @@ export interface UpstreamAccount {
   temp_unschedulable_until?: number | null
   expires_at?: number | null
   auto_pause_on_expired: boolean
+  oauth_refresh_owner: UpstreamOAuthRefreshOwner
   pool_ids: number[]
   created_at: number
   updated_at: number
@@ -117,6 +119,7 @@ export interface UpstreamAccountPayload {
   schedulable: boolean
   expires_at?: number | null
   auto_pause_on_expired: boolean
+  oauth_refresh_owner: UpstreamOAuthRefreshOwner
   pool_ids: number[]
 }
 

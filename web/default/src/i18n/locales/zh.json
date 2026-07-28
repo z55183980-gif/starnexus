@@ -5008,6 +5008,12 @@
     "No pool members": "暂无账号池成员",
     "Scheduler top K": "调度候选 Top K",
     "Select an account": "选择账号",
-    "Use 0 to consider every eligible account in the priority tier.": "设为 0 时将考虑当前优先级层级中的全部可用账号。"
+    "Use 0 to consider every eligible account in the priority tier.": "设为 0 时将考虑当前优先级层级中的全部可用账号。",
+    "External system": "外部系统",
+    "Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.": "当另一个系统使用同一 OAuth 账号时，请保持关闭，以避免刷新令牌冲突。",
+    "OAuth refresh is managed externally": "OAuth 刷新由外部系统管理",
+    "OAuth refresh owner": "OAuth 刷新所有者",
+    "StarNexus manages OAuth refresh": "由 StarNexus 管理 OAuth 刷新",
+    "Enable StarNexus OAuth refresh ownership before reauthorizing this account.": "重新授权此账号前，请先将 OAuth 刷新所有者切换为 StarNexus。"
   }
 }

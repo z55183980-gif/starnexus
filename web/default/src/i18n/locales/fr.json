@@ -5008,6 +5008,12 @@
     "No pool members": "Aucun membre dans le pool",
     "Scheduler top K": "Top K du planificateur",
     "Select an account": "Sélectionner un compte",
-    "Use 0 to consider every eligible account in the priority tier.": "Utilisez 0 pour considérer tous les comptes éligibles du niveau de priorité."
+    "Use 0 to consider every eligible account in the priority tier.": "Utilisez 0 pour considérer tous les comptes éligibles du niveau de priorité.",
+    "External system": "Système externe",
+    "Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.": "Laissez cette option désactivée tant qu'un autre système utilise le même compte OAuth afin d'éviter les conflits de jetons d'actualisation.",
+    "OAuth refresh is managed externally": "L'actualisation OAuth est gérée par un système externe",
+    "OAuth refresh owner": "Responsable de l'actualisation OAuth",
+    "StarNexus manages OAuth refresh": "StarNexus gère l'actualisation OAuth",
+    "Enable StarNexus OAuth refresh ownership before reauthorizing this account.": "Attribuez à StarNexus la gestion de l’actualisation OAuth avant de réautoriser ce compte."
   }
 }

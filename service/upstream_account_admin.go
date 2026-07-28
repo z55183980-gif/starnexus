@@ -440,6 +440,7 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 		explicitPriority := input.Account.Priority
 		explicitSchedulable := input.Account.Schedulable
 		explicitAutoPauseOnExpired := input.Account.AutoPauseOnExpired
+		explicitOAuthRefreshOwner := input.Account.OAuthRefreshOwner
 		if err := tx.Create(&input.Account).Error; err != nil {
 			return err
 		}
@@ -448,10 +449,12 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 		input.Account.Priority = explicitPriority
 		input.Account.Schedulable = explicitSchedulable
 		input.Account.AutoPauseOnExpired = explicitAutoPauseOnExpired
+		input.Account.OAuthRefreshOwner = explicitOAuthRefreshOwner
 		if err := tx.Model(&model.UpstreamAccount{}).Where("id = ?", input.Account.Id).Updates(map[string]any{
 			"priority":              explicitPriority,
 			"schedulable":           explicitSchedulable,
 			"auto_pause_on_expired": explicitAutoPauseOnExpired,
+			"oauth_refresh_owner":   explicitOAuthRefreshOwner,
 		}).Error; err != nil {
 			return err
 		}
@@ -517,7 +520,8 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			"load_factor": input.Account.LoadFactor, "rate_multiplier": input.Account.RateMultiplier,
 			"status": input.Account.Status, "schedulable": input.Account.Schedulable,
 			"expires_at": input.Account.ExpiresAt, "auto_pause_on_expired": input.Account.AutoPauseOnExpired,
-			"updated_at": common.GetTimestamp(),
+			"oauth_refresh_owner": input.Account.OAuthRefreshOwner,
+			"updated_at":          common.GetTimestamp(),
 		}
 		if input.Credentials != nil {
 			newVersion := current.CredentialVersion + 1

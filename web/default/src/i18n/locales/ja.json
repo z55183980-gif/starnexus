@@ -5008,6 +5008,12 @@
     "No pool members": "プールメンバーがありません",
     "Scheduler top K": "スケジューラ Top K",
     "Select an account": "アカウントを選択",
-    "Use 0 to consider every eligible account in the priority tier.": "0 を指定すると、同じ優先度のすべての利用可能なアカウントを対象にします。"
+    "Use 0 to consider every eligible account in the priority tier.": "0 を指定すると、同じ優先度のすべての利用可能なアカウントを対象にします。",
+    "External system": "外部システム",
+    "Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.": "別のシステムが同じ OAuth アカウントを使用している間は、リフレッシュトークンの競合を避けるためオフにしてください。",
+    "OAuth refresh is managed externally": "OAuth の更新は外部システムが管理しています",
+    "OAuth refresh owner": "OAuth 更新の管理元",
+    "StarNexus manages OAuth refresh": "StarNexus が OAuth 更新を管理する",
+    "Enable StarNexus OAuth refresh ownership before reauthorizing this account.": "このアカウントを再認証する前に、OAuth 更新の管理元を StarNexus に切り替えてください。"
   }
 }

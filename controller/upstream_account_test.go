@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -50,6 +51,7 @@ func TestCreateUpstreamAccountAndProxyReturnPersistedIds(t *testing.T) {
 	var account model.UpstreamAccount
 	require.NoError(t, common.Unmarshal(accountResponse.Data, &account))
 	require.Positive(t, account.Id)
+	require.Equal(t, constant.UpstreamOAuthRefreshOwnerExternal, account.OAuthRefreshOwner)
 
 	proxyResponse := invokeUpstreamHandler(t, CreateUpstreamProxy, `{
 		"name":"proxy","protocol":"http","host":"127.0.0.1","port":8080,

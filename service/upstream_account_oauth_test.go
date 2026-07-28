@@ -82,6 +82,7 @@ func TestReplaceUpstreamOAuthCredentialRecoversAccount(t *testing.T) {
 	require.Equal(t, constant.UpstreamStatusActive, after.Status)
 	require.True(t, after.Schedulable)
 	require.Empty(t, after.ErrorMessage)
+	require.Equal(t, constant.UpstreamOAuthRefreshOwnerStarNexus, after.OAuthRefreshOwner)
 	require.Equal(t, expiresAt, *after.ExpiresAt)
 	decoded, err := DecryptUpstreamAccountCredentials(&after)
 	require.NoError(t, err)
@@ -93,6 +94,7 @@ func TestShouldRefreshUpstreamOAuthAccount(t *testing.T) {
 	account := &model.UpstreamAccount{
 		Id: 1, Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
 		Status: constant.UpstreamStatusActive, ExpiresAt: &expiresAt, CredentialCiphertext: "configured",
+		OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
 	}
 	require.True(t, shouldRefreshUpstreamOAuthAccount(account, 200))
 	require.False(t, shouldRefreshUpstreamOAuthAccount(account, 199))
@@ -100,6 +102,15 @@ func TestShouldRefreshUpstreamOAuthAccount(t *testing.T) {
 	require.False(t, shouldRefreshUpstreamOAuthAccount(account, 200))
 	account.Status = constant.UpstreamStatusError
 	require.True(t, shouldRefreshUpstreamOAuthAccount(account, 200), "refresh can recover an errored OAuth account")
+	account.OAuthRefreshOwner = constant.UpstreamOAuthRefreshOwnerExternal
+	require.False(t, shouldRefreshUpstreamOAuthAccount(account, 200))
+}
+
+func TestRefreshUpstreamOAuthAccountRejectsExternalOwner(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "external-refresh-owner")
+	_, err := refreshUpstreamOAuthAccountUnlocked(context.Background(), account.Id)
+	require.EqualError(t, err, "OAuth refresh is owned by an external system")
 }
 
 func TestWithUpstreamOAuthRefreshLockRejectsConcurrentLocalRefresh(t *testing.T) {

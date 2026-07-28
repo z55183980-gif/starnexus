@@ -119,6 +119,7 @@ func TestCreateUpstreamAccountPreservesExplicitZeroValues(t *testing.T) {
 	require.Zero(t, stored.Priority)
 	require.False(t, stored.Schedulable)
 	require.False(t, stored.AutoPauseOnExpired)
+	require.Equal(t, constant.UpstreamOAuthRefreshOwnerExternal, stored.OAuthRefreshOwner)
 }
 
 func TestUpstreamAccountPoolRuntimeStats(t *testing.T) {

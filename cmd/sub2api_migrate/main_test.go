@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
@@ -106,6 +107,7 @@ func TestImportSnapshotIsIdempotentAndRollbackSafe(t *testing.T) {
 	var account model.UpstreamAccount
 	require.NoError(t, destination.Where("source_system = ?", sourceSystemSub2API).First(&account).Error)
 	require.EqualValues(t, 1, account.CredentialVersion)
+	require.Equal(t, constant.UpstreamOAuthRefreshOwnerExternal, account.OAuthRefreshOwner)
 
 	verified, err := verifySnapshot(destination, snapshot, "test-run")
 	require.NoError(t, err)
@@ -203,4 +205,42 @@ func TestNormalizeSourceAccountCredentialsMapsLegacyChatGPTAccountID(t *testing.
 	current := map[string]any{"account_id": "acct-current", "chatgpt_account_id": "acct-legacy"}
 	normalized = normalizeSourceAccountCredentials(constant.UpstreamAccountTypeOAuth, current)
 	require.Equal(t, "acct-current", normalized["account_id"])
+}
+
+func TestSourceAccountExpiresAtUsesOAuthCredentialFallback(t *testing.T) {
+	explicit := time.Unix(1_900_000_000, 0).UTC()
+	result := sourceAccountExpiresAt(
+		sourceAccount{ExpiresAt: &explicit},
+		constant.UpstreamAccountTypeOAuth,
+		map[string]any{"expired": "2001-01-01T00:00:00Z"},
+	)
+	require.NotNil(t, result)
+	require.EqualValues(t, explicit.Unix(), *result)
+
+	result = sourceAccountExpiresAt(
+		sourceAccount{},
+		constant.UpstreamAccountTypeOAuth,
+		map[string]any{"expired": "2030-03-04T05:06:07.123Z"},
+	)
+	require.NotNil(t, result)
+	require.EqualValues(t, time.Date(2030, 3, 4, 5, 6, 7, 0, time.UTC).Unix(), *result)
+
+	result = sourceAccountExpiresAt(
+		sourceAccount{},
+		constant.UpstreamAccountTypeOAuth,
+		map[string]any{"expired": float64(1_900_000_000_000)},
+	)
+	require.NotNil(t, result)
+	require.EqualValues(t, 1_900_000_000, *result)
+
+	require.Nil(t, sourceAccountExpiresAt(
+		sourceAccount{},
+		constant.UpstreamAccountTypeAPIKey,
+		map[string]any{"expired": "2030-03-04T05:06:07Z"},
+	))
+	require.Nil(t, sourceAccountExpiresAt(
+		sourceAccount{},
+		constant.UpstreamAccountTypeOAuth,
+		map[string]any{"expired": "invalid"},
+	))
 }

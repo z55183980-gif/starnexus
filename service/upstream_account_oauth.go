@@ -171,6 +171,7 @@ func CompleteUpstreamCodexOAuth(ctx context.Context, input UpstreamOAuthComplete
 				Name: name, Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
 				Extra: "{}", ProxyId: input.ProxyId, Concurrency: 1, Priority: 50, Weight: 1,
 				Status: constant.UpstreamStatusActive, Schedulable: true, ExpiresAt: &expiresAt, AutoPauseOnExpired: true,
+				OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
 			},
 			Credentials: credentials, PoolIds: input.PoolIds,
 		}
@@ -206,6 +207,9 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 	}
 	if account.Platform != constant.UpstreamPlatformOpenAI || account.Type != constant.UpstreamAccountTypeOAuth {
 		return nil, errors.New("account is not an OpenAI OAuth account")
+	}
+	if account.OAuthRefreshOwner != constant.UpstreamOAuthRefreshOwnerStarNexus {
+		return nil, errors.New("OAuth refresh is owned by an external system")
 	}
 	credentials, err := DecryptUpstreamAccountCredentials(&account)
 	if err != nil {
@@ -271,6 +275,7 @@ func replaceUpstreamOAuthCredential(accountId int, credentials map[string]any, e
 			"expires_at": expiresAt, "proxy_id": proxyId, "status": constant.UpstreamStatusActive,
 			"schedulable": true, "error_message": "", "temp_unschedulable_until": nil,
 			"temp_unschedulable_reason": "", "updated_at": common.GetTimestamp(),
+			"oauth_refresh_owner": constant.UpstreamOAuthRefreshOwnerStarNexus,
 		})
 		if result.Error != nil {
 			return result.Error

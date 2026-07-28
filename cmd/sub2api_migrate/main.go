@@ -598,8 +598,9 @@ func upsertAccount(db *gorm.DB, source sourceAccount, proxyMap map[int64]int, ru
 	account.Schedulable = source.Schedulable
 	account.ErrorMessage = stringValue(source.ErrorMessage)
 	account.LastUsedAt = unixPointer(source.LastUsedAt)
-	account.ExpiresAt = unixPointer(source.ExpiresAt)
+	account.ExpiresAt = sourceAccountExpiresAt(source, accountType, credentials)
 	account.AutoPauseOnExpired = source.AutoPauseOnExpired
+	account.OAuthRefreshOwner = constant.UpstreamOAuthRefreshOwnerExternal
 	account.RateLimitedAt = unixPointer(source.RateLimitedAt)
 	account.RateLimitResetAt = unixPointer(source.RateLimitResetAt)
 	account.OverloadUntil = unixPointer(source.OverloadUntil)
@@ -693,7 +694,8 @@ func verifyImportedAccount(db *gorm.DB, source sourceAccount, account *model.Ups
 	if account.Platform != constant.UpstreamPlatformOpenAI || account.Type != mapAccountType(source.Type) ||
 		account.Concurrency != max(1, source.Concurrency) || account.Priority != source.Priority ||
 		account.Status != mapAccountStatus(source.Status) || account.Schedulable != source.Schedulable ||
-		account.AutoPauseOnExpired != source.AutoPauseOnExpired {
+		account.AutoPauseOnExpired != source.AutoPauseOnExpired ||
+		account.OAuthRefreshOwner != constant.UpstreamOAuthRefreshOwnerExternal {
 		return errors.New("destination fields do not match source")
 	}
 	credentials, err := service.DecryptUpstreamAccountCredentials(account)
@@ -707,6 +709,9 @@ func verifyImportedAccount(db *gorm.DB, source sourceAccount, account *model.Ups
 	expectedCredentials = normalizeSourceAccountCredentials(mapAccountType(source.Type), expectedCredentials)
 	if !reflect.DeepEqual(credentials, expectedCredentials) {
 		return errors.New("credential mismatch")
+	}
+	if !int64PointersEqual(account.ExpiresAt, sourceAccountExpiresAt(source, mapAccountType(source.Type), expectedCredentials)) {
+		return errors.New("account expiry mismatch")
 	}
 	if err := verifyImportedProxyReference(db, account.ProxyId, source.ProxyID); err != nil {
 		return fmt.Errorf("proxy reference: %w", err)
@@ -981,6 +986,54 @@ func normalizeSourceAccountCredentials(accountType string, credentials map[strin
 		normalized["account_id"] = accountID
 	}
 	return normalized
+}
+
+func sourceAccountExpiresAt(source sourceAccount, accountType string, credentials map[string]any) *int64 {
+	if source.ExpiresAt != nil {
+		return unixPointer(source.ExpiresAt)
+	}
+	if accountType != constant.UpstreamAccountTypeOAuth {
+		return nil
+	}
+	value, ok := credentials["expired"]
+	if !ok || value == nil {
+		return nil
+	}
+	var timestamp int64
+	switch typed := value.(type) {
+	case string:
+		text := strings.TrimSpace(typed)
+		if text == "" {
+			return nil
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			return nil
+		}
+		timestamp = parsed.Unix()
+	case float64:
+		timestamp = int64(typed)
+	case int64:
+		timestamp = typed
+	case int:
+		timestamp = int64(typed)
+	default:
+		return nil
+	}
+	if timestamp > 1_000_000_000_000 {
+		timestamp /= 1000
+	}
+	if timestamp <= 0 {
+		return nil
+	}
+	return &timestamp
+}
+
+func int64PointersEqual(left, right *int64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
 }
 
 func credentialString(value any) string {

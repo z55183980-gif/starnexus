@@ -89,7 +89,7 @@ func runUpstreamAccountOAuthRefreshOnce() {
 	for {
 		var accounts []model.UpstreamAccount
 		err := model.DB.
-			Where("id > ? AND platform = ? AND type = ? AND expires_at IS NOT NULL AND expires_at <= ?", lastId, constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth, refreshBefore).
+			Where("id > ? AND platform = ? AND type = ? AND oauth_refresh_owner = ? AND expires_at IS NOT NULL AND expires_at <= ?", lastId, constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth, constant.UpstreamOAuthRefreshOwnerStarNexus, refreshBefore).
 			Order("id ASC").
 			Limit(upstreamOAuthRefreshBatchSize).
 			Find(&accounts).Error
@@ -132,6 +132,7 @@ func shouldRefreshUpstreamOAuthAccount(account *model.UpstreamAccount, refreshBe
 	return account != nil &&
 		account.Platform == constant.UpstreamPlatformOpenAI &&
 		account.Type == constant.UpstreamAccountTypeOAuth &&
+		account.OAuthRefreshOwner == constant.UpstreamOAuthRefreshOwnerStarNexus &&
 		account.ExpiresAt != nil &&
 		*account.ExpiresAt <= refreshBefore &&
 		account.Status != constant.UpstreamStatusInactive &&

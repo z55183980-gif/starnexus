@@ -5008,6 +5008,12 @@
     "No pool members": "Không có thành viên trong nhóm",
     "Scheduler top K": "Top K của bộ lập lịch",
     "Select an account": "Chọn tài khoản",
-    "Use 0 to consider every eligible account in the priority tier.": "Đặt 0 để xem xét mọi tài khoản đủ điều kiện trong mức ưu tiên hiện tại."
+    "Use 0 to consider every eligible account in the priority tier.": "Đặt 0 để xem xét mọi tài khoản đủ điều kiện trong mức ưu tiên hiện tại.",
+    "External system": "Hệ thống bên ngoài",
+    "Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.": "Giữ tùy chọn này tắt khi hệ thống khác đang sử dụng cùng tài khoản OAuth để tránh xung đột refresh token.",
+    "OAuth refresh is managed externally": "Việc làm mới OAuth do hệ thống bên ngoài quản lý",
+    "OAuth refresh owner": "Chủ thể quản lý làm mới OAuth",
+    "StarNexus manages OAuth refresh": "StarNexus quản lý làm mới OAuth",
+    "Enable StarNexus OAuth refresh ownership before reauthorizing this account.": "Hãy chuyển quyền quản lý làm mới OAuth cho StarNexus trước khi ủy quyền lại tài khoản này."
   }
 }

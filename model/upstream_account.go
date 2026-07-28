@@ -88,6 +88,7 @@ type UpstreamAccount struct {
 	SessionWindowStatus     string   `json:"session_window_status" gorm:"type:varchar(32);not null"`
 	ExpiresAt               *int64   `json:"expires_at" gorm:"bigint;index"`
 	AutoPauseOnExpired      bool     `json:"auto_pause_on_expired" gorm:"not null;default:true"`
+	OAuthRefreshOwner       string   `json:"oauth_refresh_owner" gorm:"column:oauth_refresh_owner;type:varchar(16);not null;default:'external';index"`
 	SourceSystem            *string  `json:"source_system,omitempty" gorm:"type:varchar(32);uniqueIndex:idx_upstream_account_source,priority:1"`
 	SourceId                *int64   `json:"source_id,omitempty" gorm:"uniqueIndex:idx_upstream_account_source,priority:2"`
 	ImportRunId             *string  `json:"import_run_id,omitempty" gorm:"type:varchar(64);index"`
@@ -264,6 +265,7 @@ func ValidateUpstreamAccount(account *UpstreamAccount) error {
 	account.Platform = strings.ToLower(strings.TrimSpace(account.Platform))
 	account.Type = strings.ToLower(strings.TrimSpace(account.Type))
 	account.Status = strings.ToLower(strings.TrimSpace(account.Status))
+	account.OAuthRefreshOwner = strings.ToLower(strings.TrimSpace(account.OAuthRefreshOwner))
 	if account.Name == "" {
 		return errors.New("account name is required")
 	}
@@ -293,6 +295,12 @@ func ValidateUpstreamAccount(account *UpstreamAccount) error {
 	}
 	if account.Status != constant.UpstreamStatusActive && account.Status != constant.UpstreamStatusInactive && account.Status != constant.UpstreamStatusError {
 		return errors.New("unsupported account status")
+	}
+	if account.OAuthRefreshOwner == "" {
+		account.OAuthRefreshOwner = constant.UpstreamOAuthRefreshOwnerExternal
+	}
+	if account.OAuthRefreshOwner != constant.UpstreamOAuthRefreshOwnerExternal && account.OAuthRefreshOwner != constant.UpstreamOAuthRefreshOwnerStarNexus {
+		return errors.New("unsupported OAuth refresh owner")
 	}
 	if strings.TrimSpace(account.Extra) == "" {
 		account.Extra = "{}"

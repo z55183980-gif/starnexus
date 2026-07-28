@@ -53,10 +53,12 @@ import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -155,6 +157,7 @@ type AccountDraft = {
   weight: string
   status: 'active' | 'inactive' | 'error'
   schedulable: boolean
+  starnexusOwnsOAuthRefresh: boolean
   poolIds: number[]
 }
 
@@ -171,6 +174,7 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
     weight: String(account?.weight ?? 1),
     status: account?.status ?? 'active',
     schedulable: account?.schedulable ?? true,
+    starnexusOwnsOAuthRefresh: account?.oauth_refresh_owner !== 'external',
     poolIds: account?.pool_ids ?? [],
   }
 }
@@ -193,11 +197,16 @@ function AccountBatchUpdateDialog({
   const [schedulable, setSchedulable] = useState<
     'unchanged' | 'true' | 'false'
   >('unchanged')
+  const [oauthRefreshOwner, setOAuthRefreshOwner] = useState<
+    'unchanged' | 'starnexus' | 'external'
+  >('unchanged')
   const [busy, setBusy] = useState(false)
   const submit = async () => {
     const patch: Partial<UpstreamAccountPayload> = {}
     if (status !== 'unchanged') patch.status = status
     if (schedulable !== 'unchanged') patch.schedulable = schedulable === 'true'
+    if (oauthRefreshOwner !== 'unchanged')
+      patch.oauth_refresh_owner = oauthRefreshOwner
     if (Object.keys(patch).length === 0)
       return toast.error(t('Select at least one field to update'))
     setBusy(true)
@@ -250,6 +259,30 @@ function AccountBatchUpdateDialog({
                 <SelectItem value='unchanged'>{t('Keep unchanged')}</SelectItem>
                 <SelectItem value='true'>{t('Enabled')}</SelectItem>
                 <SelectItem value='false'>{t('Disabled')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel>{t('OAuth refresh owner')}</FieldLabel>
+            <Select
+              value={oauthRefreshOwner}
+              onValueChange={(value) =>
+                setOAuthRefreshOwner(value as typeof oauthRefreshOwner)
+              }
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value='unchanged'>
+                    {t('Keep unchanged')}
+                  </SelectItem>
+                  <SelectItem value='starnexus'>{t('StarNexus')}</SelectItem>
+                  <SelectItem value='external'>
+                    {t('External system')}
+                  </SelectItem>
+                </SelectGroup>
               </SelectContent>
             </Select>
           </Field>
@@ -342,9 +375,20 @@ function AccountDialog({
         status: draft.status,
         schedulable: draft.schedulable,
         auto_pause_on_expired: account?.auto_pause_on_expired ?? true,
+        oauth_refresh_owner:
+          draft.type === 'oauth' && draft.starnexusOwnsOAuthRefresh
+            ? 'starnexus'
+            : 'external',
         pool_ids: draft.poolIds,
       }
       if (draft.type === 'oauth') {
+        if (draft.oauthInput.trim() && !draft.starnexusOwnsOAuthRefresh) {
+          throw new Error(
+            t(
+              'Enable StarNexus OAuth refresh ownership before reauthorizing this account.'
+            )
+          )
+        }
         if (!account && !draft.oauthInput.trim()) {
           throw new Error(t('Paste the OAuth callback URL or code'))
         }
@@ -456,40 +500,64 @@ function AccountDialog({
             </Field>
           )}
           {draft.type === 'oauth' && (
-            <Field className='sm:col-span-2'>
-              <div className='flex items-center justify-between gap-3'>
-                <FieldLabel htmlFor='oauth-result'>
-                  {t('Codex OAuth')}
-                </FieldLabel>
-                <Button
-                  type='button'
-                  variant='outline'
-                  onClick={startOAuth}
-                  disabled={busy}
-                >
-                  <HugeiconsIcon icon={Link01Icon} strokeWidth={2} />
-                  {t(
-                    account || oauthStarted
-                      ? 'Open authorization again'
-                      : 'Start authorization'
+            <>
+              <Field className='sm:col-span-2'>
+                <div className='flex items-center justify-between gap-3'>
+                  <FieldLabel htmlFor='oauth-result'>
+                    {t('Codex OAuth')}
+                  </FieldLabel>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    onClick={startOAuth}
+                    disabled={busy || !draft.starnexusOwnsOAuthRefresh}
+                  >
+                    <HugeiconsIcon icon={Link01Icon} strokeWidth={2} />
+                    {t(
+                      account || oauthStarted
+                        ? 'Open authorization again'
+                        : 'Start authorization'
+                    )}
+                  </Button>
+                </div>
+                <Textarea
+                  id='oauth-result'
+                  rows={3}
+                  value={draft.oauthInput}
+                  placeholder={t(
+                    'Paste the callback URL, authorization code, or code#state'
                   )}
-                </Button>
-              </div>
-              <Textarea
-                id='oauth-result'
-                rows={3}
-                value={draft.oauthInput}
-                placeholder={t(
-                  'Paste the callback URL, authorization code, or code#state'
-                )}
-                onChange={(event) => set('oauthInput', event.target.value)}
-              />
-              <FieldDescription>
-                {t(
-                  'The verifier is stored encrypted in the server, so authorization can complete on another instance.'
-                )}
-              </FieldDescription>
-            </Field>
+                  onChange={(event) => set('oauthInput', event.target.value)}
+                />
+                <FieldDescription>
+                  {t(
+                    'The verifier is stored encrypted in the server, so authorization can complete on another instance.'
+                  )}
+                </FieldDescription>
+              </Field>
+              <Field
+                orientation='horizontal'
+                className='items-center justify-between rounded-lg border p-3 sm:col-span-2'
+              >
+                <div className='flex flex-col gap-1'>
+                  <FieldLabel htmlFor='oauth-refresh-owner'>
+                    {t('StarNexus manages OAuth refresh')}
+                  </FieldLabel>
+                  <FieldDescription>
+                    {t(
+                      'Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.'
+                    )}
+                  </FieldDescription>
+                </div>
+                <Switch
+                  id='oauth-refresh-owner'
+                  checked={draft.starnexusOwnsOAuthRefresh}
+                  onCheckedChange={(checked) =>
+                    set('starnexusOwnsOAuthRefresh', checked)
+                  }
+                />
+              </Field>
+            </>
           )}
           <Field>
             <FieldLabel>{t('Proxy')}</FieldLabel>
@@ -1413,9 +1481,16 @@ export function AccountManagement() {
                             />
                             {account.type === 'oauth' && (
                               <IconButton
-                                label={t('Refresh credential')}
+                                label={
+                                  account.oauth_refresh_owner === 'starnexus'
+                                    ? t('Refresh credential')
+                                    : t('OAuth refresh is managed externally')
+                                }
                                 icon={RefreshIcon}
-                                disabled={busyId === account.id}
+                                disabled={
+                                  busyId === account.id ||
+                                  account.oauth_refresh_owner !== 'starnexus'
+                                }
                                 onClick={() =>
                                   runAccountAction(account, 'refresh')
                                 }

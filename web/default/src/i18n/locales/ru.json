@@ -5008,6 +5008,12 @@
     "No pool members": "В пуле нет участников",
     "Scheduler top K": "Top K планировщика",
     "Select an account": "Выберите аккаунт",
-    "Use 0 to consider every eligible account in the priority tier.": "Укажите 0, чтобы учитывать все доступные аккаунты текущего уровня приоритета."
+    "Use 0 to consider every eligible account in the priority tier.": "Укажите 0, чтобы учитывать все доступные аккаунты текущего уровня приоритета.",
+    "External system": "Внешняя система",
+    "Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.": "Оставьте этот параметр выключенным, пока другая система использует ту же учетную запись OAuth, чтобы избежать конфликтов токенов обновления.",
+    "OAuth refresh is managed externally": "Обновлением OAuth управляет внешняя система",
+    "OAuth refresh owner": "Владелец обновления OAuth",
+    "StarNexus manages OAuth refresh": "StarNexus управляет обновлением OAuth",
+    "Enable StarNexus OAuth refresh ownership before reauthorizing this account.": "Перед повторной авторизацией этой учетной записи передайте StarNexus управление обновлением OAuth."
   }
 }

@@ -16,6 +16,11 @@ const (
 )
 
 const (
+	UpstreamOAuthRefreshOwnerExternal  = "external"
+	UpstreamOAuthRefreshOwnerStarNexus = "starnexus"
+)
+
+const (
 	UpstreamStatusActive   = "active"
 	UpstreamStatusInactive = "inactive"
 	UpstreamStatusError    = "error"

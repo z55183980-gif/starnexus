@@ -42,6 +42,7 @@ type upstreamAccountRequest struct {
 	Schedulable        *bool                     `json:"schedulable"`
 	ExpiresAt          optionalNullable[int64]   `json:"expires_at"`
 	AutoPauseOnExpired *bool                     `json:"auto_pause_on_expired"`
+	OAuthRefreshOwner  *string                   `json:"oauth_refresh_owner"`
 	PoolIds            *[]int                    `json:"pool_ids"`
 }
 
@@ -688,8 +689,12 @@ func newAccountFromRequest(request upstreamAccountRequest) model.UpstreamAccount
 	account := model.UpstreamAccount{
 		Platform: constant.UpstreamPlatformOpenAI, Extra: "{}", Concurrency: 1, Priority: 50, Weight: 1,
 		Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
 	}
 	applyAccountRequest(&account, request)
+	if account.Type != constant.UpstreamAccountTypeOAuth {
+		account.OAuthRefreshOwner = constant.UpstreamOAuthRefreshOwnerExternal
+	}
 	return account
 }
 
@@ -739,6 +744,9 @@ func applyAccountRequest(account *model.UpstreamAccount, request upstreamAccount
 	}
 	if request.AutoPauseOnExpired != nil {
 		account.AutoPauseOnExpired = *request.AutoPauseOnExpired
+	}
+	if request.OAuthRefreshOwner != nil {
+		account.OAuthRefreshOwner = *request.OAuthRefreshOwner
 	}
 }
 
