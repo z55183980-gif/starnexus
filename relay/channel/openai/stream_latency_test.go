@@ -276,6 +276,61 @@ func TestOpenAIStreamFlushesCurrentFrameWithoutWaitingForNextFrame(t *testing.T)
 	require.True(t, strings.HasSuffix(body, "data: [DONE]\n\n"))
 }
 
+func TestOpenAIStreamRecordsFirstVisibleOutputInsteadOfRoleChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setStreamTestTimeout(t)
+
+	recorder := newStreamFlushRecorder()
+	c := newOpenAIStreamTestContext(recorder)
+	info := relaycommon.GenRelayInfoOpenAI(c, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"}
+	info.StartTime = time.Now().Add(-time.Second)
+	info.FirstResponseTime = info.StartTime.Add(-time.Second)
+	reader, writer := io.Pipe()
+	done := make(chan *types.NewAPIError, 1)
+	go func() {
+		_, apiErr := OaiStreamHandler(c, info, &http.Response{Body: reader})
+		done <- apiErr
+	}()
+
+	roleFrame := `{"id":"chatcmpl-upstream","object":"chat.completion.chunk","created":123,"model":"gpt-5.6-sol","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}`
+	_, err := io.WriteString(writer, "data: "+roleFrame+"\n\n")
+	require.NoError(t, err)
+	select {
+	case <-recorder.flushCh:
+	case <-time.After(time.Second):
+		t.Fatal("role chunk was not flushed")
+	}
+	require.False(t, info.HasSendResponse(), "empty role chunk must not count as visible output")
+
+	contentFrame := `{"id":"chatcmpl-upstream","object":"chat.completion.chunk","created":123,"model":"gpt-5.6-sol","choices":[{"index":0,"delta":{"content":"hello"}}]}`
+	_, err = io.WriteString(writer, "data: "+contentFrame+"\n\n")
+	require.NoError(t, err)
+	select {
+	case <-recorder.flushCh:
+	case <-time.After(time.Second):
+		t.Fatal("content chunk was not flushed")
+	}
+	require.Eventually(t, info.HasSendResponse, time.Second, time.Millisecond, "non-empty Chat content must record first visible output")
+
+	_, err = io.WriteString(writer, "data: [DONE]\n\n")
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	select {
+	case apiErr := <-done:
+		require.Nil(t, apiErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("OpenAI stream handler did not finish")
+	}
+}
+
+func TestOpenAIChatStreamDataHasVisibleOutput(t *testing.T) {
+	require.False(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"role":"assistant","content":""}}]}`))
+	require.True(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"content":"hello"}}]}`))
+	require.True(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"reasoning_content":"thinking"}}]}`))
+	require.True(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"tool","arguments":"{}"}}]}}]}`))
+}
+
 func TestShouldSendOpenAIStreamData(t *testing.T) {
 	usageOnly := `{"choices":[],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
 	usageWithContent := `{"choices":[{"delta":{"content":"x"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`

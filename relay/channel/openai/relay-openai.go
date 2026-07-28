@@ -125,7 +125,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	// 检查是否为音频模型
 	isAudioModel := strings.Contains(strings.ToLower(model), "audio")
 
-	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+	helper.StreamScannerHandlerWithOptions(c, resp, info, helper.StreamScannerOptions{
+		DisableAutoFirstResponseTime: info.RelayFormat == types.RelayFormatOpenAI,
+	}, func(data string, sr *helper.StreamResult) {
 		// Non-OpenAI output formats still need the previous frame held back because
 		// HandleFinalResponse performs their format-specific terminal conversion.
 		if info.RelayFormat != types.RelayFormatOpenAI && lastStreamData != "" {
@@ -150,6 +152,8 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 				if err := HandleStreamFormat(c, info, data, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 					common.SysLog("error handling stream format: " + err.Error())
 					sr.Error(err)
+				} else if openAIChatStreamDataHasVisibleOutput(data) {
+					info.SetFirstResponseTime()
 				}
 			}
 		}
@@ -189,6 +193,17 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
 	return usage, nil
+}
+
+func openAIChatStreamDataHasVisibleOutput(data string) bool {
+	if data == "" {
+		return false
+	}
+	var chunk dto.ChatCompletionsStreamResponse
+	if err := common.UnmarshalJsonStr(data, &chunk); err != nil {
+		return false
+	}
+	return chatStreamChunkHasVisibleOutput(&chunk)
 }
 
 func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
