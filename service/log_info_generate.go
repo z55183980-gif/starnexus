@@ -17,6 +17,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const streamTransportInfoContextKey = "stream_transport_info"
+
+func SetStreamTransportInfo(ctx *gin.Context, downstream, upstream, mode string) {
+	if ctx == nil {
+		return
+	}
+	ctx.Set(streamTransportInfoContextKey, map[string]string{
+		"downstream": downstream,
+		"upstream":   upstream,
+		"mode":       mode,
+	})
+}
+
 func attachQuotaSaturationToOther(other map[string]interface{}, clamp *common.QuotaClamp) {
 	if clamp == nil || other == nil {
 		return
@@ -106,10 +119,26 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendRequestPath(ctx, relayInfo, other)
 	appendRequestConversionChain(relayInfo, other)
 	appendFinalRequestFormat(relayInfo, other)
+	appendStreamTransportInfo(ctx, other)
 	appendBillingInfo(relayInfo, other)
 	appendParamOverrideInfo(relayInfo, other)
 	appendStreamStatus(relayInfo, other)
 	return other
+}
+
+func appendStreamTransportInfo(ctx *gin.Context, other map[string]interface{}) {
+	if ctx == nil || other == nil {
+		return
+	}
+	value, ok := ctx.Get(streamTransportInfoContextKey)
+	if !ok {
+		return
+	}
+	info, ok := value.(map[string]string)
+	if !ok || len(info) == 0 {
+		return
+	}
+	other["stream_transport"] = info
 }
 
 func appendParamOverrideInfo(relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {

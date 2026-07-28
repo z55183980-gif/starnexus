@@ -295,6 +295,14 @@ func RelayResponsesWebSocket(c *gin.Context) {
 			continue
 		}
 		turn.channel = selectedChannel
+		turn.ctx.Set("use_channel", []string{fmt.Sprintf("%d", selectedChannel.Id)})
+		upstreamTransport := "sse"
+		upstreamMode := "responses_sse_bridge"
+		if upstreamWebSocket {
+			upstreamTransport = "websocket"
+			upstreamMode = "responses_websocket_v2"
+		}
+		service.SetStreamTransportInfo(turn.ctx, "websocket", upstreamTransport, upstreamMode)
 		if !upstreamWebSocket {
 			if !session.activateSSETurn(turn) {
 				turn.finish(false)
@@ -324,6 +332,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		if upstream == nil {
 			upstreamConn, resp, dialErr := channel.DoResponsesWssRequest(adaptor, turn.ctx, turn.info)
 			if dialErr != nil {
+				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, dialErr)
 				turn.finish(false)
 				status := http.StatusBadGateway
 				if resp != nil {
@@ -345,8 +354,10 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		}
 
 		if !session.activateTurn(upstream, turn) {
+			err := errors.New("upstream Responses WebSocket disconnected before request dispatch")
+			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
 			turn.finish(false)
-			session.sendTurnFailure(turn, types.NewErrorWithStatusCode(errors.New("upstream Responses WebSocket disconnected before request dispatch"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+			session.sendTurnFailure(turn, types.NewErrorWithStatusCode(err, types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
 			continue
 		}
 		// From this point the request may be observed by the upstream even when
@@ -472,6 +483,7 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		return nil, nil, nil, types.NewError(err, types.ErrorCodeGenRelayInfoFailed, types.ErrOptionWithSkipRetry())
 	}
 	relayInfo.IsStream = true
+	relayInfo.StreamStatus = relaycommon.NewStreamStatus()
 	turnCtx.Set(string(appconstant.ContextKeyIsStream), true)
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
@@ -635,10 +647,13 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 			}
 		}
 		if finished != nil {
-			finished.finish(successful)
 			if successful && finished.channel != nil {
-				service.RecordChannelAffinity(s.baseCtx, finished.channel.Id)
+				finished.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+				service.RecordChannelAffinity(finished.ctx, finished.channel.Id)
+			} else {
+				finished.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, errors.New("upstream Responses WebSocket returned a terminal failure"))
 			}
+			finished.finish(successful)
 			s.activeTurn = nil
 		}
 		s.mu.Unlock()
@@ -836,11 +851,13 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn, req
 			terminal = true
 			finished = true
 			successful = turn.accumulator.Successful()
-			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
-			turn.finish(successful)
 			if successful && turn.channel != nil {
-				service.RecordChannelAffinity(s.baseCtx, turn.channel.Id)
+				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+				service.RecordChannelAffinity(turn.ctx, turn.channel.Id)
+			} else {
+				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, errors.New("upstream Responses SSE returned a terminal failure"))
 			}
+			turn.finish(successful)
 			s.activeTurn = nil
 		}
 		s.mu.Unlock()
@@ -956,6 +973,7 @@ func (s *responsesWebSocketSession) handleUpstreamFailure(upstream *responsesWSU
 	} else if recoverable && turn.replayEnabled && turn.requestDispatched && turn.upstreamEvent {
 		logger.LogWarn(s.baseCtx, "responses websocket replay skipped because the upstream request was already acknowledged or delivered")
 	}
+	turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
 	turn.finish(false)
 	logger.LogWarn(s.baseCtx, "responses websocket upstream turn failed without closing downstream websocket")
 	s.sendTurnFailure(turn, types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses WebSocket disconnected: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
@@ -1141,6 +1159,7 @@ func (s *responsesWebSocketSession) close() {
 		s.upstream = nil
 		s.mu.Unlock()
 		if turn != nil {
+			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, errors.New("downstream Responses WebSocket closed"))
 			turn.finish(false)
 		}
 		if upstream != nil {
