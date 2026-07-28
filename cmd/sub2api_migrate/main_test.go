@@ -183,3 +183,14 @@ func TestValidateSourceProxyRejectsSilentProtocolFallbacks(t *testing.T) {
 	require.ErrorContains(t, validateSourceProxy(sourceProxy{Protocol: "http", FallbackMode: "proxy"}), "backup_proxy_id")
 	require.NoError(t, validateSourceProxy(sourceProxy{Protocol: "socks5h", FallbackMode: "direct"}))
 }
+
+func TestNormalizeSourceAccountCredentialsMapsLegacyChatGPTAccountID(t *testing.T) {
+	legacy := map[string]any{"access_token": "token", "chatgpt_account_id": "acct-legacy"}
+	normalized := normalizeSourceAccountCredentials(constant.UpstreamAccountTypeOAuth, legacy)
+	require.Equal(t, "acct-legacy", normalized["account_id"])
+	require.NotContains(t, legacy, "account_id")
+
+	current := map[string]any{"account_id": "acct-current", "chatgpt_account_id": "acct-legacy"}
+	normalized = normalizeSourceAccountCredentials(constant.UpstreamAccountTypeOAuth, current)
+	require.Equal(t, "acct-current", normalized["account_id"])
+}

@@ -551,6 +551,7 @@ func upsertAccount(db *gorm.DB, source sourceAccount, proxyMap map[int64]int, ru
 	if accountType == "" {
 		return nil, false, fmt.Errorf("unsupported account type %q", source.Type)
 	}
+	credentials = normalizeSourceAccountCredentials(accountType, credentials)
 	var current model.UpstreamAccount
 	err := db.Where("source_system = ? AND source_id = ?", sourceSystemSub2API, source.ID).First(&current).Error
 	created := errors.Is(err, gorm.ErrRecordNotFound)
@@ -684,6 +685,7 @@ func verifyImportedAccount(db *gorm.DB, source sourceAccount, account *model.Ups
 	if err := common.Unmarshal(source.Credentials, &expectedCredentials); err != nil {
 		return errors.New("source credentials are invalid JSON")
 	}
+	expectedCredentials = normalizeSourceAccountCredentials(mapAccountType(source.Type), expectedCredentials)
 	if !reflect.DeepEqual(credentials, expectedCredentials) {
 		return errors.New("credential mismatch")
 	}
@@ -946,6 +948,31 @@ func mapAccountType(value string) string {
 	default:
 		return ""
 	}
+}
+
+func normalizeSourceAccountCredentials(accountType string, credentials map[string]any) map[string]any {
+	normalized := make(map[string]any, len(credentials)+1)
+	for key, value := range credentials {
+		normalized[key] = value
+	}
+	if accountType != constant.UpstreamAccountTypeOAuth || credentialString(normalized["account_id"]) != "" {
+		return normalized
+	}
+	if accountID := credentialString(normalized["chatgpt_account_id"]); accountID != "" {
+		normalized["account_id"] = accountID
+	}
+	return normalized
+}
+
+func credentialString(value any) string {
+	if value == nil {
+		return ""
+	}
+	text, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(text)
 }
 
 func mapActiveStatus(value string) string {
