@@ -21,7 +21,6 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1294,14 +1293,6 @@ export function AccountManagement() {
         )}
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>
-        <Alert className='mb-4'>
-          <AlertTitle>{t('Channel integration')}</AlertTitle>
-          <AlertDescription>
-            {t(
-              'Add accounts to a pool here, then select Local account pool as the credential source in an OpenAI or Codex channel. The account itself is not a channel.'
-            )}
-          </AlertDescription>
-        </Alert>
         <Tabs defaultValue='accounts'>
           <TabsList>
             <TabsTrigger value='accounts'>{t('Accounts')}</TabsTrigger>
