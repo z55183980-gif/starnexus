@@ -106,12 +106,12 @@ const channelFormBaseSchema = z.object({
 export const channelFormSchema = channelFormBaseSchema.superRefine(
   (data, ctx) => {
     if (data.credential_source === 'local_account_pool') {
-      if (data.type !== 1 && data.type !== 57) {
+      if (data.type !== 1 && data.type !== 14) {
         ctx.addIssue({
           code: 'custom',
           path: ['credential_source'],
           message:
-            'Local account pools currently support only OpenAI and Codex channels',
+            'Local account pools use the OpenAI or Anthropic channel type',
         })
       }
       if (!data.upstream_account_pool_id) {
@@ -216,7 +216,7 @@ export function getChannelCreateDefaultValues(
   if (mode === 'local') {
     return {
       ...CHANNEL_FORM_DEFAULT_VALUES,
-      type: 57,
+      type: 1,
       credential_source: 'local_account_pool',
       upstream_account_pool_id: null,
       multi_key_mode: 'single',
@@ -338,7 +338,12 @@ export function transformChannelToFormDefaults(
 
   return {
     name: channel.name || '',
-    type: channel.type,
+    type:
+      channel.credential_source === 'local_account_pool'
+        ? channel.type === 14
+          ? 14
+          : 1
+        : channel.type,
     base_url: channel.base_url || '',
     key: '', // Never populate key from backend for security
     credential_source:
@@ -552,7 +557,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
 
   const channel: Partial<Channel> = {
     name: formData.name,
-    type: formData.type,
+    type: useAccountPool ? (formData.type === 14 ? 14 : 1) : formData.type,
     base_url: formData.base_url || null,
     key: useAccountPool ? '' : formData.key,
     credential_source: useAccountPool ? 'local_account_pool' : 'channel_key',
@@ -602,10 +607,11 @@ export function transformFormDataToUpdatePayload(
   formData: ChannelFormValues,
   channelId: number
 ): Partial<Channel> {
+  const useAccountPool = formData.credential_source === 'local_account_pool'
   const payload: Partial<Channel> = {
     id: channelId,
     name: formData.name,
-    type: formData.type,
+    type: useAccountPool ? (formData.type === 14 ? 14 : 1) : formData.type,
     credential_source: formData.credential_source,
     upstream_account_pool_id:
       formData.credential_source === 'local_account_pool'

@@ -25,7 +25,10 @@ func TestImportSnapshotIsIdempotentAndRollbackSafe(t *testing.T) {
 	require.NoError(t, source.AutoMigrate(&sourceAccount{}, &sourceProxy{}, &sourceGroup{}, &sourceAccountGroup{}))
 	require.NoError(t, source.Create(&sourceProxy{ID: 11, Name: "proxy", Protocol: "http", Host: "127.0.0.1", Port: 8080, Status: "active", FallbackMode: "none", ExpiryWarnDays: 7}).Error)
 	require.NoError(t, source.Create(&sourceProxy{ID: 12, Name: "unused", Protocol: "http", Host: "127.0.0.2", Port: 8081, Status: "active", FallbackMode: "none", ExpiryWarnDays: 7}).Error)
-	require.NoError(t, source.Create(&sourceGroup{ID: 21, Name: "openai", Platform: "openai", Status: "active"}).Error)
+	require.NoError(t, source.Create(&sourceGroup{
+		ID: 21, Name: "openai", Platform: "openai", Status: "active",
+		ModelRoutingEnabled: true, ModelRouting: []byte(`{"gpt-5.*":[31]}`),
+	}).Error)
 	require.NoError(t, source.Create(&sourceGroup{ID: 22, Name: "unused-openai", Platform: "openai", Status: "active"}).Error)
 	require.NoError(t, source.Create(&sourceAccount{
 		ID: 31, Name: "api account", Platform: "openai", Type: "api_key",
@@ -108,6 +111,10 @@ func TestImportSnapshotIsIdempotentAndRollbackSafe(t *testing.T) {
 	require.NoError(t, destination.Where("source_system = ?", sourceSystemSub2API).First(&account).Error)
 	require.EqualValues(t, 1, account.CredentialVersion)
 	require.Equal(t, constant.UpstreamOAuthRefreshOwnerExternal, account.OAuthRefreshOwner)
+	scheduler, err := model.ParseUpstreamAccountSchedulerConfig(importedPool.SchedulerConfig)
+	require.NoError(t, err)
+	require.Equal(t, "destination", scheduler.ModelRoutingIdSpace)
+	require.Equal(t, []int64{int64(account.Id)}, scheduler.RoutingAccountIds("gpt-5.6-sol"))
 
 	verified, err := verifySnapshot(destination, snapshot, "test-run")
 	require.NoError(t, err)

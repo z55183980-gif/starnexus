@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,10 +19,15 @@ import (
 func TestUpstreamAPIKeyAccountProbeUsesStoredCredential(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	authorization := make(chan string, 1)
+	requestBody := make(chan string, 1)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorization <- r.Header.Get("Authorization")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":[]}`))
+		body, _ := io.ReadAll(r.Body)
+		requestBody <- string(body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_probe\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"STARNEXUS_PROBE_OK\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{}}\n\ndata: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
 
@@ -41,7 +47,10 @@ func TestUpstreamAPIKeyAccountProbeUsesStoredCredential(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Equal(t, http.StatusOK, result.StatusCode)
+	require.Positive(t, result.FirstOutputLatencyMs)
+	require.Equal(t, "http_sse_responses", result.Protocol)
 	require.Equal(t, "Bearer probe-secret", <-authorization)
+	require.Greater(t, len(<-requestBody), 2000)
 
 	var stored model.UpstreamAccount
 	require.NoError(t, model.DB.First(&stored, input.Account.Id).Error)

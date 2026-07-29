@@ -13,11 +13,12 @@ import (
 )
 
 type routingNodeRequest struct {
-	Key     string `json:"key"`
-	Name    string `json:"name"`
-	Origin  string `json:"origin"`
-	Enabled bool   `json:"enabled"`
-	Sort    int    `json:"sort"`
+	Key            string `json:"key"`
+	Name           string `json:"name"`
+	Origin         string `json:"origin"`
+	Enabled        bool   `json:"enabled"`
+	Sort           int    `json:"sort"`
+	MonitorEnabled bool   `json:"monitor_enabled"`
 }
 
 func GetRoutingNodes(c *gin.Context) {
@@ -71,7 +72,14 @@ func CreateRoutingNode(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	node := &model.RoutingNode{Key: key, Name: input.Name, Origin: origin, Enabled: input.Enabled, Sort: input.Sort}
+	node := &model.RoutingNode{
+		Key:            key,
+		Name:           input.Name,
+		Origin:         origin,
+		Enabled:        input.Enabled,
+		Sort:           input.Sort,
+		MonitorEnabled: input.MonitorEnabled,
+	}
 	if err := model.CreateRoutingNode(node); err != nil {
 		common.ApiError(c, err)
 		return
@@ -117,6 +125,7 @@ func UpdateRoutingNode(c *gin.Context) {
 	current.Origin = origin
 	current.Enabled = input.Enabled
 	current.Sort = input.Sort
+	current.MonitorEnabled = input.MonitorEnabled
 	if err := model.UpdateRoutingNode(current); err != nil {
 		common.ApiError(c, err)
 		return

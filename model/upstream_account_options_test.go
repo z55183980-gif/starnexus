@@ -1,0 +1,61 @@
+package model
+
+import (
+	"testing"
+
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/stretchr/testify/require"
+)
+
+func TestValidateUpstreamAccountOptions(t *testing.T) {
+	account := &UpstreamAccount{
+		Platform: constant.UpstreamPlatformOpenAI,
+		Type:     constant.UpstreamAccountTypeAPIKey,
+		Extra: `{
+			"openai_apikey_responses_websockets_v2_mode":"ctx_pool",
+			"openai_compact_mode":"force_on",
+			"compact_model_mapping":{"gpt-5.*":"gpt-5.4"},
+			"openai_capabilities":["chat_completions"]
+		}`,
+	}
+	require.NoError(t, ValidateUpstreamAccountOptions(account))
+
+	options, err := ParseUpstreamAccountOptions(account.Extra)
+	require.NoError(t, err)
+	require.Equal(t, UpstreamOpenAIWSModeContextPool, options.OpenAIWSMode(account.Type))
+	require.True(t, options.AllowsOpenAICompact())
+	require.True(t, options.SupportsOpenAIEndpoint("/v1/responses"))
+	require.False(t, options.SupportsOpenAIEndpoint("/v1/embeddings"))
+}
+
+func TestValidateUpstreamAccountOptionsAllowsHTTPBridge(t *testing.T) {
+	account := &UpstreamAccount{
+		Platform: constant.UpstreamPlatformOpenAI,
+		Type:     constant.UpstreamAccountTypeOAuth,
+		Extra:    `{"openai_oauth_responses_websockets_v2_mode":"http_bridge"}`,
+	}
+	require.NoError(t, ValidateUpstreamAccountOptions(account))
+	options, err := ParseUpstreamAccountOptions(account.Extra)
+	require.NoError(t, err)
+	require.Equal(t, UpstreamOpenAIWSModeHTTPBridge, options.OpenAIWSMode(account.Type))
+}
+
+func TestValidateUpstreamAccountOptionsRejectsInvalidCombinations(t *testing.T) {
+	tests := []struct {
+		name  string
+		type_ string
+		extra string
+	}{
+		{name: "codex app server without restriction", type_: constant.UpstreamAccountTypeOAuth, extra: `{"codex_cli_only_allow_app_server":true}`},
+		{name: "codex restriction on API key", type_: constant.UpstreamAccountTypeAPIKey, extra: `{"codex_cli_only":true}`},
+		{name: "invalid websocket mode", type_: constant.UpstreamAccountTypeOAuth, extra: `{"openai_oauth_responses_websockets_v2_mode":"shared"}`},
+		{name: "invalid compact mapping", type_: constant.UpstreamAccountTypeOAuth, extra: `{"compact_model_mapping":{"":"gpt-5.4"}}`},
+		{name: "API key websocket mode on OAuth", type_: constant.UpstreamAccountTypeOAuth, extra: `{"openai_apikey_responses_websockets_v2_mode":"off"}`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			account := &UpstreamAccount{Platform: constant.UpstreamPlatformOpenAI, Type: test.type_, Extra: test.extra}
+			require.Error(t, ValidateUpstreamAccountOptions(account))
+		})
+	}
+}

@@ -36,6 +36,7 @@ const (
 type ChannelOtherSettings struct {
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
 	ResponsesWebSocketV2Enabled           bool                  `json:"responses_websocket_v2_enabled,omitempty"`
+	ResponsesWebSocketV2Mode              string                `json:"responses_websocket_v2_mode,omitempty"`
 	ResponsesWebSocketV2ReplayEnabled     bool                  `json:"responses_websocket_v2_replay_enabled,omitempty"`
 	AlphaSearchEnabled                    bool                  `json:"alpha_search_enabled,omitempty"` // 是否允许 OpenAI 兼容渠道处理 /v1/alpha/search（默认关闭）
 	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"`      // "json" or "api_key"

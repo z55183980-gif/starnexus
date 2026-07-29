@@ -446,13 +446,8 @@ export function ChannelMutateDrawer({
 
   const compatibleAccountPools = useMemo(() => {
     const pools = upstreamPoolsData?.data ?? []
-    return pools.filter((pool) => {
-      if (pool.status !== 'active') return false
-      if (currentType === 57) return pool.credential_type !== 'apikey'
-      if (currentType === 1) return pool.credential_type !== 'oauth'
-      return false
-    })
-  }, [currentType, upstreamPoolsData?.data])
+    return pools.filter((pool) => pool.status === 'active')
+  }, [upstreamPoolsData?.data])
 
   useEffect(() => {
     if (!isLocalChannel || !selectedAccountPoolId || !upstreamPoolsData?.data) {
@@ -473,19 +468,24 @@ export function ChannelMutateDrawer({
 
   useEffect(() => {
     if (credentialSource !== 'local_account_pool') return
-    if (currentType !== 1 && currentType !== 57) {
-      if (isLocalChannel) {
-        form.setValue('type', 57)
-      } else {
-        form.setValue('credential_source', 'channel_key')
-        form.setValue('upstream_account_pool_id', null)
-      }
-      return
+    const selectedPool = compatibleAccountPools.find(
+      (pool) => pool.id === selectedAccountPoolId
+    )
+    const expectedType = selectedPool?.platform === 'anthropic' ? 14 : 1
+    if (isLocalChannel && currentType !== expectedType) {
+      form.setValue('type', expectedType)
     }
     form.setValue('multi_key_mode', 'single')
     form.setValue('responses_websocket_v2_enabled', false)
     form.setValue('responses_websocket_v2_replay_enabled', false)
-  }, [credentialSource, currentType, form, isLocalChannel])
+  }, [
+    compatibleAccountPools,
+    credentialSource,
+    currentType,
+    form,
+    isLocalChannel,
+    selectedAccountPoolId,
+  ])
 
   // Get all models list
   const allModelsList = useMemo(
@@ -529,18 +529,14 @@ export function ChannelMutateDrawer({
 
   const currentTypeLabel = useMemo(
     () =>
-      CHANNEL_TYPE_OPTIONS.find((option) => option.value === currentType)
-        ?.label || `#${currentType}`,
-    [currentType]
+      CHANNEL_TYPE_OPTIONS.find(
+        (option) => option.value === (isLocalChannel ? 1 : currentType)
+      )?.label || `#${currentType}`,
+    [currentType, isLocalChannel]
   )
 
   const channelTypeOptions = useMemo(() => {
-    const sourceOptions = isLocalChannel
-      ? CHANNEL_TYPE_OPTIONS.filter(
-          (option) => option.value === 1 || option.value === 57
-        )
-      : CHANNEL_TYPE_OPTIONS
-    const options = sourceOptions.map((option) => ({
+    const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
       value: String(option.value),
       label: t(option.label),
       icon: getLobeIcon(`${getChannelTypeIcon(option.value)}.Color`, 16),
@@ -553,7 +549,7 @@ export function ChannelMutateDrawer({
       })
     }
     return options
-  }, [currentType, isLocalChannel, t])
+  }, [currentType, t])
 
   // Extract redirect models from model_mapping (target values)
   const redirectModelList = useMemo(
@@ -1237,32 +1233,44 @@ export function ChannelMutateDrawer({
                     )}
                   />
 
-                  <FormField
-                    control={form.control}
-                    name='type'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Type *')}</FormLabel>
-                        <FormControl>
-                          <Combobox
-                            options={channelTypeOptions}
-                            value={String(field.value)}
-                            onValueChange={(value) => {
-                              const nextType = Number(value)
-                              if (Number.isInteger(nextType) && nextType > 0) {
-                                field.onChange(nextType)
-                              }
-                            }}
-                            placeholder={t('Select channel type')}
-                            searchPlaceholder={t('Search channel type...')}
-                            emptyText={t('No channel type found.')}
-                            allowCustomValue={!isLocalChannel}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {isLocalChannel ? (
+                    <FormItem>
+                      <FormLabel>{t('Type *')}</FormLabel>
+                      <FormControl>
+                        <Input value={t('OpenAI')} disabled />
+                      </FormControl>
+                    </FormItem>
+                  ) : (
+                    <FormField
+                      control={form.control}
+                      name='type'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t('Type *')}</FormLabel>
+                          <FormControl>
+                            <Combobox
+                              options={channelTypeOptions}
+                              value={String(field.value)}
+                              onValueChange={(value) => {
+                                const nextType = Number(value)
+                                if (
+                                  Number.isInteger(nextType) &&
+                                  nextType > 0
+                                ) {
+                                  field.onChange(nextType)
+                                }
+                              }}
+                              placeholder={t('Select channel type')}
+                              searchPlaceholder={t('Search channel type...')}
+                              emptyText={t('No channel type found.')}
+                              allowCustomValue={!isLocalChannel}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                 </div>
 
                 <FormField
@@ -1360,7 +1368,8 @@ export function ChannelMutateDrawer({
                                   key={pool.id}
                                   value={String(pool.id)}
                                 >
-                                  {pool.name} ({pool.account_count})
+                                  {pool.name} ({pool.platform},{' '}
+                                  {pool.account_count})
                                 </SelectItem>
                               ))}
                             </SelectGroup>
@@ -1379,13 +1388,6 @@ export function ChannelMutateDrawer({
                       </FormItem>
                     )}
                   />
-                  <Alert>
-                    <AlertDescription>
-                      {t(
-                        'Codex to StarNexus can still use WebSocket. StarNexus uses HTTP/SSE for this upstream account pool, so upstream reconnects do not close the client WebSocket session.'
-                      )}
-                    </AlertDescription>
-                  </Alert>
                 </div>
               )}
 

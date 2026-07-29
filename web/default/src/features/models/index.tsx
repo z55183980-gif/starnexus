@@ -47,7 +47,7 @@ const SECTION_META: Record<
   { titleKey: string; descriptionKey: string }
 > = {
   metadata: {
-    titleKey: 'Metadata',
+    titleKey: 'Model Management',
     descriptionKey: 'Manage model metadata and configuration',
   },
   deployments: {

@@ -76,6 +76,13 @@ func TestAttachNodeNameToLogOther(t *testing.T) {
 	require.Equal(t, []int{42}, adminInfo["use_channel"])
 }
 
+func TestResolveUseTimeMilliseconds(t *testing.T) {
+	precise := int64(1234)
+	require.Equal(t, int64(1234), *resolveUseTimeMilliseconds(1, &precise))
+	require.Equal(t, int64(2000), *resolveUseTimeMilliseconds(2, nil))
+	require.Nil(t, resolveUseTimeMilliseconds(0, nil))
+}
+
 func TestGetAgentUserLogsScopesToAgentAndInvitees(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

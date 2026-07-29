@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	openairelay "github.com/QuantumNous/new-api/relay/channel/openai"
@@ -161,6 +162,43 @@ func TestSupportsResponsesWebSocketChannel(t *testing.T) {
 	}))
 }
 
+func TestResponsesWSUpstreamMode(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	channel := &model.Channel{Type: constant.ChannelTypeCodex, OtherSettings: `{"responses_websocket_v2_enabled":true}`}
+
+	require.Equal(t, model.UpstreamOpenAIWSModeContextPool, responsesWSUpstreamMode(ctx, channel))
+	require.True(t, responsesWSModeUsesUpstreamWebSocket(model.UpstreamOpenAIWSModeContextPool))
+	require.True(t, responsesWSModeUsesUpstreamWebSocket(model.UpstreamOpenAIWSModePassthrough))
+	require.False(t, responsesWSModeUsesUpstreamWebSocket(model.UpstreamOpenAIWSModeHTTPBridge))
+	require.False(t, responsesWSModeUsesUpstreamWebSocket(model.UpstreamOpenAIWSModeOff))
+
+	common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{
+		ResponsesWebSocketV2Enabled: true,
+		ResponsesWebSocketV2Mode:    model.UpstreamOpenAIWSModeHTTPBridge,
+	})
+	require.Equal(t, model.UpstreamOpenAIWSModeHTTPBridge, responsesWSUpstreamMode(ctx, channel))
+}
+
+func TestResponsesWSUpstreamIdentityChangesWithLocalAccount(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	channel := &model.Channel{Id: 42, Type: constant.ChannelTypeCodex}
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	common.SetContextKey(ctx, constant.ContextKeyChannelBaseUrl, "https://chatgpt.com")
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "credential-a")
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountId, 10)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountLeaseId, "lease-a")
+	first := responsesWSUpstreamIdentity(ctx, channel)
+
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountId, 11)
+	second := responsesWSUpstreamIdentity(ctx, channel)
+	require.NotEmpty(t, first)
+	require.NotEqual(t, first, second)
+}
+
 func TestResponsesWSTurnReplaySnapshotSurvivesFinish(t *testing.T) {
 	t.Parallel()
 
@@ -271,8 +309,7 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	}
 	go session.readUpstream(upstream)
 
-	// Transport and lifecycle events are client-visible but do not contain the
-	// first generated output, so they must not start TTFT.
+	// Transport-only events must not start first-response timing.
 	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"responsesapi.websocket_timing"}`)))
 	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
 	messageType, data, err := clientPeer.ReadMessage()
@@ -291,8 +328,9 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_1"}}`, string(data))
 	session.mu.Lock()
 	hasFirstResponse = info.HasSendResponse()
+	firstResponseTime := info.FirstResponseTime
 	session.mu.Unlock()
-	require.False(t, hasFirstResponse)
+	require.True(t, hasFirstResponse)
 
 	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_text.delta","delta":"hello"}`)))
 	messageType, data, err = clientPeer.ReadMessage()
@@ -301,8 +339,10 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	require.JSONEq(t, `{"type":"response.output_text.delta","delta":"hello"}`, string(data))
 	session.mu.Lock()
 	hasFirstResponse = info.HasSendResponse()
+	unchangedFirstResponseTime := info.FirstResponseTime
 	session.mu.Unlock()
 	require.True(t, hasFirstResponse)
+	require.Equal(t, firstResponseTime, unchangedFirstResponseTime, "later output must not replace response.created timing")
 
 	session.mu.Lock()
 	session.activeTurn = nil

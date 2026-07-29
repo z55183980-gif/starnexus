@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -64,6 +65,10 @@ func ModelMappedHelper(c *gin.Context, info *common.RelayInfo, request dto.Reque
 		if info.IsModelMapped {
 			info.UpstreamModelName = currentModel
 		}
+	}
+	if accountMappedModel := strings.TrimSpace(c.GetString(string(constant.ContextKeyUpstreamAccountMappedModel))); accountMappedModel != "" {
+		info.UpstreamModelName = accountMappedModel
+		info.IsModelMapped = true
 	}
 
 	if isResponsesCompact {

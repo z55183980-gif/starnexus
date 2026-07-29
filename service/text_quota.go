@@ -23,46 +23,54 @@ import (
 )
 
 type textQuotaSummary struct {
-	PromptTokens             int
-	CompletionTokens         int
-	TotalTokens              int
-	RawPromptTokens          int
-	RawCompletionTokens      int
-	RawTotalTokens           int
-	CacheTokens              int
-	CacheCreationTokens      int
-	CacheCreationTokens5m    int
-	CacheCreationTokens1h    int
-	ImageTokens              int
-	AudioTokens              int
-	ModelName                string
-	TokenName                string
-	UseTimeSeconds           int64
-	CompletionRatio          float64
-	CacheRatio               float64
-	ImageRatio               float64
-	ModelRatio               float64
-	GroupRatio               float64
-	ModelPrice               float64
-	CacheCreationRatio       float64
-	CacheCreationRatio5m     float64
-	CacheCreationRatio1h     float64
-	Quota                    int
-	IsClaudeUsageSemantic    bool
-	UsageSemantic            string
-	WebSearchPrice           float64
-	WebSearchCallCount       int
-	ClaudeWebSearchPrice     float64
-	ClaudeWebSearchCallCount int
-	FileSearchPrice          float64
-	FileSearchCallCount      int
-	AudioInputPrice          float64
-	ImageGenerationCallPrice float64
-	ToolCallSurchargeQuota   decimal.Decimal
-	TokenPricingEnabled      bool
-	TokenPricingInputRatio   float64
-	TokenPricingOutputRatio  float64
+	PromptTokens              int
+	CompletionTokens          int
+	TotalTokens               int
+	RawPromptTokens           int
+	RawCompletionTokens       int
+	RawTotalTokens            int
+	CacheTokens               int
+	CacheCreationTokens       int
+	CacheCreationTokens5m     int
+	CacheCreationTokens1h     int
+	ImageTokens               int
+	AudioTokens               int
+	ModelName                 string
+	TokenName                 string
+	UseTimeSeconds            int64
+	UseTimeMilliseconds       int64
+	CompletionRatio           float64
+	CacheRatio                float64
+	ImageRatio                float64
+	ModelRatio                float64
+	GroupRatio                float64
+	ModelPrice                float64
+	CacheCreationRatio        float64
+	CacheCreationRatio5m      float64
+	CacheCreationRatio1h      float64
+	Quota                     int
+	IsClaudeUsageSemantic     bool
+	UsageSemantic             string
+	WebSearchPrice            float64
+	WebSearchCallCount        int
+	ClaudeWebSearchPrice      float64
+	ClaudeWebSearchCallCount  int
+	FileSearchPrice           float64
+	FileSearchCallCount       int
+	AudioInputPrice           float64
+	ImageGenerationCallPrice  float64
+	ToolCallSurchargeQuota    decimal.Decimal
+	TokenPricingEnabled       bool
+	TokenPricingInputRatio    float64
+	TokenPricingOutputRatio   float64
+	LongContextBillingApplied bool
 }
+
+const (
+	openAIAccountLongContextInputThreshold   = 272000
+	openAIAccountLongContextInputMultiplier  = 2.0
+	openAIAccountLongContextOutputMultiplier = 1.5
+)
 
 func (s *textQuotaSummary) hasBillableUsage() bool {
 	return s.RawTotalTokens > 0 || !s.ToolCallSurchargeQuota.IsZero()
@@ -219,10 +227,15 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 }
 
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
+	elapsed := time.Since(relayInfo.StartTime)
+	if elapsed < 0 {
+		elapsed = 0
+	}
 	summary := textQuotaSummary{
 		ModelName:            relayInfo.OriginModelName,
 		TokenName:            ctx.GetString("token_name"),
-		UseTimeSeconds:       time.Now().Unix() - relayInfo.StartTime.Unix(),
+		UseTimeSeconds:       int64(elapsed / time.Second),
+		UseTimeMilliseconds:  elapsed.Milliseconds(),
 		CompletionRatio:      relayInfo.PriceData.CompletionRatio,
 		CacheRatio:           relayInfo.PriceData.CacheRatio,
 		ImageRatio:           relayInfo.PriceData.ImageRatio,
@@ -353,6 +366,12 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 
 		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
+		if ctx.GetBool(string(constant.ContextKeyUpstreamOpenAILongContextBilling)) &&
+			summary.RawPromptTokens > openAIAccountLongContextInputThreshold {
+			promptQuota = promptQuota.Mul(decimal.NewFromFloat(openAIAccountLongContextInputMultiplier))
+			completionQuota = completionQuota.Mul(decimal.NewFromFloat(openAIAccountLongContextOutputMultiplier))
+			summary.LongContextBillingApplied = true
+		}
 		quotaCalculateDecimal := promptQuota.Add(completionQuota).Mul(ratio)
 		quotaCalculateDecimal = quotaCalculateDecimal.Add(audioInputQuota)
 		quotaCalculateDecimal = relayInfo.PriceData.ApplyOtherRatiosToDecimal(quotaCalculateDecimal)
@@ -549,18 +568,19 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	attachQuotaSaturation(ctx, relayInfo, other)
 
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
-		ChannelId:        relayInfo.ChannelId,
-		PromptTokens:     summary.PromptTokens,
-		CompletionTokens: summary.CompletionTokens,
-		ModelName:        logModel,
-		TokenName:        summary.TokenName,
-		Quota:            summary.Quota,
-		Content:          logContent,
-		TokenId:          relayInfo.TokenId,
-		UseTimeSeconds:   int(summary.UseTimeSeconds),
-		IsStream:         relayInfo.IsStream,
-		Group:            relayInfo.UsingGroup,
-		Other:            other,
+		ChannelId:           relayInfo.ChannelId,
+		PromptTokens:        summary.PromptTokens,
+		CompletionTokens:    summary.CompletionTokens,
+		ModelName:           logModel,
+		TokenName:           summary.TokenName,
+		Quota:               summary.Quota,
+		Content:             logContent,
+		TokenId:             relayInfo.TokenId,
+		UseTimeSeconds:      int(summary.UseTimeSeconds),
+		UseTimeMilliseconds: common.GetPointer(summary.UseTimeMilliseconds),
+		IsStream:            relayInfo.IsStream,
+		Group:               relayInfo.UsingGroup,
+		Other:               other,
 	})
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))

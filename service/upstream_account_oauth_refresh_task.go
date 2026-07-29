@@ -89,7 +89,11 @@ func runUpstreamAccountOAuthRefreshOnce() {
 	for {
 		var accounts []model.UpstreamAccount
 		err := model.DB.
-			Where("id > ? AND platform = ? AND type = ? AND oauth_refresh_owner = ? AND expires_at IS NOT NULL AND expires_at <= ?", lastId, constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth, constant.UpstreamOAuthRefreshOwnerStarNexus, refreshBefore).
+			Where("id > ? AND oauth_refresh_owner = ? AND expires_at IS NOT NULL AND expires_at <= ?", lastId, constant.UpstreamOAuthRefreshOwnerStarNexus, refreshBefore).
+			Where("(platform = ? AND type = ?) OR (platform = ? AND type IN ?)",
+				constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth,
+				constant.UpstreamPlatformAnthropic, []string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeSetupToken}).
+			Where("temp_unschedulable_reason <> ? OR temp_unschedulable_until IS NULL OR temp_unschedulable_until <= ?", "oauth_refresh_failed", now).
 			Order("id ASC").
 			Limit(upstreamOAuthRefreshBatchSize).
 			Find(&accounts).Error
@@ -130,11 +134,11 @@ func runUpstreamAccountOAuthRefreshOnce() {
 
 func shouldRefreshUpstreamOAuthAccount(account *model.UpstreamAccount, refreshBefore int64) bool {
 	return account != nil &&
-		account.Platform == constant.UpstreamPlatformOpenAI &&
-		account.Type == constant.UpstreamAccountTypeOAuth &&
+		isRefreshableUpstreamOAuthAccount(account.Platform, account.Type) &&
 		account.OAuthRefreshOwner == constant.UpstreamOAuthRefreshOwnerStarNexus &&
 		account.ExpiresAt != nil &&
 		*account.ExpiresAt <= refreshBefore &&
+		!(account.TempUnschedulableReason == "oauth_refresh_failed" && account.TempUnschedulableUntil != nil && *account.TempUnschedulableUntil > common.GetTimestamp()) &&
 		account.Status != constant.UpstreamStatusInactive &&
 		account.CredentialCiphertext != ""
 }

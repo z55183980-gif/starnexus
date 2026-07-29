@@ -10,8 +10,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Add01Icon,
+  ArrowDown01Icon,
   Delete02Icon,
   Edit02Icon,
+  FileExportIcon,
   FileImportIcon,
   Link01Icon,
   Loading03Icon,
@@ -32,7 +34,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
@@ -42,6 +44,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Field,
   FieldDescription,
@@ -57,7 +67,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -67,35 +76,46 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
+import { AccountBatchUpdateDialog } from './account-batch-update-dialog'
+import { AccountDialog } from './account-dialog'
 import {
-  completeUpstreamOAuth,
-  createUpstreamAccount,
-  createUpstreamAccountsBatch,
+  AccountCapacityCell,
+  AccountIdentityCell,
+  AccountPlatformCell,
+  AccountPoolsCell,
+  AccountSchedulingCell,
+  AccountUsageCell,
+} from './account-runtime-cells'
+import {
   createUpstreamPool,
   deleteUpstreamAccount,
   deleteUpstreamAccountsBatch,
   deleteUpstreamPool,
+  exportUpstreamAccounts,
+  importUpstreamData,
   listUpstreamAccounts,
   listUpstreamPoolMembers,
   listUpstreamPools,
   listUpstreamProxies,
+  recoverUpstreamAccount,
+  recoverUpstreamAccounts,
   refreshUpstreamOAuth,
   replaceUpstreamPoolMembers,
-  startUpstreamOAuth,
   testUpstreamAccount,
-  updateUpstreamAccount,
   updateUpstreamAccountsBatch,
   updateUpstreamPool,
 } from './api'
+import { mergeAccountImportDocuments } from './batch-import'
 import { BatchImportDialog } from './batch-import-dialog'
+import { CRSSyncDialog } from './crs-sync-dialog'
 import type {
   UpstreamAccount,
   UpstreamAccountPayload,
   UpstreamAccountPool,
   UpstreamAccountPoolMember,
   UpstreamAccountType,
+  UpstreamPlatform,
   UpstreamPoolPayload,
 } from './types'
 
@@ -114,6 +134,35 @@ function statusVariant(status: string) {
   if (status === 'active') return 'default' as const
   if (status === 'error') return 'destructive' as const
   return 'secondary' as const
+}
+
+function credentialTypeLabel(
+  platform: UpstreamPlatform,
+  type: UpstreamAccountType | 'mixed',
+  translate: (key: string) => string
+) {
+  if (type === 'mixed') return translate('Mixed')
+  if (type === 'oauth') {
+    return platform === 'anthropic'
+      ? translate('Claude OAuth')
+      : translate('Codex OAuth')
+  }
+  if (type === 'setup_token') return translate('Setup Token')
+  if (type === 'bedrock') return translate('AWS Bedrock')
+  if (type === 'service_account') return translate('Vertex AI')
+  return platform === 'anthropic'
+    ? translate('Anthropic API Key')
+    : translate('OpenAI API Key')
+}
+
+function accountStatusLabel(
+  status: UpstreamAccount['status'],
+  translate: (key: string) => string
+) {
+  if (status === 'active') return translate('Active')
+  if (status === 'inactive') return translate('Inactive')
+  if (status === 'expired') return translate('Expired')
+  return translate('Error')
 }
 
 function IconButton({
@@ -144,559 +193,10 @@ function IconButton({
   )
 }
 
-type AccountDraft = {
-  name: string
-  notes: string
-  type: UpstreamAccountType
-  apiKey: string
-  oauthInput: string
-  proxyId: string
-  concurrency: string
-  priority: string
-  weight: string
-  status: 'active' | 'inactive' | 'error'
-  schedulable: boolean
-  starnexusOwnsOAuthRefresh: boolean
-  poolIds: number[]
-}
-
-function accountDraft(account?: UpstreamAccount | null): AccountDraft {
-  return {
-    name: account?.name ?? '',
-    notes: account?.notes ?? '',
-    type: account?.type ?? 'oauth',
-    apiKey: '',
-    oauthInput: '',
-    proxyId: account?.proxy_id ? String(account.proxy_id) : '',
-    concurrency: String(account?.concurrency ?? 1),
-    priority: String(account?.priority ?? 50),
-    weight: String(account?.weight ?? 1),
-    status: account?.status ?? 'active',
-    schedulable: account?.schedulable ?? true,
-    starnexusOwnsOAuthRefresh: account?.oauth_refresh_owner !== 'external',
-    poolIds: account?.pool_ids ?? [],
-  }
-}
-
-function AccountBatchUpdateDialog({
-  open,
-  onOpenChange,
-  count,
-  onApply,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  count: number
-  onApply: (patch: Partial<UpstreamAccountPayload>) => Promise<void>
-}) {
-  const { t } = useTranslation()
-  const [status, setStatus] = useState<
-    'unchanged' | 'active' | 'inactive' | 'error'
-  >('unchanged')
-  const [schedulable, setSchedulable] = useState<
-    'unchanged' | 'true' | 'false'
-  >('unchanged')
-  const [oauthRefreshOwner, setOAuthRefreshOwner] = useState<
-    'unchanged' | 'starnexus' | 'external'
-  >('unchanged')
-  const [busy, setBusy] = useState(false)
-  const submit = async () => {
-    const patch: Partial<UpstreamAccountPayload> = {}
-    if (status !== 'unchanged') patch.status = status
-    if (schedulable !== 'unchanged') patch.schedulable = schedulable === 'true'
-    if (oauthRefreshOwner !== 'unchanged')
-      patch.oauth_refresh_owner = oauthRefreshOwner
-    if (Object.keys(patch).length === 0)
-      return toast.error(t('Select at least one field to update'))
-    setBusy(true)
-    try {
-      await onApply(patch)
-      onOpenChange(false)
-    } finally {
-      setBusy(false)
-    }
-  }
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-md'>
-        <DialogHeader>
-          <DialogTitle>{t('Batch update accounts')}</DialogTitle>
-          <DialogDescription>
-            {t('Update {{count}} selected accounts', { count })}
-          </DialogDescription>
-        </DialogHeader>
-        <FieldGroup>
-          <Field>
-            <FieldLabel>{t('Status')}</FieldLabel>
-            <Select
-              value={status}
-              onValueChange={(value) => setStatus(value as typeof status)}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='unchanged'>{t('Keep unchanged')}</SelectItem>
-                <SelectItem value='active'>{t('Active')}</SelectItem>
-                <SelectItem value='inactive'>{t('Inactive')}</SelectItem>
-                <SelectItem value='error'>{t('Error')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel>{t('Schedulable')}</FieldLabel>
-            <Select
-              value={schedulable}
-              onValueChange={(value) =>
-                setSchedulable(value as typeof schedulable)
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='unchanged'>{t('Keep unchanged')}</SelectItem>
-                <SelectItem value='true'>{t('Enabled')}</SelectItem>
-                <SelectItem value='false'>{t('Disabled')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel>{t('OAuth refresh owner')}</FieldLabel>
-            <Select
-              value={oauthRefreshOwner}
-              onValueChange={(value) =>
-                setOAuthRefreshOwner(value as typeof oauthRefreshOwner)
-              }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value='unchanged'>
-                    {t('Keep unchanged')}
-                  </SelectItem>
-                  <SelectItem value='starnexus'>{t('StarNexus')}</SelectItem>
-                  <SelectItem value='external'>
-                    {t('External system')}
-                  </SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-        </FieldGroup>
-        <DialogFooter>
-          <Button variant='outline' onClick={() => onOpenChange(false)}>
-            {t('Cancel')}
-          </Button>
-          <Button disabled={busy} onClick={submit}>
-            {busy && (
-              <HugeiconsIcon
-                icon={Loading03Icon}
-                className='animate-spin'
-                strokeWidth={2}
-              />
-            )}
-            {t('Update')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function AccountDialog({
-  open,
-  onOpenChange,
-  account,
-  pools,
-  proxies,
-  onSaved,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  account: UpstreamAccount | null
-  pools: UpstreamAccountPool[]
-  proxies: Array<{ id: number; name: string }>
-  onSaved: () => void
-}) {
-  const { t } = useTranslation()
-  const [draft, setDraft] = useState<AccountDraft>(() => accountDraft(account))
-  const [busy, setBusy] = useState(false)
-  const [oauthStarted, setOAuthStarted] = useState(false)
-
-  const reset = () => {
-    setDraft(accountDraft(account))
-    setOAuthStarted(false)
-  }
-
-  const set = <K extends keyof AccountDraft>(key: K, value: AccountDraft[K]) =>
-    setDraft((current) => ({ ...current, [key]: value }))
-
-  const startOAuth = async () => {
-    setBusy(true)
-    try {
-      const response = await startUpstreamOAuth({
-        account_id: account?.id,
-        proxy_id: draft.proxyId ? Number(draft.proxyId) : null,
-      })
-      if (!response.success || !response.data?.authorize_url) {
-        throw new Error(response.message || t('Failed to start authorization'))
-      }
-      window.open(response.data.authorize_url, '_blank', 'noopener,noreferrer')
-      setOAuthStarted(true)
-      toast.success(t('Authorization page opened'))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Request failed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const submit = async () => {
-    if (!draft.name.trim()) {
-      toast.error(t('Account name is required'))
-      return
-    }
-    setBusy(true)
-    try {
-      const payload: UpstreamAccountPayload = {
-        name: draft.name.trim(),
-        notes: draft.notes.trim(),
-        platform: 'openai',
-        type: draft.type,
-        extra: account?.extra || '{}',
-        proxy_id: draft.proxyId ? Number(draft.proxyId) : null,
-        concurrency: Math.max(1, Number(draft.concurrency) || 1),
-        priority: Number(draft.priority) || 0,
-        weight: Math.max(1, Number(draft.weight) || 1),
-        status: draft.status,
-        schedulable: draft.schedulable,
-        auto_pause_on_expired: account?.auto_pause_on_expired ?? true,
-        oauth_refresh_owner:
-          draft.type === 'oauth' && draft.starnexusOwnsOAuthRefresh
-            ? 'starnexus'
-            : 'external',
-        pool_ids: draft.poolIds,
-      }
-      if (draft.type === 'oauth') {
-        if (draft.oauthInput.trim() && !draft.starnexusOwnsOAuthRefresh) {
-          throw new Error(
-            t(
-              'Enable StarNexus OAuth refresh ownership before reauthorizing this account.'
-            )
-          )
-        }
-        if (!account && !draft.oauthInput.trim()) {
-          throw new Error(t('Paste the OAuth callback URL or code'))
-        }
-        let accountId = account?.id
-        if (draft.oauthInput.trim()) {
-          const oauthResponse = await completeUpstreamOAuth({
-            input: draft.oauthInput.trim(),
-            name: draft.name.trim(),
-            pool_ids: account ? draft.poolIds : [],
-            proxy_id: draft.proxyId ? Number(draft.proxyId) : undefined,
-          })
-          if (!oauthResponse.success || !oauthResponse.data?.id) {
-            throw new Error(oauthResponse.message || t('Save failed'))
-          }
-          accountId = oauthResponse.data.id
-        }
-        if (!accountId) throw new Error(t('Save failed'))
-        const response = await updateUpstreamAccount(accountId, payload)
-        if (!response.success)
-          throw new Error(response.message || t('Save failed'))
-      } else {
-        if (draft.type === 'apikey' && draft.apiKey.trim()) {
-          payload.credentials = { api_key: draft.apiKey.trim() }
-        }
-        if (!account && !payload.credentials) {
-          throw new Error(t('API key is required'))
-        }
-        const response = account
-          ? await updateUpstreamAccount(account.id, payload)
-          : await createUpstreamAccount(payload)
-        if (!response.success)
-          throw new Error(response.message || t('Save failed'))
-      }
-      toast.success(account ? t('Account updated') : t('Account created'))
-      onSaved()
-      onOpenChange(false)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Save failed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        onOpenChange(next)
-        if (!next) reset()
-      }}
-    >
-      <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
-        <DialogHeader>
-          <DialogTitle>
-            {account ? t('Edit account') : t('Add account')}
-          </DialogTitle>
-          <DialogDescription>
-            {t('Accounts can join multiple pools and are scheduled globally.')}
-          </DialogDescription>
-        </DialogHeader>
-        <FieldGroup className='grid gap-4 sm:grid-cols-2'>
-          <Field>
-            <FieldLabel htmlFor='account-name'>{t('Name')}</FieldLabel>
-            <Input
-              id='account-name'
-              value={draft.name}
-              onChange={(event) => set('name', event.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel>{t('Credential type')}</FieldLabel>
-            <Select
-              value={draft.type}
-              disabled={Boolean(account)}
-              onValueChange={(value) =>
-                set('type', value as UpstreamAccountType)
-              }
-            >
-              <SelectTrigger className='w-full'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='oauth'>{t('Codex OAuth')}</SelectItem>
-                <SelectItem value='apikey'>{t('OpenAI API Key')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field className='sm:col-span-2'>
-            <FieldLabel htmlFor='account-notes'>{t('Notes')}</FieldLabel>
-            <Input
-              id='account-notes'
-              value={draft.notes}
-              onChange={(event) => set('notes', event.target.value)}
-            />
-          </Field>
-          {draft.type === 'apikey' && (
-            <Field className='sm:col-span-2'>
-              <FieldLabel htmlFor='account-key'>{t('API Key')}</FieldLabel>
-              <Input
-                id='account-key'
-                type='password'
-                autoComplete='new-password'
-                value={draft.apiKey}
-                placeholder={
-                  account ? t('Leave empty to keep the current key') : ''
-                }
-                onChange={(event) => set('apiKey', event.target.value)}
-              />
-            </Field>
-          )}
-          {draft.type === 'oauth' && (
-            <>
-              <Field className='sm:col-span-2'>
-                <div className='flex items-center justify-between gap-3'>
-                  <FieldLabel htmlFor='oauth-result'>
-                    {t('Codex OAuth')}
-                  </FieldLabel>
-                  <Button
-                    type='button'
-                    variant='outline'
-                    onClick={startOAuth}
-                    disabled={busy || !draft.starnexusOwnsOAuthRefresh}
-                  >
-                    <HugeiconsIcon icon={Link01Icon} strokeWidth={2} />
-                    {t(
-                      account || oauthStarted
-                        ? 'Open authorization again'
-                        : 'Start authorization'
-                    )}
-                  </Button>
-                </div>
-                <Textarea
-                  id='oauth-result'
-                  rows={3}
-                  value={draft.oauthInput}
-                  placeholder={t(
-                    'Paste the callback URL, authorization code, or code#state'
-                  )}
-                  onChange={(event) => set('oauthInput', event.target.value)}
-                />
-                <FieldDescription>
-                  {t(
-                    'The verifier is stored encrypted in the server, so authorization can complete on another instance.'
-                  )}
-                </FieldDescription>
-              </Field>
-              <Field
-                orientation='horizontal'
-                className='items-center justify-between rounded-lg border p-3 sm:col-span-2'
-              >
-                <div className='flex flex-col gap-1'>
-                  <FieldLabel htmlFor='oauth-refresh-owner'>
-                    {t('StarNexus manages OAuth refresh')}
-                  </FieldLabel>
-                  <FieldDescription>
-                    {t(
-                      'Keep this off while another system uses the same OAuth account to avoid refresh token conflicts.'
-                    )}
-                  </FieldDescription>
-                </div>
-                <Switch
-                  id='oauth-refresh-owner'
-                  checked={draft.starnexusOwnsOAuthRefresh}
-                  onCheckedChange={(checked) =>
-                    set('starnexusOwnsOAuthRefresh', checked)
-                  }
-                />
-              </Field>
-            </>
-          )}
-          <Field>
-            <FieldLabel>{t('Proxy')}</FieldLabel>
-            <Select
-              value={draft.proxyId || 'none'}
-              onValueChange={(value) =>
-                set('proxyId', value === 'none' ? '' : String(value))
-              }
-            >
-              <SelectTrigger className='w-full'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='none'>
-                  {t('Use pool or channel proxy')}
-                </SelectItem>
-                {proxies.map((proxy) => (
-                  <SelectItem key={proxy.id} value={String(proxy.id)}>
-                    {proxy.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel>{t('Status')}</FieldLabel>
-            <Select
-              value={draft.status}
-              onValueChange={(value) =>
-                set('status', value as AccountDraft['status'])
-              }
-            >
-              <SelectTrigger className='w-full'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value='active'>{t('Active')}</SelectItem>
-                <SelectItem value='inactive'>{t('Inactive')}</SelectItem>
-                <SelectItem value='error'>{t('Error')}</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='account-concurrency'>
-              {t('Concurrency')}
-            </FieldLabel>
-            <Input
-              id='account-concurrency'
-              type='number'
-              min={1}
-              value={draft.concurrency}
-              onChange={(event) => set('concurrency', event.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='account-priority'>{t('Priority')}</FieldLabel>
-            <Input
-              id='account-priority'
-              type='number'
-              value={draft.priority}
-              onChange={(event) => set('priority', event.target.value)}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor='account-weight'>{t('Weight')}</FieldLabel>
-            <Input
-              id='account-weight'
-              type='number'
-              min={1}
-              value={draft.weight}
-              onChange={(event) => set('weight', event.target.value)}
-            />
-          </Field>
-          <Field
-            orientation='horizontal'
-            className='items-center self-end pb-2'
-          >
-            <Checkbox
-              checked={draft.schedulable}
-              onCheckedChange={(checked) =>
-                set('schedulable', checked === true)
-              }
-            />
-            <FieldLabel>{t('Schedulable')}</FieldLabel>
-          </Field>
-          <Field className='sm:col-span-2'>
-            <FieldLabel>{t('Account pools')}</FieldLabel>
-            <div className='grid gap-2 rounded-lg border p-3 sm:grid-cols-2'>
-              {pools.length === 0 ? (
-                <p className='text-muted-foreground text-sm'>
-                  {t('Create an account pool first')}
-                </p>
-              ) : (
-                pools.map((pool) => (
-                  <label
-                    key={pool.id}
-                    className='flex items-center gap-2 text-sm'
-                  >
-                    <Checkbox
-                      checked={draft.poolIds.includes(pool.id)}
-                      onCheckedChange={(checked) =>
-                        set(
-                          'poolIds',
-                          checked === true
-                            ? [...draft.poolIds, pool.id]
-                            : draft.poolIds.filter((id) => id !== pool.id)
-                        )
-                      }
-                    />
-                    <span>{pool.name}</span>
-                    <Badge variant='outline'>{pool.credential_type}</Badge>
-                  </label>
-                ))
-              )}
-            </div>
-          </Field>
-        </FieldGroup>
-        <DialogFooter>
-          <Button variant='outline' onClick={() => onOpenChange(false)}>
-            {t('Cancel')}
-          </Button>
-          <Button onClick={submit} disabled={busy}>
-            {busy && (
-              <HugeiconsIcon
-                icon={Loading03Icon}
-                className='animate-spin'
-                strokeWidth={2}
-              />
-            )}
-            {t('Save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
 type PoolDraft = {
   name: string
   description: string
+  platform: UpstreamPlatform
   credentialType: UpstreamAccountType | 'mixed'
   status: 'active' | 'inactive'
   defaultProxyId: string
@@ -732,6 +232,7 @@ function PoolDialog({
   const [draft, setDraft] = useState<PoolDraft>({
     name: pool?.name ?? '',
     description: pool?.description ?? '',
+    platform: pool?.platform ?? 'openai',
     credentialType: pool?.credential_type ?? 'mixed',
     status: pool?.status ?? 'active',
     defaultProxyId: pool?.default_proxy_id ? String(pool.default_proxy_id) : '',
@@ -757,7 +258,7 @@ function PoolDialog({
       const payload: UpstreamPoolPayload = {
         name: draft.name.trim(),
         description: draft.description.trim(),
-        platform: 'openai',
+        platform: draft.platform,
         credential_type: draft.credentialType,
         status: draft.status,
         default_proxy_id: draft.defaultProxyId
@@ -813,6 +314,30 @@ function PoolDialog({
               onChange={(event) => set('description', event.target.value)}
             />
           </Field>
+          <Field>
+            <FieldLabel>{t('Platform')}</FieldLabel>
+            <Select
+              value={draft.platform}
+              disabled={Boolean(pool)}
+              onValueChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  platform: value as UpstreamPlatform,
+                  credentialType: 'mixed',
+                }))
+              }
+            >
+              <SelectTrigger className='w-full'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value='openai'>OpenAI</SelectItem>
+                  <SelectItem value='anthropic'>Anthropic</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
           <div className='grid gap-4 sm:grid-cols-2'>
             <Field>
               <FieldLabel>{t('Credential type')}</FieldLabel>
@@ -826,9 +351,32 @@ function PoolDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='mixed'>{t('Mixed')}</SelectItem>
-                  <SelectItem value='oauth'>{t('Codex OAuth')}</SelectItem>
-                  <SelectItem value='apikey'>{t('OpenAI API Key')}</SelectItem>
+                  <SelectGroup>
+                    <SelectItem value='mixed'>{t('Mixed')}</SelectItem>
+                    <SelectItem value='oauth'>
+                      {draft.platform === 'openai'
+                        ? t('Codex OAuth')
+                        : t('Claude OAuth')}
+                    </SelectItem>
+                    {draft.platform === 'anthropic' && (
+                      <SelectItem value='setup_token'>
+                        {t('Setup Token')}
+                      </SelectItem>
+                    )}
+                    <SelectItem value='apikey'>
+                      {draft.platform === 'openai'
+                        ? t('OpenAI API Key')
+                        : t('Anthropic API Key')}
+                    </SelectItem>
+                    {draft.platform === 'anthropic' && (
+                      <>
+                        <SelectItem value='bedrock'>AWS Bedrock</SelectItem>
+                        <SelectItem value='service_account'>
+                          Vertex AI
+                        </SelectItem>
+                      </>
+                    )}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </Field>
@@ -1129,10 +677,20 @@ function PoolMembersDialog({
 export function AccountManagement() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const [activeTab, setActiveTab] = useState<'accounts' | 'pools'>('accounts')
   const [search, setSearch] = useState('')
+  const [platformFilter, setPlatformFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [schedulableFilter, setSchedulableFilter] = useState('all')
+  const [poolFilter, setPoolFilter] = useState('all')
+  const [proxyFilter, setProxyFilter] = useState('all')
   const [page, setPage] = useState(1)
   const [accountDialog, setAccountDialog] = useState(false)
   const [batchImportOpen, setBatchImportOpen] = useState(false)
+  const [crsSyncOpen, setCRSSyncOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportConfirmOpen, setExportConfirmOpen] = useState(false)
   const [batchUpdateOpen, setBatchUpdateOpen] = useState(false)
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
   const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([])
@@ -1149,14 +707,35 @@ export function AccountManagement() {
     name: string
   } | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [schedulingBusyId, setSchedulingBusyId] = useState<number | null>(null)
+  const [recoveringSelected, setRecoveringSelected] = useState(false)
 
   const accountsQuery = useQuery({
-    queryKey: [...queryKeys.accounts, search, page],
+    queryKey: [
+      ...queryKeys.accounts,
+      search,
+      page,
+      platformFilter,
+      typeFilter,
+      statusFilter,
+      schedulableFilter,
+      poolFilter,
+      proxyFilter,
+    ],
     queryFn: () =>
       listUpstreamAccounts({
         page,
         page_size: 50,
         search: search || undefined,
+        platform: platformFilter === 'all' ? undefined : platformFilter,
+        type: typeFilter === 'all' ? undefined : typeFilter,
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        schedulable:
+          schedulableFilter === 'all'
+            ? undefined
+            : schedulableFilter === 'true',
+        pool_id: poolFilter === 'all' ? undefined : Number(poolFilter),
+        proxy_id: proxyFilter === 'all' ? undefined : Number(proxyFilter),
       }),
   })
   const poolsQuery = useQuery({
@@ -1188,26 +767,92 @@ export function AccountManagement() {
 
   const runAccountAction = async (
     account: UpstreamAccount,
-    action: 'test' | 'refresh'
+    action: 'test' | 'refresh' | 'recover'
   ) => {
     setBusyId(account.id)
     try {
-      const response =
-        action === 'test'
-          ? await testUpstreamAccount(account.id)
-          : await refreshUpstreamOAuth(account.id)
-      if (!response.success)
-        throw new Error(response.message || t('Request failed'))
-      toast.success(
-        action === 'test'
-          ? t('Account test succeeded')
-          : t('Credential refreshed')
-      )
+      if (action === 'test') {
+        const response = await testUpstreamAccount(account.id)
+        if (!response.success || !response.data?.success) {
+          throw new Error(
+            response.message ||
+              t('Account test failed: {{result}}', {
+                result: response.data?.result || 'unknown',
+              })
+          )
+        }
+        toast.success(
+          t(
+            'Account test succeeded: first output {{firstOutput}} ms, total {{total}} ms',
+            {
+              firstOutput: response.data.first_output_latency_ms,
+              total: response.data.latency_ms,
+            }
+          )
+        )
+      } else if (action === 'recover') {
+        const response = await recoverUpstreamAccount(account.id)
+        if (!response.success)
+          throw new Error(response.message || t('Request failed'))
+        toast.success(t('Account scheduling restored'))
+      } else {
+        const response = await refreshUpstreamOAuth(account.id)
+        if (!response.success)
+          throw new Error(response.message || t('Request failed'))
+        toast.success(t('Credential refreshed'))
+      }
       refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Request failed'))
     } finally {
       setBusyId(null)
+    }
+  }
+
+  const toggleAccountScheduling = async (
+    account: UpstreamAccount,
+    schedulable: boolean
+  ) => {
+    setSchedulingBusyId(account.id)
+    try {
+      const response = await updateUpstreamAccountsBatch([account.id], {
+        schedulable,
+      })
+      if (!response.success || response.data?.failures.length) {
+        throw new Error(
+          response.data?.failures[0]?.message ||
+            response.message ||
+            t('Update failed')
+        )
+      }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.accounts })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Update failed'))
+      await queryClient.invalidateQueries({ queryKey: queryKeys.accounts })
+    } finally {
+      setSchedulingBusyId(null)
+    }
+  }
+
+  const recoverSelectedAccounts = async () => {
+    setRecoveringSelected(true)
+    try {
+      const response = await recoverUpstreamAccounts(selectedAccountIds)
+      if (!response.success) {
+        throw new Error(response.message || t('Request failed'))
+      }
+      toast.success(
+        t('Restored {{success}} accounts; {{failed}} failed', {
+          success: response.data?.success_ids.length ?? 0,
+          failed: response.data?.failures.length ?? 0,
+        })
+      )
+      setSelectedAccountIds([])
+      refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Request failed'))
+    } finally {
+      setRecoveringSelected(false)
     }
   }
 
@@ -1228,20 +873,61 @@ export function AccountManagement() {
     }
   }
 
-  const importAccounts = async (items: unknown[]) => {
-    const response = await createUpstreamAccountsBatch(
-      items as UpstreamAccountPayload[]
+  const importAccounts = async (_items: unknown[], documents: unknown[]) => {
+    const response = await importUpstreamData(
+      mergeAccountImportDocuments(documents)
     )
     if (!response.success)
       throw new Error(response.message || t('Import failed'))
-    const failures = response.data?.failures.length ?? 0
+    const failures =
+      (response.data?.account_failed ?? 0) + (response.data?.proxy_failed ?? 0)
+    const successes = response.data?.account_created ?? 0
+    if (successes === 0 && failures > 0) {
+      throw new Error(response.data?.errors?.[0]?.message || t('Import failed'))
+    }
     toast.success(
       t('Imported {{success}} accounts; {{failed}} failed', {
-        success: response.data?.success_ids.length ?? 0,
+        success: successes,
         failed: failures,
       })
     )
     refresh()
+  }
+
+  const exportAccounts = async () => {
+    if (exporting) return
+    setExporting(true)
+    setExportConfirmOpen(false)
+    try {
+      const response = await exportUpstreamAccounts(selectedAccountIds)
+      if (!response.success || !response.data) {
+        throw new Error(response.message || t('Export failed'))
+      }
+      const timestamp = new Date()
+        .toISOString()
+        .replace(/[-:]/g, '')
+        .replace(/\..+$/, '')
+      const blob = new Blob([JSON.stringify(response.data, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `starnexus-accounts-${timestamp}.json`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+      toast.success(
+        t('Exported {{count}} accounts', {
+          count: response.data.accounts.length,
+        })
+      )
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Export failed'))
+    } finally {
+      setExporting(false)
+    }
   }
 
   const deleteSelectedAccounts = async () => {
@@ -1289,67 +975,306 @@ export function AccountManagement() {
       </SectionPageLayout.Title>
       <SectionPageLayout.Description>
         {t(
-          'Manage reusable OpenAI credentials and the local account pools referenced by channels.'
+          'Manage reusable OpenAI and Anthropic credentials and the local account pools referenced by channels.'
         )}
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>
-        <Tabs defaultValue='accounts'>
-          <TabsList>
-            <TabsTrigger value='accounts'>{t('Accounts')}</TabsTrigger>
-            <TabsTrigger value='pools'>{t('Account pools')}</TabsTrigger>
-          </TabsList>
-          <TabsContent value='accounts' className='space-y-3 pt-3'>
-            <div className='flex flex-wrap items-center justify-between gap-2'>
-              <Input
-                className='max-w-sm'
-                value={search}
-                placeholder={t('Search accounts')}
-                onChange={(event) => {
-                  setSearch(event.target.value)
-                  setPage(1)
-                }}
-              />
-              <div className='flex flex-wrap gap-2'>
-                {selectedAccountIds.length > 0 && (
-                  <>
-                    <Button
-                      variant='outline'
-                      onClick={() => setBatchUpdateOpen(true)}
-                    >
-                      <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
-                      {t('Batch update')}
-                    </Button>
-                    <Button
-                      variant='destructive'
-                      onClick={() => setBulkDeleteOpen(true)}
-                    >
-                      <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-                      {t('Delete selected ({{count}})', {
-                        count: selectedAccountIds.length,
-                      })}
-                    </Button>
-                  </>
-                )}
-                <Button
-                  variant='outline'
-                  onClick={() => setBatchImportOpen(true)}
-                >
-                  <HugeiconsIcon icon={FileImportIcon} strokeWidth={2} />
-                  {t('Batch import')}
-                </Button>
-                <Button
-                  onClick={() => {
-                    setSelectedAccount(null)
-                    setAccountDialog(true)
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as 'accounts' | 'pools')}
+        >
+          <div className='flex flex-wrap items-center gap-2'>
+            <TabsList className='shrink-0'>
+              <TabsTrigger value='accounts'>{t('Accounts')}</TabsTrigger>
+              <TabsTrigger value='pools'>{t('Account pools')}</TabsTrigger>
+            </TabsList>
+            {activeTab === 'accounts' ? (
+              <>
+                <Input
+                  className='max-w-sm min-w-48 flex-1'
+                  value={search}
+                  placeholder={t('Search accounts')}
+                  onChange={(event) => {
+                    setSearch(event.target.value)
+                    setPage(1)
+                  }}
+                />
+                <Select
+                  items={[
+                    { value: 'all', label: t('All platforms') },
+                    { value: 'openai', label: 'OpenAI' },
+                    { value: 'anthropic', label: 'Anthropic' },
+                  ]}
+                  value={platformFilter}
+                  onValueChange={(value) => {
+                    setPlatformFilter(value || 'all')
+                    setPage(1)
                   }}
                 >
-                  <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-                  {t('Add account')}
-                </Button>
-              </div>
-            </div>
-            <div className='overflow-hidden rounded-lg border'>
-              <Table>
+                  <SelectTrigger className='w-36'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align='start' alignItemWithTrigger={false}>
+                    <SelectItem value='all'>{t('All platforms')}</SelectItem>
+                    <SelectItem value='openai'>OpenAI</SelectItem>
+                    <SelectItem value='anthropic'>Anthropic</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  items={[
+                    { value: 'all', label: t('All credential types') },
+                    { value: 'oauth', label: t('OAuth') },
+                    { value: 'setup_token', label: t('Setup Token') },
+                    { value: 'apikey', label: t('API key') },
+                    { value: 'bedrock', label: t('AWS Bedrock') },
+                    { value: 'service_account', label: t('Vertex') },
+                  ]}
+                  value={typeFilter}
+                  onValueChange={(value) => {
+                    setTypeFilter(value || 'all')
+                    setPage(1)
+                  }}
+                >
+                  <SelectTrigger className='w-44'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align='start' alignItemWithTrigger={false}>
+                    <SelectItem value='all'>
+                      {t('All credential types')}
+                    </SelectItem>
+                    <SelectItem value='oauth'>{t('OAuth')}</SelectItem>
+                    <SelectItem value='setup_token'>
+                      {t('Setup Token')}
+                    </SelectItem>
+                    <SelectItem value='apikey'>{t('API key')}</SelectItem>
+                    <SelectItem value='bedrock'>{t('AWS Bedrock')}</SelectItem>
+                    <SelectItem value='service_account'>
+                      {t('Vertex')}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  items={[
+                    { value: 'all', label: t('All statuses') },
+                    { value: 'active', label: t('Active') },
+                    { value: 'inactive', label: t('Inactive') },
+                    { value: 'error', label: t('Error') },
+                    { value: 'expired', label: t('Expired') },
+                  ]}
+                  value={statusFilter}
+                  onValueChange={(value) => {
+                    setStatusFilter(value || 'all')
+                    setPage(1)
+                  }}
+                >
+                  <SelectTrigger className='w-36'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align='start' alignItemWithTrigger={false}>
+                    <SelectItem value='all'>{t('All statuses')}</SelectItem>
+                    <SelectItem value='active'>{t('Active')}</SelectItem>
+                    <SelectItem value='inactive'>{t('Inactive')}</SelectItem>
+                    <SelectItem value='error'>{t('Error')}</SelectItem>
+                    <SelectItem value='expired'>{t('Expired')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  items={[
+                    { value: 'all', label: t('All scheduling states') },
+                    { value: 'true', label: t('Schedulable') },
+                    { value: 'false', label: t('Paused') },
+                  ]}
+                  value={schedulableFilter}
+                  onValueChange={(value) => {
+                    setSchedulableFilter(value || 'all')
+                    setPage(1)
+                  }}
+                >
+                  <SelectTrigger className='w-44'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align='start' alignItemWithTrigger={false}>
+                    <SelectItem value='all'>
+                      {t('All scheduling states')}
+                    </SelectItem>
+                    <SelectItem value='true'>{t('Schedulable')}</SelectItem>
+                    <SelectItem value='false'>{t('Paused')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select
+                  items={[
+                    { value: 'all', label: t('All account pools') },
+                    ...pools.map((pool) => ({
+                      value: String(pool.id),
+                      label: pool.name,
+                    })),
+                  ]}
+                  value={poolFilter}
+                  onValueChange={(value) => {
+                    setPoolFilter(value || 'all')
+                    setPage(1)
+                  }}
+                >
+                  <SelectTrigger className='w-44'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align='start' alignItemWithTrigger={false}>
+                    <SelectItem value='all'>
+                      {t('All account pools')}
+                    </SelectItem>
+                    {pools.map((pool) => (
+                      <SelectItem key={pool.id} value={String(pool.id)}>
+                        {pool.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select
+                  items={[
+                    { value: 'all', label: t('All proxies') },
+                    ...proxies.map((proxy) => ({
+                      value: String(proxy.id),
+                      label: proxy.name,
+                    })),
+                  ]}
+                  value={proxyFilter}
+                  onValueChange={(value) => {
+                    setProxyFilter(value || 'all')
+                    setPage(1)
+                  }}
+                >
+                  <SelectTrigger className='w-40'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align='start' alignItemWithTrigger={false}>
+                    <SelectItem value='all'>{t('All proxies')}</SelectItem>
+                    {proxies.map((proxy) => (
+                      <SelectItem key={proxy.id} value={String(proxy.id)}>
+                        {proxy.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <div className='ml-auto flex flex-wrap gap-2'>
+                  {selectedAccountIds.length > 0 && (
+                    <>
+                      <Button
+                        variant='outline'
+                        disabled={recoveringSelected}
+                        onClick={recoverSelectedAccounts}
+                      >
+                        <HugeiconsIcon
+                          icon={
+                            recoveringSelected ? Loading03Icon : RefreshIcon
+                          }
+                          className={
+                            recoveringSelected ? 'animate-spin' : undefined
+                          }
+                          strokeWidth={2}
+                        />
+                        {t('Restore selected')}
+                      </Button>
+                      <Button
+                        variant='outline'
+                        onClick={() => setBatchUpdateOpen(true)}
+                      >
+                        <HugeiconsIcon icon={Edit02Icon} strokeWidth={2} />
+                        {t('Batch update')}
+                      </Button>
+                      <Button
+                        variant='destructive'
+                        onClick={() => setBulkDeleteOpen(true)}
+                      >
+                        <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                        {t('Delete selected ({{count}})', {
+                          count: selectedAccountIds.length,
+                        })}
+                      </Button>
+                    </>
+                  )}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      type='button'
+                      disabled={exporting}
+                      className={buttonVariants({ variant: 'outline' })}
+                    >
+                      <HugeiconsIcon
+                        data-icon='inline-start'
+                        icon={FileImportIcon}
+                        strokeWidth={2}
+                      />
+                      {t('Import / Export')}
+                      <HugeiconsIcon
+                        data-icon='inline-end'
+                        icon={ArrowDown01Icon}
+                        strokeWidth={2}
+                      />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align='end' className='w-56'>
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>
+                          {t('Data operations')}
+                        </DropdownMenuLabel>
+                        <DropdownMenuItem onClick={() => setCRSSyncOpen(true)}>
+                          <span className='flex size-7 items-center justify-center rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400'>
+                            <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+                          </span>
+                          {t('Sync from CRS')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setBatchImportOpen(true)}
+                        >
+                          <span className='flex size-7 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'>
+                            <HugeiconsIcon
+                              icon={FileImportIcon}
+                              strokeWidth={2}
+                            />
+                          </span>
+                          {t('Import')}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => setExportConfirmOpen(true)}
+                        >
+                          <span className='flex size-7 items-center justify-center rounded-md bg-violet-500/10 text-violet-600 dark:text-violet-400'>
+                            <HugeiconsIcon
+                              icon={FileExportIcon}
+                              strokeWidth={2}
+                            />
+                          </span>
+                          {selectedAccountIds.length > 0
+                            ? t('Export selected')
+                            : t('Export')}
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button
+                    onClick={() => {
+                      setSelectedAccount(null)
+                      setAccountDialog(true)
+                    }}
+                  >
+                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                    {t('Add account')}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Button
+                className='ml-auto'
+                onClick={() => {
+                  setSelectedPool(null)
+                  setPoolDialog(true)
+                }}
+              >
+                <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                {t('Add account pool')}
+              </Button>
+            )}
+          </div>
+          <TabsContent value='accounts' className='space-y-3 pt-3'>
+            <div className='overflow-x-auto rounded-lg border'>
+              <Table className='min-w-[1260px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead className='w-10'>
@@ -1373,12 +1298,13 @@ export function AccountManagement() {
                         }}
                       />
                     </TableHead>
-                    <TableHead>{t('Account')}</TableHead>
-                    <TableHead>{t('Type')}</TableHead>
-                    <TableHead>{t('Pools')}</TableHead>
+                    <TableHead>{t('Account ID')}</TableHead>
+                    <TableHead>{t('Platform / Type')}</TableHead>
+                    <TableHead>{t('Capacity')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>
-                    <TableHead>{t('Concurrency')}</TableHead>
-                    <TableHead>{t('Last used')}</TableHead>
+                    <TableHead>{t('Scheduling')}</TableHead>
+                    <TableHead>{t('Groups')}</TableHead>
+                    <TableHead>{t('Usage window')}</TableHead>
                     <TableHead className='text-right'>{t('Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1398,7 +1324,7 @@ export function AccountManagement() {
                     </TableRow>
                   ) : (
                     accounts.map((account) => (
-                      <TableRow key={account.id}>
+                      <TableRow key={account.id} className='h-24 align-middle'>
                         <TableCell>
                           <Checkbox
                             aria-label={t('Select account {{name}}', {
@@ -1417,47 +1343,53 @@ export function AccountManagement() {
                           />
                         </TableCell>
                         <TableCell>
-                          <div className='font-medium'>{account.name}</div>
-                          {account.error_message && (
-                            <div className='text-destructive max-w-64 truncate text-xs'>
-                              {account.error_message}
+                          <AccountIdentityCell account={account} />
+                        </TableCell>
+                        <TableCell>
+                          <AccountPlatformCell account={account} />
+                        </TableCell>
+                        <TableCell>
+                          <AccountCapacityCell account={account} />
+                        </TableCell>
+                        <TableCell>
+                          <div className='max-w-40 space-y-1'>
+                            <div className='flex items-center gap-1'>
+                              <Badge variant={statusVariant(account.status)}>
+                                {accountStatusLabel(account.status, t)}
+                              </Badge>
+                              {!account.schedulable && (
+                                <Badge variant='outline'>{t('Paused')}</Badge>
+                              )}
                             </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant='outline'>
-                            {account.type === 'oauth'
-                              ? t('Codex OAuth')
-                              : t('API Key')}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex max-w-72 flex-wrap gap-1'>
-                            {account.pool_ids.length
-                              ? account.pool_ids.map((id) => (
-                                  <Badge key={id} variant='secondary'>
-                                    {poolNames.get(id) || `#${id}`}
-                                  </Badge>
-                                ))
-                              : '-'}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex items-center gap-1'>
-                            <Badge variant={statusVariant(account.status)}>
-                              {account.status === 'active'
-                                ? t('Active')
-                                : account.status === 'inactive'
-                                  ? t('Inactive')
-                                  : t('Error')}
-                            </Badge>
-                            {!account.schedulable && (
-                              <Badge variant='outline'>{t('Paused')}</Badge>
+                            {account.error_message && (
+                              <div
+                                className='text-destructive max-w-40 truncate text-[11px]'
+                                title={account.error_message}
+                              >
+                                {account.error_message}
+                              </div>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>{account.concurrency}</TableCell>
-                        <TableCell>{timestamp(account.last_used_at)}</TableCell>
+                        <TableCell>
+                          <AccountSchedulingCell
+                            account={account}
+                            busy={schedulingBusyId === account.id}
+                            onChange={(checked) =>
+                              void toggleAccountScheduling(account, checked)
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <AccountPoolsCell
+                            poolNames={account.pool_ids.map(
+                              (id) => poolNames.get(id) || `#${id}`
+                            )}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <AccountUsageCell account={account} />
+                        </TableCell>
                         <TableCell>
                           <div className='flex justify-end gap-1'>
                             <IconButton
@@ -1470,7 +1402,8 @@ export function AccountManagement() {
                               disabled={busyId === account.id}
                               onClick={() => runAccountAction(account, 'test')}
                             />
-                            {account.type === 'oauth' && (
+                            {(account.type === 'oauth' ||
+                              account.type === 'setup_token') && (
                               <IconButton
                                 label={
                                   account.oauth_refresh_owner === 'starnexus'
@@ -1484,6 +1417,18 @@ export function AccountManagement() {
                                 }
                                 onClick={() =>
                                   runAccountAction(account, 'refresh')
+                                }
+                              />
+                            )}
+                            {(account.status === 'error' ||
+                              account.rate_limit_reset_at != null ||
+                              account.temp_unschedulable_until != null) && (
+                              <IconButton
+                                label={t('Restore scheduling')}
+                                icon={RefreshIcon}
+                                disabled={busyId === account.id}
+                                onClick={() =>
+                                  runAccountAction(account, 'recover')
                                 }
                               />
                             )}
@@ -1543,17 +1488,6 @@ export function AccountManagement() {
             </div>
           </TabsContent>
           <TabsContent value='pools' className='space-y-3 pt-3'>
-            <div className='flex justify-end'>
-              <Button
-                onClick={() => {
-                  setSelectedPool(null)
-                  setPoolDialog(true)
-                }}
-              >
-                <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-                {t('Add account pool')}
-              </Button>
-            </div>
             <div className='overflow-hidden rounded-lg border'>
               <Table>
                 <TableHeader>
@@ -1588,7 +1522,11 @@ export function AccountManagement() {
                         </TableCell>
                         <TableCell>
                           <Badge variant='outline'>
-                            {pool.credential_type}
+                            {credentialTypeLabel(
+                              pool.platform,
+                              pool.credential_type,
+                              t
+                            )}
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -1670,29 +1608,15 @@ export function AccountManagement() {
           onOpenChange={setBatchImportOpen}
           title={t('Batch import accounts')}
           description={t(
-            'Import up to 100 OpenAI API key or Codex OAuth accounts from a JSON array.'
+            'Import up to 100 OpenAI or Anthropic accounts from a JSON array.'
           )}
-          example={JSON.stringify(
-            [
-              {
-                name: 'openai-account',
-                platform: 'openai',
-                type: 'apikey',
-                credentials: { api_key: 'sk-...' },
-                extra: '{}',
-                concurrency: 1,
-                priority: 50,
-                weight: 1,
-                status: 'active',
-                schedulable: true,
-                auto_pause_on_expired: true,
-                pool_ids: [],
-              },
-            ],
-            null,
-            2
-          )}
+          collectionKey='accounts'
           onImport={importAccounts}
+        />
+        <CRSSyncDialog
+          open={crsSyncOpen}
+          onOpenChange={setCRSSyncOpen}
+          onSynced={refresh}
         />
         <AccountBatchUpdateDialog
           open={batchUpdateOpen}
@@ -1718,6 +1642,30 @@ export function AccountManagement() {
           pool={memberPool}
           onSaved={refresh}
         />
+        <AlertDialog
+          open={exportConfirmOpen}
+          onOpenChange={setExportConfirmOpen}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('Export account data?')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t(
+                  'The export file contains decrypted account credentials. Store it securely and delete it when no longer needed.'
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={exporting}
+                onClick={() => void exportAccounts()}
+              >
+                {t('Export accounts')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <AlertDialog
           open={Boolean(deleteTarget)}
           onOpenChange={(open) => !open && setDeleteTarget(null)}

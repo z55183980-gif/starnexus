@@ -38,7 +38,7 @@ function formatJsonForEditor(value: string, fallback: string) {
 const MODELS_SECTIONS = [
   {
     id: 'global',
-    titleKey: 'Global Model Configuration',
+    titleKey: 'Global Configuration',
     descriptionKey: 'Configure global model settings',
     build: (settings: ModelSettings) => (
       <GlobalSettingsCard

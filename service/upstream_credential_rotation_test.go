@@ -56,11 +56,11 @@ func TestRotateUpstreamCredentialsAcrossRecordTypes(t *testing.T) {
 
 	plan, err := InspectUpstreamCredentialRotation(context.Background())
 	require.NoError(t, err)
-	require.EqualValues(t, 3, plan.RemainingRecords)
+	require.EqualValues(t, 2, plan.RemainingRecords)
 	report, err := RotateUpstreamCredentials(context.Background(), 1)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, report.RotatedAccounts)
-	require.EqualValues(t, 1, report.RotatedProxies)
+	require.Zero(t, report.RotatedProxies)
 	require.EqualValues(t, 1, report.RotatedSessions)
 	require.Zero(t, report.RemainingRecords)
 
@@ -70,7 +70,7 @@ func TestRotateUpstreamCredentialsAcrossRecordTypes(t *testing.T) {
 	require.NoError(t, model.DB.First(&proxy, proxyInput.Proxy.Id).Error)
 	require.NoError(t, model.DB.First(&session, session.Id).Error)
 	require.Equal(t, 2, account.CredentialKeyVersion)
-	require.Equal(t, 2, proxy.AuthKeyVersion)
+	require.Zero(t, proxy.AuthKeyVersion)
 	require.Equal(t, 2, session.VerifierKeyVersion)
 	credentials, err := DecryptUpstreamAccountCredentials(&account)
 	require.NoError(t, err)

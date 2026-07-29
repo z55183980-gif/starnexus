@@ -118,6 +118,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		return
 	}
+	if tryInterceptUpstreamWarmup(c, relayFormat, request) {
+		return
+	}
 
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
@@ -179,6 +182,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return
 	}
+	if accountMultiplier, ok := common.GetContextKeyType[float64](c, constant.ContextKeyUpstreamAccountRateMultiplier); ok {
+		priceData.GroupRatioInfo.GroupRatio *= accountMultiplier
+		priceData.Quota = common.QuotaRound(float64(priceData.Quota) * accountMultiplier)
+		priceData.QuotaToPreConsume = common.QuotaRound(float64(priceData.QuotaToPreConsume) * accountMultiplier)
+	}
 	if relayFormat == types.RelayFormatOpenAIAlphaSearch {
 		priceData.QuotaToPreConsume = service.AddKnownToolCallSurchargeToPreConsumeQuota(c, relayInfo, priceData.QuotaToPreConsume)
 		relayInfo.PriceData = priceData
@@ -232,6 +240,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 
 		addUsedChannel(c, channel.Id)
+		accountFailoverStartedAt := time.Now()
+		accountFailovers := 0
 		for {
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
@@ -267,9 +277,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			relayInfo.LastError = newAPIError
 			accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 			proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
-			if service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError) {
+			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
+			if disposition.Handled() {
 				recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(newAPIError))
-				if relayInfo.SendResponseCount == 0 {
+				if disposition.RetryWithinPool() && relayInfo.SendResponseCount == 0 &&
+					service.ShouldRetryUpstreamAccount(accountFailovers, accountFailoverStartedAt) {
 					excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
 					if excludedIds == nil {
 						excludedIds = make(map[int]struct{})
@@ -277,6 +289,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					excludedIds[accountId] = struct{}{}
 					common.SetContextKey(c, constant.ContextKeyUpstreamAccountExcluded, excludedIds)
 					if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr == nil {
+						accountFailovers++
+						relayInfo.InitChannelMeta(c)
 						continue
 					} else {
 						newAPIError = setupErr
@@ -446,7 +460,7 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
 	accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 	proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
-	if service.ApplyUpstreamAccountError(accountId, proxyId, err) {
+	if service.ApplyUpstreamAccountError(accountId, proxyId, err).Handled() {
 		recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(err))
 		logger.LogError(c, fmt.Sprintf("upstream account error (account #%d, channel #%d, status code: %d): %s", accountId, channelError.ChannelId, err.StatusCode, service.UpstreamAccountErrorSummary(err)))
 		return
@@ -491,8 +505,12 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		if startTime.IsZero() {
 			startTime = time.Now()
 		}
-		useTimeSeconds := int(time.Since(startTime).Seconds())
-		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
+		elapsed := time.Since(startTime)
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		useTimeSeconds := int(elapsed / time.Second)
+		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, elapsed.Milliseconds(), common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
 
 }

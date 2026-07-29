@@ -57,6 +57,7 @@ import {
   hasAnyCacheTokens,
   isViolationFeeLog,
   getFirstResponseTimeColor,
+  getLogUseTimeSeconds,
   getResponseTimeColor,
 } from '../../lib/format'
 import {
@@ -436,6 +437,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
+  const useTime = getLogUseTimeSeconds(props.log)
   const typeConfig = getLogTypeConfig(props.log.type)
 
   const isViolation = isViolationFeeLog(other)
@@ -616,7 +618,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 />
               )}
 
-              {showTiming && props.log.use_time > 0 && (
+              {showTiming && useTime > 0 && (
                 <DetailRow
                   label={t('Response Time')}
                   value={
@@ -625,13 +627,13 @@ export function DetailsDialog(props: DetailsDialogProps) {
                         'font-medium',
                         timingTextColorClass(
                           getResponseTimeColor(
-                            props.log.use_time,
+                            useTime,
                             props.log.completion_tokens
                           )
                         )
                       )}
                     >
-                      {formatUseTime(props.log.use_time)}
+                      {formatUseTime(useTime)}
                       {props.log.is_stream &&
                         other?.frt != null &&
                         other.frt > 0 && (

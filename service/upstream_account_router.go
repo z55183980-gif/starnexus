@@ -17,18 +17,25 @@ import (
 )
 
 type UpstreamAccountSelectionRequest struct {
-	PoolId       int
-	ChannelType  int
-	Model        string
-	ChannelProxy string
-	ExcludedIds  map[int]struct{}
-	RequestId    string
+	PoolId              int
+	ChannelType         int
+	AllowedAccountTypes []string
+	Model               string
+	RequestPath         string
+	CompactRequest      bool
+	CodexClient         bool
+	CodexAppServer      bool
+	ChannelProxy        string
+	ExcludedIds         map[int]struct{}
+	RequestId           string
 }
 
 type UpstreamAccountSelection struct {
 	Pool        model.UpstreamAccountPool
 	Account     model.UpstreamAccount
 	Credentials map[string]any
+	MappedModel string
+	ModelMapped bool
 	Proxy       *model.UpstreamProxy
 	ProxyURL    string
 	Lease       *UpstreamAccountLease
@@ -40,8 +47,13 @@ type UpstreamAccountSelection struct {
 }
 
 type UpstreamAccountRouter struct {
-	leaseManager UpstreamAccountLeaseManager
-	leaseTTL     time.Duration
+	leaseManager           UpstreamAccountLeaseManager
+	leaseTTL               time.Duration
+	concurrencyWaitTimeout time.Duration
+	concurrencyWaitPoll    time.Duration
+	maxWaiters             int
+	waiterMu               sync.Mutex
+	waiters                int
 }
 
 type upstreamAccountCandidate struct {
@@ -62,7 +74,22 @@ func NewUpstreamAccountRouter(leaseManager UpstreamAccountLeaseManager, leaseTTL
 	if leaseTTL < 30*time.Second {
 		leaseTTL = 30 * time.Second
 	}
-	return &UpstreamAccountRouter{leaseManager: leaseManager, leaseTTL: leaseTTL}, nil
+	waitTimeout := time.Duration(common.GetEnvOrDefault("UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_MS", 1500)) * time.Millisecond
+	if waitTimeout < 0 {
+		waitTimeout = 0
+	}
+	waitPoll := time.Duration(common.GetEnvOrDefault("UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_POLL_MS", 50)) * time.Millisecond
+	if waitPoll < 10*time.Millisecond {
+		waitPoll = 10 * time.Millisecond
+	}
+	maxWaiters := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_MAX_WAITERS", 64)
+	if maxWaiters < 0 {
+		maxWaiters = 0
+	}
+	return &UpstreamAccountRouter{
+		leaseManager: leaseManager, leaseTTL: leaseTTL,
+		concurrencyWaitTimeout: waitTimeout, concurrencyWaitPoll: waitPoll, maxWaiters: maxWaiters,
+	}, nil
 }
 
 func NewConfiguredUpstreamAccountRouter() (*UpstreamAccountRouter, error) {
@@ -99,43 +126,87 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 	if pool.Status != constant.UpstreamStatusActive {
 		return nil, errors.New("upstream account pool is inactive")
 	}
-	requiredType, err := upstreamAccountTypeForChannel(request.ChannelType)
+	allowedTypes, err := upstreamAccountTypesForSelection(request)
 	if err != nil {
 		return nil, err
 	}
-	candidates, exclusions, err := router.loadCandidates(ctx, pool, requiredType, request.Model, request.ExcludedIds)
+	candidates, exclusions, err := router.loadCandidates(ctx, pool, allowedTypes, request, request.ExcludedIds)
 	if err != nil {
 		return nil, err
 	}
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no eligible upstream account in pool %d (%s)", pool.Id, formatUpstreamAccountExclusions(exclusions))
 	}
+	schedulerConfig, err := model.ParseUpstreamAccountSchedulerConfig(pool.SchedulerConfig)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, candidate := range weightedUpstreamCandidateOrder(candidates) {
-		lease, acquireErr := router.leaseManager.Acquire(ctx, candidate.account.Id, candidate.account.Concurrency, router.leaseTTL)
-		if errors.Is(acquireErr, ErrUpstreamAccountConcurrencyFull) {
-			exclusions["concurrency_full"]++
-			continue
+	waitDeadline := time.Now().Add(router.concurrencyWaitTimeout)
+	waiting := false
+	defer func() {
+		if waiting {
+			router.endConcurrencyWait()
 		}
-		if acquireErr != nil {
-			return nil, acquireErr
+	}()
+	for {
+		concurrencyFull := false
+		for _, candidate := range weightedUpstreamCandidateOrder(candidates) {
+			lease, acquireErr := router.leaseManager.Acquire(ctx, candidate.account.Id, candidate.account.Concurrency, router.leaseTTL)
+			if errors.Is(acquireErr, ErrUpstreamAccountConcurrencyFull) {
+				concurrencyFull = true
+				exclusions["concurrency_full"]++
+				continue
+			}
+			if acquireErr != nil {
+				return nil, acquireErr
+			}
+			credentials, decryptErr := DecryptUpstreamAccountCredentials(&candidate.account)
+			if decryptErr != nil {
+				_ = lease.Release(context.Background())
+				exclusions["credential_invalid"]++
+				continue
+			}
+			options, optionsErr := model.ParseUpstreamAccountOptions(candidate.account.Extra)
+			if optionsErr != nil {
+				_ = lease.Release(context.Background())
+				exclusions["option_invalid"]++
+				continue
+			}
+			mappedModel, modelMapped, modelSupported := resolveUpstreamAccountModel(credentials, options, request.Model, request.CompactRequest, schedulerConfig.DefaultMappedModel)
+			if !modelSupported {
+				_ = lease.Release(context.Background())
+				exclusions["model_unsupported"]++
+				continue
+			}
+			proxy, proxyURL, proxyErr := resolveUpstreamProxy(ctx, &candidate.account, &pool, request.ChannelProxy)
+			if proxyErr != nil {
+				_ = lease.Release(context.Background())
+				exclusions["proxy_unavailable"]++
+				continue
+			}
+			return &UpstreamAccountSelection{
+				Pool: pool, Account: candidate.account, Credentials: credentials,
+				MappedModel: mappedModel, ModelMapped: modelMapped,
+				Proxy: proxy, ProxyURL: proxyURL, Lease: lease, leaseTTL: router.leaseTTL,
+			}, nil
 		}
-		credentials, decryptErr := DecryptUpstreamAccountCredentials(&candidate.account)
-		if decryptErr != nil {
-			_ = lease.Release(context.Background())
-			exclusions["credential_invalid"]++
-			continue
+		if !concurrencyFull || router.concurrencyWaitTimeout <= 0 || time.Now().After(waitDeadline) {
+			break
 		}
-		proxy, proxyURL, proxyErr := resolveUpstreamProxy(ctx, &candidate.account, &pool, request.ChannelProxy)
-		if proxyErr != nil {
-			_ = lease.Release(context.Background())
-			exclusions["proxy_unavailable"]++
-			continue
+		if !waiting {
+			if !router.beginConcurrencyWait() {
+				exclusions["wait_queue_full"]++
+				break
+			}
+			waiting = true
 		}
-		return &UpstreamAccountSelection{
-			Pool: pool, Account: candidate.account, Credentials: credentials,
-			Proxy: proxy, ProxyURL: proxyURL, Lease: lease, leaseTTL: router.leaseTTL,
-		}, nil
+		if !router.waitForConcurrency(ctx, waitDeadline) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			break
+		}
 	}
 	return nil, fmt.Errorf("no available upstream account in pool %d after acquisition (%s)", pool.Id, formatUpstreamAccountExclusions(exclusions))
 }
@@ -184,7 +255,7 @@ func (selection *UpstreamAccountSelection) Release(ctx context.Context) error {
 	return selection.releaseErr
 }
 
-func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool model.UpstreamAccountPool, requiredType string, modelName string, excludedIds map[int]struct{}) ([]upstreamAccountCandidate, map[string]int, error) {
+func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool model.UpstreamAccountPool, allowedTypes map[string]struct{}, request UpstreamAccountSelectionRequest, excludedIds map[int]struct{}) ([]upstreamAccountCandidate, map[string]int, error) {
 	var members []model.UpstreamAccountPoolMember
 	if err := model.DB.Where("pool_id = ?", pool.Id).Find(&members).Error; err != nil {
 		return nil, nil, err
@@ -215,7 +286,7 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 			exclusions["excluded"]++
 			continue
 		}
-		if account.Platform != pool.Platform || account.Type != requiredType {
+		if _, allowed := allowedTypes[account.Type]; account.Platform != pool.Platform || !allowed {
 			exclusions["credential_type_mismatch"]++
 			continue
 		}
@@ -223,7 +294,26 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 			exclusions[upstreamAccountIneligibleReason(account, now)]++
 			continue
 		}
-		supportsModel, capabilityErr := upstreamAccountSupportsModel(account.Extra, modelName)
+		options, optionsErr := model.ParseUpstreamAccountOptions(account.Extra)
+		if optionsErr != nil {
+			exclusions["option_invalid"]++
+			continue
+		}
+		if account.Platform == constant.UpstreamPlatformOpenAI && !options.SupportsOpenAIEndpoint(request.RequestPath) {
+			exclusions["endpoint_unsupported"]++
+			continue
+		}
+		if request.CompactRequest && account.Platform == constant.UpstreamPlatformOpenAI && !options.AllowsOpenAICompact() {
+			exclusions["compact_unsupported"]++
+			continue
+		}
+		if account.Platform == constant.UpstreamPlatformOpenAI && account.Type == constant.UpstreamAccountTypeOAuth && options.CodexCLIOnly {
+			if !request.CodexClient || (request.CodexAppServer && !options.CodexCLIOnlyAllowAppServer) {
+				exclusions["codex_client_restricted"]++
+				continue
+			}
+		}
+		supportsModel, capabilityErr := upstreamAccountSupportsModel(account.Extra, request.Model)
 		if capabilityErr != nil {
 			exclusions["capability_invalid"]++
 			continue
@@ -233,10 +323,6 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 			continue
 		}
 		load := leaseCounts[account.Id]
-		if load >= account.Concurrency {
-			exclusions["concurrency_full"]++
-			continue
-		}
 		member := membersByAccount[account.Id]
 		priority := member.Priority
 		weight := account.Weight
@@ -254,6 +340,14 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 	if len(candidates) == 0 {
 		return nil, exclusions, nil
 	}
+	schedulerConfig, err := model.ParseUpstreamAccountSchedulerConfig(pool.SchedulerConfig)
+	if err != nil {
+		return nil, nil, err
+	}
+	if routed := routedUpstreamCandidates(pool, schedulerConfig, request.Model, candidates); len(routed) > 0 {
+		exclusions["outside_model_route"] += len(candidates) - len(routed)
+		candidates = routed
+	}
 	bestPriority := candidates[0].membershipPriority
 	for _, candidate := range candidates[1:] {
 		if candidate.membershipPriority < bestPriority {
@@ -267,10 +361,6 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 		} else {
 			exclusions["lower_priority"]++
 		}
-	}
-	schedulerConfig, err := model.ParseUpstreamAccountSchedulerConfig(pool.SchedulerConfig)
-	if err != nil {
-		return nil, nil, err
 	}
 	if schedulerConfig.TopK > 0 && len(priorityTier) > schedulerConfig.TopK {
 		sort.SliceStable(priorityTier, func(i, j int) bool {
@@ -324,6 +414,159 @@ func upstreamAccountSupportsModel(extra string, modelName string) (bool, error) 
 		}
 	}
 	return false, nil
+}
+
+func resolveUpstreamAccountModel(credentials map[string]any, options model.UpstreamAccountOptions, requestedModel string, compactRequest bool, defaultMappedModel string) (string, bool, bool) {
+	requestedModel = strings.TrimSpace(requestedModel)
+	if compactRequest {
+		if mappedModel, matched := resolveUpstreamAccountModelMapping(options.CompactModelMapping, requestedModel); matched {
+			return mappedModel, true, mappedModel != ""
+		}
+	}
+	mapping := upstreamAccountModelMapping(credentials)
+	if requestedModel == "" {
+		return requestedModel, false, true
+	}
+	if len(mapping) == 0 {
+		if isClaudeMessagesDispatchModel(requestedModel) && strings.TrimSpace(defaultMappedModel) != "" {
+			return strings.TrimSpace(defaultMappedModel), true, true
+		}
+		return requestedModel, false, true
+	}
+	if mappedModel, matched := resolveUpstreamAccountModelMapping(mapping, requestedModel); matched {
+		return mappedModel, true, mappedModel != ""
+	}
+	if isClaudeMessagesDispatchModel(requestedModel) && strings.TrimSpace(defaultMappedModel) != "" {
+		return strings.TrimSpace(defaultMappedModel), true, true
+	}
+	return requestedModel, false, false
+}
+
+func resolveUpstreamAccountModelMapping(mapping map[string]string, requestedModel string) (string, bool) {
+	if len(mapping) == 0 {
+		return requestedModel, false
+	}
+	if mappedModel, ok := mapping[requestedModel]; ok {
+		return strings.TrimSpace(mappedModel), true
+	}
+	bestPattern := ""
+	for pattern := range mapping {
+		pattern = strings.TrimSpace(pattern)
+		if !strings.HasSuffix(pattern, "*") || !strings.HasPrefix(requestedModel, strings.TrimSuffix(pattern, "*")) {
+			continue
+		}
+		if len(pattern) > len(bestPattern) || (len(pattern) == len(bestPattern) && pattern < bestPattern) {
+			bestPattern = pattern
+		}
+	}
+	if bestPattern == "" {
+		return requestedModel, false
+	}
+	return strings.TrimSpace(mapping[bestPattern]), true
+}
+
+func isClaudeMessagesDispatchModel(modelName string) bool {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	return strings.HasPrefix(modelName, "claude") &&
+		(strings.Contains(modelName, "opus") || strings.Contains(modelName, "sonnet") || strings.Contains(modelName, "haiku"))
+}
+
+func upstreamAccountModelMapping(credentials map[string]any) map[string]string {
+	if len(credentials) == 0 {
+		return nil
+	}
+	raw, ok := credentials["model_mapping"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch mapping := raw.(type) {
+	case map[string]string:
+		return mapping
+	case map[string]any:
+		result := make(map[string]string, len(mapping))
+		for pattern, target := range mapping {
+			if targetString, ok := target.(string); ok {
+				result[pattern] = targetString
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func routedUpstreamCandidates(pool model.UpstreamAccountPool, config model.UpstreamAccountSchedulerConfig, modelName string, candidates []upstreamAccountCandidate) []upstreamAccountCandidate {
+	routingIds := config.RoutingAccountIds(modelName)
+	if len(routingIds) == 0 {
+		return nil
+	}
+	idSet := make(map[int64]struct{}, len(routingIds))
+	for _, accountId := range routingIds {
+		idSet[accountId] = struct{}{}
+	}
+	idSpace := config.ModelRoutingIdSpace
+	if idSpace == "" && pool.SourceSystem != nil && strings.EqualFold(strings.TrimSpace(*pool.SourceSystem), "sub2api") {
+		idSpace = "source"
+	}
+	routed := make([]upstreamAccountCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		var accountId int64
+		if idSpace == "source" {
+			if candidate.account.SourceId == nil {
+				continue
+			}
+			accountId = *candidate.account.SourceId
+		} else {
+			accountId = int64(candidate.account.Id)
+		}
+		if _, ok := idSet[accountId]; ok {
+			routed = append(routed, candidate)
+		}
+	}
+	return routed
+}
+
+func (router *UpstreamAccountRouter) beginConcurrencyWait() bool {
+	if router == nil || router.maxWaiters <= 0 {
+		return false
+	}
+	router.waiterMu.Lock()
+	defer router.waiterMu.Unlock()
+	if router.waiters >= router.maxWaiters {
+		return false
+	}
+	router.waiters++
+	return true
+}
+
+func (router *UpstreamAccountRouter) endConcurrencyWait() {
+	if router == nil {
+		return
+	}
+	router.waiterMu.Lock()
+	if router.waiters > 0 {
+		router.waiters--
+	}
+	router.waiterMu.Unlock()
+}
+
+func (router *UpstreamAccountRouter) waitForConcurrency(ctx context.Context, deadline time.Time) bool {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return false
+	}
+	delay := router.concurrencyWaitPoll
+	if delay > remaining {
+		delay = remaining
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return time.Now().Before(deadline)
+	}
 }
 
 func upstreamModelRuleMatches(rule string, modelName string) bool {
@@ -412,15 +655,44 @@ func resolveUpstreamProxy(_ context.Context, account *model.UpstreamAccount, poo
 	return nil, "", errors.New("upstream proxy fallback chain is exhausted")
 }
 
-func upstreamAccountTypeForChannel(channelType int) (string, error) {
+func upstreamAccountTypesForChannel(channelType int) (map[string]struct{}, error) {
 	switch channelType {
 	case constant.ChannelTypeCodex:
-		return constant.UpstreamAccountTypeOAuth, nil
+		return map[string]struct{}{constant.UpstreamAccountTypeOAuth: {}}, nil
 	case constant.ChannelTypeOpenAI:
-		return constant.UpstreamAccountTypeAPIKey, nil
+		return map[string]struct{}{constant.UpstreamAccountTypeAPIKey: {}}, nil
+	case constant.ChannelTypeAnthropic:
+		return map[string]struct{}{
+			constant.UpstreamAccountTypeOAuth: {}, constant.UpstreamAccountTypeSetupToken: {},
+			constant.UpstreamAccountTypeAPIKey: {}, constant.UpstreamAccountTypeBedrock: {},
+			constant.UpstreamAccountTypeServiceAccount: {},
+		}, nil
 	default:
-		return "", errors.New("channel type does not support a local upstream account pool")
+		return nil, errors.New("channel type does not support a local upstream account pool")
 	}
+}
+
+func upstreamAccountTypesForSelection(request UpstreamAccountSelectionRequest) (map[string]struct{}, error) {
+	if len(request.AllowedAccountTypes) == 0 {
+		return upstreamAccountTypesForChannel(request.ChannelType)
+	}
+
+	allowedTypes := make(map[string]struct{}, len(request.AllowedAccountTypes))
+	for _, accountType := range request.AllowedAccountTypes {
+		accountType = strings.ToLower(strings.TrimSpace(accountType))
+		switch accountType {
+		case constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeSetupToken,
+			constant.UpstreamAccountTypeAPIKey, constant.UpstreamAccountTypeBedrock,
+			constant.UpstreamAccountTypeServiceAccount:
+			allowedTypes[accountType] = struct{}{}
+		default:
+			return nil, fmt.Errorf("unsupported upstream account type %q", accountType)
+		}
+	}
+	if len(allowedTypes) == 0 {
+		return nil, errors.New("at least one upstream account type is required")
+	}
+	return allowedTypes, nil
 }
 
 func upstreamAccountIneligibleReason(account model.UpstreamAccount, now int64) string {

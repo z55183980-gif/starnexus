@@ -32,8 +32,12 @@ type UpstreamAccountPool struct {
 func (UpstreamAccountPool) TableName() string { return "upstream_account_pools" }
 
 type UpstreamAccountSchedulerConfig struct {
-	Version int `json:"version"`
-	TopK    int `json:"top_k"`
+	Version             int                `json:"version"`
+	TopK                int                `json:"top_k"`
+	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
+	DefaultMappedModel  string             `json:"default_mapped_model"`
+	ModelRouting        map[string][]int64 `json:"model_routing"`
+	ModelRoutingIdSpace string             `json:"model_routing_id_space"`
 }
 
 func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerConfig, error) {
@@ -53,7 +57,43 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 	if config.TopK < 0 || config.TopK > 100 {
 		return config, errors.New("scheduler_config top_k must be between 0 and 100")
 	}
+	switch config.ModelRoutingIdSpace {
+	case "", "source", "destination":
+	default:
+		return config, errors.New("scheduler_config model_routing_id_space must be source or destination")
+	}
+	for pattern, accountIds := range config.ModelRouting {
+		if strings.TrimSpace(pattern) == "" {
+			return config, errors.New("scheduler_config model_routing contains an empty model pattern")
+		}
+		for _, accountId := range accountIds {
+			if accountId <= 0 {
+				return config, errors.New("scheduler_config model_routing account ids must be positive")
+			}
+		}
+	}
 	return config, nil
+}
+
+func (config UpstreamAccountSchedulerConfig) RoutingAccountIds(modelName string) []int64 {
+	modelName = strings.TrimSpace(modelName)
+	if !config.ModelRoutingEnabled || modelName == "" || len(config.ModelRouting) == 0 {
+		return nil
+	}
+	if accountIds := config.ModelRouting[modelName]; len(accountIds) > 0 {
+		return accountIds
+	}
+	bestPattern := ""
+	for pattern, accountIds := range config.ModelRouting {
+		if len(accountIds) == 0 || !strings.HasSuffix(pattern, "*") {
+			continue
+		}
+		prefix := strings.TrimSuffix(pattern, "*")
+		if strings.HasPrefix(modelName, prefix) && (len(pattern) > len(bestPattern) || (len(pattern) == len(bestPattern) && pattern < bestPattern)) {
+			bestPattern = pattern
+		}
+	}
+	return config.ModelRouting[bestPattern]
 }
 
 type UpstreamAccount struct {
@@ -148,6 +188,8 @@ type UpstreamProxy struct {
 	Protocol              string  `json:"protocol" gorm:"type:varchar(16);not null;index"`
 	Host                  string  `json:"host" gorm:"type:varchar(255);not null;index"`
 	Port                  int     `json:"port" gorm:"not null"`
+	Username              string  `json:"-" gorm:"type:varchar(255)"`
+	Password              string  `json:"-" gorm:"type:text"`
 	AuthCiphertext        string  `json:"-" gorm:"type:text;not null"`
 	AuthNonce             string  `json:"-" gorm:"type:varchar(64);not null"`
 	AuthKeyVersion        int     `json:"auth_key_version" gorm:"not null"`
@@ -233,13 +275,13 @@ func ValidateUpstreamAccountPool(pool *UpstreamAccountPool) error {
 	if pool.Name == "" {
 		return errors.New("pool name is required")
 	}
-	if pool.Platform != constant.UpstreamPlatformOpenAI {
+	if !IsSupportedUpstreamPlatform(pool.Platform) {
 		return errors.New("unsupported pool platform")
 	}
 	if pool.CredentialType == "" {
 		pool.CredentialType = "mixed"
 	}
-	if pool.CredentialType != "mixed" && pool.CredentialType != constant.UpstreamAccountTypeOAuth && pool.CredentialType != constant.UpstreamAccountTypeAPIKey {
+	if pool.CredentialType != "mixed" && !IsSupportedUpstreamAccountType(pool.Platform, pool.CredentialType) {
 		return errors.New("unsupported pool credential type")
 	}
 	if pool.Status == "" {
@@ -269,10 +311,10 @@ func ValidateUpstreamAccount(account *UpstreamAccount) error {
 	if account.Name == "" {
 		return errors.New("account name is required")
 	}
-	if account.Platform != constant.UpstreamPlatformOpenAI {
+	if !IsSupportedUpstreamPlatform(account.Platform) {
 		return errors.New("unsupported account platform")
 	}
-	if account.Type != constant.UpstreamAccountTypeOAuth && account.Type != constant.UpstreamAccountTypeAPIKey {
+	if !IsSupportedUpstreamAccountType(account.Platform, account.Type) {
 		return errors.New("unsupported account type")
 	}
 	if account.Concurrency <= 0 {
@@ -293,7 +335,7 @@ func ValidateUpstreamAccount(account *UpstreamAccount) error {
 	if account.Status == "" {
 		account.Status = constant.UpstreamStatusActive
 	}
-	if account.Status != constant.UpstreamStatusActive && account.Status != constant.UpstreamStatusInactive && account.Status != constant.UpstreamStatusError {
+	if account.Status != constant.UpstreamStatusActive && account.Status != constant.UpstreamStatusInactive && account.Status != constant.UpstreamStatusError && account.Status != constant.UpstreamStatusExpired {
 		return errors.New("unsupported account status")
 	}
 	if account.OAuthRefreshOwner == "" {
@@ -309,7 +351,35 @@ func ValidateUpstreamAccount(account *UpstreamAccount) error {
 	if err := common.UnmarshalJsonStr(account.Extra, &extra); err != nil {
 		return errors.New("account extra must be a JSON object")
 	}
-	return nil
+	return ValidateUpstreamAccountOptions(account)
+}
+
+func IsSupportedUpstreamPlatform(platform string) bool {
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case constant.UpstreamPlatformOpenAI, constant.UpstreamPlatformAnthropic:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsSupportedUpstreamAccountType(platform string, accountType string) bool {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	switch platform {
+	case constant.UpstreamPlatformOpenAI:
+		return accountType == constant.UpstreamAccountTypeOAuth || accountType == constant.UpstreamAccountTypeAPIKey
+	case constant.UpstreamPlatformAnthropic:
+		switch accountType {
+		case constant.UpstreamAccountTypeOAuth,
+			constant.UpstreamAccountTypeSetupToken,
+			constant.UpstreamAccountTypeAPIKey,
+			constant.UpstreamAccountTypeBedrock,
+			constant.UpstreamAccountTypeServiceAccount:
+			return true
+		}
+	}
+	return false
 }
 
 func ValidateUpstreamProxy(proxy *UpstreamProxy) error {
@@ -335,7 +405,7 @@ func ValidateUpstreamProxy(proxy *UpstreamProxy) error {
 	if proxy.Status == "" {
 		proxy.Status = constant.UpstreamStatusActive
 	}
-	if proxy.Status != constant.UpstreamStatusActive && proxy.Status != constant.UpstreamStatusInactive {
+	if proxy.Status != constant.UpstreamStatusActive && proxy.Status != constant.UpstreamStatusInactive && proxy.Status != constant.UpstreamStatusExpired {
 		return errors.New("unsupported proxy status")
 	}
 	if proxy.FallbackMode == "" {

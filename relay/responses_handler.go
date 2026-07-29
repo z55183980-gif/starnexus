@@ -10,6 +10,7 @@ import (
 	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -71,10 +72,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 	adaptor.Init(info)
 	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	accountResponsesMode := common.GetContextKeyString(c, appconstant.ContextKeyUpstreamOpenAIResponsesMode)
+	forceAccountChatCompletions := accountResponsesMode == model.UpstreamOpenAIResponsesModeForceChatCompletions
+	forceAccountResponses := accountResponsesMode == model.UpstreamOpenAIResponsesModeForceResponses
 	if info.RelayMode == relayconstant.RelayModeResponses &&
 		!passThroughGlobal &&
 		!info.ChannelSetting.PassThroughBodyEnabled &&
-		service.ShouldResponsesUseChatCompletionsGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+		(forceAccountChatCompletions ||
+			(!forceAccountResponses && service.ShouldResponsesUseChatCompletionsGlobal(info.ChannelId, info.ChannelType, info.OriginModelName))) {
 		usage, newAPIError := responsesViaChatCompletions(c, info, adaptor, request)
 		if newAPIError != nil {
 			return newAPIError

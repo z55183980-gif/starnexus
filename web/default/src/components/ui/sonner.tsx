@@ -22,20 +22,32 @@ import {
   CheckmarkCircle02Icon,
   InformationCircleIcon,
   Alert02Icon,
+  Cancel01Icon,
   MultiplicationSignCircleIcon,
   Loading03Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTheme } from 'next-themes'
 import { Toaster as Sonner, type ToasterProps } from 'sonner'
+import { cn } from '@/lib/utils'
 
-const Toaster = ({ ...props }: ToasterProps) => {
+const DEFAULT_TOAST_DURATION = 5000
+
+const Toaster = ({
+  closeButton = true,
+  duration = DEFAULT_TOAST_DURATION,
+  style,
+  toastOptions,
+  ...props
+}: ToasterProps) => {
   const { theme = 'system' } = useTheme()
 
   return (
     <Sonner
       theme={theme as ToasterProps['theme']}
       className='toaster group'
+      closeButton={closeButton}
+      duration={duration}
       icons={{
         success: (
           <HugeiconsIcon
@@ -72,6 +84,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
             className='size-4 animate-spin'
           />
         ),
+        close: <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />,
       }}
       style={
         {
@@ -79,11 +92,19 @@ const Toaster = ({ ...props }: ToasterProps) => {
           '--normal-text': 'var(--popover-foreground)',
           '--normal-border': 'var(--border)',
           '--border-radius': 'var(--radius)',
+          '--toast-duration': `${duration}ms`,
+          ...style,
         } as React.CSSProperties
       }
       toastOptions={{
+        ...toastOptions,
+        style: {
+          '--toast-duration': `${duration}ms`,
+          ...toastOptions?.style,
+        } as React.CSSProperties,
         classNames: {
-          toast: 'cn-toast',
+          ...toastOptions?.classNames,
+          toast: cn('cn-toast', toastOptions?.classNames?.toast),
         },
       }}
       {...props}

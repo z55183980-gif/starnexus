@@ -7,12 +7,16 @@ const (
 )
 
 const (
-	UpstreamPlatformOpenAI = "openai"
+	UpstreamPlatformOpenAI    = "openai"
+	UpstreamPlatformAnthropic = "anthropic"
 )
 
 const (
-	UpstreamAccountTypeOAuth  = "oauth"
-	UpstreamAccountTypeAPIKey = "apikey"
+	UpstreamAccountTypeOAuth          = "oauth"
+	UpstreamAccountTypeSetupToken     = "setup_token"
+	UpstreamAccountTypeAPIKey         = "apikey"
+	UpstreamAccountTypeBedrock        = "bedrock"
+	UpstreamAccountTypeServiceAccount = "service_account"
 )
 
 const (
@@ -24,6 +28,7 @@ const (
 	UpstreamStatusActive   = "active"
 	UpstreamStatusInactive = "inactive"
 	UpstreamStatusError    = "error"
+	UpstreamStatusExpired  = "expired"
 )
 
 const (

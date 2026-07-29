@@ -19,7 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Activity,
   ChartNoAxesCombined,
-  Box,
   CreditCard,
   FileText,
   FlaskConical,
@@ -30,6 +29,7 @@ import {
   MessageSquare,
   Radio,
   Receipt,
+  Route,
   Settings,
   ShieldCheck,
   Ticket,
@@ -172,6 +172,12 @@ export function useSidebarData(): SidebarData {
             icon: ChartNoAxesCombined,
           },
           {
+            title: t('Routing Management'),
+            url: '/routing-management',
+            icon: Route,
+            rootOnly: true,
+          },
+          {
             title: t('Channels'),
             url: '/channels',
             icon: Radio,
@@ -187,11 +193,6 @@ export function useSidebarData(): SidebarData {
             url: '/upstream-proxies',
             icon: Globe2,
             rootOnly: true,
-          },
-          {
-            title: t('Models'),
-            url: '/models/metadata',
-            icon: Box,
           },
           {
             title: t('Users'),

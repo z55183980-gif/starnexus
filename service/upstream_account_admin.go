@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -24,6 +25,7 @@ type UpstreamAccountListFilter struct {
 	Status      string
 	Search      string
 	PoolId      int
+	ProxyId     int
 	Schedulable *bool
 	Page        int
 	PageSize    int
@@ -31,8 +33,18 @@ type UpstreamAccountListFilter struct {
 
 type UpstreamAccountView struct {
 	model.UpstreamAccount
-	CredentialConfigured bool  `json:"credential_configured"`
-	PoolIds              []int `json:"pool_ids"`
+	CredentialConfigured bool                    `json:"credential_configured"`
+	PoolIds              []int                   `json:"pool_ids"`
+	CurrentConcurrency   int                     `json:"current_concurrency"`
+	Metadata             UpstreamAccountMetadata `json:"metadata"`
+}
+
+type UpstreamAccountMetadata struct {
+	Email            string `json:"email,omitempty"`
+	PlanType         string `json:"plan_type,omitempty"`
+	PrivacyMode      string `json:"privacy_mode,omitempty"`
+	CompactMode      string `json:"compact_mode,omitempty"`
+	CompactSupported bool   `json:"compact_supported"`
 }
 
 type UpstreamAccountPoolView struct {
@@ -63,10 +75,12 @@ type UpstreamAccountPoolMemberView struct {
 
 type UpstreamProxyView struct {
 	model.UpstreamProxy
-	AuthConfigured bool  `json:"auth_configured"`
-	AccountCount   int64 `json:"account_count"`
-	PoolCount      int64 `json:"pool_count"`
-	BackupCount    int64 `json:"backup_count"`
+	AuthConfigured bool   `json:"auth_configured"`
+	AuthUsername   string `json:"username"`
+	AuthPassword   string `json:"password,omitempty"`
+	AccountCount   int64  `json:"account_count"`
+	PoolCount      int64  `json:"pool_count"`
+	BackupCount    int64  `json:"backup_count"`
 }
 
 type UpstreamAccountCreateInput struct {
@@ -80,6 +94,14 @@ type UpstreamAccountUpdateInput struct {
 	Credentials *map[string]any
 	PoolIds     *[]int
 }
+
+type UpstreamAccountRecoveryScope string
+
+const (
+	UpstreamAccountRecoveryAll       UpstreamAccountRecoveryScope = "all"
+	UpstreamAccountRecoveryRateLimit UpstreamAccountRecoveryScope = "rate_limit"
+	UpstreamAccountRecoveryTemporary UpstreamAccountRecoveryScope = "temporary"
+)
 
 type UpstreamProxyAuthInput struct {
 	Username string `json:"username"`
@@ -376,6 +398,9 @@ func ListUpstreamAccounts(filter UpstreamAccountListFilter) ([]UpstreamAccountVi
 	if filter.PoolId > 0 {
 		query = query.Where("id IN (?)", model.DB.Model(&model.UpstreamAccountPoolMember{}).Select("account_id").Where("pool_id = ?", filter.PoolId))
 	}
+	if filter.ProxyId > 0 {
+		query = query.Where("proxy_id = ?", filter.ProxyId)
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
@@ -384,13 +409,20 @@ func ListUpstreamAccounts(filter UpstreamAccountListFilter) ([]UpstreamAccountVi
 	if err := query.Order("priority ASC").Order("id ASC").Limit(filter.PageSize).Offset((filter.Page - 1) * filter.PageSize).Find(&accounts).Error; err != nil {
 		return nil, 0, err
 	}
+	accountIds := make([]int, 0, len(accounts))
+	for _, account := range accounts {
+		accountIds = append(accountIds, account.Id)
+	}
+	leaseCounts := currentUpstreamAccountLeaseCounts(accountIds)
 	views := make([]UpstreamAccountView, 0, len(accounts))
 	for _, account := range accounts {
 		poolIds, err := listUpstreamAccountPoolIds(model.DB, account.Id)
 		if err != nil {
 			return nil, 0, err
 		}
-		views = append(views, upstreamAccountView(account, poolIds))
+		view := upstreamAccountView(account, poolIds)
+		view.CurrentConcurrency = leaseCounts[account.Id]
+		views = append(views, view)
 	}
 	return views, total, nil
 }
@@ -408,6 +440,7 @@ func GetUpstreamAccount(id int) (*UpstreamAccountView, error) {
 		return nil, err
 	}
 	view := upstreamAccountView(account, poolIds)
+	view.CurrentConcurrency = currentUpstreamAccountLeaseCounts([]int{id})[id]
 	return &view, nil
 }
 
@@ -418,7 +451,7 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 	if err := model.ValidateUpstreamAccount(&input.Account); err != nil {
 		return err
 	}
-	if err := validateUpstreamCredentialPayload(input.Account.Type, input.Credentials); err != nil {
+	if err := validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, input.Credentials); err != nil {
 		return err
 	}
 	keyring, err := LoadUpstreamCredentialKeyringFromEnv()
@@ -486,7 +519,7 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 	var keyring *UpstreamCredentialKeyring
 	var err error
 	if input.Credentials != nil {
-		if err = validateUpstreamCredentialPayload(input.Account.Type, *input.Credentials); err != nil {
+		if err = validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, *input.Credentials); err != nil {
 			return err
 		}
 		keyring, err = LoadUpstreamCredentialKeyringFromEnv()
@@ -564,6 +597,48 @@ func DeleteUpstreamAccount(id int) error {
 	})
 }
 
+func RecoverUpstreamAccountRuntimeState(id int, scope UpstreamAccountRecoveryScope) error {
+	if id <= 0 {
+		return errors.New("invalid upstream account id")
+	}
+	if scope == "" {
+		scope = UpstreamAccountRecoveryAll
+	}
+	if scope != UpstreamAccountRecoveryAll && scope != UpstreamAccountRecoveryRateLimit && scope != UpstreamAccountRecoveryTemporary {
+		return errors.New("unsupported upstream account recovery scope")
+	}
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		var account model.UpstreamAccount
+		if err := tx.First(&account, id).Error; err != nil {
+			return err
+		}
+		updates := map[string]any{"updated_at": common.GetTimestamp()}
+		if scope == UpstreamAccountRecoveryAll || scope == UpstreamAccountRecoveryRateLimit {
+			updates["rate_limited_at"] = nil
+			updates["rate_limit_reset_at"] = nil
+			updates["session_window_start"] = nil
+			updates["session_window_end"] = nil
+			updates["session_window_status"] = ""
+		}
+		if scope == UpstreamAccountRecoveryAll || scope == UpstreamAccountRecoveryTemporary {
+			updates["overload_until"] = nil
+			updates["temp_unschedulable_until"] = nil
+			updates["temp_unschedulable_reason"] = ""
+		}
+		if scope == UpstreamAccountRecoveryAll {
+			updates["error_message"] = ""
+			if account.ExpiresAt != nil && *account.ExpiresAt <= common.GetTimestamp() {
+				updates["status"] = constant.UpstreamStatusExpired
+				updates["schedulable"] = false
+			} else {
+				updates["status"] = constant.UpstreamStatusActive
+				updates["schedulable"] = true
+			}
+		}
+		return tx.Model(&model.UpstreamAccount{}).Where("id = ?", id).Updates(updates).Error
+	})
+}
+
 func ListUpstreamProxies() ([]UpstreamProxyView, error) {
 	var proxies []model.UpstreamProxy
 	if err := model.DB.Order("id ASC").Find(&proxies).Error; err != nil {
@@ -602,10 +677,6 @@ func CreateUpstreamProxy(input *UpstreamProxyCreateInput) error {
 	if err := model.ValidateUpstreamProxy(&input.Proxy); err != nil {
 		return err
 	}
-	keyring, err := LoadUpstreamCredentialKeyringFromEnv()
-	if err != nil {
-		return err
-	}
 	return model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := validateProxyFallback(tx, &input.Proxy); err != nil {
 			return err
@@ -613,28 +684,13 @@ func CreateUpstreamProxy(input *UpstreamProxyCreateInput) error {
 		now := common.GetTimestamp()
 		input.Proxy.CreatedAt = now
 		input.Proxy.UpdatedAt = now
+		input.Proxy.Username = input.Auth.Username
+		input.Proxy.Password = input.Auth.Password
 		input.Proxy.AuthCredentialVersion = 1
-		input.Proxy.AuthKeyVersion = keyring.ActiveVersion()
+		input.Proxy.AuthKeyVersion = 0
 		input.Proxy.AuthCiphertext = ""
 		input.Proxy.AuthNonce = ""
-		if err := tx.Create(&input.Proxy).Error; err != nil {
-			return err
-		}
-		envelope, err := keyring.EncryptJSON(upstreamProxyAuthRecordKind, input.Proxy.Id, input.Proxy.AuthCredentialVersion, input.Auth)
-		if err != nil {
-			return err
-		}
-		if err := tx.Model(&model.UpstreamProxy{}).Where("id = ?", input.Proxy.Id).Updates(map[string]any{
-			"auth_ciphertext":  envelope.Ciphertext,
-			"auth_nonce":       envelope.Nonce,
-			"auth_key_version": envelope.KeyVersion,
-		}).Error; err != nil {
-			return err
-		}
-		input.Proxy.AuthCiphertext = envelope.Ciphertext
-		input.Proxy.AuthNonce = envelope.Nonce
-		input.Proxy.AuthKeyVersion = envelope.KeyVersion
-		return nil
+		return tx.Create(&input.Proxy).Error
 	})
 }
 
@@ -644,14 +700,6 @@ func UpdateUpstreamProxy(input *UpstreamProxyUpdateInput) error {
 	}
 	if err := model.ValidateUpstreamProxy(&input.Proxy); err != nil {
 		return err
-	}
-	var keyring *UpstreamCredentialKeyring
-	var err error
-	if input.Auth != nil {
-		keyring, err = LoadUpstreamCredentialKeyringFromEnv()
-		if err != nil {
-			return err
-		}
 	}
 	return model.DB.Transaction(func(tx *gorm.DB) error {
 		var current model.UpstreamProxy
@@ -668,15 +716,27 @@ func UpdateUpstreamProxy(input *UpstreamProxyUpdateInput) error {
 			"expiry_warn_days": input.Proxy.ExpiryWarnDays, "updated_at": common.GetTimestamp(),
 		}
 		if input.Auth != nil {
-			newVersion := current.AuthCredentialVersion + 1
-			envelope, err := keyring.EncryptJSON(upstreamProxyAuthRecordKind, current.Id, newVersion, input.Auth)
-			if err != nil {
-				return err
+			username := strings.TrimSpace(input.Auth.Username)
+			password := strings.TrimSpace(input.Auth.Password)
+			if username != "" || password != "" {
+				currentAuth, err := DecryptUpstreamProxyAuth(&current)
+				if err != nil {
+					return err
+				}
+				if username != "" {
+					currentAuth.Username = username
+				}
+				if password != "" {
+					currentAuth.Password = password
+				}
+				newVersion := current.AuthCredentialVersion + 1
+				updates["username"] = currentAuth.Username
+				updates["password"] = currentAuth.Password
+				updates["auth_ciphertext"] = ""
+				updates["auth_nonce"] = ""
+				updates["auth_key_version"] = 0
+				updates["auth_credential_version"] = newVersion
 			}
-			updates["auth_ciphertext"] = envelope.Ciphertext
-			updates["auth_nonce"] = envelope.Nonce
-			updates["auth_key_version"] = envelope.KeyVersion
-			updates["auth_credential_version"] = newVersion
 		}
 		result := tx.Model(&model.UpstreamProxy{}).Where("id = ? AND auth_credential_version = ?", current.Id, current.AuthCredentialVersion).Updates(updates)
 		if result.Error != nil {
@@ -747,6 +807,9 @@ func DecryptUpstreamProxyAuth(proxy *model.UpstreamProxy) (*UpstreamProxyAuthInp
 	if proxy == nil || proxy.Id <= 0 {
 		return nil, errors.New("invalid upstream proxy")
 	}
+	if proxy.Username != "" || proxy.Password != "" || proxy.AuthCiphertext == "" {
+		return &UpstreamProxyAuthInput{Username: proxy.Username, Password: proxy.Password}, nil
+	}
 	keyring, err := LoadUpstreamCredentialKeyringFromEnv()
 	if err != nil {
 		return nil, err
@@ -760,7 +823,7 @@ func DecryptUpstreamProxyAuth(proxy *model.UpstreamProxy) (*UpstreamProxyAuthInp
 	return &auth, err
 }
 
-func validateUpstreamCredentialPayload(accountType string, credentials map[string]any) error {
+func validateUpstreamCredentialPayload(platform string, accountType string, credentials map[string]any) error {
 	if credentials == nil {
 		return errors.New("account credentials are required")
 	}
@@ -771,14 +834,55 @@ func validateUpstreamCredentialPayload(accountType string, credentials map[strin
 		}
 		return strings.TrimSpace(fmt.Sprintf("%v", value))
 	}
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	if !model.IsSupportedUpstreamAccountType(platform, accountType) {
+		return errors.New("unsupported account type")
+	}
 	switch accountType {
 	case constant.UpstreamAccountTypeOAuth:
-		if getString("access_token") == "" || getString("account_id") == "" {
-			return errors.New("OAuth credentials require access_token and account_id")
+		if getString("access_token") == "" {
+			return errors.New("OAuth credentials require access_token")
+		}
+		if platform == constant.UpstreamPlatformOpenAI && getString("account_id") == "" {
+			return errors.New("OpenAI OAuth credentials require account_id")
+		}
+	case constant.UpstreamAccountTypeSetupToken:
+		if getString("access_token") == "" {
+			return errors.New("setup token credentials require access_token")
 		}
 	case constant.UpstreamAccountTypeAPIKey:
 		if getString("api_key") == "" {
 			return errors.New("API key credentials require api_key")
+		}
+	case constant.UpstreamAccountTypeBedrock:
+		authMethod := strings.ToLower(getString("auth_mode"))
+		switch authMethod {
+		case "api_key":
+			if getString("api_key") == "" || getString("aws_region") == "" {
+				return errors.New("Bedrock API key credentials require api_key and region")
+			}
+		case "sigv4", "":
+			if getString("aws_access_key_id") == "" || getString("aws_secret_access_key") == "" || getString("aws_region") == "" {
+				return errors.New("Bedrock SigV4 credentials require access_key_id, secret_access_key, and region")
+			}
+		default:
+			return errors.New("unsupported Bedrock authentication method")
+		}
+	case constant.UpstreamAccountTypeServiceAccount:
+		raw := getString("service_account_json")
+		if raw == "" {
+			return errors.New("Vertex credentials require service_account_json")
+		}
+		var serviceAccount map[string]any
+		if err := common.Unmarshal([]byte(raw), &serviceAccount); err != nil {
+			return errors.New("Vertex service_account_json must be valid JSON")
+		}
+		for _, key := range []string{"project_id", "client_email", "private_key"} {
+			value := strings.TrimSpace(fmt.Sprintf("%v", serviceAccount[key]))
+			if value == "" || value == "<nil>" {
+				return fmt.Errorf("Vertex service_account_json requires %s", key)
+			}
 		}
 	default:
 		return errors.New("unsupported account type")
@@ -915,14 +1019,85 @@ func normalizePositiveIds(ids []int) []int {
 }
 
 func upstreamAccountView(account model.UpstreamAccount, poolIds []int) UpstreamAccountView {
-	configured := account.CredentialCiphertext != "" && account.CredentialNonce != "" && account.CredentialKeyVersion > 0
+	configured := account.CredentialCiphertext != ""
+	metadata := upstreamAccountMetadata(&account)
 	account.CredentialCiphertext = ""
 	account.CredentialNonce = ""
-	return UpstreamAccountView{UpstreamAccount: account, CredentialConfigured: configured, PoolIds: poolIds}
+	return UpstreamAccountView{UpstreamAccount: account, CredentialConfigured: configured, PoolIds: poolIds, Metadata: metadata}
+}
+
+func currentUpstreamAccountLeaseCounts(accountIds []int) map[int]int {
+	counts := make(map[int]int, len(accountIds))
+	if len(accountIds) == 0 {
+		return counts
+	}
+	router, err := GetConfiguredUpstreamAccountRouter()
+	if err != nil || router == nil || router.leaseManager == nil {
+		return counts
+	}
+	current, err := router.leaseManager.CountBatch(context.Background(), accountIds)
+	if err != nil {
+		return counts
+	}
+	return current
+}
+
+func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMetadata {
+	metadata := UpstreamAccountMetadata{}
+	if account == nil {
+		return metadata
+	}
+	if credentials, err := DecryptUpstreamAccountCredentials(account); err == nil {
+		metadata.Email = upstreamCredentialMapString(credentials, "email")
+		metadata.PlanType = upstreamCredentialMapString(credentials, "plan_type")
+		if metadata.PlanType == "" {
+			metadata.PlanType = upstreamCredentialMapString(credentials, "plan")
+		}
+		metadata.PrivacyMode = upstreamCredentialMapString(credentials, "privacy_mode")
+		for _, key := range []string{"metadata", "live_identity"} {
+			nested, _ := credentials[key].(map[string]any)
+			if metadata.Email == "" {
+				metadata.Email = upstreamCredentialMapString(nested, "email")
+			}
+			if metadata.PlanType == "" {
+				metadata.PlanType = upstreamCredentialMapString(nested, "plan")
+			}
+			if metadata.PrivacyMode == "" {
+				metadata.PrivacyMode = upstreamCredentialMapString(nested, "privacy_mode")
+			}
+		}
+	}
+	var extra map[string]any
+	if common.UnmarshalJsonStr(account.Extra, &extra) == nil {
+		if metadata.PrivacyMode == "" {
+			metadata.PrivacyMode = upstreamCredentialMapString(extra, "privacy_mode")
+		}
+	}
+	if account.Platform == constant.UpstreamPlatformOpenAI {
+		options, err := model.ParseUpstreamAccountOptions(account.Extra)
+		if err != nil {
+			return metadata
+		}
+		metadata.CompactMode = options.OpenAICompactMode
+		metadata.CompactSupported = options.AllowsOpenAICompact()
+	}
+	return metadata
 }
 
 func upstreamProxyView(db *gorm.DB, proxy model.UpstreamProxy) (UpstreamProxyView, error) {
-	view := UpstreamProxyView{UpstreamProxy: proxy, AuthConfigured: proxy.AuthCiphertext != "" && proxy.AuthNonce != "" && proxy.AuthKeyVersion > 0}
+	auth := UpstreamProxyAuthInput{Username: proxy.Username, Password: proxy.Password}
+	if auth.Username == "" && auth.Password == "" && proxy.AuthCiphertext != "" {
+		if legacyAuth, err := DecryptUpstreamProxyAuth(&proxy); err == nil {
+			auth = *legacyAuth
+		}
+	}
+	view := UpstreamProxyView{
+		UpstreamProxy: proxy,
+		AuthConfigured: auth.Username != "" || auth.Password != "" ||
+			(proxy.AuthCiphertext != "" && proxy.AuthNonce != "" && proxy.AuthKeyVersion > 0),
+		AuthUsername: auth.Username,
+		AuthPassword: auth.Password,
+	}
 	view.AuthCiphertext = ""
 	view.AuthNonce = ""
 	if err := db.Model(&model.UpstreamAccount{}).Where("proxy_id = ?", proxy.Id).Count(&view.AccountCount).Error; err != nil {

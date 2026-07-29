@@ -1,0 +1,144 @@
+package service
+
+import (
+	"testing"
+	"time"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/stretchr/testify/require"
+)
+
+func TestExportUpstreamAccountsIncludesImportableCredentials(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "export-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey,
+		Status:         constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "export-account", Platform: constant.UpstreamPlatformOpenAI,
+			Type: constant.UpstreamAccountTypeAPIKey, Extra: "{}", Concurrency: 2,
+			Priority: 10, Weight: 3, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true,
+			OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerExternal,
+		},
+		Credentials: map[string]any{"api_key": "export-secret"},
+		PoolIds:     []int{pool.Id},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	exported, err := ExportUpstreamAccounts([]int{input.Account.Id})
+	require.NoError(t, err)
+	require.Equal(t, upstreamAccountExportType, exported.Type)
+	require.Equal(t, upstreamAccountExportVersion, exported.Version)
+	require.Len(t, exported.Accounts, 1)
+	require.Equal(t, "export-secret", exported.Accounts[0].Credentials["api_key"])
+	require.Equal(t, []int{pool.Id}, exported.Accounts[0].PoolIds)
+}
+
+func TestSub2APICompatibleExportImportRoundTripWithoutKeyring(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	t.Setenv(upstreamCredentialKeysEnv, "")
+	t.Setenv(upstreamCredentialActiveVersionEnv, "")
+
+	proxyInput := UpstreamProxyCreateInput{
+		Proxy: model.UpstreamProxy{
+			Name: "roundtrip-proxy", Protocol: constant.UpstreamProxyProtocolSOCKS5,
+			Host: "127.0.0.1", Port: 1080, Status: constant.UpstreamStatusActive,
+			FallbackMode: constant.UpstreamProxyFallbackNone,
+		},
+		Auth: UpstreamProxyAuthInput{Username: "proxy-user", Password: "proxy-secret"},
+	}
+	require.NoError(t, CreateUpstreamProxy(&proxyInput))
+	accountInput := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "roundtrip-account", Platform: constant.UpstreamPlatformOpenAI,
+			Type: constant.UpstreamAccountTypeAPIKey, Extra: `{"responses_mode":"auto"}`,
+			ProxyId: &proxyInput.Proxy.Id, Concurrency: 2, Priority: 10, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{"api_key": "roundtrip-secret"},
+	}
+	require.NoError(t, CreateUpstreamAccount(&accountInput))
+
+	exported, err := ExportUpstreamAccounts([]int{accountInput.Account.Id})
+	require.NoError(t, err)
+	require.Equal(t, "sub2api-data", exported.Type)
+	require.Equal(t, 1, exported.Version)
+	require.Len(t, exported.Proxies, 1)
+	require.Len(t, exported.Accounts, 1)
+	require.NotEmpty(t, exported.Proxies[0].ProxyKey)
+	require.NotNil(t, exported.Accounts[0].ProxyKey)
+	require.Equal(t, exported.Proxies[0].ProxyKey, *exported.Accounts[0].ProxyKey)
+	require.Equal(t, "auto", exported.Accounts[0].Extra.(map[string]any)["responses_mode"])
+
+	raw, err := common.Marshal(exported)
+	require.NoError(t, err)
+	var decoded UpstreamAccountExport
+	require.NoError(t, common.Unmarshal(raw, &decoded))
+	require.NotNil(t, decoded.Proxies)
+	require.NotNil(t, decoded.Accounts)
+
+	result, err := ImportUpstreamData(decoded)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.ProxyReused)
+	require.Equal(t, 0, result.ProxyFailed)
+	require.Equal(t, 1, result.AccountCreated)
+	require.Equal(t, 0, result.AccountFailed)
+
+	var imported model.UpstreamAccount
+	require.NoError(t, model.DB.Where("name = ? AND id <> ?", "roundtrip-account", accountInput.Account.Id).First(&imported).Error)
+	require.Equal(t, proxyInput.Proxy.Id, *imported.ProxyId)
+	require.Zero(t, imported.CredentialKeyVersion)
+	require.Empty(t, imported.CredentialNonce)
+	credentials, err := DecryptUpstreamAccountCredentials(&imported)
+	require.NoError(t, err)
+	require.Equal(t, "roundtrip-secret", credentials["api_key"])
+}
+
+func TestImportLegacySub2APIOAuthAccountWithoutFrontendNormalization(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	t.Setenv(upstreamCredentialKeysEnv, "")
+	t.Setenv(upstreamCredentialActiveVersionEnv, "")
+
+	payload := UpstreamAccountExport{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Proxies:    []UpstreamProxyExportItem{},
+		Accounts: []UpstreamAccountExportItem{
+			{
+				Name: "legacy-sub2-oauth", Platform: constant.UpstreamPlatformOpenAI,
+				Type: constant.UpstreamAccountTypeOAuth,
+				Credentials: map[string]any{
+					"access_token": "legacy-access-token", "refresh_token": "legacy-refresh-token",
+					"chatgpt_account_id": "legacy-account-id",
+				},
+				Extra: map[string]any{"privacy_mode": "training_off"}, Concurrency: 1, Priority: 50,
+			},
+		},
+	}
+
+	result, err := ImportUpstreamData(payload)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.AccountCreated)
+	require.Zero(t, result.AccountFailed)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.Where("name = ?", "legacy-sub2-oauth").First(&account).Error)
+	require.Zero(t, account.CredentialKeyVersion)
+	require.JSONEq(t, `{"privacy_mode":"training_off"}`, account.Extra)
+	credentials, err := DecryptUpstreamAccountCredentials(&account)
+	require.NoError(t, err)
+	require.Equal(t, "legacy-account-id", credentials["account_id"])
+	require.Equal(t, "legacy-account-id", credentials["chatgpt_account_id"])
+}
+
+func TestCRSSourceIDIsStableAndPositive(t *testing.T) {
+	first := crsSourceID("crs-account-42")
+	require.Positive(t, first)
+	require.Equal(t, first, crsSourceID("crs-account-42"))
+	require.NotEqual(t, first, crsSourceID("crs-account-43"))
+}

@@ -36,6 +36,75 @@ func setupUpstreamAdminTestDB(t *testing.T) {
 	t.Setenv(upstreamCredentialActiveVersionEnv, "1")
 }
 
+func TestCreateUpstreamProxyWithoutCredentialKeyring(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	t.Setenv(upstreamCredentialKeysEnv, "")
+	t.Setenv(upstreamCredentialActiveVersionEnv, "")
+
+	input := UpstreamProxyCreateInput{
+		Proxy: model.UpstreamProxy{
+			Name: "plain-proxy", Protocol: constant.UpstreamProxyProtocolSOCKS5,
+			Host: "127.0.0.1", Port: 1080, Status: constant.UpstreamStatusActive,
+			FallbackMode: constant.UpstreamProxyFallbackNone,
+		},
+		Auth: UpstreamProxyAuthInput{Username: "proxy-user", Password: "proxy-password"},
+	}
+	require.NoError(t, CreateUpstreamProxy(&input))
+
+	var stored model.UpstreamProxy
+	require.NoError(t, model.DB.First(&stored, input.Proxy.Id).Error)
+	require.Equal(t, "proxy-user", stored.Username)
+	require.Equal(t, "proxy-password", stored.Password)
+	require.Empty(t, stored.AuthCiphertext)
+	require.Empty(t, stored.AuthNonce)
+	require.Zero(t, stored.AuthKeyVersion)
+
+	auth, err := DecryptUpstreamProxyAuth(&stored)
+	require.NoError(t, err)
+	require.Equal(t, input.Auth, *auth)
+
+	view, err := GetUpstreamProxy(input.Proxy.Id)
+	require.NoError(t, err)
+	require.True(t, view.AuthConfigured)
+	require.Equal(t, "proxy-user", view.AuthUsername)
+	require.Equal(t, "proxy-password", view.AuthPassword)
+	encoded, err := common.Marshal(view)
+	require.NoError(t, err)
+	require.Contains(t, string(encoded), "proxy-user")
+	require.Contains(t, string(encoded), "proxy-password")
+}
+
+func TestCreateUpstreamAccountWithoutCredentialKeyring(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	t.Setenv(upstreamCredentialKeysEnv, "")
+	t.Setenv(upstreamCredentialActiveVersionEnv, "")
+
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "plain-account", Platform: constant.UpstreamPlatformOpenAI,
+			Type: constant.UpstreamAccountTypeAPIKey, Extra: "{}", Concurrency: 1,
+			Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{"api_key": "plain-secret"},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	var stored model.UpstreamAccount
+	require.NoError(t, model.DB.First(&stored, input.Account.Id).Error)
+	require.Zero(t, stored.CredentialKeyVersion)
+	require.Empty(t, stored.CredentialNonce)
+	require.Contains(t, stored.CredentialCiphertext, "plain-secret")
+
+	credentials, err := DecryptUpstreamAccountCredentials(&stored)
+	require.NoError(t, err)
+	require.Equal(t, "plain-secret", credentials["api_key"])
+
+	view, err := GetUpstreamAccount(input.Account.Id)
+	require.NoError(t, err)
+	require.True(t, view.CredentialConfigured)
+}
+
 func TestUpstreamAccountAdminCredentialLifecycleAndSafeDelete(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 
@@ -209,4 +278,52 @@ func TestUpstreamAccountAdminRejectsIncompatibleTypeChanges(t *testing.T) {
 
 	account.Type = constant.UpstreamAccountTypeAPIKey
 	require.ErrorContains(t, UpdateUpstreamAccount(&UpstreamAccountUpdateInput{Account: account}), "replacement credentials")
+}
+
+func TestRecoverUpstreamAccountRuntimeState(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	now := common.GetTimestamp()
+	resetAt := now + 300
+	overloadUntil := now + 120
+	tempUntil := now + 60
+	account := model.UpstreamAccount{
+		Name: "recover-account", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+		Extra: "{}", Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusError,
+		Schedulable: false, ErrorMessage: "rate limited", RateLimitedAt: &now, RateLimitResetAt: &resetAt,
+		OverloadUntil: &overloadUntil, TempUnschedulableUntil: &tempUntil, TempUnschedulableReason: "rate_limited",
+		SessionWindowStart: &now, SessionWindowEnd: &resetAt, SessionWindowStatus: "rejected",
+	}
+	input := UpstreamAccountCreateInput{Account: account, Credentials: map[string]any{"api_key": "secret"}}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	require.NoError(t, RecoverUpstreamAccountRuntimeState(input.Account.Id, UpstreamAccountRecoveryAll))
+	var recovered model.UpstreamAccount
+	require.NoError(t, model.DB.First(&recovered, input.Account.Id).Error)
+	require.Equal(t, constant.UpstreamStatusActive, recovered.Status)
+	require.True(t, recovered.Schedulable)
+	require.Empty(t, recovered.ErrorMessage)
+	require.Nil(t, recovered.RateLimitResetAt)
+	require.Nil(t, recovered.OverloadUntil)
+	require.Nil(t, recovered.TempUnschedulableUntil)
+	require.Empty(t, recovered.TempUnschedulableReason)
+	require.Nil(t, recovered.SessionWindowStart)
+	require.Nil(t, recovered.SessionWindowEnd)
+}
+
+func TestRecoverUpstreamAccountKeepsExpiredAccountPaused(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	expiresAt := common.GetTimestamp() - 1
+	account := model.UpstreamAccount{
+		Name: "expired-account", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+		Extra: "{}", Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusError,
+		Schedulable: false, ExpiresAt: &expiresAt, AutoPauseOnExpired: true,
+	}
+	input := UpstreamAccountCreateInput{Account: account, Credentials: map[string]any{"api_key": "secret"}}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	require.NoError(t, RecoverUpstreamAccountRuntimeState(input.Account.Id, UpstreamAccountRecoveryAll))
+
+	var recovered model.UpstreamAccount
+	require.NoError(t, model.DB.First(&recovered, input.Account.Id).Error)
+	require.Equal(t, constant.UpstreamStatusExpired, recovered.Status)
+	require.False(t, recovered.Schedulable)
 }

@@ -415,6 +415,16 @@ func importSnapshot(db *gorm.DB, snapshot *sourceSnapshot, runID string) (migrat
 			report.UpdatedAccounts++
 		}
 	}
+	for _, source := range snapshot.Groups {
+		destinationPoolId, ok := poolMap[source.ID]
+		if !ok {
+			continue
+		}
+		if err := db.Model(&model.UpstreamAccountPool{}).Where("id = ?", destinationPoolId).
+			Update("scheduler_config", schedulerConfig(source, accountMap)).Error; err != nil {
+			return report, fmt.Errorf("remap group %d model routing: %w", source.ID, err)
+		}
+	}
 
 	membersByPool := make(map[int64][]service.UpstreamAccountPoolMemberInput)
 	for _, source := range snapshot.Memberships {
@@ -547,7 +557,7 @@ func upsertPool(db *gorm.DB, source sourceGroup, credentialType string, runID st
 	pool.Platform = constant.UpstreamPlatformOpenAI
 	pool.CredentialType = credentialType
 	pool.Status = mapActiveStatus(source.Status)
-	pool.SchedulerConfig = schedulerConfig(source)
+	pool.SchedulerConfig = schedulerConfig(source, nil)
 	if created {
 		if err := service.CreateUpstreamAccountPool(&pool); err != nil {
 			return nil, false, err
@@ -645,6 +655,10 @@ func verifySnapshot(db *gorm.DB, snapshot *sourceSnapshot, runID string) (migrat
 		report.VerifiedAccounts++
 	}
 	poolMap := make(map[int64]model.UpstreamAccountPool, len(snapshot.Groups))
+	accountIdMap := make(map[int64]int, len(accountMap))
+	for sourceId, account := range accountMap {
+		accountIdMap[sourceId] = account.Id
+	}
 	for _, source := range snapshot.Groups {
 		if err := verifySingleSourceRecord(db, &model.UpstreamAccountPool{}, source.ID); err != nil {
 			return report, fmt.Errorf("verify group %d: %w", source.ID, err)
@@ -654,7 +668,7 @@ func verifySnapshot(db *gorm.DB, snapshot *sourceSnapshot, runID string) (migrat
 			return report, err
 		}
 		if pool.Platform != constant.UpstreamPlatformOpenAI || pool.CredentialType != poolCredentialType(source.ID, snapshot) ||
-			pool.Status != mapActiveStatus(source.Status) || pool.SchedulerConfig != schedulerConfig(source) {
+			pool.Status != mapActiveStatus(source.Status) || pool.SchedulerConfig != schedulerConfig(source, accountIdMap) {
 			return report, fmt.Errorf("group %d destination fields do not match source", source.ID)
 		}
 		poolMap[source.ID] = pool
@@ -922,15 +936,29 @@ func poolCredentialType(groupID int64, snapshot *sourceSnapshot) string {
 	return "mixed"
 }
 
-func schedulerConfig(source sourceGroup) string {
+func schedulerConfig(source sourceGroup, accountMap map[int64]int) string {
 	config := map[string]any{
 		"source": sourceSystemSub2API, "source_group_id": source.ID,
 		"model_routing_enabled": source.ModelRoutingEnabled, "default_mapped_model": source.DefaultMappedModel,
 	}
 	if len(source.ModelRouting) > 0 {
-		var routing any
-		if common.Unmarshal(source.ModelRouting, &routing) == nil {
-			config["model_routing"] = routing
+		var sourceRouting map[string][]int64
+		if common.Unmarshal(source.ModelRouting, &sourceRouting) == nil {
+			if accountMap == nil {
+				config["model_routing"] = sourceRouting
+				config["model_routing_id_space"] = "source"
+			} else {
+				destinationRouting := make(map[string][]int64, len(sourceRouting))
+				for pattern, sourceAccountIds := range sourceRouting {
+					for _, sourceAccountId := range sourceAccountIds {
+						if destinationAccountId, ok := accountMap[sourceAccountId]; ok {
+							destinationRouting[pattern] = append(destinationRouting[pattern], int64(destinationAccountId))
+						}
+					}
+				}
+				config["model_routing"] = destinationRouting
+				config["model_routing_id_space"] = "destination"
+			}
 		}
 	}
 	data, err := common.Marshal(config)

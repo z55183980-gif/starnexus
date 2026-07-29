@@ -46,6 +46,7 @@ type Log struct {
 	PromptTokens      int    `json:"prompt_tokens" gorm:"default:0"`
 	CompletionTokens  int    `json:"completion_tokens" gorm:"default:0"`
 	UseTime           int    `json:"use_time" gorm:"default:0"`
+	UseTimeMs         *int64 `json:"use_time_ms,omitempty" gorm:"bigint"`
 	IsStream          bool   `json:"is_stream"`
 	ChannelId         int    `json:"channel" gorm:"index"`
 	ChannelName       string `json:"channel_name" gorm:"->"`
@@ -205,7 +206,7 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 	}
 }
 
-func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
+func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int, useTimeMilliseconds int64,
 	isStream bool, group string, other map[string]interface{}) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, content))
 	username := c.GetString("username")
@@ -233,6 +234,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		ChannelId:        channelId,
 		TokenId:          tokenId,
 		UseTime:          useTimeSeconds,
+		UseTimeMs:        resolveUseTimeMilliseconds(useTimeSeconds, &useTimeMilliseconds),
 		IsStream:         isStream,
 		Group:            group,
 		Ip: func() string {
@@ -255,18 +257,19 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 }
 
 type RecordConsumeLogParams struct {
-	ChannelId        int                    `json:"channel_id"`
-	PromptTokens     int                    `json:"prompt_tokens"`
-	CompletionTokens int                    `json:"completion_tokens"`
-	ModelName        string                 `json:"model_name"`
-	TokenName        string                 `json:"token_name"`
-	Quota            int                    `json:"quota"`
-	Content          string                 `json:"content"`
-	TokenId          int                    `json:"token_id"`
-	UseTimeSeconds   int                    `json:"use_time_seconds"`
-	IsStream         bool                   `json:"is_stream"`
-	Group            string                 `json:"group"`
-	Other            map[string]interface{} `json:"other"`
+	ChannelId           int                    `json:"channel_id"`
+	PromptTokens        int                    `json:"prompt_tokens"`
+	CompletionTokens    int                    `json:"completion_tokens"`
+	ModelName           string                 `json:"model_name"`
+	TokenName           string                 `json:"token_name"`
+	Quota               int                    `json:"quota"`
+	Content             string                 `json:"content"`
+	TokenId             int                    `json:"token_id"`
+	UseTimeSeconds      int                    `json:"use_time_seconds"`
+	UseTimeMilliseconds *int64                 `json:"use_time_milliseconds,omitempty"`
+	IsStream            bool                   `json:"is_stream"`
+	Group               string                 `json:"group"`
+	Other               map[string]interface{} `json:"other"`
 }
 
 func attachNodeNameToLogOther(other map[string]interface{}) map[string]interface{} {
@@ -283,6 +286,21 @@ func attachNodeNameToLogOther(other map[string]interface{}) map[string]interface
 	}
 	adminInfo["node_name"] = common.NodeName
 	return other
+}
+
+func resolveUseTimeMilliseconds(useTimeSeconds int, useTimeMilliseconds *int64) *int64 {
+	if useTimeMilliseconds != nil {
+		value := *useTimeMilliseconds
+		if value < 0 {
+			value = 0
+		}
+		return &value
+	}
+	if useTimeSeconds <= 0 {
+		return nil
+	}
+	value := int64(useTimeSeconds) * 1000
+	return &value
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
@@ -315,6 +333,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		ChannelId:        params.ChannelId,
 		TokenId:          params.TokenId,
 		UseTime:          params.UseTimeSeconds,
+		UseTimeMs:        resolveUseTimeMilliseconds(params.UseTimeSeconds, params.UseTimeMilliseconds),
 		IsStream:         params.IsStream,
 		Group:            params.Group,
 		Ip: func() string {

@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -425,9 +426,12 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPoolId, 0)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, 0)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, "")
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, "")
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, "")
 	common.SetContextKey(c, constant.ContextKeyUpstreamProxyId, 0)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountLeaseId, "")
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountMappedModel, "")
+	common.SetContextKey(c, constant.ContextKeyUpstreamInterceptWarmup, false)
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -509,31 +513,86 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
 	setting := channel.GetSetting()
+	selectionModel := strings.TrimSpace(modelName)
+	compactRequest := strings.HasSuffix(selectionModel, ratio_setting.CompactModelSuffix)
+	if compactRequest {
+		selectionModel = strings.TrimSuffix(selectionModel, ratio_setting.CompactModelSuffix)
+	}
+	codexClient, codexAppServer := detectCodexClient(c)
 	excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
 	selection, err := router.Select(c.Request.Context(), service.UpstreamAccountSelectionRequest{
-		PoolId: *channel.UpstreamAccountPoolId, ChannelType: channel.Type, Model: modelName,
+		PoolId: *channel.UpstreamAccountPoolId, ChannelType: channel.Type,
+		AllowedAccountTypes: localUpstreamAllowedAccountTypes(
+			channel.Type,
+			c.Request.URL.Path,
+			!model_setting.GetGlobalSettings().PassThroughRequestEnabled && !setting.PassThroughBodyEnabled,
+			channel.GetOtherSettings().AlphaSearchEnabled,
+		), Model: selectionModel, RequestPath: c.Request.URL.Path, CompactRequest: compactRequest,
+		CodexClient: codexClient, CodexAppServer: codexAppServer,
 		ChannelProxy: setting.Proxy, RequestId: c.GetString(common.RequestIdKey), ExcludedIds: excludedIds,
 	})
 	if err != nil {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
-	key, err := localUpstreamChannelKey(channel.Type, selection.Credentials)
+	effectiveChannelType, err := localUpstreamChannelType(selection.Account.Platform, selection.Account.Type)
+	if err != nil {
+		_ = selection.Release(context.Background())
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
+	}
+	options, err := model.ParseUpstreamAccountOptions(selection.Account.Extra)
+	if err != nil {
+		_ = selection.Release(context.Background())
+		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
+	}
+	key, err := localUpstreamChannelKey(selection.Account.Platform, selection.Account.Type, selection.Credentials)
 	if err != nil {
 		_ = selection.Release(context.Background())
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
 	setting.Proxy = selection.ProxyURL
-	common.SetContextKey(c, constant.ContextKeyChannelSetting, setting)
-	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-	if channel.Type == constant.ChannelTypeOpenAI {
-		if baseURL := upstreamCredentialString(selection.Credentials, "base_url"); baseURL != "" {
-			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, baseURL)
-		}
+	if options.OpenAIPassthrough || options.AnthropicPassthrough {
+		setting.PassThroughBodyEnabled = true
 	}
+	common.SetContextKey(c, constant.ContextKeyChannelSetting, setting)
+	otherSettings, _ := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
+	switch effectiveChannelType {
+	case constant.ChannelTypeAws:
+		if strings.EqualFold(upstreamCredentialString(selection.Credentials, "auth_mode"), "api_key") {
+			otherSettings.AwsKeyType = dto.AwsKeyTypeApiKey
+		} else {
+			otherSettings.AwsKeyType = dto.AwsKeyTypeAKSK
+		}
+	case constant.ChannelTypeVertexAi:
+		otherSettings.VertexKeyType = dto.VertexKeyTypeJSON
+		region := upstreamCredentialString(selection.Credentials, "location")
+		if region == "" {
+			region = "global"
+		}
+		c.Set("region", region)
+	case constant.ChannelTypeOpenAI, constant.ChannelTypeCodex:
+		wsMode := options.OpenAIWSMode(selection.Account.Type)
+		otherSettings.ResponsesWebSocketV2Mode = wsMode
+		otherSettings.ResponsesWebSocketV2Enabled = wsMode == model.UpstreamOpenAIWSModeContextPool || wsMode == model.UpstreamOpenAIWSModePassthrough
+	}
+	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, otherSettings)
+	common.SetContextKey(c, constant.ContextKeyChannelType, effectiveChannelType)
+	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, localUpstreamBaseURL(effectiveChannelType, selection.Credentials, channel.GetBaseURL()))
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPoolId, selection.Pool.Id)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, selection.Account.Id)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, selection.Account.Name)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, selection.Account.Platform)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, selection.Account.Type)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAnthropicAuthScheme, options.AnthropicAPIKeyAuthScheme)
+	common.SetContextKey(c, constant.ContextKeyUpstreamOpenAIResponsesMode, options.OpenAIResponsesMode)
+	common.SetContextKey(c, constant.ContextKeyUpstreamOpenAILongContextBilling, options.OpenAILongContextBillingEnabled)
+	common.SetContextKey(c, constant.ContextKeyUpstreamInterceptWarmup, options.InterceptWarmupRequests)
+	if selection.Account.RateMultiplier != nil {
+		common.SetContextKey(c, constant.ContextKeyUpstreamAccountRateMultiplier, *selection.Account.RateMultiplier)
+	}
+	if selection.ModelMapped {
+		common.SetContextKey(c, constant.ContextKeyUpstreamAccountMappedModel, selection.MappedModel)
+	}
 	proxyId := 0
 	if selection.Proxy != nil {
 		proxyId = selection.Proxy.Id
@@ -560,6 +619,14 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 	return nil
 }
 
+func detectCodexClient(c *gin.Context) (bool, bool) {
+	if c == nil || c.Request == nil {
+		return false, false
+	}
+	identity := strings.ToLower(strings.TrimSpace(c.GetHeader("User-Agent") + " " + c.GetHeader("originator")))
+	return strings.Contains(identity, "codex"), strings.Contains(identity, "app-server") || strings.Contains(identity, "app_server")
+}
+
 func ReleaseUpstreamAccountSelection(c *gin.Context) {
 	if c == nil {
 		return
@@ -584,23 +651,114 @@ func ReleaseUpstreamAccountSelection(c *gin.Context) {
 	c.Set(string(constant.ContextKeyUpstreamAccountSelection), nil)
 }
 
-func localUpstreamChannelKey(channelType int, credentials map[string]any) (string, error) {
-	switch channelType {
-	case constant.ChannelTypeCodex:
+func localUpstreamChannelKey(platform string, accountType string, credentials map[string]any) (string, error) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	switch {
+	case platform == constant.UpstreamPlatformOpenAI && accountType == constant.UpstreamAccountTypeOAuth:
 		encoded, err := common.Marshal(credentials)
 		if err != nil {
 			return "", errors.New("failed to encode local OAuth credential")
 		}
 		return string(encoded), nil
-	case constant.ChannelTypeOpenAI:
+	case accountType == constant.UpstreamAccountTypeAPIKey:
 		key := upstreamCredentialString(credentials, "api_key")
 		if key == "" {
 			return "", errors.New("local API key credential is missing api_key")
 		}
 		return key, nil
-	default:
-		return "", errors.New("channel type does not support local account credentials")
+	case platform == constant.UpstreamPlatformAnthropic && (accountType == constant.UpstreamAccountTypeOAuth || accountType == constant.UpstreamAccountTypeSetupToken):
+		key := upstreamCredentialString(credentials, "access_token")
+		if key == "" {
+			return "", errors.New("local Claude credential is missing access_token")
+		}
+		return key, nil
+	case platform == constant.UpstreamPlatformAnthropic && accountType == constant.UpstreamAccountTypeBedrock:
+		region := upstreamCredentialString(credentials, "aws_region")
+		if strings.EqualFold(upstreamCredentialString(credentials, "auth_mode"), "api_key") {
+			key := upstreamCredentialString(credentials, "api_key")
+			if key == "" || region == "" {
+				return "", errors.New("local Bedrock API key credential is incomplete")
+			}
+			return key + "|" + region, nil
+		}
+		accessKey := upstreamCredentialString(credentials, "aws_access_key_id")
+		secretKey := upstreamCredentialString(credentials, "aws_secret_access_key")
+		sessionToken := upstreamCredentialString(credentials, "aws_session_token")
+		if accessKey == "" || secretKey == "" || region == "" {
+			return "", errors.New("local Bedrock SigV4 credential is incomplete")
+		}
+		if sessionToken != "" {
+			return strings.Join([]string{accessKey, secretKey, sessionToken, region}, "|"), nil
+		}
+		return strings.Join([]string{accessKey, secretKey, region}, "|"), nil
+	case platform == constant.UpstreamPlatformAnthropic && accountType == constant.UpstreamAccountTypeServiceAccount:
+		key := upstreamCredentialString(credentials, "service_account_json")
+		if key == "" {
+			return "", errors.New("local Vertex credential is missing service_account_json")
+		}
+		return key, nil
 	}
+	return "", errors.New("channel type does not support local account credentials")
+}
+
+func localUpstreamAllowedAccountTypes(channelType int, requestPath string, allowCompatibilityConversion bool, alphaSearchEnabled bool) []string {
+	if channelType == constant.ChannelTypeAnthropic {
+		return []string{
+			constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeSetupToken,
+			constant.UpstreamAccountTypeAPIKey, constant.UpstreamAccountTypeBedrock,
+			constant.UpstreamAccountTypeServiceAccount,
+		}
+	}
+	requestPath = strings.TrimSpace(requestPath)
+	if strings.HasPrefix(requestPath, "/v1/alpha/search") {
+		if !alphaSearchEnabled {
+			return []string{constant.UpstreamAccountTypeOAuth}
+		}
+		return []string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey}
+	}
+	if strings.HasPrefix(requestPath, "/v1/responses") {
+		return []string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey}
+	}
+	if allowCompatibilityConversion && (strings.HasPrefix(requestPath, "/v1/chat/completions") || strings.HasPrefix(requestPath, "/pg/chat/completions")) {
+		return []string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey}
+	}
+	return []string{constant.UpstreamAccountTypeAPIKey}
+}
+
+func localUpstreamChannelType(platform string, accountType string) (int, error) {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	switch {
+	case platform == constant.UpstreamPlatformOpenAI && accountType == constant.UpstreamAccountTypeOAuth:
+		return constant.ChannelTypeCodex, nil
+	case platform == constant.UpstreamPlatformOpenAI && accountType == constant.UpstreamAccountTypeAPIKey:
+		return constant.ChannelTypeOpenAI, nil
+	case platform == constant.UpstreamPlatformAnthropic && (accountType == constant.UpstreamAccountTypeOAuth || accountType == constant.UpstreamAccountTypeSetupToken || accountType == constant.UpstreamAccountTypeAPIKey):
+		return constant.ChannelTypeAnthropic, nil
+	case platform == constant.UpstreamPlatformAnthropic && accountType == constant.UpstreamAccountTypeBedrock:
+		return constant.ChannelTypeAws, nil
+	case platform == constant.UpstreamPlatformAnthropic && accountType == constant.UpstreamAccountTypeServiceAccount:
+		return constant.ChannelTypeVertexAi, nil
+	default:
+		return constant.ChannelTypeUnknown, fmt.Errorf("unsupported local upstream account %q/%q", platform, accountType)
+	}
+}
+
+func localUpstreamBaseURL(channelType int, credentials map[string]any, channelBaseURL string) string {
+	if channelType == constant.ChannelTypeCodex {
+		return constant.ChannelBaseURLs[constant.ChannelTypeCodex]
+	}
+	if baseURL := upstreamCredentialString(credentials, "base_url"); baseURL != "" {
+		return baseURL
+	}
+	if (channelType == constant.ChannelTypeOpenAI || channelType == constant.ChannelTypeAnthropic) && strings.TrimSpace(channelBaseURL) != "" {
+		return channelBaseURL
+	}
+	if channelType >= 0 && channelType < len(constant.ChannelBaseURLs) {
+		return constant.ChannelBaseURLs[channelType]
+	}
+	return ""
 }
 
 func upstreamCredentialString(credentials map[string]any, key string) string {

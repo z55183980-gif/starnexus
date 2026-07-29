@@ -96,7 +96,7 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 		if len(awsSecret) != 2 {
 			return "", errors.New("invalid aws api key, should be in format of <api-key>|<region>")
 		}
-		return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/converse", awsModelId, awsSecret[1]), nil
+		return fmt.Sprintf("https://bedrock-runtime.%s.amazonaws.com/model/%s/converse", awsSecret[1], awsModelId), nil
 	} else {
 		a.ClientMode = ClientModeAKSK
 		return "", nil
@@ -106,7 +106,8 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	claude.CommonClaudeHeadersOperation(c, req, info)
 	if a.ClientMode == ClientModeApiKey {
-		req.Set("Authorization", "Bearer "+info.ApiKey)
+		apiKey := strings.SplitN(info.ApiKey, "|", 2)[0]
+		req.Set("Authorization", "Bearer "+apiKey)
 	}
 	return nil
 }

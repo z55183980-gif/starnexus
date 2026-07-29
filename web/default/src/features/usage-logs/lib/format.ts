@@ -105,6 +105,19 @@ export function parseLogOther(other: string): LogOtherData | null {
   }
 }
 
+export function getLogUseTimeSeconds(
+  log: Pick<UsageLog, 'use_time' | 'use_time_ms'>
+): number {
+  if (
+    typeof log.use_time_ms === 'number' &&
+    Number.isFinite(log.use_time_ms) &&
+    log.use_time_ms >= 0
+  ) {
+    return log.use_time_ms / 1000
+  }
+  return Number.isFinite(log.use_time) && log.use_time >= 0 ? log.use_time : 0
+}
+
 /**
  * Get time color based on duration (in seconds)
  */

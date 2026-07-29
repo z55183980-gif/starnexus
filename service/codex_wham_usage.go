@@ -14,26 +14,26 @@ func FetchCodexWhamUsage(
 	baseURL string,
 	accessToken string,
 	accountID string,
-) (statusCode int, body []byte, err error) {
+) (statusCode int, header http.Header, body []byte, err error) {
 	if client == nil {
-		return 0, nil, fmt.Errorf("nil http client")
+		return 0, nil, nil, fmt.Errorf("nil http client")
 	}
 	bu := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if bu == "" {
-		return 0, nil, fmt.Errorf("empty baseURL")
+		return 0, nil, nil, fmt.Errorf("empty baseURL")
 	}
 	at := strings.TrimSpace(accessToken)
 	aid := strings.TrimSpace(accountID)
 	if at == "" {
-		return 0, nil, fmt.Errorf("empty accessToken")
+		return 0, nil, nil, fmt.Errorf("empty accessToken")
 	}
 	if aid == "" {
-		return 0, nil, fmt.Errorf("empty accountID")
+		return 0, nil, nil, fmt.Errorf("empty accountID")
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bu+"/backend-api/wham/usage", nil)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+at)
 	req.Header.Set("chatgpt-account-id", aid)
@@ -44,13 +44,13 @@ func FetchCodexWhamUsage(
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err = io.ReadAll(resp.Body)
 	if err != nil {
-		return resp.StatusCode, nil, err
+		return resp.StatusCode, resp.Header.Clone(), nil, err
 	}
-	return resp.StatusCode, body, nil
+	return resp.StatusCode, resp.Header.Clone(), body, nil
 }

@@ -47,3 +47,23 @@ func TestUpstreamCredentialKeyringRejectsTamperingAndBadConfig(t *testing.T) {
 	_, err = ParseUpstreamCredentialKeyring(`{"1":"`+key+`"}`, "2")
 	require.Error(t, err)
 }
+
+func TestUpstreamCredentialKeyringUsesPlaintextWithoutConfiguration(t *testing.T) {
+	t.Setenv(upstreamCredentialKeysEnv, "")
+	t.Setenv(upstreamCredentialActiveVersionEnv, "")
+
+	keyring, err := LoadUpstreamCredentialKeyringFromEnv()
+	require.NoError(t, err)
+	require.Zero(t, keyring.ActiveVersion())
+
+	credential := map[string]any{"api_key": "plain-secret"}
+	envelope, err := keyring.EncryptJSON("account", 7, 1, credential)
+	require.NoError(t, err)
+	require.Zero(t, envelope.KeyVersion)
+	require.Empty(t, envelope.Nonce)
+	require.Contains(t, envelope.Ciphertext, "plain-secret")
+
+	var decoded map[string]any
+	require.NoError(t, keyring.DecryptJSON(*envelope, "account", 7, 1, &decoded))
+	require.Equal(t, "plain-secret", decoded["api_key"])
+}

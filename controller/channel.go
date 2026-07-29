@@ -546,6 +546,10 @@ func normalizeChannelCredentialSource(channel *model.Channel) {
 	}
 	if channel.CredentialSource != constant.ChannelCredentialSourceAccountPool {
 		channel.UpstreamAccountPoolId = nil
+	} else if channel.Type == constant.ChannelTypeCodex {
+		// Local pools expose one OpenAI channel. The selected account type decides
+		// whether the request uses the OpenAI API-key or Codex OAuth adaptor.
+		channel.Type = constant.ChannelTypeOpenAI
 	}
 }
 
@@ -566,21 +570,19 @@ func validateChannelCredentialSource(channel *model.Channel) error {
 		if channel.ChannelInfo.IsMultiKey {
 			return fmt.Errorf("local account pool cannot be combined with channel multi-key mode")
 		}
-		if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex {
-			return fmt.Errorf("local account pool currently supports only OpenAI and Codex channels")
+		if channel.Type != constant.ChannelTypeOpenAI && channel.Type != constant.ChannelTypeCodex && channel.Type != constant.ChannelTypeAnthropic {
+			return fmt.Errorf("local account pool currently supports only OpenAI, Codex, and Anthropic channels")
 		}
 		pool, err := service.GetUpstreamAccountPool(*channel.UpstreamAccountPoolId)
 		if err != nil {
 			return fmt.Errorf("failed to load local account pool: %w", err)
 		}
-		if pool.Status != constant.UpstreamStatusActive || pool.Platform != constant.UpstreamPlatformOpenAI {
+		expectedPlatform := constant.UpstreamPlatformOpenAI
+		if channel.Type == constant.ChannelTypeAnthropic {
+			expectedPlatform = constant.UpstreamPlatformAnthropic
+		}
+		if pool.Status != constant.UpstreamStatusActive || pool.Platform != expectedPlatform {
 			return fmt.Errorf("local account pool is not active or compatible")
-		}
-		if channel.Type == constant.ChannelTypeCodex && pool.CredentialType == constant.UpstreamAccountTypeAPIKey {
-			return fmt.Errorf("Codex channel requires an OAuth or mixed account pool")
-		}
-		if channel.Type == constant.ChannelTypeOpenAI && pool.CredentialType == constant.UpstreamAccountTypeOAuth {
-			return fmt.Errorf("OpenAI channel requires an API key or mixed account pool")
 		}
 		if channel.GetOtherSettings().ResponsesWebSocketV2Enabled {
 			return fmt.Errorf("local account pool channels must use upstream HTTP/SSE")

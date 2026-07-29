@@ -30,11 +30,16 @@ type UpstreamCredentialEnvelope struct {
 type UpstreamCredentialKeyring struct {
 	activeVersion int
 	keys          map[int][]byte
+	plaintext     bool
 }
 
 func LoadUpstreamCredentialKeyringFromEnv() (*UpstreamCredentialKeyring, error) {
+	rawKeys := os.Getenv(upstreamCredentialKeysEnv)
+	if strings.TrimSpace(rawKeys) == "" {
+		return &UpstreamCredentialKeyring{plaintext: true}, nil
+	}
 	return ParseUpstreamCredentialKeyring(
-		os.Getenv(upstreamCredentialKeysEnv),
+		rawKeys,
 		os.Getenv(upstreamCredentialActiveVersionEnv),
 	)
 }
@@ -88,6 +93,9 @@ func (keyring *UpstreamCredentialKeyring) Encrypt(recordKind string, recordId in
 	if keyring == nil || recordId <= 0 || credentialVersion <= 0 || strings.TrimSpace(recordKind) == "" {
 		return nil, errors.New("invalid upstream credential encryption context")
 	}
+	if keyring.plaintext {
+		return &UpstreamCredentialEnvelope{Ciphertext: string(plaintext)}, nil
+	}
 	key, ok := keyring.keys[keyring.activeVersion]
 	if !ok {
 		return nil, errors.New("active upstream credential key is unavailable")
@@ -123,6 +131,12 @@ func (keyring *UpstreamCredentialKeyring) DecryptJSON(envelope UpstreamCredentia
 func (keyring *UpstreamCredentialKeyring) Decrypt(envelope UpstreamCredentialEnvelope, recordKind string, recordId int, credentialVersion int64) ([]byte, error) {
 	if keyring == nil || recordId <= 0 || credentialVersion <= 0 || strings.TrimSpace(recordKind) == "" {
 		return nil, errors.New("invalid upstream credential decryption context")
+	}
+	if envelope.KeyVersion == 0 {
+		if envelope.Nonce != "" {
+			return nil, errors.New("plaintext upstream credential nonce must be empty")
+		}
+		return []byte(envelope.Ciphertext), nil
 	}
 	key, ok := keyring.keys[envelope.KeyVersion]
 	if !ok {

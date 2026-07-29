@@ -24,6 +24,8 @@ type UpstreamOAuthStartInput struct {
 	AccountId      *int
 	ProxyId        *int
 	ProxyIdPresent bool
+	Platform       string
+	CredentialType string
 }
 
 type UpstreamOAuthStartResult struct {
@@ -40,14 +42,30 @@ type UpstreamOAuthCompleteInput struct {
 }
 
 func StartUpstreamCodexOAuth(input UpstreamOAuthStartInput) (*UpstreamOAuthStartResult, error) {
+	input.Platform = constant.UpstreamPlatformOpenAI
+	input.CredentialType = constant.UpstreamAccountTypeOAuth
+	return StartUpstreamAccountOAuth(input)
+}
+
+func StartUpstreamAccountOAuth(input UpstreamOAuthStartInput) (*UpstreamOAuthStartResult, error) {
+	platform := strings.ToLower(strings.TrimSpace(input.Platform))
+	accountType := strings.ToLower(strings.TrimSpace(input.CredentialType))
+	if platform == "" {
+		platform = constant.UpstreamPlatformOpenAI
+	}
+	if accountType == "" {
+		accountType = constant.UpstreamAccountTypeOAuth
+	}
 	if input.AccountId != nil {
 		var account model.UpstreamAccount
 		if err := model.DB.First(&account, *input.AccountId).Error; err != nil {
 			return nil, err
 		}
-		if account.Platform != constant.UpstreamPlatformOpenAI || account.Type != constant.UpstreamAccountTypeOAuth {
-			return nil, errors.New("account is not an OpenAI OAuth account")
+		if !isRefreshableUpstreamOAuthAccount(account.Platform, account.Type) {
+			return nil, errors.New("account does not support OAuth authorization")
 		}
+		platform = account.Platform
+		accountType = account.Type
 		if !input.ProxyIdPresent {
 			input.ProxyId = account.ProxyId
 		}
@@ -58,9 +76,28 @@ func StartUpstreamCodexOAuth(input UpstreamOAuthStartInput) (*UpstreamOAuthStart
 			return nil, fmt.Errorf("OAuth proxy is invalid: %w", err)
 		}
 	}
-	flow, err := CreateCodexOAuthAuthorizationFlow()
-	if err != nil {
-		return nil, err
+	var state, verifier, authorizeURL, scope string
+	switch platform {
+	case constant.UpstreamPlatformOpenAI:
+		if accountType != constant.UpstreamAccountTypeOAuth {
+			return nil, errors.New("OpenAI authorization requires an OAuth account")
+		}
+		flow, err := CreateCodexOAuthAuthorizationFlow()
+		if err != nil {
+			return nil, err
+		}
+		state, verifier, authorizeURL = flow.State, flow.Verifier, flow.AuthorizeURL
+	case constant.UpstreamPlatformAnthropic:
+		if accountType != constant.UpstreamAccountTypeOAuth && accountType != constant.UpstreamAccountTypeSetupToken {
+			return nil, errors.New("Anthropic authorization requires OAuth or Setup Token")
+		}
+		flow, err := CreateClaudeOAuthAuthorizationFlow(accountType == constant.UpstreamAccountTypeSetupToken)
+		if err != nil {
+			return nil, err
+		}
+		state, verifier, authorizeURL, scope = flow.State, flow.Verifier, flow.AuthorizeURL, flow.Scope
+	default:
+		return nil, errors.New("unsupported OAuth platform")
 	}
 	keyring, err := LoadUpstreamCredentialKeyringFromEnv()
 	if err != nil {
@@ -68,7 +105,7 @@ func StartUpstreamCodexOAuth(input UpstreamOAuthStartInput) (*UpstreamOAuthStart
 	}
 	now := common.GetTimestamp()
 	session := model.UpstreamOAuthSession{
-		StateHash: hashUpstreamOAuthState(flow.State), AccountId: input.AccountId, ProxyId: input.ProxyId,
+		StateHash: hashUpstreamOAuthState(state), AccountId: input.AccountId, ProxyId: input.ProxyId,
 		VerifierVersion: 1, VerifierKeyVersion: keyring.ActiveVersion(), CreatedAt: now,
 		ExpiresAt: now + int64(upstreamOAuthSessionTTL.Seconds()),
 	}
@@ -76,7 +113,9 @@ func StartUpstreamCodexOAuth(input UpstreamOAuthStartInput) (*UpstreamOAuthStart
 		if err := tx.Create(&session).Error; err != nil {
 			return err
 		}
-		envelope, err := keyring.EncryptJSON(upstreamOAuthSessionRecordKind, session.Id, session.VerifierVersion, map[string]string{"verifier": flow.Verifier})
+		envelope, err := keyring.EncryptJSON(upstreamOAuthSessionRecordKind, session.Id, session.VerifierVersion, map[string]string{
+			"verifier": verifier, "platform": platform, "credential_type": accountType, "scope": scope,
+		})
 		if err != nil {
 			return err
 		}
@@ -91,10 +130,14 @@ func StartUpstreamCodexOAuth(input UpstreamOAuthStartInput) (*UpstreamOAuthStart
 	}); err != nil {
 		return nil, err
 	}
-	return &UpstreamOAuthStartResult{AuthorizeURL: flow.AuthorizeURL, ExpiresAt: session.ExpiresAt}, nil
+	return &UpstreamOAuthStartResult{AuthorizeURL: authorizeURL, ExpiresAt: session.ExpiresAt}, nil
 }
 
 func CompleteUpstreamCodexOAuth(ctx context.Context, input UpstreamOAuthCompleteInput) (*UpstreamAccountView, error) {
+	return CompleteUpstreamAccountOAuth(ctx, input)
+}
+
+func CompleteUpstreamAccountOAuth(ctx context.Context, input UpstreamOAuthCompleteInput) (*UpstreamAccountView, error) {
 	state := strings.TrimSpace(input.State)
 	code := strings.TrimSpace(input.Code)
 	if state == "" || code == "" {
@@ -137,21 +180,52 @@ func CompleteUpstreamCodexOAuth(ctx context.Context, input UpstreamOAuthComplete
 	if err != nil {
 		return nil, err
 	}
-	tokenResult, err := ExchangeCodexAuthorizationCodeWithProxy(ctx, code, verifier, proxyURL)
-	if err != nil {
-		return nil, err
+	platform := strings.ToLower(strings.TrimSpace(verifierPayload["platform"]))
+	accountType := strings.ToLower(strings.TrimSpace(verifierPayload["credential_type"]))
+	if platform == "" {
+		platform = constant.UpstreamPlatformOpenAI
 	}
-	accountExternalId, ok := ExtractCodexAccountIDFromJWT(tokenResult.AccessToken)
-	if !ok {
-		return nil, errors.New("failed to extract account_id from OAuth access token")
+	if accountType == "" {
+		accountType = constant.UpstreamAccountTypeOAuth
 	}
-	email, _ := ExtractEmailFromJWT(tokenResult.AccessToken)
-	credentials := map[string]any{
-		"access_token": tokenResult.AccessToken, "refresh_token": tokenResult.RefreshToken,
-		"account_id": accountExternalId, "email": email, "type": "codex",
-		"last_refresh": time.Now().Format(time.RFC3339), "expired": tokenResult.ExpiresAt.Format(time.RFC3339),
+	credentials := map[string]any{}
+	email := ""
+	accountExternalId := ""
+	expiresAt := int64(0)
+	switch platform {
+	case constant.UpstreamPlatformOpenAI:
+		tokenResult, exchangeErr := ExchangeCodexAuthorizationCodeWithProxy(ctx, code, verifier, proxyURL)
+		if exchangeErr != nil {
+			return nil, exchangeErr
+		}
+		accountExternalId, _ = ExtractCodexAccountIDFromJWT(tokenResult.AccessToken)
+		if accountExternalId == "" {
+			return nil, errors.New("failed to extract account_id from OAuth access token")
+		}
+		email, _ = ExtractEmailFromJWT(tokenResult.AccessToken)
+		credentials = map[string]any{
+			"access_token": tokenResult.AccessToken, "refresh_token": tokenResult.RefreshToken,
+			"account_id": accountExternalId, "email": email, "type": "codex",
+			"last_refresh": time.Now().Format(time.RFC3339), "expired": tokenResult.ExpiresAt.Format(time.RFC3339),
+		}
+		expiresAt = tokenResult.ExpiresAt.Unix()
+	case constant.UpstreamPlatformAnthropic:
+		tokenResult, exchangeErr := ExchangeClaudeAuthorizationCodeWithProxy(ctx, code, verifier, state, proxyURL)
+		if exchangeErr != nil {
+			return nil, exchangeErr
+		}
+		email = tokenResult.Email
+		accountExternalId = tokenResult.AccountID
+		credentials = map[string]any{
+			"access_token": tokenResult.AccessToken, "refresh_token": tokenResult.RefreshToken,
+			"token_type": tokenResult.TokenType, "scope": tokenResult.Scope,
+			"org_uuid": tokenResult.Organization, "account_id": tokenResult.AccountID, "email": tokenResult.Email,
+			"last_refresh": time.Now().Format(time.RFC3339), "expired": tokenResult.ExpiresAt.Format(time.RFC3339),
+		}
+		expiresAt = tokenResult.ExpiresAt.Unix()
+	default:
+		return nil, errors.New("unsupported OAuth platform")
 	}
-	expiresAt := tokenResult.ExpiresAt.Unix()
 	var accountId int
 	if session.AccountId != nil {
 		if err := replaceUpstreamOAuthCredential(*session.AccountId, credentials, expiresAt, session.ProxyId); err != nil {
@@ -168,7 +242,7 @@ func CompleteUpstreamCodexOAuth(ctx context.Context, input UpstreamOAuthComplete
 		}
 		accountInput := UpstreamAccountCreateInput{
 			Account: model.UpstreamAccount{
-				Name: name, Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+				Name: name, Platform: platform, Type: accountType,
 				Extra: "{}", ProxyId: input.ProxyId, Concurrency: 1, Priority: 50, Weight: 1,
 				Status: constant.UpstreamStatusActive, Schedulable: true, ExpiresAt: &expiresAt, AutoPauseOnExpired: true,
 				OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
@@ -205,8 +279,8 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 	if err := model.DB.First(&account, accountId).Error; err != nil {
 		return nil, err
 	}
-	if account.Platform != constant.UpstreamPlatformOpenAI || account.Type != constant.UpstreamAccountTypeOAuth {
-		return nil, errors.New("account is not an OpenAI OAuth account")
+	if !isRefreshableUpstreamOAuthAccount(account.Platform, account.Type) {
+		return nil, errors.New("account does not support OAuth refresh")
 	}
 	if account.OAuthRefreshOwner != constant.UpstreamOAuthRefreshOwnerStarNexus {
 		return nil, errors.New("OAuth refresh is owned by an external system")
@@ -223,25 +297,46 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 	if err != nil {
 		return nil, err
 	}
-	result, err := RefreshCodexOAuthTokenWithProxy(ctx, refreshToken, proxyURL)
-	if err != nil {
-		return nil, err
-	}
-	credentials["access_token"] = result.AccessToken
-	credentials["refresh_token"] = result.RefreshToken
-	credentials["last_refresh"] = time.Now().Format(time.RFC3339)
-	credentials["expired"] = result.ExpiresAt.Format(time.RFC3339)
-	if upstreamCredentialMapString(credentials, "account_id") == "" {
-		if value, ok := ExtractCodexAccountIDFromJWT(result.AccessToken); ok {
-			credentials["account_id"] = value
+	var expiresAt int64
+	switch account.Platform {
+	case constant.UpstreamPlatformOpenAI:
+		result, refreshErr := RefreshCodexOAuthTokenWithProxy(ctx, refreshToken, proxyURL)
+		if refreshErr != nil {
+			return nil, refreshErr
 		}
-	}
-	if upstreamCredentialMapString(credentials, "email") == "" {
-		if value, ok := ExtractEmailFromJWT(result.AccessToken); ok {
-			credentials["email"] = value
+		credentials["access_token"] = result.AccessToken
+		credentials["refresh_token"] = result.RefreshToken
+		credentials["last_refresh"] = time.Now().Format(time.RFC3339)
+		credentials["expired"] = result.ExpiresAt.Format(time.RFC3339)
+		if upstreamCredentialMapString(credentials, "account_id") == "" {
+			if value, ok := ExtractCodexAccountIDFromJWT(result.AccessToken); ok {
+				credentials["account_id"] = value
+			}
 		}
+		if upstreamCredentialMapString(credentials, "email") == "" {
+			if value, ok := ExtractEmailFromJWT(result.AccessToken); ok {
+				credentials["email"] = value
+			}
+		}
+		expiresAt = result.ExpiresAt.Unix()
+	case constant.UpstreamPlatformAnthropic:
+		result, refreshErr := RefreshClaudeOAuthTokenWithProxy(ctx, refreshToken, proxyURL)
+		if refreshErr != nil {
+			return nil, refreshErr
+		}
+		credentials["access_token"] = result.AccessToken
+		if result.RefreshToken != "" {
+			credentials["refresh_token"] = result.RefreshToken
+		}
+		credentials["token_type"] = result.TokenType
+		credentials["scope"] = result.Scope
+		credentials["last_refresh"] = time.Now().Format(time.RFC3339)
+		credentials["expired"] = result.ExpiresAt.Format(time.RFC3339)
+		expiresAt = result.ExpiresAt.Unix()
+	default:
+		return nil, errors.New("unsupported OAuth platform")
 	}
-	if err := replaceUpstreamOAuthCredential(account.Id, credentials, result.ExpiresAt.Unix(), account.ProxyId); err != nil {
+	if err := replaceUpstreamOAuthCredential(account.Id, credentials, expiresAt, account.ProxyId); err != nil {
 		return nil, err
 	}
 	recordUpstreamAccountEvent(account.Id, 0, "oauth_refresh", "success", "credential refreshed", nil)
@@ -258,10 +353,10 @@ func replaceUpstreamOAuthCredential(accountId int, credentials map[string]any, e
 		if err := tx.First(&current, accountId).Error; err != nil {
 			return err
 		}
-		if current.Type != constant.UpstreamAccountTypeOAuth {
+		if !isRefreshableUpstreamOAuthAccount(current.Platform, current.Type) {
 			return errors.New("account is not an OAuth account")
 		}
-		if err := validateUpstreamCredentialPayload(current.Type, credentials); err != nil {
+		if err := validateUpstreamCredentialPayload(current.Platform, current.Type, credentials); err != nil {
 			return err
 		}
 		newVersion := current.CredentialVersion + 1
@@ -285,6 +380,13 @@ func replaceUpstreamOAuthCredential(accountId int, credentials map[string]any, e
 		}
 		return nil
 	})
+}
+
+func isRefreshableUpstreamOAuthAccount(platform string, accountType string) bool {
+	platform = strings.ToLower(strings.TrimSpace(platform))
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	return (platform == constant.UpstreamPlatformOpenAI && accountType == constant.UpstreamAccountTypeOAuth) ||
+		(platform == constant.UpstreamPlatformAnthropic && (accountType == constant.UpstreamAccountTypeOAuth || accountType == constant.UpstreamAccountTypeSetupToken))
 }
 
 func resolveOAuthProxyURL(proxyId *int) (string, error) {

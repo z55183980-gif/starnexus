@@ -45,6 +45,18 @@ func IsResponsesFirstOutputEvent(event *dto.ResponsesStreamResponse) bool {
 	return strings.HasPrefix(eventType, "response.output_text") || strings.HasPrefix(eventType, "response.output")
 }
 
+// IsResponsesFirstFrameEvent reports whether an event is the first frame of a
+// Responses API lifecycle. It intentionally excludes transport-only WebSocket
+// events such as responsesapi.websocket_timing while allowing response.created
+// to start the lower, S4-compatible first-response latency measurement.
+func IsResponsesFirstFrameEvent(event *dto.ResponsesStreamResponse) bool {
+	if event == nil {
+		return false
+	}
+	eventType := strings.TrimSpace(event.Type)
+	return strings.HasPrefix(eventType, "response.")
+}
+
 func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.RelayInfo, data []byte) (*dto.ResponsesStreamResponse, error) {
 	var event dto.ResponsesStreamResponse
 	if err := common.Unmarshal(data, &event); err != nil {

@@ -35,12 +35,25 @@ func TestValidateChannelWithLocalAccountPool(t *testing.T) {
 		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
 	}
 	require.NoError(t, validateChannel(channel, true))
+	require.Equal(t, constant.ChannelTypeOpenAI, channel.Type)
 
 	channel.ChannelInfo.IsMultiKey = true
 	require.Error(t, validateChannel(channel, true))
 	channel.ChannelInfo.IsMultiKey = false
 	channel.Type = constant.ChannelTypeAnthropic
 	require.Error(t, validateChannel(channel, true))
+
+	anthropicPool := model.UpstreamAccountPool{
+		Name: "claude", Platform: constant.UpstreamPlatformAnthropic, CredentialType: "mixed",
+		Status: constant.UpstreamStatusActive, SchedulerConfig: "{}", CreatedAt: 1, UpdatedAt: 1,
+	}
+	require.NoError(t, db.Create(&anthropicPool).Error)
+	anthropicChannel := &model.Channel{
+		Type: constant.ChannelTypeAnthropic, Name: "local-claude", Key: "",
+		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &anthropicPool.Id,
+	}
+	require.NoError(t, validateChannel(anthropicChannel, true))
+	require.Equal(t, constant.ChannelTypeAnthropic, anthropicChannel.Type)
 
 	channel.Type = constant.ChannelTypeOpenAI
 	channel.CredentialSource = constant.ChannelCredentialSourceKey

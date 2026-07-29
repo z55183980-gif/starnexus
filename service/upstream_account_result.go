@@ -11,6 +11,23 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 )
 
+type UpstreamAccountErrorDisposition int
+
+const (
+	UpstreamAccountErrorNotHandled UpstreamAccountErrorDisposition = iota
+	UpstreamAccountErrorRetryAccount
+	UpstreamAccountErrorRetryTransport
+	UpstreamAccountErrorGlobal
+)
+
+func (disposition UpstreamAccountErrorDisposition) Handled() bool {
+	return disposition != UpstreamAccountErrorNotHandled
+}
+
+func (disposition UpstreamAccountErrorDisposition) RetryWithinPool() bool {
+	return disposition == UpstreamAccountErrorRetryAccount || disposition == UpstreamAccountErrorRetryTransport
+}
+
 type UpstreamAccountEventInput struct {
 	AccountId int
 	PoolId    int
@@ -86,9 +103,9 @@ func truncateUpstreamEventText(value string, limit int) string {
 	return value[:limit]
 }
 
-func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIError) bool {
+func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIError) UpstreamAccountErrorDisposition {
 	if accountId <= 0 || apiErr == nil {
-		return false
+		return UpstreamAccountErrorNotHandled
 	}
 	now := common.GetTimestamp()
 	message := UpstreamAccountErrorSummary(apiErr)
@@ -96,7 +113,7 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		"error_message": message,
 		"updated_at":    now,
 	}
-	owned := true
+	disposition := UpstreamAccountErrorRetryAccount
 	switch {
 	case apiErr.StatusCode == 401:
 		updates["status"] = "error"
@@ -107,26 +124,66 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		updates["temp_unschedulable_until"] = until
 		updates["temp_unschedulable_reason"] = "upstream_forbidden"
 	case apiErr.StatusCode == 429:
-		resetAt := now + int64(time.Minute.Seconds())
+		resetAt, windowStart, windowEnd := upstreamRateLimitState(apiErr, now)
 		updates["rate_limited_at"] = now
 		updates["rate_limit_reset_at"] = resetAt
-	case apiErr.StatusCode == 408 || apiErr.StatusCode >= 500 || apiErr.GetErrorCode() == types.ErrorCodeDoRequestFailed:
-		until := now + int64((30 * time.Second).Seconds())
-		updates["temp_unschedulable_until"] = until
-		updates["temp_unschedulable_reason"] = "upstream_transport"
+		if windowStart != nil && windowEnd != nil {
+			updates["session_window_start"] = *windowStart
+			updates["session_window_end"] = *windowEnd
+			updates["session_window_status"] = "rejected"
+		}
+	case apiErr.StatusCode == 408 || isUpstreamTransportError(apiErr):
+		disposition = UpstreamAccountErrorRetryTransport
+		updates = nil
+	case apiErr.StatusCode >= 500 && hasUpstreamHTTPResponse(apiErr):
+		return UpstreamAccountErrorGlobal
 	default:
-		owned = false
+		return UpstreamAccountErrorNotHandled
 	}
-	if !owned {
-		return false
+	if len(updates) > 0 {
+		_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
 	}
-	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
-	if proxyId > 0 && (apiErr.StatusCode == 408 || apiErr.GetErrorCode() == types.ErrorCodeDoRequestFailed) {
+	if disposition == UpstreamAccountErrorRetryTransport && proxyId > 0 {
 		_ = model.DB.Model(&model.UpstreamProxy{}).Where("id = ?", proxyId).Updates(map[string]any{
 			"last_test_at": now, "latency_status": "error", "latency_message": message, "updated_at": now,
 		}).Error
 	}
-	return true
+	return disposition
+}
+
+func isUpstreamTransportError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	switch apiErr.GetErrorCode() {
+	case types.ErrorCodeDoRequestFailed, types.ErrorCodeReadResponseBodyFailed, types.ErrorCodeBadResponse, types.ErrorCodeEmptyResponse:
+		return true
+	default:
+		return false
+	}
+}
+
+func hasUpstreamHTTPResponse(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	header, body := apiErr.UpstreamResponse()
+	return len(header) > 0 || len(body) > 0 || apiErr.GetErrorCode() == types.ErrorCodeBadResponseStatusCode
+}
+
+func ShouldRetryUpstreamAccount(failovers int, startedAt time.Time) bool {
+	maxFailovers := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_MAX_FAILOVERS", 2)
+	if maxFailovers < 0 {
+		maxFailovers = 0
+	}
+	if failovers >= maxFailovers {
+		return false
+	}
+	budgetMs := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS", 5000)
+	if budgetMs <= 0 || startedAt.IsZero() {
+		return true
+	}
+	return time.Since(startedAt) < time.Duration(budgetMs)*time.Millisecond
 }
 
 func RecordUpstreamAccountSuccess(accountId int) {

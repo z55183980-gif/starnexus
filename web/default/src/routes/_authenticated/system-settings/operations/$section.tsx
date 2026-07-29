@@ -27,6 +27,9 @@ export const Route = createFileRoute(
   '/_authenticated/system-settings/operations/$section'
 )({
   beforeLoad: ({ params }) => {
+    if (params.section === 'node-routing') {
+      throw redirect({ to: '/routing-management' })
+    }
     const validSections = OPERATIONS_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({

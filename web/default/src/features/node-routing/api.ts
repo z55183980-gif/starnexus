@@ -3,6 +3,8 @@ import type {
   RoutingNode,
   RoutingNodeBoundUsersResponse,
   RoutingNodeInput,
+  RoutingNodeMonitorEnrollment,
+  RoutingNodeMonitorSharedEnrollment,
   RoutingNodesResponse,
 } from './types'
 
@@ -32,6 +34,20 @@ export async function getRoutingNodeBoundUsers(
     throw new Error(result.message || 'Failed to load bound users')
   }
   return result
+}
+
+export async function removeRoutingNodeUserBinding(
+  userId: number
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.put(
+    `/api/user/${userId}/node_binding`,
+    { node: 'auto' },
+    {
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
+  return res.data
 }
 
 export async function createRoutingNode(
@@ -71,6 +87,50 @@ export async function reconcileRoutingNodes(): Promise<{
   data?: { started: boolean }
 }> {
   const res = await api.post('/api/node-routing/reconcile', undefined, {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function rotateRoutingNodeMonitorToken(id: number): Promise<{
+  success: boolean
+  message?: string
+  data?: RoutingNodeMonitorEnrollment
+}> {
+  const res = await api.post(
+    `/api/node-routing/nodes/${id}/monitor-token`,
+    undefined,
+    {
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+export async function rotateRoutingNodeMonitorEnrollmentToken(): Promise<{
+  success: boolean
+  message?: string
+  data?: RoutingNodeMonitorSharedEnrollment
+}> {
+  const res = await api.post(
+    '/api/node-routing/monitor-enrollment-token',
+    undefined,
+    {
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
+export async function getRoutingNodeMonitorEnrollmentToken(): Promise<{
+  success: boolean
+  message?: string
+  data?: RoutingNodeMonitorSharedEnrollment
+}> {
+  const res = await api.get('/api/node-routing/monitor-enrollment-token', {
     skipBusinessError: true,
     skipErrorHandler: true,
   } as Record<string, unknown>)

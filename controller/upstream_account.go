@@ -207,7 +207,7 @@ func ListUpstreamAccounts(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	filter := service.UpstreamAccountListFilter{
 		Platform: c.Query("platform"), Type: c.Query("type"), Status: c.Query("status"),
-		Search: c.Query("search"), PoolId: queryPositiveInt(c, "pool_id"),
+		Search: c.Query("search"), PoolId: queryPositiveInt(c, "pool_id"), ProxyId: queryPositiveInt(c, "proxy_id"),
 		Page: pageInfo.GetPage(), PageSize: pageInfo.GetPageSize(),
 	}
 	if raw := strings.TrimSpace(c.Query("schedulable")); raw != "" {
@@ -226,6 +226,72 @@ func ListUpstreamAccounts(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{"items": accounts, "total": total, "page": filter.Page, "page_size": filter.PageSize})
 }
 
+func ExportUpstreamAccounts(c *gin.Context) {
+	var request struct {
+		Ids []int `json:"ids"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	exported, err := service.ExportUpstreamAccounts(request.Ids)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("exported %d upstream account(s)", len(exported.Accounts)))
+	common.ApiSuccess(c, exported)
+}
+
+func ImportUpstreamData(c *gin.Context) {
+	var request struct {
+		Data service.UpstreamAccountExport `json:"data"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	result, err := service.ImportUpstreamData(request.Data)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf(
+		"imported upstream data: %d account(s), %d proxy record(s), %d proxy record(s) reused",
+		result.AccountCreated, result.ProxyCreated, result.ProxyReused,
+	))
+	common.ApiSuccess(c, result)
+}
+
+func PreviewUpstreamAccountsFromCRS(c *gin.Context) {
+	var request service.CRSSyncInput
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	result, err := service.PreviewUpstreamAccountsFromCRS(c.Request.Context(), request)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func SyncUpstreamAccountsFromCRS(c *gin.Context) {
+	var request service.CRSSyncInput
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	result, err := service.SyncUpstreamAccountsFromCRS(c.Request.Context(), request)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("synced upstream accounts from CRS: %d created, %d updated, %d failed", result.Created, result.Updated, result.Failed))
+	common.ApiSuccess(c, result)
+}
+
 func GetUpstreamAccount(c *gin.Context) {
 	id, ok := positivePathId(c)
 	if !ok {
@@ -237,6 +303,33 @@ func GetUpstreamAccount(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, account)
+}
+
+func GetUpstreamAccountQuota(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	usage, err := service.QueryUpstreamAccountQuota(c.Request.Context(), id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, usage)
+}
+
+func ResetUpstreamAccountQuota(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	result, err := service.ResetUpstreamAccountQuota(c.Request.Context(), id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("reset upstream account %d quota", id))
+	common.ApiSuccess(c, result)
 }
 
 func CreateUpstreamAccount(c *gin.Context) {
@@ -306,6 +399,54 @@ func DeleteUpstreamAccount(c *gin.Context) {
 	}
 	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("deleted upstream account %d", id))
 	common.ApiSuccess(c, nil)
+}
+
+func RecoverUpstreamAccount(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Scope service.UpstreamAccountRecoveryScope `json:"scope"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+	}
+	if err := service.RecoverUpstreamAccountRuntimeState(id, request.Scope); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("recovered upstream account %d runtime state (%s)", id, request.Scope))
+	account, err := service.GetUpstreamAccount(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, account)
+}
+
+func RecoverUpstreamAccountsBatch(c *gin.Context) {
+	var request struct {
+		Ids   []int                                `json:"ids"`
+		Scope service.UpstreamAccountRecoveryScope `json:"scope"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || len(request.Ids) == 0 || len(request.Ids) > 100 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	result := upstreamBatchResult{SuccessIds: []int{}, Failures: []upstreamBatchFailure{}}
+	for _, id := range request.Ids {
+		if err := service.RecoverUpstreamAccountRuntimeState(id, request.Scope); err != nil {
+			result.Failures = append(result.Failures, upstreamBatchFailure{Id: id, Message: err.Error()})
+			continue
+		}
+		result.SuccessIds = append(result.SuccessIds, id)
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("recovered %d upstream account runtime states", len(result.SuccessIds)))
+	common.ApiSuccess(c, result)
 }
 
 func CreateUpstreamAccountsBatch(c *gin.Context) {
@@ -387,15 +528,18 @@ func DeleteUpstreamAccountsBatch(c *gin.Context) {
 
 func StartUpstreamAccountOAuth(c *gin.Context) {
 	var request struct {
-		AccountId *int                  `json:"account_id"`
-		ProxyId   optionalNullable[int] `json:"proxy_id"`
+		AccountId      *int                  `json:"account_id"`
+		ProxyId        optionalNullable[int] `json:"proxy_id"`
+		Platform       string                `json:"platform"`
+		CredentialType string                `json:"credential_type"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	result, err := service.StartUpstreamCodexOAuth(service.UpstreamOAuthStartInput{
+	result, err := service.StartUpstreamAccountOAuth(service.UpstreamOAuthStartInput{
 		AccountId: request.AccountId, ProxyId: optionalPositiveId(request.ProxyId), ProxyIdPresent: request.ProxyId.Present,
+		Platform: request.Platform, CredentialType: request.CredentialType,
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -420,9 +564,9 @@ func CompleteUpstreamAccountOAuth(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
-	account, err := service.CompleteUpstreamCodexOAuth(ctx, service.UpstreamOAuthCompleteInput{
+	account, err := service.CompleteUpstreamAccountOAuth(ctx, service.UpstreamOAuthCompleteInput{
 		State: state, Code: code, Name: request.Name, PoolIds: request.PoolIds, ProxyId: request.ProxyId,
 	})
 	if err != nil {
@@ -454,7 +598,7 @@ func TestUpstreamAccount(c *gin.Context) {
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 	result, err := service.TestUpstreamAccount(ctx, id)
 	if err != nil {
@@ -474,7 +618,7 @@ func TestUpstreamAccountsBatch(c *gin.Context) {
 	}
 	results := make([]*service.UpstreamAccountTestResult, 0, len(request.Ids))
 	for _, id := range request.Ids {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 		result, err := service.TestUpstreamAccount(ctx, id)
 		cancel()
 		if err != nil {
@@ -692,7 +836,7 @@ func newAccountFromRequest(request upstreamAccountRequest) model.UpstreamAccount
 		OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
 	}
 	applyAccountRequest(&account, request)
-	if account.Type != constant.UpstreamAccountTypeOAuth {
+	if account.Type != constant.UpstreamAccountTypeOAuth && account.Type != constant.UpstreamAccountTypeSetupToken {
 		account.OAuthRefreshOwner = constant.UpstreamOAuthRefreshOwnerExternal
 	}
 	return account

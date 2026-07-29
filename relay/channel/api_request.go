@@ -14,6 +14,7 @@ import (
 	"time"
 
 	common2 "github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
@@ -355,6 +356,9 @@ func doApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	}
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
+	}
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		service.RecordUpstreamAccountRateLimitHeadersAsync(common2.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId), resp.Header)
 	}
 	return resp, nil
 }

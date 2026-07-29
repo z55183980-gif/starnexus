@@ -75,6 +75,7 @@ import { LOG_TYPE_ENUM } from '@/features/usage-logs/constants'
 import type { UsageLog } from '@/features/usage-logs/data/schema'
 import {
   getFirstResponseTimeColor,
+  getLogUseTimeSeconds,
   getResponseTimeColor,
   parseLogOther,
 } from '@/features/usage-logs/lib/format'
@@ -273,11 +274,12 @@ function LogTiming({ log }: { log: UsageLog }) {
   const { t } = useTranslation()
   const other = parseLogOther(log.other)
   const frt = other?.frt
+  const useTime = getLogUseTimeSeconds(log)
   const tokensPerSecond =
-    log.use_time > 0 && log.completion_tokens > 0
-      ? log.completion_tokens / log.use_time
+    useTime > 0 && log.completion_tokens > 0
+      ? log.completion_tokens / useTime
       : null
-  const timeVariant = getResponseTimeColor(log.use_time, log.completion_tokens)
+  const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
   const frtVariant = frt ? getFirstResponseTimeColor(frt / 1000) : null
 
   return (
@@ -297,7 +299,7 @@ function LogTiming({ log }: { log: UsageLog }) {
             )}
             aria-hidden='true'
           />
-          {formatUseTime(log.use_time)}
+          {formatUseTime(useTime)}
         </span>
         {log.is_stream &&
           (frt != null && frt > 0 ? (
@@ -334,7 +336,7 @@ function LogTiming({ log }: { log: UsageLog }) {
 
 function getPercentileLatency(logs: UsageLog[], percentile: number) {
   const values = logs
-    .map((log) => Number(log.use_time))
+    .map(getLogUseTimeSeconds)
     .filter((value) => Number.isFinite(value) && value >= 0)
     .sort((a, b) => a - b)
   if (values.length === 0) return 0

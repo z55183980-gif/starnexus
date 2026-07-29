@@ -7,19 +7,26 @@ published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
 
-export type UpstreamStatus = 'active' | 'inactive' | 'error'
-export type UpstreamAccountType = 'oauth' | 'apikey'
+export type UpstreamStatus = 'active' | 'inactive' | 'error' | 'expired'
+export type UpstreamPlatform = 'openai' | 'anthropic'
+export type UpstreamAccountType =
+  | 'oauth'
+  | 'setup_token'
+  | 'apikey'
+  | 'bedrock'
+  | 'service_account'
 export type UpstreamOAuthRefreshOwner = 'external' | 'starnexus'
 export type UpstreamProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
 export type UpstreamProxyFallback = 'none' | 'direct' | 'proxy'
+export type UpstreamProxyStatus = 'active' | 'inactive' | 'expired'
 
 export interface UpstreamAccountPool {
   id: number
   name: string
   description: string
-  platform: 'openai'
+  platform: UpstreamPlatform
   credential_type: UpstreamAccountType | 'mixed'
-  status: Exclude<UpstreamStatus, 'error'>
+  status: 'active' | 'inactive'
   default_proxy_id?: number | null
   scheduler_config: string
   account_count: number
@@ -40,7 +47,7 @@ export interface UpstreamAccountPoolMember {
   weight: number
   created_at: number
   name: string
-  platform: 'openai'
+  platform: UpstreamPlatform
   type: UpstreamAccountType
   status: UpstreamStatus
   schedulable: boolean
@@ -50,13 +57,14 @@ export interface UpstreamAccount {
   id: number
   name: string
   notes?: string | null
-  platform: 'openai'
+  platform: UpstreamPlatform
   type: UpstreamAccountType
   credential_configured: boolean
   credential_version: number
   extra: string
   proxy_id?: number | null
   concurrency: number
+  current_concurrency: number
   priority: number
   weight: number
   load_factor?: number | null
@@ -71,8 +79,53 @@ export interface UpstreamAccount {
   auto_pause_on_expired: boolean
   oauth_refresh_owner: UpstreamOAuthRefreshOwner
   pool_ids: number[]
+  metadata: {
+    email?: string
+    plan_type?: string
+    privacy_mode?: string
+    compact_mode?: string
+    compact_supported: boolean
+  }
   created_at: number
   updated_at: number
+}
+
+export interface UpstreamAccountRateLimitWindow {
+  used_percent: number
+  limit_window_seconds: number
+  reset_after_seconds: number
+  reset_at: number
+}
+
+export interface UpstreamAccountRateLimit {
+  plan_type?: string
+  allowed: boolean
+  limit_reached: boolean
+  primary_window?: UpstreamAccountRateLimitWindow | null
+  secondary_window?: UpstreamAccountRateLimitWindow | null
+}
+
+export interface UpstreamAccountQuotaUsage {
+  user_id?: string
+  account_id?: string
+  email?: string
+  plan_type?: string
+  rate_limit?: UpstreamAccountRateLimit | null
+  additional_rate_limits?: Array<{
+    limit_name?: string
+    metered_feature?: string
+    rate_limit?: UpstreamAccountRateLimit | null
+  }>
+  rate_limit_reset_credits?: {
+    available_count: number
+    credits?: Array<{ expires_at?: string }>
+  } | null
+  fetched_at: number
+}
+
+export interface UpstreamAccountQuotaResetResult {
+  code: string
+  windows_reset: number
 }
 
 export interface UpstreamProxy {
@@ -82,7 +135,9 @@ export interface UpstreamProxy {
   host: string
   port: number
   auth_configured: boolean
-  status: Exclude<UpstreamStatus, 'error'>
+  username: string
+  password?: string
+  status: UpstreamProxyStatus
   expires_at?: number | null
   fallback_mode: UpstreamProxyFallback
   backup_proxy_id?: number | null
@@ -105,9 +160,9 @@ export interface UpstreamProxy {
 export interface UpstreamAccountPayload {
   name: string
   notes?: string
-  platform: 'openai'
+  platform: UpstreamPlatform
   type: UpstreamAccountType
-  credentials?: Record<string, string>
+  credentials?: Record<string, unknown>
   extra: string
   proxy_id?: number | null
   concurrency: number
@@ -126,9 +181,9 @@ export interface UpstreamAccountPayload {
 export interface UpstreamPoolPayload {
   name: string
   description: string
-  platform: 'openai'
+  platform: UpstreamPlatform
   credential_type: UpstreamAccountType | 'mixed'
-  status: Exclude<UpstreamStatus, 'error'>
+  status: 'active' | 'inactive'
   default_proxy_id?: number | null
   scheduler_config: string
 }
@@ -139,7 +194,7 @@ export interface UpstreamProxyPayload {
   host: string
   port: number
   auth?: { username: string; password: string }
-  status: Exclude<UpstreamStatus, 'error'>
+  status: Exclude<UpstreamProxyStatus, 'expired'>
   expires_at?: number | null
   fallback_mode: UpstreamProxyFallback
   backup_proxy_id?: number | null
@@ -155,4 +210,75 @@ export interface ApiResponse<T> {
 export interface UpstreamBatchResult {
   success_ids: number[]
   failures: Array<{ index?: number; id?: number; message: string }>
+}
+
+export interface UpstreamAccountExport {
+  type: 'sub2api-data'
+  version: 1
+  exported_at: string
+  proxies: unknown[]
+  accounts: unknown[]
+}
+
+export interface UpstreamDataImportResult {
+  proxy_created: number
+  proxy_reused: number
+  proxy_failed: number
+  account_created: number
+  account_failed: number
+  errors: Array<{
+    kind: string
+    name?: string
+    proxy_key?: string
+    message: string
+  }>
+}
+
+export interface CRSSyncInput {
+  base_url: string
+  username: string
+  password: string
+  sync_proxies: boolean
+  selected_account_ids?: string[]
+}
+
+export interface CRSPreviewAccount {
+  crs_account_id: string
+  kind: string
+  name: string
+  platform: UpstreamPlatform
+  type: UpstreamAccountType
+}
+
+export interface CRSPreviewResult {
+  new_accounts: CRSPreviewAccount[]
+  existing_accounts: CRSPreviewAccount[]
+  skipped: number
+}
+
+export interface CRSSyncResult {
+  created: number
+  updated: number
+  skipped: number
+  failed: number
+  items: Array<{
+    crs_account_id: string
+    kind: string
+    name: string
+    action: 'created' | 'updated' | 'skipped' | 'failed'
+    error?: string
+  }>
+}
+
+export interface UpstreamAccountTestResult {
+  account_id: number
+  success: boolean
+  status_code: number
+  latency_ms: number
+  first_output_latency_ms: number
+  proxy_id: number
+  result: string
+  credential_type: string
+  protocol: string
+  model: string
 }

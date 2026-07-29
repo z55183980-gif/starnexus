@@ -9,14 +9,22 @@ License, or (at your option) any later version.
 import { api } from '@/lib/api'
 import type {
   ApiResponse,
+  CRSPreviewResult,
+  CRSSyncInput,
+  CRSSyncResult,
   UpstreamAccount,
+  UpstreamAccountExport,
+  UpstreamAccountTestResult,
   UpstreamAccountPoolMember,
   UpstreamAccountPayload,
   UpstreamAccountPool,
+  UpstreamAccountQuotaResetResult,
+  UpstreamAccountQuotaUsage,
   UpstreamBatchResult,
   UpstreamPoolPayload,
   UpstreamProxy,
   UpstreamProxyPayload,
+  UpstreamDataImportResult,
 } from './types'
 
 export async function listUpstreamPools(): Promise<
@@ -70,6 +78,11 @@ export async function listUpstreamAccounts(params?: {
   page_size?: number
   search?: string
   pool_id?: number
+  proxy_id?: number
+  platform?: string
+  type?: string
+  status?: string
+  schedulable?: boolean
 }): Promise<
   ApiResponse<{
     items: UpstreamAccount[]
@@ -93,6 +106,40 @@ export async function createUpstreamAccountsBatch(
   items: UpstreamAccountPayload[]
 ): Promise<ApiResponse<UpstreamBatchResult>> {
   const response = await api.post('/api/upstream/accounts/batch', { items })
+  return response.data
+}
+
+export async function exportUpstreamAccounts(
+  ids: number[]
+): Promise<ApiResponse<UpstreamAccountExport>> {
+  const response = await api.post('/api/upstream/accounts/export', { ids })
+  return response.data
+}
+
+export async function importUpstreamData(
+  data: UpstreamAccountExport
+): Promise<ApiResponse<UpstreamDataImportResult>> {
+  const response = await api.post('/api/upstream/accounts/import', {
+    data,
+    skip_default_group_bind: true,
+  })
+  return response.data
+}
+
+export async function previewUpstreamAccountsFromCRS(
+  payload: Omit<CRSSyncInput, 'selected_account_ids'>
+): Promise<ApiResponse<CRSPreviewResult>> {
+  const response = await api.post(
+    '/api/upstream/accounts/sync/crs/preview',
+    payload
+  )
+  return response.data
+}
+
+export async function syncUpstreamAccountsFromCRS(
+  payload: CRSSyncInput
+): Promise<ApiResponse<CRSSyncResult>> {
+  const response = await api.post('/api/upstream/accounts/sync/crs', payload)
   return response.data
 }
 
@@ -130,8 +177,43 @@ export async function deleteUpstreamAccount(
 
 export async function testUpstreamAccount(
   id: number
-): Promise<ApiResponse<{ result: string; latency_ms: number }>> {
+): Promise<ApiResponse<UpstreamAccountTestResult>> {
   const response = await api.post(`/api/upstream/accounts/${id}/test`)
+  return response.data
+}
+
+export async function getUpstreamAccountQuota(
+  id: number
+): Promise<ApiResponse<UpstreamAccountQuotaUsage>> {
+  const response = await api.get(`/api/upstream/accounts/${id}/quota`)
+  return response.data
+}
+
+export async function resetUpstreamAccountQuota(
+  id: number
+): Promise<ApiResponse<UpstreamAccountQuotaResetResult>> {
+  const response = await api.post(`/api/upstream/accounts/${id}/reset-quota`)
+  return response.data
+}
+
+export async function recoverUpstreamAccount(
+  id: number,
+  scope: 'all' | 'rate_limit' | 'temporary' = 'all'
+): Promise<ApiResponse<UpstreamAccount>> {
+  const response = await api.post(`/api/upstream/accounts/${id}/recover`, {
+    scope,
+  })
+  return response.data
+}
+
+export async function recoverUpstreamAccounts(
+  ids: number[],
+  scope: 'all' | 'rate_limit' | 'temporary' = 'all'
+): Promise<ApiResponse<UpstreamBatchResult>> {
+  const response = await api.post('/api/upstream/accounts/recover', {
+    ids,
+    scope,
+  })
   return response.data
 }
 
@@ -145,6 +227,8 @@ export async function refreshUpstreamOAuth(
 export async function startUpstreamOAuth(payload: {
   account_id?: number
   proxy_id?: number | null
+  platform?: 'openai' | 'anthropic'
+  credential_type?: 'oauth' | 'setup_token'
 }): Promise<ApiResponse<{ authorize_url: string }>> {
   const response = await api.post('/api/upstream/accounts/oauth/start', payload)
   return response.data

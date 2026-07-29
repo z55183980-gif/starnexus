@@ -121,19 +121,51 @@ describe('Channel creation modes', () => {
     const defaults = getChannelCreateDefaultValues('local')
     const payload = transformFormDataToCreatePayload({
       ...defaults,
-      name: 'local codex pool',
+      name: 'local openai pool',
       upstream_account_pool_id: 9,
       models: 'gpt-5.6-sol',
       group: ['test3'],
     })
 
-    assert.equal(defaults.type, 57)
+    assert.equal(defaults.type, 1)
     assert.equal(defaults.credential_source, 'local_account_pool')
     assert.equal(requiresChannelKeyForCreate(defaults), false)
     assert.equal(payload.mode, 'single')
     assert.equal(payload.channel.key, null)
     assert.equal(payload.channel.credential_source, 'local_account_pool')
     assert.equal(payload.channel.upstream_account_pool_id, 9)
+  })
+
+  test('normalizes an edited legacy local Codex channel to OpenAI', () => {
+    const payload = transformFormDataToUpdatePayload(
+      {
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        name: 'legacy local pool',
+        type: 57,
+        credential_source: 'local_account_pool',
+        upstream_account_pool_id: 9,
+        models: 'gpt-5.6-sol',
+        group: ['test3'],
+      },
+      44
+    )
+
+    assert.equal(payload.type, 1)
+  })
+
+  test('keeps Anthropic type for local Anthropic account pools', () => {
+    const payload = transformFormDataToCreatePayload({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'local anthropic pool',
+      type: 14,
+      credential_source: 'local_account_pool',
+      upstream_account_pool_id: 10,
+      models: 'claude-sonnet-4-5',
+      group: ['test3'],
+    })
+
+    assert.equal(payload.channel.type, 14)
+    assert.equal(payload.channel.credential_source, 'local_account_pool')
   })
 })
 

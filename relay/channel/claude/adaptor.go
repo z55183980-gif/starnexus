@@ -6,7 +6,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -81,14 +84,63 @@ func CommonClaudeHeadersOperation(c *gin.Context, req *http.Header, info *relayc
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
-	req.Set("x-api-key", info.ApiKey)
+	accountPlatform := common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountPlatform)
+	accountType := common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountType)
+	isClaudeCode := accountPlatform == constant.UpstreamPlatformAnthropic &&
+		(accountType == constant.UpstreamAccountTypeOAuth || accountType == constant.UpstreamAccountTypeSetupToken)
+	if isClaudeCode {
+		req.Del("x-api-key")
+		req.Set("Authorization", "Bearer "+info.ApiKey)
+	} else if common.GetContextKeyString(c, constant.ContextKeyUpstreamAnthropicAuthScheme) == "authorization_bearer" {
+		req.Del("x-api-key")
+		req.Set("Authorization", "Bearer "+info.ApiKey)
+	} else {
+		req.Del("Authorization")
+		req.Set("x-api-key", info.ApiKey)
+	}
 	anthropicVersion := c.Request.Header.Get("anthropic-version")
 	if anthropicVersion == "" {
 		anthropicVersion = "2023-06-01"
 	}
 	req.Set("anthropic-version", anthropicVersion)
 	CommonClaudeHeadersOperation(c, req, info)
+	if isClaudeCode {
+		applyClaudeCodeHeaders(req)
+	}
 	return nil
+}
+
+func applyClaudeCodeHeaders(req *http.Header) {
+	const requiredBetas = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,prompt-caching-scope-2026-01-05,effort-2025-11-24,context-management-2025-06-27,extended-cache-ttl-2025-04-11"
+	existing := strings.TrimSpace(req.Get("anthropic-beta"))
+	if existing == "" {
+		req.Set("anthropic-beta", requiredBetas)
+	} else {
+		seen := map[string]struct{}{}
+		values := make([]string, 0)
+		for _, value := range strings.Split(existing+","+requiredBetas, ",") {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			if _, ok := seen[value]; ok {
+				continue
+			}
+			seen[value] = struct{}{}
+			values = append(values, value)
+		}
+		req.Set("anthropic-beta", strings.Join(values, ","))
+	}
+	req.Set("User-Agent", "claude-cli/2.1.220 (external, cli)")
+	req.Set("X-App", "cli")
+	req.Set("anthropic-dangerous-direct-browser-access", "true")
+	req.Set("X-Stainless-Lang", "js")
+	req.Set("X-Stainless-Package-Version", "0.74.0")
+	req.Set("X-Stainless-OS", "Windows")
+	req.Set("X-Stainless-Arch", "x64")
+	req.Set("X-Stainless-Runtime", "node")
+	req.Set("X-Stainless-Runtime-Version", "v22.17.0")
+	req.Set("X-Stainless-Retry-Count", "0")
 }
 
 func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeneralOpenAIRequest) (any, error) {

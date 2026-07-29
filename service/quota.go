@@ -171,7 +171,12 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		tieredResult = tieredRes
 	}
 
-	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
+	elapsed := time.Since(relayInfo.StartTime)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	useTimeSeconds := int64(elapsed / time.Second)
+	useTimeMilliseconds := elapsed.Milliseconds()
 	rawInputTokens := usage.InputTokens
 	rawOutputTokens := usage.OutputTokens
 	rawTotalTokens := usage.TotalTokens
@@ -250,18 +255,19 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
-		ChannelId:        relayInfo.ChannelId,
-		PromptTokens:     billing_setting.ApplyInputTokenPricingForContext(usage.InputTokens, tokenPricingCtx),
-		CompletionTokens: billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokens, tokenPricingCtx),
-		ModelName:        logModel,
-		TokenName:        tokenName,
-		Quota:            quota,
-		Content:          logContent,
-		TokenId:          relayInfo.TokenId,
-		UseTimeSeconds:   int(useTimeSeconds),
-		IsStream:         relayInfo.IsStream,
-		Group:            relayInfo.UsingGroup,
-		Other:            other,
+		ChannelId:           relayInfo.ChannelId,
+		PromptTokens:        billing_setting.ApplyInputTokenPricingForContext(usage.InputTokens, tokenPricingCtx),
+		CompletionTokens:    billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokens, tokenPricingCtx),
+		ModelName:           logModel,
+		TokenName:           tokenName,
+		Quota:               quota,
+		Content:             logContent,
+		TokenId:             relayInfo.TokenId,
+		UseTimeSeconds:      int(useTimeSeconds),
+		UseTimeMilliseconds: common.GetPointer(useTimeMilliseconds),
+		IsStream:            relayInfo.IsStream,
+		Group:               relayInfo.UsingGroup,
+		Other:               other,
 	})
 }
 
@@ -299,7 +305,12 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		tieredResult = tieredRes
 	}
 
-	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
+	elapsed := time.Since(relayInfo.StartTime)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	useTimeSeconds := int64(elapsed / time.Second)
+	useTimeMilliseconds := elapsed.Milliseconds()
 	rawPromptTokens := usage.PromptTokens
 	rawCompletionTokens := usage.CompletionTokens
 	rawTotalTokens := usage.PromptTokens + usage.CompletionTokens
@@ -378,18 +389,19 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
-		ChannelId:        relayInfo.ChannelId,
-		PromptTokens:     billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokens, tokenPricingCtx),
-		CompletionTokens: billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokens, tokenPricingCtx),
-		ModelName:        logModel,
-		TokenName:        tokenName,
-		Quota:            quota,
-		Content:          logContent,
-		TokenId:          relayInfo.TokenId,
-		UseTimeSeconds:   int(useTimeSeconds),
-		IsStream:         relayInfo.IsStream,
-		Group:            relayInfo.UsingGroup,
-		Other:            other,
+		ChannelId:           relayInfo.ChannelId,
+		PromptTokens:        billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokens, tokenPricingCtx),
+		CompletionTokens:    billing_setting.ApplyOutputTokenPricingForContext(usage.CompletionTokens, tokenPricingCtx),
+		ModelName:           logModel,
+		TokenName:           tokenName,
+		Quota:               quota,
+		Content:             logContent,
+		TokenId:             relayInfo.TokenId,
+		UseTimeSeconds:      int(useTimeSeconds),
+		UseTimeMilliseconds: common.GetPointer(useTimeMilliseconds),
+		IsStream:            relayInfo.IsStream,
+		Group:               relayInfo.UsingGroup,
+		Other:               other,
 	})
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(usage.CompletionTokens))

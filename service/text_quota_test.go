@@ -71,6 +71,21 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, 1488, chatSummary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryRecordsMillisecondDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.6-sol",
+		StartTime:       time.Now().Add(-1450 * time.Millisecond),
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{})
+
+	require.Equal(t, int64(1), summary.UseTimeSeconds)
+	require.GreaterOrEqual(t, summary.UseTimeMilliseconds, int64(1400))
+	require.Less(t, summary.UseTimeMilliseconds, int64(2000))
+}
+
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
@@ -108,6 +123,28 @@ func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.
 
 	// 100 + remaining(5)*1 + 2*2 + 3*3 = 118
 	require.Equal(t, 118, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryAppliesOpenAIAccountLongContextBilling(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamOpenAILongContextBilling, true)
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.4",
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{PromptTokens: 300000, CompletionTokens: 100}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.True(t, summary.LongContextBillingApplied)
+	require.Equal(t, 600150, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t *testing.T) {

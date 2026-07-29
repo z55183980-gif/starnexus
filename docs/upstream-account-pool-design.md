@@ -127,7 +127,7 @@ pools; membership priority and weight are local to each pool.
 | Field | Notes |
 | --- | --- |
 | Identity | `id`, `name`, `protocol`, `host`, `port`, `status` |
-| Encrypted auth | ciphertext, nonce, key version, credential version |
+| Authentication | `username`, `password`; legacy encrypted columns remain for compatibility |
 | Expiry | `expires_at`, `expiry_warn_days` |
 | Fallback | `fallback_mode` (`none`, `proxy`, `direct`), `backup_proxy_id` |
 | Health | last test time, latency, status, message, observed IP/location metadata |
@@ -149,17 +149,24 @@ bodies are forbidden.
 
 ## 5. Credential Encryption and Rotation
 
-Credentials use AES-256-GCM with a fresh random 96-bit nonce per write.
+Account credentials and OAuth verifier state are stored as plaintext JSON when
+no credential keyring is configured. If a keyring is configured, new writes use
+AES-256-GCM with a fresh random 96-bit nonce. Proxy authentication follows the
+upstream Sub2API data model and is stored directly on the proxy record. Proxy
+passwords are returned only by root-admin proxy-management APIs and remain
+forbidden in events and logs.
 
 Environment configuration:
 
-- `UPSTREAM_ACCOUNT_CREDENTIAL_KEYS`: JSON object mapping positive key versions
-  to base64-encoded 32-byte keys.
-- `UPSTREAM_ACCOUNT_ACTIVE_KEY_VERSION`: active version used for new writes.
+- `UPSTREAM_ACCOUNT_CREDENTIAL_KEYS` (optional): JSON object mapping positive
+  key versions to base64-encoded 32-byte keys.
+- `UPSTREAM_ACCOUNT_ACTIVE_KEY_VERSION`: active version used for encrypted new
+  writes when a keyring is configured.
 
-Additional authenticated data binds ciphertext to record kind, record ID,
-credential version, and key version. A local-pool channel fails closed when the
-active keyring is missing or malformed.
+Additional authenticated data binds encrypted account and OAuth records to record
+kind, record ID, credential version, and key version. Plaintext records use key
+version 0 and an empty nonce. Encrypted records still require their configured
+key version to remain available.
 
 Rotation procedure:
 
@@ -170,7 +177,8 @@ Rotation procedure:
 4. Verify that no record references the retired version.
 5. Remove the old key from the environment.
 
-The migration importer encrypts credentials before inserting them. Plaintext is
+The migration importer encrypts account credentials before inserting them and
+stores proxy authentication directly on proxy records. Plaintext credentials are
 never written to a staging table or migration log.
 
 ## 6. Account Eligibility and Scheduling
@@ -253,6 +261,14 @@ Errors are classified by their narrowest owner:
 Account retries are bounded by unique attempted account IDs and the request
 retry budget. A retry must not charge twice, emit duplicate client-visible SSE
 events, or carry a previous account's key/proxy/lease in context.
+
+Runtime bounds are configurable:
+
+- `UPSTREAM_ACCOUNT_MAX_FAILOVERS` defaults to `2` account switches.
+- `UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS` defaults to `5000` milliseconds.
+- `UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_MS` defaults to `1500` milliseconds.
+- `UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_POLL_MS` defaults to `50` milliseconds.
+- `UPSTREAM_ACCOUNT_MAX_WAITERS` defaults to `64` local waiters per instance.
 
 ## 10. OAuth Lifecycle
 

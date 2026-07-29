@@ -32,7 +32,6 @@ func InspectUpstreamCredentialRotation(ctx context.Context) (*UpstreamCredential
 		value  *int64
 	}{
 		{&model.UpstreamAccount{}, "credential_key_version", &report.ScannedAccounts},
-		{&model.UpstreamProxy{}, "auth_key_version", &report.ScannedProxies},
 		{&model.UpstreamOAuthSession{}, "verifier_key_version", &report.ScannedSessions},
 	}
 	for _, item := range counts {
@@ -41,6 +40,12 @@ func InspectUpstreamCredentialRotation(ctx context.Context) (*UpstreamCredential
 		}
 		report.RemainingRecords += *item.value
 	}
+	if err := model.DB.WithContext(ctx).Model(&model.UpstreamProxy{}).
+		Where("auth_ciphertext <> ? AND auth_nonce <> ? AND auth_key_version > ? AND auth_key_version <> ?", "", "", 0, keyring.ActiveVersion()).
+		Count(&report.ScannedProxies).Error; err != nil {
+		return nil, err
+	}
+	report.RemainingRecords += report.ScannedProxies
 	return report, nil
 }
 
@@ -205,7 +210,9 @@ func scanUpstreamCredentialRecords(
 	}
 	if err := scanCredentialTable(ctx, batchSize, func(lastId int, limit int) ([]model.UpstreamProxy, error) {
 		var records []model.UpstreamProxy
-		err := model.DB.WithContext(ctx).Where("id > ?", lastId).Order("id ASC").Limit(limit).Find(&records).Error
+		err := model.DB.WithContext(ctx).
+			Where("id > ? AND auth_ciphertext <> ? AND auth_nonce <> ? AND auth_key_version > ?", lastId, "", "", 0).
+			Order("id ASC").Limit(limit).Find(&records).Error
 		return records, err
 	}, func(record model.UpstreamProxy) int { return record.Id }, proxyFn); err != nil {
 		return err

@@ -96,6 +96,34 @@ type NewAPIError struct {
 	errorCode      ErrorCode
 	StatusCode     int
 	Metadata       json.RawMessage
+	upstreamHeader http.Header
+	upstreamBody   []byte
+}
+
+const maxUpstreamErrorBodyBytes = 64 * 1024
+
+func (e *NewAPIError) SetUpstreamResponse(header http.Header, body []byte) {
+	if e == nil {
+		return
+	}
+	if header != nil {
+		e.upstreamHeader = header.Clone()
+	}
+	if len(body) > maxUpstreamErrorBodyBytes {
+		body = body[:maxUpstreamErrorBodyBytes]
+	}
+	e.upstreamBody = append(e.upstreamBody[:0], body...)
+}
+
+func (e *NewAPIError) UpstreamResponse() (http.Header, []byte) {
+	if e == nil {
+		return nil, nil
+	}
+	var header http.Header
+	if e.upstreamHeader != nil {
+		header = e.upstreamHeader.Clone()
+	}
+	return header, append([]byte(nil), e.upstreamBody...)
 }
 
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.

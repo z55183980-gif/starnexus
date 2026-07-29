@@ -54,6 +54,7 @@ import type { UsageLog } from '../../data/schema'
 import {
   formatModelName,
   getFirstResponseTimeColor,
+  getLogUseTimeSeconds,
   getResponseTimeColor,
   getTieredBillingSummary,
   hasAnyCacheTokens,
@@ -680,7 +681,8 @@ export function useCommonLogsColumns(
     },
 
     {
-      accessorKey: 'use_time',
+      id: 'use_time',
+      accessorFn: (log) => getLogUseTimeSeconds(log),
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Timing')} />
       ),
@@ -688,7 +690,7 @@ export function useCommonLogsColumns(
         const log = row.original
         if (!isTimingLogType(log.type)) return null
 
-        const useTime = row.getValue('use_time') as number
+        const useTime = row.getValue<number>('use_time')
         const other = parseLogOther(log.other)
         const frt = other?.frt
         const tokensPerSecond =

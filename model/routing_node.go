@@ -12,19 +12,24 @@ import (
 var routingNodeKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 type RoutingNode struct {
-	Id        int    `json:"id"`
-	Key       string `json:"key" gorm:"type:varchar(32);uniqueIndex;not null"`
-	Name      string `json:"name" gorm:"type:varchar(64);not null"`
-	Origin    string `json:"origin" gorm:"type:varchar(255);not null"`
-	Enabled   bool   `json:"enabled" gorm:"not null"`
-	Sort      int    `json:"sort" gorm:"default:0;not null"`
-	CreatedAt int64  `json:"created_at" gorm:"bigint;not null"`
-	UpdatedAt int64  `json:"updated_at" gorm:"bigint;not null"`
+	Id                    int    `json:"id"`
+	Key                   string `json:"key" gorm:"type:varchar(32);uniqueIndex;not null"`
+	Name                  string `json:"name" gorm:"type:varchar(64);not null"`
+	Origin                string `json:"origin" gorm:"type:varchar(255);not null"`
+	Enabled               bool   `json:"enabled" gorm:"not null"`
+	Sort                  int    `json:"sort" gorm:"default:0;not null"`
+	MonitorEnabled        bool   `json:"monitor_enabled" gorm:"default:false;not null"`
+	MonitorTokenHash      string `json:"-" gorm:"type:varchar(64);index;default:'';not null"`
+	MonitorTokenUpdatedAt int64  `json:"-" gorm:"bigint;default:0;not null"`
+	CreatedAt             int64  `json:"created_at" gorm:"bigint;not null"`
+	UpdatedAt             int64  `json:"updated_at" gorm:"bigint;not null"`
 }
 
 type RoutingNodeWithCount struct {
 	RoutingNode
-	BindingCount int64 `json:"binding_count"`
+	BindingCount      int64                     `json:"binding_count"`
+	MonitorConfigured bool                      `json:"monitor_configured"`
+	MonitorStatus     *RoutingNodeMonitorStatus `json:"monitor_status,omitempty"`
 }
 
 type RoutingNodeBoundUser struct {
@@ -70,9 +75,13 @@ func ListRoutingNodes(includeDisabled bool) ([]RoutingNodeWithCount, error) {
 	result := make([]RoutingNodeWithCount, 0, len(nodes))
 	for _, node := range nodes {
 		result = append(result, RoutingNodeWithCount{
-			RoutingNode:  node,
-			BindingCount: counts[node.Key],
+			RoutingNode:       node,
+			BindingCount:      counts[node.Key],
+			MonitorConfigured: node.MonitorTokenHash != "",
 		})
+	}
+	if err := attachRoutingNodeMonitorStatuses(result); err != nil {
+		return nil, err
 	}
 	return result, nil
 }
@@ -161,11 +170,12 @@ func UpdateRoutingNode(node *RoutingNode) error {
 		return errors.New("invalid routing node")
 	}
 	return DB.Model(&RoutingNode{}).Where("id = ?", node.Id).Updates(map[string]any{
-		"name":       strings.TrimSpace(node.Name),
-		"origin":     strings.TrimSpace(node.Origin),
-		"enabled":    node.Enabled,
-		"sort":       node.Sort,
-		"updated_at": common.GetTimestamp(),
+		"name":            strings.TrimSpace(node.Name),
+		"origin":          strings.TrimSpace(node.Origin),
+		"enabled":         node.Enabled,
+		"sort":            node.Sort,
+		"monitor_enabled": node.MonitorEnabled,
+		"updated_at":      common.GetTimestamp(),
 	}).Error
 }
 
@@ -184,6 +194,12 @@ func DeleteRoutingNode(id int) error {
 		}
 		if count > 0 {
 			return errors.New("routing node still has bound users")
+		}
+		if err := tx.Where("node_id = ?", node.Id).Delete(&RoutingNodeMonitorStatus{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("node_id = ?", node.Id).Delete(&RoutingNodeMonitorNetworkSample{}).Error; err != nil {
+			return err
 		}
 		return tx.Delete(&node).Error
 	})

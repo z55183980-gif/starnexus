@@ -77,6 +77,90 @@ func TestUpstreamAccountRouterUsesChannelProxyWhenNoLocalProxy(t *testing.T) {
 	require.NoError(t, selection.Lease.Release(context.Background()))
 }
 
+func TestResolveUpstreamAccountModelUsesClaudeGroupDefaultOnlyForClaudeFamilies(t *testing.T) {
+	mapped, matched, supported := resolveUpstreamAccountModel(nil, model.UpstreamAccountOptions{}, "claude-opus-4-6", false, "gpt-5.4")
+	require.True(t, matched)
+	require.True(t, supported)
+	require.Equal(t, "gpt-5.4", mapped)
+
+	mapped, matched, supported = resolveUpstreamAccountModel(nil, model.UpstreamAccountOptions{}, "gpt6", false, "gpt-5.4")
+	require.False(t, matched)
+	require.True(t, supported)
+	require.Equal(t, "gpt6", mapped)
+}
+
+func TestResolveUpstreamAccountModelUsesCompactMappingFirst(t *testing.T) {
+	options := model.UpstreamAccountOptions{CompactModelMapping: map[string]string{"gpt-5.*": "gpt-5.4-compact"}}
+	mapped, matched, supported := resolveUpstreamAccountModel(
+		map[string]any{"model_mapping": map[string]any{"gpt-5.*": "gpt-5.4"}},
+		options,
+		"gpt-5.6-sol",
+		true,
+		"",
+	)
+	require.True(t, matched)
+	require.True(t, supported)
+	require.Equal(t, "gpt-5.4-compact", mapped)
+}
+
+func TestUpstreamAccountRouterHonorsCompactAndCodexRestrictions(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "account-option-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccountWithExtra(t, "compact-off", pool.Id, `{"openai_compact_mode":"force_off"}`)
+	allowed := createRouterTestAccountWithExtra(t, "compact-on", pool.Id, `{"openai_compact_mode":"force_on","codex_cli_only":true}`)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	_, err = router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		CompactRequest: true,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "codex_client_restricted")
+
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		CompactRequest: true, CodexClient: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, allowed.Id, selection.Account.Id)
+	require.NoError(t, selection.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterFiltersMixedPoolByAllowedAccountTypes(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "mixed-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: "mixed", Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	oauth := createRouterTestAccount(t, "oauth", pool.Id, nil)
+	apiKey := createRouterTestAPIKeyAccount(t, "apikey", pool.Id)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	oauthSelection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, AllowedAccountTypes: []string{constant.UpstreamAccountTypeOAuth},
+	})
+	require.NoError(t, err)
+	require.Equal(t, oauth.Id, oauthSelection.Account.Id)
+	require.NoError(t, oauthSelection.Release(context.Background()))
+
+	apiKeySelection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, AllowedAccountTypes: []string{constant.UpstreamAccountTypeAPIKey},
+	})
+	require.NoError(t, err)
+	require.Equal(t, apiKey.Id, apiKeySelection.Account.Id)
+	require.Equal(t, "sk-apikey", apiKeySelection.Credentials["api_key"])
+	require.NoError(t, apiKeySelection.Release(context.Background()))
+}
+
 func TestResolveUpstreamProxyRechecksMigratedFallbackOrigin(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	origin := createRouterTestProxy(t, "origin-proxy", 1082)
@@ -176,6 +260,86 @@ func TestUpstreamAccountSupportsModelCapabilities(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestUpstreamAccountRouterAppliesCredentialModelMapping(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "model-mapping-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestMappedAccount(t, "unsupported", pool.Id, map[string]any{"gpt-4.*": "gpt-4.1"})
+	supported := createRouterTestMappedAccount(t, "supported", pool.Id, map[string]any{"gpt-5.*": "gpt-5.4"})
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+	})
+	require.NoError(t, err)
+	require.Equal(t, supported.Id, selection.Account.Id)
+	require.True(t, selection.ModelMapped)
+	require.Equal(t, "gpt-5.4", selection.MappedModel)
+	require.NoError(t, selection.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterUsesImportedSourceModelRouting(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	sourceSystem := "sub2api"
+	pool := model.UpstreamAccountPool{
+		Name: "source-routing-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SourceSystem:    &sourceSystem,
+		SchedulerConfig: `{"model_routing_enabled":true,"model_routing":{"gpt-5.*":[902]},"model_routing_id_space":"source"}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	first := createRouterTestAccount(t, "source-first", pool.Id, nil)
+	second := createRouterTestAccount(t, "source-second", pool.Id, nil)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", first.Id).Update("source_id", 901).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", second.Id).Update("source_id", 902).Error)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+	})
+	require.NoError(t, err)
+	require.Equal(t, second.Id, selection.Account.Id)
+	require.NoError(t, selection.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterWaitsForConcurrencySlot(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "wait-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	account := createRouterTestAccount(t, "wait-account", pool.Id, nil)
+	manager := NewLocalUpstreamAccountLeaseManager()
+	busyLease, err := manager.Acquire(context.Background(), account.Id, 1, time.Minute)
+	require.NoError(t, err)
+	router, err := NewUpstreamAccountRouter(manager, time.Minute)
+	require.NoError(t, err)
+	router.concurrencyWaitTimeout = 300 * time.Millisecond
+	router.concurrencyWaitPoll = 10 * time.Millisecond
+	router.maxWaiters = 1
+	releaseDone := make(chan error, 1)
+	go func() {
+		time.Sleep(60 * time.Millisecond)
+		releaseDone <- busyLease.Release(context.Background())
+	}()
+
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex,
+	})
+	require.NoError(t, err)
+	require.Equal(t, account.Id, selection.Account.Id)
+	require.NoError(t, <-releaseDone)
+	require.NoError(t, selection.Release(context.Background()))
+}
+
 type failingLeaseRefreshBackend struct{}
 
 func (failingLeaseRefreshBackend) refresh(context.Context, *UpstreamAccountLease, time.Duration) error {
@@ -230,6 +394,53 @@ func createRouterTestAccount(t *testing.T, name string, poolId int, proxyId *int
 		},
 		Credentials: map[string]any{"access_token": name + "-secret", "account_id": "acct-" + name},
 		PoolIds:     []int{poolId},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	return input.Account
+}
+
+func createRouterTestAccountWithExtra(t *testing.T, name string, poolId int, extra string) model.UpstreamAccount {
+	t.Helper()
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: name, Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+			Extra: extra, Concurrency: 1, Priority: 1, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{"access_token": name + "-secret", "account_id": "acct-" + name},
+		PoolIds:     []int{poolId},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	return input.Account
+}
+
+func createRouterTestAPIKeyAccount(t *testing.T, name string, poolId int) model.UpstreamAccount {
+	t.Helper()
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: name, Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+			Extra: "{}", Concurrency: 1, Priority: 1, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{"api_key": "sk-" + name},
+		PoolIds:     []int{poolId},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	return input.Account
+}
+
+func createRouterTestMappedAccount(t *testing.T, name string, poolId int, modelMapping map[string]any) model.UpstreamAccount {
+	t.Helper()
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: name, Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+			Extra: "{}", Concurrency: 1, Priority: 1, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{
+			"access_token": name + "-secret", "account_id": "acct-" + name, "model_mapping": modelMapping,
+		},
+		PoolIds: []int{poolId},
 	}
 	require.NoError(t, CreateUpstreamAccount(&input))
 	return input.Account

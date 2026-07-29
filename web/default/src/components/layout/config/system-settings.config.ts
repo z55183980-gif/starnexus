@@ -72,7 +72,14 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
         {
           title: t('Models & Routing'),
           icon: Box,
-          items: getModelsSectionNavItems(t),
+          items: [
+            {
+              title: t('Model Management'),
+              url: '/models/metadata',
+              activeUrls: ['/models/deployments'],
+            },
+            ...getModelsSectionNavItems(t),
+          ],
         },
         {
           title: t('Security & Limits'),
@@ -103,7 +110,7 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
  */
 export const SYSTEM_SETTINGS_VIEW: SidebarView = {
   id: 'system-settings',
-  pathPattern: /^\/system-settings(\/|$)/,
+  pathPattern: /^\/(?:system-settings|models)(\/|$)/,
   parent: {
     to: '/dashboard/overview',
     label: 'Back to Dashboard',

@@ -41,6 +41,30 @@ func TestStartUpstreamCodexOAuthStoresEncryptedServerState(t *testing.T) {
 	require.NotEmpty(t, payload["verifier"])
 }
 
+func TestStartUpstreamClaudeSetupTokenStoresPlatformAndScope(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	result, err := StartUpstreamAccountOAuth(UpstreamOAuthStartInput{
+		Platform: constant.UpstreamPlatformAnthropic, CredentialType: constant.UpstreamAccountTypeSetupToken,
+	})
+	require.NoError(t, err)
+	parsed, err := url.Parse(result.AuthorizeURL)
+	require.NoError(t, err)
+	require.Equal(t, claudeSetupTokenScope, parsed.Query().Get("scope"))
+	require.Equal(t, claudeOAuthClientID, parsed.Query().Get("client_id"))
+
+	var session model.UpstreamOAuthSession
+	require.NoError(t, model.DB.First(&session).Error)
+	keyring, err := LoadUpstreamCredentialKeyringFromEnv()
+	require.NoError(t, err)
+	var payload map[string]string
+	require.NoError(t, keyring.DecryptJSON(UpstreamCredentialEnvelope{
+		Ciphertext: session.VerifierCiphertext, Nonce: session.VerifierNonce, KeyVersion: session.VerifierKeyVersion,
+	}, upstreamOAuthSessionRecordKind, session.Id, session.VerifierVersion, &payload))
+	require.Equal(t, constant.UpstreamPlatformAnthropic, payload["platform"])
+	require.Equal(t, constant.UpstreamAccountTypeSetupToken, payload["credential_type"])
+	require.Equal(t, claudeSetupTokenScope, payload["scope"])
+}
+
 func TestStartUpstreamCodexOAuthCanExplicitlyClearExistingProxy(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	proxy := createRouterTestProxy(t, "oauth-proxy", 18080)
@@ -102,6 +126,12 @@ func TestShouldRefreshUpstreamOAuthAccount(t *testing.T) {
 	require.False(t, shouldRefreshUpstreamOAuthAccount(account, 200))
 	account.Status = constant.UpstreamStatusError
 	require.True(t, shouldRefreshUpstreamOAuthAccount(account, 200), "refresh can recover an errored OAuth account")
+	backoffUntil := common.GetTimestamp() + 60
+	account.TempUnschedulableReason = "oauth_refresh_failed"
+	account.TempUnschedulableUntil = &backoffUntil
+	require.False(t, shouldRefreshUpstreamOAuthAccount(account, 200), "refresh failure backoff must suppress repeated refresh attempts")
+	backoffUntil = common.GetTimestamp() - 1
+	require.True(t, shouldRefreshUpstreamOAuthAccount(account, 200))
 	account.OAuthRefreshOwner = constant.UpstreamOAuthRefreshOwnerExternal
 	require.False(t, shouldRefreshUpstreamOAuthAccount(account, 200))
 }

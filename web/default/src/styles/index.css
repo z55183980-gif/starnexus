@@ -32,6 +32,119 @@ For commercial licensing, please contact support@quantumnous.com
     font-weight: var(--shiki-dark-font-weight) !important;
     text-decoration: var(--shiki-dark-text-decoration) !important;
   }
+
+  .cn-toast {
+    --toast-accent: var(--primary);
+
+    min-height: 3.75rem;
+    overflow: hidden;
+    gap: 0.75rem !important;
+    border: 1px solid var(--border) !important;
+    border-inline-start: 0.25rem solid var(--toast-accent) !important;
+    border-radius: calc(var(--radius) + 0.125rem) !important;
+    padding: 1rem 3rem 1rem 1.125rem !important;
+    background-color: var(--popover) !important;
+    background-image: linear-gradient(
+      var(--toast-accent),
+      var(--toast-accent)
+    ) !important;
+    background-repeat: no-repeat !important;
+    background-position: bottom left !important;
+    background-size: 100% 0.1875rem;
+    box-shadow:
+      0 0.625rem 1.875rem rgb(0 0 0 / 10%),
+      0 0.125rem 0.5rem rgb(0 0 0 / 6%) !important;
+  }
+
+  .cn-toast[data-type='success'] {
+    --toast-accent: var(--success);
+  }
+
+  .cn-toast[data-type='error'] {
+    --toast-accent: var(--destructive);
+  }
+
+  .cn-toast[data-type='warning'] {
+    --toast-accent: var(--warning);
+  }
+
+  .cn-toast[data-type='info'] {
+    --toast-accent: var(--info);
+  }
+
+  .cn-toast[data-type='loading'] {
+    --toast-accent: var(--muted-foreground);
+
+    background-image: none !important;
+  }
+
+  .cn-toast[data-mounted='true']:not([data-type='loading']) {
+    animation: cn-toast-countdown var(--toast-duration, 5000ms) linear forwards;
+  }
+
+  .toaster:hover .cn-toast,
+  .toaster:focus-within .cn-toast,
+  .cn-toast[data-swiping='true'] {
+    animation-play-state: paused;
+  }
+
+  .cn-toast [data-icon] {
+    color: var(--toast-accent);
+    margin: 0 !important;
+  }
+
+  .cn-toast [data-content] {
+    min-width: 0;
+  }
+
+  .cn-toast [data-title] {
+    line-height: 1.5 !important;
+  }
+
+  .cn-toast [data-close-button] {
+    top: 50% !important;
+    right: 0.75rem !important;
+    left: auto !important;
+    width: 1.5rem !important;
+    height: 1.5rem !important;
+    transform: translateY(-50%) !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: var(--muted-foreground) !important;
+    opacity: 0.7;
+  }
+
+  .cn-toast [data-close-button]:hover {
+    background: var(--muted) !important;
+    color: var(--foreground) !important;
+    opacity: 1;
+  }
+
+  .toaster[dir='rtl'] .cn-toast {
+    padding-right: 1.125rem !important;
+    padding-left: 3rem !important;
+    background-position: bottom right !important;
+  }
+
+  .toaster[dir='rtl'] .cn-toast [data-close-button] {
+    right: auto !important;
+    left: 0.75rem !important;
+  }
+}
+
+@keyframes cn-toast-countdown {
+  from {
+    background-size: 100% 0.1875rem;
+  }
+  to {
+    background-size: 0% 0.1875rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cn-toast {
+    background-image: none !important;
+  }
 }
 
 @layer base {
@@ -444,17 +557,41 @@ For commercial licensing, please contact support@quantumnous.com
 
 .hero-section-glow {
   background:
-    radial-gradient(ellipse 60% 50% at 20% 20%, rgb(120 180 255 / 80%) 0%, transparent 70%),
-    radial-gradient(ellipse 50% 40% at 80% 15%, rgb(100 200 255 / 60%) 0%, transparent 70%),
-    radial-gradient(ellipse 40% 35% at 40% 80%, rgb(160 140 255 / 40%) 0%, transparent 70%);
+    radial-gradient(
+      ellipse 60% 50% at 20% 20%,
+      rgb(120 180 255 / 80%) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 50% 40% at 80% 15%,
+      rgb(100 200 255 / 60%) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      ellipse 40% 35% at 40% 80%,
+      rgb(160 140 255 / 40%) 0%,
+      transparent 70%
+    );
 }
 
 @supports (color: oklch(0.5 0.2 250)) {
   .hero-section-glow {
     background:
-      radial-gradient(ellipse 60% 50% at 20% 20%, oklch(0.72 0.18 250 / 80%) 0%, transparent 70%),
-      radial-gradient(ellipse 50% 40% at 80% 15%, oklch(0.65 0.15 200 / 60%) 0%, transparent 70%),
-      radial-gradient(ellipse 40% 35% at 40% 80%, oklch(0.7 0.12 280 / 40%) 0%, transparent 70%);
+      radial-gradient(
+        ellipse 60% 50% at 20% 20%,
+        oklch(0.72 0.18 250 / 80%) 0%,
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 50% 40% at 80% 15%,
+        oklch(0.65 0.15 200 / 60%) 0%,
+        transparent 70%
+      ),
+      radial-gradient(
+        ellipse 40% 35% at 40% 80%,
+        oklch(0.7 0.12 280 / 40%) 0%,
+        transparent 70%
+      );
   }
 }
 

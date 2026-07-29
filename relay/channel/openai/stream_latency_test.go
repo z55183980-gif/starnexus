@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
@@ -119,7 +118,7 @@ func TestResponsesCreatedFlushesChatStartBeforeNextUpstreamEvent(t *testing.T) {
 	require.Contains(t, recorder.BodyString(), `"role":"assistant"`)
 }
 
-func TestResponsesToChatRecordsFirstVisibleOutputInsteadOfStartChunk(t *testing.T) {
+func TestResponsesToChatRecordsFirstSSEEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setStreamTestTimeout(t)
 
@@ -143,7 +142,8 @@ func TestResponsesToChatRecordsFirstVisibleOutputInsteadOfStartChunk(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("start chunk was not flushed")
 	}
-	require.False(t, info.HasSendResponse(), "empty Chat start chunk must not count as visible output")
+	require.Eventually(t, info.HasSendResponse, time.Second, time.Millisecond, "response.created must start HTTP/SSE first-response timing")
+	firstResponseTime := info.FirstResponseTime
 
 	_, err = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
 	require.NoError(t, err)
@@ -152,7 +152,7 @@ func TestResponsesToChatRecordsFirstVisibleOutputInsteadOfStartChunk(t *testing.
 	case <-time.After(time.Second):
 		t.Fatal("visible Chat chunk was not flushed")
 	}
-	require.Eventually(t, info.HasSendResponse, time.Second, time.Millisecond, "non-empty Chat content must record first visible output")
+	require.Equal(t, firstResponseTime, info.FirstResponseTime, "later visible output must not replace the first SSE event time")
 
 	_, err = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n")
 	require.NoError(t, err)
@@ -165,7 +165,7 @@ func TestResponsesToChatRecordsFirstVisibleOutputInsteadOfStartChunk(t *testing.
 	}
 }
 
-func TestResponsesStreamRecordsFirstOutputInsteadOfLifecycleEvent(t *testing.T) {
+func TestResponsesStreamRecordsFirstSSEEvent(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setStreamTestTimeout(t)
 
@@ -190,7 +190,8 @@ func TestResponsesStreamRecordsFirstOutputInsteadOfLifecycleEvent(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("Responses lifecycle event was not flushed")
 	}
-	require.False(t, info.HasSendResponse(), "Responses lifecycle event must not count as visible output")
+	require.Eventually(t, info.HasSendResponse, time.Second, time.Millisecond, "Responses lifecycle event must start HTTP/SSE first-response timing")
+	firstResponseTime := info.FirstResponseTime
 
 	_, err = io.WriteString(writer, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n")
 	require.NoError(t, err)
@@ -199,6 +200,7 @@ func TestResponsesStreamRecordsFirstOutputInsteadOfLifecycleEvent(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("Responses output event was not flushed")
 	}
+	require.Equal(t, firstResponseTime, info.FirstResponseTime, "later output must not replace the first SSE event time")
 
 	_, err = io.WriteString(writer, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\ndata: [DONE]\n\n")
 	require.NoError(t, err)
@@ -209,21 +211,6 @@ func TestResponsesStreamRecordsFirstOutputInsteadOfLifecycleEvent(t *testing.T) 
 	case <-time.After(2 * time.Second):
 		t.Fatal("Responses stream handler did not finish")
 	}
-	require.True(t, info.HasSendResponse(), "Responses output delta must record first visible output")
-}
-
-func TestChatStreamChunkHasVisibleOutput(t *testing.T) {
-	empty := ""
-	visible := "hello"
-	require.False(t, chatStreamChunkHasVisibleOutput(&dto.ChatCompletionsStreamResponse{
-		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{Role: "assistant", Content: &empty}}},
-	}))
-	require.True(t, chatStreamChunkHasVisibleOutput(&dto.ChatCompletionsStreamResponse{
-		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{Content: &visible}}},
-	}))
-	require.True(t, chatStreamChunkHasVisibleOutput(&dto.ChatCompletionsStreamResponse{
-		Choices: []dto.ChatCompletionsStreamResponseChoice{{Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{{ID: "call_1"}}}}},
-	}))
 }
 
 func TestOpenAIStreamFlushesCurrentFrameWithoutWaitingForNextFrame(t *testing.T) {
@@ -276,7 +263,7 @@ func TestOpenAIStreamFlushesCurrentFrameWithoutWaitingForNextFrame(t *testing.T)
 	require.True(t, strings.HasSuffix(body, "data: [DONE]\n\n"))
 }
 
-func TestOpenAIStreamRecordsFirstVisibleOutputInsteadOfRoleChunk(t *testing.T) {
+func TestOpenAIStreamRecordsFirstSSEEventIncludingRoleChunk(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setStreamTestTimeout(t)
 
@@ -301,7 +288,8 @@ func TestOpenAIStreamRecordsFirstVisibleOutputInsteadOfRoleChunk(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("role chunk was not flushed")
 	}
-	require.False(t, info.HasSendResponse(), "empty role chunk must not count as visible output")
+	require.Eventually(t, info.HasSendResponse, time.Second, time.Millisecond, "empty role chunk must start HTTP/SSE first-response timing")
+	firstResponseTime := info.FirstResponseTime
 
 	contentFrame := `{"id":"chatcmpl-upstream","object":"chat.completion.chunk","created":123,"model":"gpt-5.6-sol","choices":[{"index":0,"delta":{"content":"hello"}}]}`
 	_, err = io.WriteString(writer, "data: "+contentFrame+"\n\n")
@@ -311,7 +299,7 @@ func TestOpenAIStreamRecordsFirstVisibleOutputInsteadOfRoleChunk(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("content chunk was not flushed")
 	}
-	require.Eventually(t, info.HasSendResponse, time.Second, time.Millisecond, "non-empty Chat content must record first visible output")
+	require.Equal(t, firstResponseTime, info.FirstResponseTime, "later content must not replace the first SSE event time")
 
 	_, err = io.WriteString(writer, "data: [DONE]\n\n")
 	require.NoError(t, err)
@@ -322,13 +310,6 @@ func TestOpenAIStreamRecordsFirstVisibleOutputInsteadOfRoleChunk(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("OpenAI stream handler did not finish")
 	}
-}
-
-func TestOpenAIChatStreamDataHasVisibleOutput(t *testing.T) {
-	require.False(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"role":"assistant","content":""}}]}`))
-	require.True(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"content":"hello"}}]}`))
-	require.True(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"reasoning_content":"thinking"}}]}`))
-	require.True(t, openAIChatStreamDataHasVisibleOutput(`{"choices":[{"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"tool","arguments":"{}"}}]}}]}`))
 }
 
 func TestShouldSendOpenAIStreamData(t *testing.T) {

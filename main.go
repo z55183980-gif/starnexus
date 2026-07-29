@@ -120,10 +120,12 @@ func main() {
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()
 	service.StartUpstreamAccountOAuthRefreshTask()
+	service.StartUpstreamProxyExpiryTask()
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 	service.StartUserNodeRoutingReconcileTask()
+	service.StartRoutingNodeMonitorReporter()
 
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {

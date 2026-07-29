@@ -56,6 +56,8 @@ func SetApiRouter(router *gin.Engine) {
 		// Standard OAuth providers (GitHub, Discord, OIDC, LinuxDO) - unified route
 		apiRouter.GET("/oauth/:provider", middleware.CriticalRateLimit(), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.CriticalRateLimit(), controller.GetRatioConfig)
+		apiRouter.POST("/node-monitor/enroll", middleware.CriticalRateLimit(), controller.EnrollRoutingNodeMonitor)
+		apiRouter.POST("/node-monitor/report", controller.ReportRoutingNodeMonitor)
 
 		apiRouter.POST("/stripe/webhook", controller.StripeWebhook)
 		apiRouter.POST("/creem/webhook", controller.CreemWebhook)
@@ -179,6 +181,9 @@ func SetApiRouter(router *gin.Engine) {
 			nodeRoutingRoute.POST("/nodes", middleware.RootAuth(), controller.CreateRoutingNode)
 			nodeRoutingRoute.PUT("/nodes/:id", middleware.RootAuth(), controller.UpdateRoutingNode)
 			nodeRoutingRoute.DELETE("/nodes/:id", middleware.RootAuth(), controller.DeleteRoutingNode)
+			nodeRoutingRoute.POST("/nodes/:id/monitor-token", middleware.RootAuth(), controller.RotateRoutingNodeMonitorToken)
+			nodeRoutingRoute.GET("/monitor-enrollment-token", middleware.RootAuth(), controller.GetRoutingNodeMonitorEnrollmentToken)
+			nodeRoutingRoute.POST("/monitor-enrollment-token", middleware.RootAuth(), controller.RotateRoutingNodeMonitorEnrollmentToken)
 			nodeRoutingRoute.POST("/reconcile", middleware.RootAuth(), controller.ReconcileRoutingNodes)
 		}
 
@@ -194,13 +199,21 @@ func SetApiRouter(router *gin.Engine) {
 			upstreamRoute.PUT("/account-pools/:id/members", controller.ReplaceUpstreamAccountPoolMembers)
 
 			upstreamRoute.GET("/accounts", controller.ListUpstreamAccounts)
+			upstreamRoute.POST("/accounts/export", controller.ExportUpstreamAccounts)
+			upstreamRoute.POST("/accounts/import", controller.ImportUpstreamData)
+			upstreamRoute.POST("/accounts/sync/crs/preview", controller.PreviewUpstreamAccountsFromCRS)
+			upstreamRoute.POST("/accounts/sync/crs", controller.SyncUpstreamAccountsFromCRS)
 			upstreamRoute.GET("/accounts/:id", controller.GetUpstreamAccount)
+			upstreamRoute.GET("/accounts/:id/quota", controller.GetUpstreamAccountQuota)
+			upstreamRoute.POST("/accounts/:id/reset-quota", controller.ResetUpstreamAccountQuota)
 			upstreamRoute.POST("/accounts", controller.CreateUpstreamAccount)
 			upstreamRoute.POST("/accounts/batch", controller.CreateUpstreamAccountsBatch)
 			upstreamRoute.PUT("/accounts/batch", controller.UpdateUpstreamAccountsBatch)
 			upstreamRoute.DELETE("/accounts/batch", controller.DeleteUpstreamAccountsBatch)
+			upstreamRoute.POST("/accounts/recover", controller.RecoverUpstreamAccountsBatch)
 			upstreamRoute.PUT("/accounts/:id", controller.UpdateUpstreamAccount)
 			upstreamRoute.DELETE("/accounts/:id", controller.DeleteUpstreamAccount)
+			upstreamRoute.POST("/accounts/:id/recover", controller.RecoverUpstreamAccount)
 			upstreamRoute.POST("/accounts/oauth/start", controller.StartUpstreamAccountOAuth)
 			upstreamRoute.POST("/accounts/oauth/complete", controller.CompleteUpstreamAccountOAuth)
 			upstreamRoute.POST("/accounts/:id/oauth/refresh", controller.RefreshUpstreamAccountOAuth)

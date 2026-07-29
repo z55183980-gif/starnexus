@@ -21,6 +21,10 @@ func ChannelSupportsRequestPath(channel *model.Channel, requestPath string, mode
 		return false
 	}
 	if strings.HasPrefix(requestPath, alphaSearchRequestPath) {
+		if channel.CredentialSource == constant.ChannelCredentialSourceAccountPool &&
+			(channel.Type == constant.ChannelTypeOpenAI || channel.Type == constant.ChannelTypeCodex) {
+			return true
+		}
 		return channel.GetOtherSettings().SupportsAlphaSearch(channel.Type, modelName)
 	}
 	if channel.Type == constant.ChannelTypeAdvancedCustom {

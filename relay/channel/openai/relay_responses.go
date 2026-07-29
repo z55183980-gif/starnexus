@@ -80,9 +80,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
 
-	helper.StreamScannerHandlerWithOptions(c, resp, info, helper.StreamScannerOptions{
-		DisableAutoFirstResponseTime: true,
-	}, func(data string, sr *helper.StreamResult) {
+	// HTTP/SSE keeps the S4 reporting convention: lifecycle events such as
+	// response.created starts FRT for HTTP/SSE and WebSocket paths.
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
 		// 检查当前数据是否包含 completed 状态和 usage 信息
 		var streamResponse dto.ResponsesStreamResponse
@@ -92,9 +92,6 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		sendResponsesStreamData(c, streamResponse, data)
-		if IsResponsesFirstOutputEvent(&streamResponse) {
-			info.SetFirstResponseTime()
-		}
 		switch streamResponse.Type {
 		case "response.completed":
 			if streamResponse.Response != nil {
