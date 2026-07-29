@@ -61,7 +61,7 @@ func collectPostgreSQLMonitorMetrics(report *RoutingNodeMonitorReport, dsn strin
 		return
 	}
 	report.PostgreSQLStatus = databaseServiceStatusDown
-	report.PostgreSQLReplicationStatus = "stopped"
+	report.PostgreSQLReplicationStatus = databaseServiceStatusNotConfigured
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -112,6 +112,8 @@ func collectPostgreSQLMonitorMetrics(report *RoutingNodeMonitorReport, dsn strin
 		if receiverLag.Valid {
 			report.PostgreSQLReplicationLagSeconds = math.Max(0, receiverLag.Float64)
 		}
+	} else if receiverStatus.Valid && receiverStatus.String != "" {
+		report.PostgreSQLReplicationStatus = "stopped"
 	}
 }
 
