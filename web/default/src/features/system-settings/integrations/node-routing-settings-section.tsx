@@ -102,6 +102,7 @@ const emptyNode: RoutingNodeInput = {
   key: '',
   name: '',
   origin: '',
+  type: 'application',
   enabled: true,
   sort: 0,
   monitor_enabled: true,
@@ -373,6 +374,7 @@ export function NodeRoutingSettingsSection() {
         ) : (
           <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'>
             {nodes.map((node) => {
+              const databaseNode = node.type === 'database'
               return (
                 <Card
                   key={node.id}
@@ -387,36 +389,52 @@ export function NodeRoutingSettingsSection() {
                   >
                     <CardTitle className='flex min-w-0 items-center gap-2'>
                       <span className='truncate'>{node.name}</span>
-                      <Badge variant={node.enabled ? 'default' : 'secondary'}>
-                        {node.enabled ? t('Enabled') : t('Disabled')}
+                      <Badge
+                        variant={
+                          databaseNode
+                            ? 'secondary'
+                            : node.enabled
+                              ? 'default'
+                              : 'secondary'
+                        }
+                      >
+                        {databaseNode
+                          ? t('Database')
+                          : node.enabled
+                            ? t('Enabled')
+                            : t('Disabled')}
                       </Badge>
                     </CardTitle>
                     <CardDescription className='flex min-w-0 items-center gap-2'>
                       <span className='font-mono'>{node.key}</span>
                       <span aria-hidden='true'>·</span>
-                      <span className='truncate font-mono'>{node.origin}</span>
+                      <span className='truncate font-mono'>
+                        {databaseNode ? t('Database') : node.origin}
+                      </span>
                     </CardDescription>
                   </CardHeader>
 
                   <CardContent className='flex flex-1 flex-col gap-4'>
                     <div className='flex flex-wrap items-center justify-between gap-2'>
                       <RoutingNodeMonitorBadge node={node} />
-                      <Badge
-                        variant={
-                          node.binding_count > 0 ? 'secondary' : 'outline'
-                        }
-                        render={<button type='button' />}
-                        className='cursor-pointer tabular-nums'
-                        title={t('View bound users')}
-                        aria-label={t('View bound users')}
-                        onClick={() => {
-                          setBoundUsersPage(1)
-                          setBoundUsersEditing(false)
-                          setBoundUsersNode(node)
-                        }}
-                      >
-                        {t('Bound users')}: {node.binding_count}
-                      </Badge>
+                      {!databaseNode && (
+                        <Badge
+                          variant={
+                            node.binding_count > 0 ? 'secondary' : 'outline'
+                          }
+                          render={<button type='button' />}
+                          className='cursor-pointer tabular-nums'
+                          title={t('View bound users')}
+                          aria-label={t('View bound users')}
+                          onClick={() => {
+                            setBoundUsersPage(1)
+                            setBoundUsersEditing(false)
+                            setBoundUsersNode(node)
+                          }}
+                        >
+                          {t('Bound users')}: {node.binding_count}
+                        </Badge>
+                      )}
                     </div>
 
                     <Separator />
@@ -440,25 +458,28 @@ export function NodeRoutingSettingsSection() {
 
                   <CardFooter
                     className={cn(
-                      'grid grid-cols-3 gap-2 p-2',
+                      'grid gap-2 p-2',
+                      databaseNode ? 'grid-cols-2' : 'grid-cols-3',
                       nodeCardTone.footer
                     )}
                   >
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      onClick={() => {
-                        setBoundUsersPage(1)
-                        setBoundUsersEditing(false)
-                        setBoundUsersNode(node)
-                      }}
-                    >
-                      <HugeiconsIcon
-                        icon={UserRemove01Icon}
-                        data-icon='inline-start'
-                      />
-                      {t('Users')}
-                    </Button>
+                    {!databaseNode && (
+                      <Button
+                        size='sm'
+                        variant='ghost'
+                        onClick={() => {
+                          setBoundUsersPage(1)
+                          setBoundUsersEditing(false)
+                          setBoundUsersNode(node)
+                        }}
+                      >
+                        <HugeiconsIcon
+                          icon={UserRemove01Icon}
+                          data-icon='inline-start'
+                        />
+                        {t('Users')}
+                      </Button>
+                    )}
                     <Button
                       size='sm'
                       variant='ghost'
@@ -468,6 +489,7 @@ export function NodeRoutingSettingsSection() {
                           key: node.key,
                           name: node.name,
                           origin: node.origin,
+                          type: node.type,
                           enabled: node.enabled,
                           sort: node.sort,
                           monitor_enabled: node.monitor_enabled,
@@ -512,9 +534,11 @@ export function NodeRoutingSettingsSection() {
                 {editing ? t('Edit node') : t('Add node')}
               </DialogTitle>
               <DialogDescription>
-                {t(
-                  'The origin must be a proxied hostname under the allowed domain.'
-                )}
+                {form.type === 'database'
+                  ? t('Database')
+                  : t(
+                      'The origin must be a proxied hostname under the allowed domain.'
+                    )}
               </DialogDescription>
             </DialogHeader>
             <FieldGroup>
@@ -551,22 +575,24 @@ export function NodeRoutingSettingsSection() {
                   }
                 />
               </Field>
-              <Field>
-                <FieldLabel htmlFor='routing-node-origin'>
-                  {t('Origin hostname')}
-                </FieldLabel>
-                <Input
-                  id='routing-node-origin'
-                  value={form.origin}
-                  placeholder='origin-s5.dkby.com'
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      origin: event.target.value,
-                    }))
-                  }
-                />
-              </Field>
+              {form.type === 'application' && (
+                <Field>
+                  <FieldLabel htmlFor='routing-node-origin'>
+                    {t('Origin hostname')}
+                  </FieldLabel>
+                  <Input
+                    id='routing-node-origin'
+                    value={form.origin}
+                    placeholder='origin-s5.dkby.com'
+                    onChange={(event) =>
+                      setForm((current) => ({
+                        ...current,
+                        origin: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              )}
               <Field>
                 <FieldLabel htmlFor='routing-node-sort'>
                   {t('Sort order')}
@@ -640,7 +666,7 @@ export function NodeRoutingSettingsSection() {
                   saveMutation.isPending ||
                   !form.key.trim() ||
                   !form.name.trim() ||
-                  !form.origin.trim()
+                  (form.type === 'application' && !form.origin.trim())
                 }
                 onClick={() => saveMutation.mutate()}
               >

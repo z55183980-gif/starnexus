@@ -37,10 +37,51 @@ func TestRoutingNodeLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, enabled, 1)
 
+	databaseNode := &RoutingNode{
+		Key: "spg", Name: "SPG", Type: RoutingNodeTypeDatabase, Enabled: true, MonitorEnabled: true, Sort: 6,
+	}
+	require.NoError(t, CreateRoutingNode(databaseNode))
+	all, err = ListRoutingNodes(true)
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	enabled, err = ListRoutingNodes(false)
+	require.NoError(t, err)
+	require.Len(t, enabled, 1)
+	require.Equal(t, node.Key, enabled[0].Key)
+
 	require.NoError(t, SaveUserNodeBindingWithRevision(9, node.Key, 10))
 	require.Error(t, DeleteRoutingNode(node.Id))
 	require.NoError(t, DeleteUserNodeBinding(9))
 	require.NoError(t, DeleteRoutingNode(node.Id))
+}
+
+func TestEnsureDefaultRoutingNodesIncludesApplicationAndDatabaseNodes(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalDB := DB
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+	require.NoError(t, db.AutoMigrate(
+		&RoutingNode{},
+		&RoutingNodeMonitorStatus{},
+		&RoutingNodeMonitorNetworkSample{},
+		&UserNodeBinding{},
+	))
+
+	require.NoError(t, EnsureDefaultRoutingNodes())
+	nodes, err := ListRoutingNodes(true)
+	require.NoError(t, err)
+	require.Len(t, nodes, 5)
+
+	s4, err := GetRoutingNodeByKey("s4", true)
+	require.NoError(t, err)
+	require.Equal(t, RoutingNodeTypeApplication, s4.Type)
+
+	spg, err := GetRoutingNodeByKey("spg", true)
+	require.NoError(t, err)
+	require.Equal(t, RoutingNodeTypeDatabase, spg.Type)
+	require.False(t, spg.IsRoutable())
+	require.True(t, spg.MonitorEnabled)
 }
 
 func TestRoutingNodeMonitorState(t *testing.T) {

@@ -16,6 +16,7 @@ type routingNodeRequest struct {
 	Key            string `json:"key"`
 	Name           string `json:"name"`
 	Origin         string `json:"origin"`
+	Type           string `json:"type"`
 	Enabled        bool   `json:"enabled"`
 	Sort           int    `json:"sort"`
 	MonitorEnabled bool   `json:"monitor_enabled"`
@@ -67,15 +68,24 @@ func CreateRoutingNode(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	origin, err := service.NormalizeRoutingOrigin(input.Origin)
+	nodeType, err := model.NormalizeRoutingNodeType(input.Type)
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	origin := ""
+	if nodeType == model.RoutingNodeTypeApplication {
+		origin, err = service.NormalizeRoutingOrigin(input.Origin)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	node := &model.RoutingNode{
 		Key:            key,
 		Name:           input.Name,
 		Origin:         origin,
+		Type:           nodeType,
 		Enabled:        input.Enabled,
 		Sort:           input.Sort,
 		MonitorEnabled: input.MonitorEnabled,
@@ -104,12 +114,23 @@ func UpdateRoutingNode(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	origin, err := service.NormalizeRoutingOrigin(input.Origin)
+	nodeType, err := model.NormalizeRoutingNodeType(current.Type)
+	if strings.TrimSpace(input.Type) != "" {
+		nodeType, err = model.NormalizeRoutingNodeType(input.Type)
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if !input.Enabled {
+	origin := ""
+	if nodeType == model.RoutingNodeTypeApplication {
+		origin, err = service.NormalizeRoutingOrigin(input.Origin)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
+	if !input.Enabled || nodeType == model.RoutingNodeTypeDatabase {
 		count, countErr := model.CountUserNodeBindingsByNode(current.Key)
 		if countErr != nil {
 			common.ApiError(c, countErr)
@@ -120,9 +141,10 @@ func UpdateRoutingNode(c *gin.Context) {
 			return
 		}
 	}
-	originChanged := current.Origin != origin
+	routingChanged := current.Origin != origin || current.Type != nodeType
 	current.Name = input.Name
 	current.Origin = origin
+	current.Type = nodeType
 	current.Enabled = input.Enabled
 	current.Sort = input.Sort
 	current.MonitorEnabled = input.MonitorEnabled
@@ -130,7 +152,7 @@ func UpdateRoutingNode(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if originChanged {
+	if routingChanged {
 		service.TriggerUserNodeRoutingReconcile()
 	}
 	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("updated routing node %s", current.Key))

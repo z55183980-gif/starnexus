@@ -308,6 +308,9 @@ func resolveRoutingNode(node string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	if !routingNode.IsRoutable() {
+		return "", "", errors.New("node does not participate in user routing")
+	}
 	origin, err := NormalizeRoutingOrigin(routingNode.Origin)
 	if err != nil {
 		return "", "", err

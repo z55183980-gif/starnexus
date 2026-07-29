@@ -11,11 +11,17 @@ import (
 
 var routingNodeKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
+const (
+	RoutingNodeTypeApplication = "application"
+	RoutingNodeTypeDatabase    = "database"
+)
+
 type RoutingNode struct {
 	Id                    int    `json:"id"`
 	Key                   string `json:"key" gorm:"type:varchar(32);uniqueIndex;not null"`
 	Name                  string `json:"name" gorm:"type:varchar(64);not null"`
 	Origin                string `json:"origin" gorm:"type:varchar(255);not null"`
+	Type                  string `json:"type" gorm:"type:varchar(16);default:'application';not null"`
 	Enabled               bool   `json:"enabled" gorm:"not null"`
 	Sort                  int    `json:"sort" gorm:"default:0;not null"`
 	MonitorEnabled        bool   `json:"monitor_enabled" gorm:"default:false;not null"`
@@ -23,6 +29,21 @@ type RoutingNode struct {
 	MonitorTokenUpdatedAt int64  `json:"-" gorm:"bigint;default:0;not null"`
 	CreatedAt             int64  `json:"created_at" gorm:"bigint;not null"`
 	UpdatedAt             int64  `json:"updated_at" gorm:"bigint;not null"`
+}
+
+func NormalizeRoutingNodeType(nodeType string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(nodeType)) {
+	case "", RoutingNodeTypeApplication:
+		return RoutingNodeTypeApplication, nil
+	case RoutingNodeTypeDatabase:
+		return RoutingNodeTypeDatabase, nil
+	default:
+		return "", errors.New("invalid routing node type")
+	}
+}
+
+func (node RoutingNode) IsRoutable() bool {
+	return node.Type == "" || node.Type == RoutingNodeTypeApplication
 }
 
 type RoutingNodeWithCount struct {
@@ -50,7 +71,7 @@ func ListRoutingNodes(includeDisabled bool) ([]RoutingNodeWithCount, error) {
 	var nodes []RoutingNode
 	query := DB.Order("sort ASC").Order("id ASC")
 	if !includeDisabled {
-		query = query.Where("enabled = ?", true)
+		query = query.Where("enabled = ? AND (type = ? OR type = ?)", true, RoutingNodeTypeApplication, "")
 	}
 	if err := query.Find(&nodes).Error; err != nil {
 		return nil, err
@@ -160,6 +181,10 @@ func CreateRoutingNode(node *RoutingNode) error {
 	node.Key = key
 	node.Name = strings.TrimSpace(node.Name)
 	node.Origin = strings.TrimSpace(node.Origin)
+	node.Type, err = NormalizeRoutingNodeType(node.Type)
+	if err != nil {
+		return err
+	}
 	node.CreatedAt = now
 	node.UpdatedAt = now
 	return DB.Create(node).Error
@@ -169,9 +194,14 @@ func UpdateRoutingNode(node *RoutingNode) error {
 	if node == nil || node.Id <= 0 {
 		return errors.New("invalid routing node")
 	}
+	nodeType, err := NormalizeRoutingNodeType(node.Type)
+	if err != nil {
+		return err
+	}
 	return DB.Model(&RoutingNode{}).Where("id = ?", node.Id).Updates(map[string]any{
 		"name":            strings.TrimSpace(node.Name),
 		"origin":          strings.TrimSpace(node.Origin),
+		"type":            nodeType,
 		"enabled":         node.Enabled,
 		"sort":            node.Sort,
 		"monitor_enabled": node.MonitorEnabled,
@@ -207,10 +237,11 @@ func DeleteRoutingNode(id int) error {
 
 func EnsureDefaultRoutingNodes() error {
 	defaults := []RoutingNode{
-		{Key: "s1", Name: "S1", Origin: "origin-s1.dkby.com", Enabled: true, Sort: 1},
-		{Key: "s2", Name: "S2", Origin: "origin-s2.dkby.com", Enabled: true, Sort: 2},
-		{Key: "s3", Name: "S3", Origin: "origin-s3.dkby.com", Enabled: true, Sort: 3},
-		{Key: "s4", Name: "S4", Origin: "origin-s4.dkby.com", Enabled: true, Sort: 4},
+		{Key: "s1", Name: "S1", Origin: "origin-s1.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 1},
+		{Key: "s2", Name: "S2", Origin: "origin-s2.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 2},
+		{Key: "s3", Name: "S3", Origin: "origin-s3.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 3},
+		{Key: "s4", Name: "S4", Origin: "origin-s4.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 4},
+		{Key: "spg", Name: "SPG", Origin: "", Type: RoutingNodeTypeDatabase, Enabled: true, MonitorEnabled: true, Sort: 5},
 	}
 	for i := range defaults {
 		now := common.GetTimestamp()

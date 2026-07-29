@@ -1,0 +1,27 @@
+services:
+  node-monitor:
+    image: ghcr.io/z55183980-gif/starnexus:${APP_IMAGE_TAG:-main}
+    pull_policy: always
+    container_name: starnexus-node-monitor
+    restart: always
+    command: ["--node-monitor-agent"]
+    env_file:
+      - .env
+    environment:
+      HOST_PROC: /host/proc
+      HOST_SYS: /host/sys
+      HOST_ETC: /host/etc
+      NODE_MONITOR_DISK_PATH: /host
+    network_mode: host
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    volumes:
+      - /:/host:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc:/host/etc:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

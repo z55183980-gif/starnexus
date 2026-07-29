@@ -105,6 +105,16 @@ func TestUpdateUserNodeRouteSyncsTokensOnlyOnFirstMigration(t *testing.T) {
 	require.Greater(t, second.Revision, first.Revision)
 }
 
+func TestResolveRoutingNodeRejectsDatabaseNode(t *testing.T) {
+	setupUserNodeRouterTestDB(t)
+	require.NoError(t, model.CreateRoutingNode(&model.RoutingNode{
+		Key: "spg", Name: "SPG", Type: model.RoutingNodeTypeDatabase, Enabled: true,
+	}))
+
+	_, _, err := resolveRoutingNode("spg")
+	require.ErrorContains(t, err, "does not participate in user routing")
+}
+
 func TestUpdateUserNodeRouteCompensatesUnknownSetRouteResult(t *testing.T) {
 	setupUserNodeRouterTestDB(t)
 	require.NoError(t, model.DB.Create(&model.RoutingNode{

@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/shirou/gopsutil/cpu"
+	gopsutildisk "github.com/shirou/gopsutil/disk"
 	"github.com/shirou/gopsutil/host"
 	"github.com/shirou/gopsutil/load"
 	"github.com/shirou/gopsutil/mem"
@@ -246,36 +247,57 @@ func StartRoutingNodeMonitorReporter() {
 		if !common.GetEnvOrDefaultBool("NODE_MONITOR_ENABLED", false) {
 			return
 		}
-		reportURL := strings.TrimSpace(os.Getenv("NODE_MONITOR_REPORT_URL"))
-		token := strings.TrimSpace(os.Getenv("NODE_MONITOR_TOKEN"))
-		enrollmentToken := strings.TrimSpace(os.Getenv("NODE_MONITOR_ENROLLMENT_TOKEN"))
-		nodeKey := resolveRoutingNodeMonitorNodeKey(
-			os.Getenv("NODE_MONITOR_NODE_KEY"),
-			common.NodeName,
-		)
-		if err := validateRoutingNodeMonitorReportURL(reportURL); err != nil || (token == "" && (enrollmentToken == "" || nodeKey == "")) {
+		config, interval, err := loadRoutingNodeMonitorReporterConfig()
+		if err != nil {
 			common.SysLog("routing node monitor reporter is enabled but not configured")
 			return
 		}
-		intervalSeconds := 15
-		if raw := strings.TrimSpace(os.Getenv("NODE_MONITOR_INTERVAL_SECONDS")); raw != "" {
-			if parsed, err := strconv.Atoi(raw); err == nil {
-				intervalSeconds = parsed
-			}
-		}
-		if intervalSeconds < 5 {
-			intervalSeconds = 5
-		}
-		if intervalSeconds > 300 {
-			intervalSeconds = 300
-		}
-		go runRoutingNodeMonitorReporter(routingNodeMonitorReporterConfig{
-			ReportURL:       reportURL,
-			Token:           token,
-			EnrollmentToken: enrollmentToken,
-			NodeKey:         nodeKey,
-		}, time.Duration(intervalSeconds)*time.Second)
+		go runRoutingNodeMonitorReporter(config, interval)
 	})
+}
+
+func RunRoutingNodeMonitorAgent() error {
+	if !common.GetEnvOrDefaultBool("NODE_MONITOR_ENABLED", false) {
+		return errors.New("routing node monitor agent is disabled")
+	}
+	config, interval, err := loadRoutingNodeMonitorReporterConfig()
+	if err != nil {
+		return err
+	}
+	common.SysLog("routing node monitor agent started for " + config.NodeKey)
+	runRoutingNodeMonitorReporter(config, interval)
+	return nil
+}
+
+func loadRoutingNodeMonitorReporterConfig() (routingNodeMonitorReporterConfig, time.Duration, error) {
+	config := routingNodeMonitorReporterConfig{
+		ReportURL:       strings.TrimSpace(os.Getenv("NODE_MONITOR_REPORT_URL")),
+		Token:           strings.TrimSpace(os.Getenv("NODE_MONITOR_TOKEN")),
+		EnrollmentToken: strings.TrimSpace(os.Getenv("NODE_MONITOR_ENROLLMENT_TOKEN")),
+		NodeKey: resolveRoutingNodeMonitorNodeKey(
+			os.Getenv("NODE_MONITOR_NODE_KEY"),
+			common.NodeName,
+		),
+	}
+	if err := validateRoutingNodeMonitorReportURL(config.ReportURL); err != nil {
+		return routingNodeMonitorReporterConfig{}, 0, err
+	}
+	if config.Token == "" && (config.EnrollmentToken == "" || config.NodeKey == "") {
+		return routingNodeMonitorReporterConfig{}, 0, errors.New("routing node monitor token or enrollment configuration is required")
+	}
+	intervalSeconds := 15
+	if raw := strings.TrimSpace(os.Getenv("NODE_MONITOR_INTERVAL_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			intervalSeconds = parsed
+		}
+	}
+	if intervalSeconds < 5 {
+		intervalSeconds = 5
+	}
+	if intervalSeconds > 300 {
+		intervalSeconds = 300
+	}
+	return config, time.Duration(intervalSeconds) * time.Second, nil
 }
 
 func resolveRoutingNodeMonitorNodeKey(explicitKey string, nodeName string) string {
@@ -461,8 +483,8 @@ func collectRoutingNodeMonitorReport() (*RoutingNodeMonitorReport, error) {
 	if err != nil || memory.Total == 0 {
 		return nil, errors.New("failed to collect memory usage")
 	}
-	disk := common.GetDiskSpaceInfo()
-	if disk.Total == 0 {
+	diskTotal, diskUsed, diskPercent, err := collectRoutingNodeDiskMetrics()
+	if err != nil || diskTotal == 0 {
 		return nil, errors.New("failed to collect disk usage")
 	}
 	bytesSent, bytesReceived, uploadBps, downloadBps := collectRoutingNodeNetworkMetrics()
@@ -487,9 +509,9 @@ func collectRoutingNodeMonitorReport() (*RoutingNodeMonitorReport, error) {
 		MemoryUsed:           memory.Used,
 		MemoryTotal:          memory.Total,
 		MemoryPercent:        memory.UsedPercent,
-		DiskUsed:             disk.Used,
-		DiskTotal:            disk.Total,
-		DiskPercent:          disk.UsedPercent,
+		DiskUsed:             diskUsed,
+		DiskTotal:            diskTotal,
+		DiskPercent:          diskPercent,
 		NetworkBytesSent:     bytesSent,
 		NetworkBytesReceived: bytesReceived,
 		NetworkUploadBps:     uploadBps,
@@ -497,6 +519,22 @@ func collectRoutingNodeMonitorReport() (*RoutingNodeMonitorReport, error) {
 		UptimeSeconds:        uptime,
 		AppVersion:           common.Version,
 	}, nil
+}
+
+func collectRoutingNodeDiskMetrics() (uint64, uint64, float64, error) {
+	path := strings.TrimSpace(os.Getenv("NODE_MONITOR_DISK_PATH"))
+	if path == "" {
+		info := common.GetDiskSpaceInfo()
+		if info.Total == 0 {
+			return 0, 0, 0, errors.New("disk usage is unavailable")
+		}
+		return info.Total, info.Used, info.UsedPercent, nil
+	}
+	usage, err := gopsutildisk.Usage(path)
+	if err != nil || usage == nil || usage.Total == 0 {
+		return 0, 0, 0, errors.New("disk usage is unavailable")
+	}
+	return usage.Total, usage.Used, usage.UsedPercent, nil
 }
 
 func collectRoutingNodeNetworkMetrics() (uint64, uint64, float64, float64) {

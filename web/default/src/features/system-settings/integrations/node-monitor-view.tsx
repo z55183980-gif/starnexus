@@ -72,6 +72,19 @@ function formatNetworkAxisRate(value: number): string {
   return `${Math.round(value)} B`
 }
 
+function formatReportedAt(
+  value: unknown,
+  options?: Intl.DateTimeFormatOptions
+): string {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) return '-'
+
+  const date = new Date(seconds * 1000)
+  if (Number.isNaN(date.getTime())) return '-'
+
+  return date.toLocaleTimeString([], options)
+}
+
 type MonitorState =
   | 'disabled'
   | 'unconfigured'
@@ -346,7 +359,7 @@ export function RoutingNodeNetworkTraffic({ node }: { node: RoutingNode }) {
               tickLine={false}
               minTickGap={32}
               tickFormatter={(value) =>
-                new Date(Number(value) * 1000).toLocaleTimeString([], {
+                formatReportedAt(value, {
                   hour: '2-digit',
                   minute: '2-digit',
                 })
@@ -362,8 +375,8 @@ export function RoutingNodeNetworkTraffic({ node }: { node: RoutingNode }) {
               cursor={{ strokeDasharray: '4 4' }}
               content={
                 <ChartTooltipContent
-                  labelFormatter={(value) =>
-                    new Date(Number(value) * 1000).toLocaleTimeString()
+                  labelFormatter={(_label, payload) =>
+                    formatReportedAt(payload?.[0]?.payload?.reported_at)
                   }
                   formatter={(value, name) => (
                     <div className='flex w-full items-center gap-2'>

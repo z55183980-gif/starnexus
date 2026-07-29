@@ -3,6 +3,7 @@ export interface RoutingNode {
   key: string
   name: string
   origin: string
+  type: 'application' | 'database'
   enabled: boolean
   sort: number
   monitor_enabled: boolean
@@ -17,6 +18,7 @@ export interface RoutingNodeInput {
   key: string
   name: string
   origin: string
+  type: 'application' | 'database'
   enabled: boolean
   sort: number
   monitor_enabled: boolean

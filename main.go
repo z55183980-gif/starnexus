@@ -53,6 +53,12 @@ var classicIndexPage []byte
 
 func main() {
 	startTime := time.Now()
+	if len(os.Args) > 1 && os.Args[1] == "--node-monitor-agent" {
+		if err := service.RunRoutingNodeMonitorAgent(); err != nil {
+			common.FatalLog("node monitor agent stopped: " + err.Error())
+		}
+		return
+	}
 
 	err := InitResources()
 	if err != nil {

@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/glebarez/sqlite"
@@ -113,4 +114,17 @@ func TestResolveRoutingNodeMonitorNodeKey(t *testing.T) {
 	require.Equal(t, "s12", resolveRoutingNodeMonitorNodeKey("", "XINGYUAPI-PROD-12"))
 	require.Equal(t, "s3", resolveRoutingNodeMonitorNodeKey("s3", "xingyuapi-prod-2"))
 	require.Equal(t, "custom-node", resolveRoutingNodeMonitorNodeKey("", "custom-node"))
+}
+
+func TestLoadRoutingNodeMonitorReporterConfig(t *testing.T) {
+	t.Setenv("NODE_MONITOR_REPORT_URL", "https://origin-s2.dkby.com/api/node-monitor/report")
+	t.Setenv("NODE_MONITOR_ENROLLMENT_TOKEN", "shared-token")
+	t.Setenv("NODE_MONITOR_NODE_KEY", "spg")
+	t.Setenv("NODE_MONITOR_INTERVAL_SECONDS", "2")
+
+	config, interval, err := loadRoutingNodeMonitorReporterConfig()
+	require.NoError(t, err)
+	require.Equal(t, "spg", config.NodeKey)
+	require.Equal(t, "shared-token", config.EnrollmentToken)
+	require.Equal(t, 5*time.Second, interval)
 }
