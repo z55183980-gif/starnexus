@@ -3,6 +3,7 @@ services:
     image: ghcr.io/z55183980-gif/starnexus:${APP_IMAGE_TAG:-main}
     pull_policy: always
     container_name: starnexus-node-monitor
+    hostname: ${NODE_NAME:-starnexus-node-monitor}
     restart: always
     command: ["--node-monitor-agent"]
     env_file:
