@@ -29,12 +29,18 @@ import {
   SortAsc,
   RefreshCw,
   ArrowUpFromLine,
+  ChevronDown,
+  Database,
+  Server,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuCheckboxItem,
   DropdownMenuItem,
   DropdownMenuSeparator,
@@ -64,6 +70,9 @@ export function ChannelsPrimaryButtons() {
   } = useChannels()
   const queryClient = useQueryClient()
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const isRoot =
+    useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST) ===
+    ROLE.SUPER_ADMIN
 
   const handleTagModeToggle = (checked: boolean) => {
     localStorage.setItem('enable-tag-mode', String(checked))
@@ -104,11 +113,31 @@ export function ChannelsPrimaryButtons() {
         </div>
 
         {/* Create Channel */}
-        <Button onClick={() => setOpen('create-channel')} size='sm'>
-          <Plus className='h-4 w-4' />
-          <span className='max-sm:hidden'>{t('Create Channel')}</span>
-          <span className='sm:hidden'>{t('Create')}</span>
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button size='sm' aria-label={t('Create Channel')} />}
+          >
+            <Plus data-icon='inline-start' />
+            <span className='max-sm:hidden'>{t('Create Channel')}</span>
+            <ChevronDown data-icon='inline-end' />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align='end' className='w-56'>
+            <DropdownMenuGroup>
+              <DropdownMenuItem onClick={() => setOpen('create-channel')}>
+                <Server data-icon='inline-start' />
+                {t('Create upstream channel')}
+              </DropdownMenuItem>
+              {isRoot && (
+                <DropdownMenuItem
+                  onClick={() => setOpen('create-local-channel')}
+                >
+                  <Database data-icon='inline-start' />
+                  {t('Create local channel')}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {/* More Actions */}
         <DropdownMenu>

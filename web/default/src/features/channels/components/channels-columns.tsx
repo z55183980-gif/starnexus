@@ -636,6 +636,8 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
         const iconName = getChannelTypeIcon(type)
         const icon = getLobeIcon(`${iconName}.Color`, 20)
         const channel = row.original as Channel
+        const isLocalChannel =
+          channel.credential_source === 'local_account_pool'
         const isMultiKey = isMultiKeyChannel(channel)
         const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
         const MultiKeyModeIcon =
@@ -679,6 +681,14 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
               size='sm'
               copyable={false}
             />
+            {isLocalChannel && (
+              <StatusBadge
+                label={t('Local')}
+                variant='blue'
+                size='sm'
+                copyable={false}
+              />
+            )}
             {isIonet && (
               <TooltipProvider delay={100}>
                 <Tooltip>

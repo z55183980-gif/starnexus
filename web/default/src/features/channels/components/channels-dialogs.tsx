@@ -35,9 +35,14 @@ export function ChannelsDialogs() {
     <>
       {/* Channel Create/Update Drawer */}
       <ChannelMutateDrawer
-        open={open === 'create-channel' || open === 'update-channel'}
+        open={
+          open === 'create-channel' ||
+          open === 'create-local-channel' ||
+          open === 'update-channel'
+        }
         onOpenChange={(v) => !v && setOpen(null)}
         currentRow={open === 'update-channel' ? currentRow : null}
+        creationMode={open === 'create-local-channel' ? 'local' : 'upstream'}
       />
 
       {/* Test Channel Dialog */}

@@ -147,6 +147,7 @@ export const channelFormSchema = channelFormBaseSchema.superRefine(
 )
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
+export type ChannelCreationMode = 'upstream' | 'local'
 
 // ============================================================================
 // Default Form Values
@@ -207,6 +208,34 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
+}
+
+export function getChannelCreateDefaultValues(
+  mode: ChannelCreationMode
+): ChannelFormValues {
+  if (mode === 'local') {
+    return {
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      type: 57,
+      credential_source: 'local_account_pool',
+      upstream_account_pool_id: null,
+      multi_key_mode: 'single',
+      responses_websocket_v2_enabled: false,
+      responses_websocket_v2_replay_enabled: false,
+    }
+  }
+
+  return {
+    ...CHANNEL_FORM_DEFAULT_VALUES,
+    credential_source: 'channel_key',
+    upstream_account_pool_id: null,
+  }
+}
+
+export function requiresChannelKeyForCreate(
+  formData: Pick<ChannelFormValues, 'credential_source'>
+): boolean {
+  return formData.credential_source !== 'local_account_pool'
 }
 
 // ============================================================================

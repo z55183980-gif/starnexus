@@ -20,6 +20,9 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
+  getChannelCreateDefaultValues,
+  requiresChannelKeyForCreate,
+  transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
 } from './channel-form'
 
@@ -102,6 +105,35 @@ describe('Responses WebSocket v2 channel settings', () => {
     assert.equal(settings.responses_websocket_v2_replay_enabled, false)
     assert.equal(payload.credential_source, 'local_account_pool')
     assert.equal(payload.upstream_account_pool_id, 9)
+  })
+})
+
+describe('Channel creation modes', () => {
+  test('uses channel credentials for upstream channels', () => {
+    const defaults = getChannelCreateDefaultValues('upstream')
+
+    assert.equal(defaults.credential_source, 'channel_key')
+    assert.equal(defaults.upstream_account_pool_id, null)
+    assert.equal(requiresChannelKeyForCreate(defaults), true)
+  })
+
+  test('uses a local account pool without requiring an API key', () => {
+    const defaults = getChannelCreateDefaultValues('local')
+    const payload = transformFormDataToCreatePayload({
+      ...defaults,
+      name: 'local codex pool',
+      upstream_account_pool_id: 9,
+      models: 'gpt-5.6-sol',
+      group: ['test3'],
+    })
+
+    assert.equal(defaults.type, 57)
+    assert.equal(defaults.credential_source, 'local_account_pool')
+    assert.equal(requiresChannelKeyForCreate(defaults), false)
+    assert.equal(payload.mode, 'single')
+    assert.equal(payload.channel.key, null)
+    assert.equal(payload.channel.credential_source, 'local_account_pool')
+    assert.equal(payload.channel.upstream_account_pool_id, 9)
   })
 })
 

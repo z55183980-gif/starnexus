@@ -49,6 +49,7 @@ import {
   Settings,
   SlidersHorizontal,
   Wand2,
+  Database,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -130,9 +131,10 @@ import {
   SUCCESS_MESSAGES,
 } from '../../constants'
 import {
-  CHANNEL_FORM_DEFAULT_VALUES,
   channelFormSchema,
   channelsQueryKeys,
+  getChannelCreateDefaultValues,
+  requiresChannelKeyForCreate,
   transformChannelToFormDefaults,
   transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
@@ -147,6 +149,7 @@ import {
   hasModelConfigChanged,
   findMissingModelsInMapping,
   validateModelMappingJson,
+  type ChannelCreationMode,
 } from '../../lib'
 import {
   collectInvalidStatusCodeEntries,
@@ -168,6 +171,7 @@ type ChannelMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentRow?: Channel | null
+  creationMode?: ChannelCreationMode
 }
 
 type ModelMappingGuardrail = {
@@ -298,6 +302,7 @@ export function ChannelMutateDrawer({
   open,
   onOpenChange,
   currentRow,
+  creationMode = 'upstream',
 }: ChannelMutateDrawerProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -394,7 +399,7 @@ export function ChannelMutateDrawer({
   // Form setup
   const form = useForm<ChannelFormValues>({
     resolver: zodResolver(channelFormSchema),
-    defaultValues: CHANNEL_FORM_DEFAULT_VALUES,
+    defaultValues: getChannelCreateDefaultValues(creationMode),
   })
 
   // Watch form values for conditional rendering
@@ -404,6 +409,11 @@ export function ChannelMutateDrawer({
   const currentGroups = form.watch('group')
   const currentType = form.watch('type')
   const credentialSource = form.watch('credential_source')
+  const selectedAccountPoolId = form.watch('upstream_account_pool_id')
+  const isLocalChannel =
+    creationMode === 'local' ||
+    currentRow?.credential_source === 'local_account_pool' ||
+    credentialSource === 'local_account_pool'
   const currentBaseUrl = form.watch('base_url')
   const currentModels = form.watch('models')
   const currentModelMapping = form.watch('model_mapping')
@@ -445,16 +455,37 @@ export function ChannelMutateDrawer({
   }, [currentType, upstreamPoolsData?.data])
 
   useEffect(() => {
+    if (!isLocalChannel || !selectedAccountPoolId || !upstreamPoolsData?.data) {
+      return
+    }
+    if (
+      !compatibleAccountPools.some((pool) => pool.id === selectedAccountPoolId)
+    ) {
+      form.setValue('upstream_account_pool_id', null)
+    }
+  }, [
+    compatibleAccountPools,
+    form,
+    isLocalChannel,
+    selectedAccountPoolId,
+    upstreamPoolsData?.data,
+  ])
+
+  useEffect(() => {
     if (credentialSource !== 'local_account_pool') return
     if (currentType !== 1 && currentType !== 57) {
-      form.setValue('credential_source', 'channel_key')
-      form.setValue('upstream_account_pool_id', null)
+      if (isLocalChannel) {
+        form.setValue('type', 57)
+      } else {
+        form.setValue('credential_source', 'channel_key')
+        form.setValue('upstream_account_pool_id', null)
+      }
       return
     }
     form.setValue('multi_key_mode', 'single')
     form.setValue('responses_websocket_v2_enabled', false)
     form.setValue('responses_websocket_v2_replay_enabled', false)
-  }, [credentialSource, currentType, form])
+  }, [credentialSource, currentType, form, isLocalChannel])
 
   // Get all models list
   const allModelsList = useMemo(
@@ -504,7 +535,12 @@ export function ChannelMutateDrawer({
   )
 
   const channelTypeOptions = useMemo(() => {
-    const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
+    const sourceOptions = isLocalChannel
+      ? CHANNEL_TYPE_OPTIONS.filter(
+          (option) => option.value === 1 || option.value === 57
+        )
+      : CHANNEL_TYPE_OPTIONS
+    const options = sourceOptions.map((option) => ({
       value: String(option.value),
       label: t(option.label),
       icon: getLobeIcon(`${getChannelTypeIcon(option.value)}.Color`, 16),
@@ -517,7 +553,7 @@ export function ChannelMutateDrawer({
       })
     }
     return options
-  }, [currentType, t])
+  }, [currentType, isLocalChannel, t])
 
   // Extract redirect models from model_mapping (target values)
   const redirectModelList = useMemo(
@@ -649,13 +685,13 @@ export function ChannelMutateDrawer({
       initialStatusCodeMappingRef.current =
         channelData.data.status_code_mapping || ''
     } else if (!isEditing) {
-      form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+      form.reset(getChannelCreateDefaultValues(creationMode))
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelData, form])
+  }, [isEditing, channelData, creationMode, form, open])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -983,7 +1019,11 @@ export function ChannelMutateDrawer({
   const onSubmit = useCallback(
     async (data: ChannelFormValues) => {
       // Validate key is required when creating
-      if (!isEditing && !data.key?.trim()) {
+      if (
+        !isEditing &&
+        requiresChannelKeyForCreate(data) &&
+        !data.key?.trim()
+      ) {
         form.setError('key', {
           type: 'manual',
           message: 'API key is required',
@@ -1115,11 +1155,11 @@ export function ChannelMutateDrawer({
     (v: boolean) => {
       onOpenChange(v)
       if (!v) {
-        form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+        form.reset(getChannelCreateDefaultValues(creationMode))
         setAdvancedSettingsOpen(false)
       }
     },
-    [onOpenChange, form]
+    [onOpenChange, creationMode, form]
   )
 
   const handleAdvancedSettingsOpenChange = useCallback((nextOpen: boolean) => {
@@ -1142,20 +1182,28 @@ export function ChannelMutateDrawer({
                 {getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 22)}
               </span>
               <span>
-                {isEditing ? t('Edit Channel') : t('Create Channel')}
+                {isEditing
+                  ? isLocalChannel
+                    ? t('Edit local channel')
+                    : t('Edit Channel')
+                  : isLocalChannel
+                    ? t('Create local channel')
+                    : t('Create upstream channel')}
                 <span className='text-muted-foreground ml-2 text-sm font-normal'>
                   {t(currentTypeLabel)}
                 </span>
               </span>
             </SheetTitle>
             <SheetDescription>
-              {isEditing
-                ? t(
-                    "Update channel configuration and click save when you're done."
-                  )
-                : t(
-                    'Add a new channel by providing the necessary information.'
-                  )}
+              {isLocalChannel
+                ? t('Configure a channel backed by a local account pool.')
+                : isEditing
+                  ? t(
+                      "Update channel configuration and click save when you're done."
+                    )
+                  : t(
+                      'Add a new channel by providing the necessary information.'
+                    )}
             </SheetDescription>
           </SheetHeader>
 
@@ -1208,7 +1256,7 @@ export function ChannelMutateDrawer({
                             placeholder={t('Select channel type')}
                             searchPlaceholder={t('Search channel type...')}
                             emptyText={t('No channel type found.')}
-                            allowCustomValue
+                            allowCustomValue={!isLocalChannel}
                           />
                         </FormControl>
                         <FormMessage />
@@ -1240,7 +1288,7 @@ export function ChannelMutateDrawer({
                   )}
                 />
 
-                {currentType === 1 && (
+                {currentType === 1 && !isLocalChannel && (
                   <FormField
                     control={form.control}
                     name='openai_organization'
@@ -1258,10 +1306,97 @@ export function ChannelMutateDrawer({
                     )}
                   />
                 )}
+
+                {isLocalChannel && (
+                  <FormField
+                    control={form.control}
+                    name='remark'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Description')}</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            rows={2}
+                            placeholder={t('Optional description')}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
               </div>
 
+              {isLocalChannel && (
+                <div className='bg-card flex flex-col gap-4 rounded-xl border p-5'>
+                  <CardHeading
+                    title={t('Local channel source')}
+                    icon={<Database />}
+                  />
+                  <FormField
+                    control={form.control}
+                    name='upstream_account_pool_id'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>{t('Local account pool')}</FormLabel>
+                        <Select
+                          value={field.value ? String(field.value) : ''}
+                          onValueChange={(value) =>
+                            field.onChange(Number(value))
+                          }
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue
+                                placeholder={t('Select an account pool')}
+                              />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {compatibleAccountPools.map((pool) => (
+                                <SelectItem
+                                  key={pool.id}
+                                  value={String(pool.id)}
+                                >
+                                  {pool.name} ({pool.account_count})
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {compatibleAccountPools.length === 0
+                            ? t(
+                                'No compatible active account pools are available'
+                              )
+                            : t(
+                                'New accounts added to this pool become available to the channel automatically.'
+                              )}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <Alert>
+                    <AlertDescription>
+                      {t(
+                        'Codex to StarNexus can still use WebSocket. StarNexus uses HTTP/SSE for this upstream account pool, so upstream reconnects do not close the client WebSocket session.'
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              )}
+
               {/* ── API Access ── */}
-              <div className='bg-card space-y-4 rounded-xl border p-5'>
+              <div
+                className={cn(
+                  'bg-card space-y-4 rounded-xl border p-5',
+                  isLocalChannel && 'hidden'
+                )}
+                aria-hidden={isLocalChannel}
+              >
                 <CardHeading
                   title={t('API Access')}
                   icon={<Link2 className='h-4 w-4' />}
@@ -1890,99 +2025,6 @@ export function ChannelMutateDrawer({
                     icon={<KeyRound className='h-3.5 w-3.5' />}
                   />
                 </div>
-                {(currentType === 1 || currentType === 57) && (
-                  <FormField
-                    control={form.control}
-                    name='credential_source'
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>{t('Credential source')}</FormLabel>
-                        <Select
-                          value={field.value}
-                          onValueChange={field.onChange}
-                        >
-                          <FormControl>
-                            <SelectTrigger className='w-full'>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectItem value='channel_key'>
-                              {t('Channel key')}
-                            </SelectItem>
-                            {isRoot && (
-                              <SelectItem value='local_account_pool'>
-                                {t('Local account pool')}
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                        <FormDescription>
-                          {t(
-                            'A local account pool is managed independently and can be reused by multiple channels.'
-                          )}
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-
-                {credentialSource === 'local_account_pool' && (
-                  <>
-                    <FormField
-                      control={form.control}
-                      name='upstream_account_pool_id'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>{t('Local account pool')}</FormLabel>
-                          <Select
-                            value={field.value ? String(field.value) : ''}
-                            onValueChange={(value) =>
-                              field.onChange(Number(value))
-                            }
-                          >
-                            <FormControl>
-                              <SelectTrigger className='w-full'>
-                                <SelectValue
-                                  placeholder={t('Select an account pool')}
-                                />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent alignItemWithTrigger={false}>
-                              {compatibleAccountPools.map((pool) => (
-                                <SelectItem
-                                  key={pool.id}
-                                  value={String(pool.id)}
-                                >
-                                  {pool.name} ({pool.account_count})
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <FormDescription>
-                            {compatibleAccountPools.length === 0
-                              ? t(
-                                  'No compatible active account pools are available'
-                                )
-                              : t(
-                                  'New accounts added to this pool become available to the channel automatically.'
-                                )}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <Alert>
-                      <AlertDescription>
-                        {t(
-                          'Codex to StarNexus can still use WebSocket. StarNexus uses HTTP/SSE for this upstream account pool, so upstream reconnects do not close the client WebSocket session.'
-                        )}
-                      </AlertDescription>
-                    </Alert>
-                  </>
-                )}
-
                 {credentialSource !== 'local_account_pool' && !isEditing && (
                   <FormField
                     control={form.control}
@@ -2378,17 +2420,18 @@ export function ChannelMutateDrawer({
                               <Plus className='mr-2 h-4 w-4' />
                               {t('Fill All Models')}
                             </Button>
-                            {MODEL_FETCHABLE_TYPES.has(currentType) && (
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                onClick={handleFetchModels}
-                              >
-                                <Sparkles className='mr-2 h-4 w-4' />
-                                {t('Fetch from Upstream')}
-                              </Button>
-                            )}
+                            {!isLocalChannel &&
+                              MODEL_FETCHABLE_TYPES.has(currentType) && (
+                                <Button
+                                  type='button'
+                                  variant='outline'
+                                  size='sm'
+                                  onClick={handleFetchModels}
+                                >
+                                  <Sparkles className='mr-2 h-4 w-4' />
+                                  {t('Fetch from Upstream')}
+                                </Button>
+                              )}
                             <Button
                               type='button'
                               variant='outline'
@@ -2747,26 +2790,28 @@ export function ChannelMutateDrawer({
                           )}
                         />
 
-                        <FormField
-                          control={form.control}
-                          name='remark'
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>{t('Remark')}</FormLabel>
-                              <FormControl>
-                                <Textarea
-                                  placeholder={t(FIELD_PLACEHOLDERS.REMARK)}
-                                  rows={2}
-                                  {...field}
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                {t(FIELD_DESCRIPTIONS.REMARK)}
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                        {!isLocalChannel && (
+                          <FormField
+                            control={form.control}
+                            name='remark'
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>{t('Remark')}</FormLabel>
+                                <FormControl>
+                                  <Textarea
+                                    placeholder={t(FIELD_PLACEHOLDERS.REMARK)}
+                                    rows={2}
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormDescription>
+                                  {t(FIELD_DESCRIPTIONS.REMARK)}
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        )}
                       </div>
                     </div>
 
