@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  Add01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
   Copy01Icon,
@@ -75,7 +74,6 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout'
 import {
-  createRoutingNode,
   getRoutingNodeBoundUsers,
   getRoutingNodeMonitorEnrollmentToken,
   getRoutingNodes,
@@ -93,6 +91,7 @@ import type {
   RoutingNodeMonitorSharedEnrollment,
 } from '@/features/node-routing/types'
 import {
+  RoutingNodeDatabaseOverview,
   RoutingNodeMonitorBadge,
   RoutingNodeNetworkTraffic,
   RoutingNodeResourceOverview,
@@ -104,6 +103,7 @@ const emptyNode: RoutingNodeInput = {
   origin: '',
   type: 'application',
   enabled: true,
+  visible: true,
   sort: 0,
   monitor_enabled: true,
 }
@@ -114,11 +114,23 @@ const nodeCardTone = {
   footer: 'border-chart-2/15 bg-chart-2/[0.06]',
 } as const
 
+const databaseNodeCardTone = {
+  card: 'border-chart-3/30 bg-chart-3/[0.035] ring-chart-3/10 before:bg-chart-3/75',
+  header: 'border-chart-3/20 bg-chart-3/[0.04]',
+  footer: 'border-chart-3/20 bg-chart-3/[0.075]',
+} as const
+
+const fixedNodeKeys = new Set(['s1', 's2', 's3', 's4', 'spg'])
+
 export function NodeRoutingSettingsSection() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [editing, setEditing] = useState<RoutingNode | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [visibilityDialogOpen, setVisibilityDialogOpen] = useState(false)
+  const [visibilityDraft, setVisibilityDraft] = useState<
+    Record<number, boolean>
+  >({})
   const [boundUsersNode, setBoundUsersNode] = useState<RoutingNode | null>(null)
   const [boundUsersPage, setBoundUsersPage] = useState(1)
   const [boundUsersEditing, setBoundUsersEditing] = useState(false)
@@ -152,9 +164,8 @@ export function NodeRoutingSettingsSection() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const result = editing
-        ? await updateRoutingNode(editing.id, form)
-        : await createRoutingNode(form)
+      if (!editing) throw new Error(t('Save failed'))
+      const result = await updateRoutingNode(editing.id, form)
       if (!result.success) throw new Error(result.message || t('Save failed'))
       return result
     },
@@ -162,6 +173,39 @@ export function NodeRoutingSettingsSection() {
       await refreshNodes()
       toast.success(t('Routing node saved'))
       setDialogOpen(false)
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+
+  const visibilityMutation = useMutation({
+    mutationFn: async () => {
+      const changes = nodes
+        .filter(
+          (node) =>
+            fixedNodeKeys.has(node.key) &&
+            visibilityDraft[node.id] !== undefined &&
+            visibilityDraft[node.id] !== node.visible
+        )
+        .map((node) =>
+          updateRoutingNode(node.id, {
+            key: node.key,
+            name: node.name,
+            origin: node.origin,
+            type: node.type,
+            enabled: node.enabled,
+            visible: visibilityDraft[node.id],
+            sort: node.sort,
+            monitor_enabled: node.monitor_enabled,
+          })
+        )
+      const results = await Promise.all(changes)
+      const failed = results.find((result) => !result.success)
+      if (failed) throw new Error(failed.message || t('Save failed'))
+    },
+    onSuccess: async () => {
+      await refreshNodes()
+      setVisibilityDialogOpen(false)
+      toast.success(t('Saved successfully'))
     },
     onError: (error: Error) => toast.error(error.message),
   })
@@ -259,6 +303,8 @@ export function NodeRoutingSettingsSection() {
   })
 
   const nodes = nodesQuery.data?.data || []
+  const fixedNodes = nodes.filter((node) => fixedNodeKeys.has(node.key))
+  const visibleNodes = fixedNodes.filter((node) => node.visible)
   const boundUsers = boundUsersQuery.data?.data?.items || []
   const boundUsersTotal = boundUsersQuery.data?.data?.total || 0
   const boundUsersTotalPages = Math.max(1, Math.ceil(boundUsersTotal / 20))
@@ -311,13 +357,16 @@ export function NodeRoutingSettingsSection() {
         <Button
           disabled={nodesQuery.isError}
           onClick={() => {
-            setEditing(null)
-            setForm(emptyNode)
-            setDialogOpen(true)
+            setVisibilityDraft(
+              Object.fromEntries(
+                fixedNodes.map((node) => [node.id, node.visible])
+              )
+            )
+            setVisibilityDialogOpen(true)
           }}
         >
-          <HugeiconsIcon icon={Add01Icon} data-icon='inline-start' />
-          {t('Add node')}
+          <HugeiconsIcon icon={Edit02Icon} data-icon='inline-start' />
+          {t('Edit')}
         </Button>
         <Button
           variant='outline'
@@ -371,22 +420,32 @@ export function NodeRoutingSettingsSection() {
               )}
             </EmptyHeader>
           </Empty>
+        ) : visibleNodes.length === 0 ? (
+          <Empty className='border'>
+            <EmptyHeader>
+              <EmptyTitle>{t('No visible nodes')}</EmptyTitle>
+              <EmptyDescription>
+                {t('Use Edit to show server cards on the main page.')}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'>
-            {nodes.map((node) => {
+            {visibleNodes.map((node) => {
               const databaseNode = node.type === 'database'
+              const cardTone = databaseNode
+                ? databaseNodeCardTone
+                : nodeCardTone
               return (
                 <Card
                   key={node.id}
                   className={cn(
                     'relative min-h-[calc(100dvh-10rem)] border pt-5 transition-[transform,box-shadow] before:absolute before:inset-x-0 before:top-0 before:h-1 hover:-translate-y-0.5 hover:shadow-md motion-reduce:transform-none',
-                    nodeCardTone.card,
+                    cardTone.card,
                     !node.enabled && 'opacity-75 saturate-50'
                   )}
                 >
-                  <CardHeader
-                    className={cn('border-b pb-4', nodeCardTone.header)}
-                  >
+                  <CardHeader className={cn('border-b pb-4', cardTone.header)}>
                     <CardTitle className='flex min-w-0 items-center gap-2'>
                       <span className='truncate'>{node.name}</span>
                       <Badge
@@ -415,9 +474,9 @@ export function NodeRoutingSettingsSection() {
                   </CardHeader>
 
                   <CardContent className='flex flex-1 flex-col gap-4'>
-                    <div className='flex flex-wrap items-center justify-between gap-2'>
-                      <RoutingNodeMonitorBadge node={node} />
-                      {!databaseNode && (
+                    {!databaseNode && (
+                      <div className='flex flex-wrap items-center justify-between gap-2'>
+                        <RoutingNodeMonitorBadge node={node} />
                         <Badge
                           variant={
                             node.binding_count > 0 ? 'secondary' : 'outline'
@@ -434,10 +493,17 @@ export function NodeRoutingSettingsSection() {
                         >
                           {t('Bound users')}: {node.binding_count}
                         </Badge>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
-                    <Separator />
+                    {!databaseNode && <Separator />}
+
+                    {databaseNode && (
+                      <>
+                        <RoutingNodeDatabaseOverview node={node} />
+                        <Separator />
+                      </>
+                    )}
 
                     <RoutingNodeResourceOverview node={node} />
 
@@ -460,7 +526,7 @@ export function NodeRoutingSettingsSection() {
                     className={cn(
                       'grid gap-2 p-2',
                       databaseNode ? 'grid-cols-2' : 'grid-cols-3',
-                      nodeCardTone.footer
+                      cardTone.footer
                     )}
                   >
                     {!databaseNode && (
@@ -491,6 +557,7 @@ export function NodeRoutingSettingsSection() {
                           origin: node.origin,
                           type: node.type,
                           enabled: node.enabled,
+                          visible: node.visible,
                           sort: node.sort,
                           monitor_enabled: node.monitor_enabled,
                         })
@@ -527,12 +594,68 @@ export function NodeRoutingSettingsSection() {
           </div>
         )}
 
+        <Dialog
+          open={visibilityDialogOpen}
+          onOpenChange={setVisibilityDialogOpen}
+        >
+          <DialogContent className='sm:max-w-md'>
+            <DialogHeader>
+              <DialogTitle>{t('Edit')}</DialogTitle>
+              <DialogDescription>
+                {t('Choose which server cards are shown on the main page.')}
+              </DialogDescription>
+            </DialogHeader>
+            <FieldGroup>
+              {fixedNodes.map((node) => (
+                <Field
+                  key={node.id}
+                  orientation='horizontal'
+                  className='bg-muted/35 rounded-lg border p-3'
+                >
+                  <FieldContent>
+                    <FieldTitle>{node.name}</FieldTitle>
+                    <FieldDescription className='font-mono'>
+                      {node.key} ·{' '}
+                      {node.type === 'database' ? 'PostgreSQL' : node.origin}
+                    </FieldDescription>
+                  </FieldContent>
+                  <Switch
+                    checked={visibilityDraft[node.id] ?? node.visible}
+                    aria-label={`${t('Show')} ${node.name}`}
+                    onCheckedChange={(checked) =>
+                      setVisibilityDraft((current) => ({
+                        ...current,
+                        [node.id]: checked,
+                      }))
+                    }
+                  />
+                </Field>
+              ))}
+            </FieldGroup>
+            <DialogFooter>
+              <Button
+                variant='outline'
+                onClick={() => setVisibilityDialogOpen(false)}
+              >
+                {t('Cancel')}
+              </Button>
+              <Button
+                disabled={visibilityMutation.isPending}
+                onClick={() => visibilityMutation.mutate()}
+              >
+                {visibilityMutation.isPending && (
+                  <Spinner data-icon='inline-start' />
+                )}
+                {t('Save')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className='sm:max-w-lg'>
             <DialogHeader>
-              <DialogTitle>
-                {editing ? t('Edit node') : t('Add node')}
-              </DialogTitle>
+              <DialogTitle>{t('Edit node')}</DialogTitle>
               <DialogDescription>
                 {form.type === 'database'
                   ? t('Database')

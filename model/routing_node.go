@@ -23,6 +23,7 @@ type RoutingNode struct {
 	Origin                string `json:"origin" gorm:"type:varchar(255);not null"`
 	Type                  string `json:"type" gorm:"type:varchar(16);default:'application';not null"`
 	Enabled               bool   `json:"enabled" gorm:"not null"`
+	Visible               bool   `json:"visible" gorm:"default:true;not null"`
 	Sort                  int    `json:"sort" gorm:"default:0;not null"`
 	MonitorEnabled        bool   `json:"monitor_enabled" gorm:"default:false;not null"`
 	MonitorTokenHash      string `json:"-" gorm:"type:varchar(64);index;default:'';not null"`
@@ -203,6 +204,7 @@ func UpdateRoutingNode(node *RoutingNode) error {
 		"origin":          strings.TrimSpace(node.Origin),
 		"type":            nodeType,
 		"enabled":         node.Enabled,
+		"visible":         node.Visible,
 		"sort":            node.Sort,
 		"monitor_enabled": node.MonitorEnabled,
 		"updated_at":      common.GetTimestamp(),
@@ -237,11 +239,11 @@ func DeleteRoutingNode(id int) error {
 
 func EnsureDefaultRoutingNodes() error {
 	defaults := []RoutingNode{
-		{Key: "s1", Name: "S1", Origin: "origin-s1.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 1},
-		{Key: "s2", Name: "S2", Origin: "origin-s2.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 2},
-		{Key: "s3", Name: "S3", Origin: "origin-s3.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 3},
-		{Key: "s4", Name: "S4", Origin: "origin-s4.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Sort: 4},
-		{Key: "spg", Name: "SPG", Origin: "", Type: RoutingNodeTypeDatabase, Enabled: true, MonitorEnabled: true, Sort: 5},
+		{Key: "s1", Name: "S1", Origin: "origin-s1.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Visible: true, Sort: 1},
+		{Key: "s2", Name: "S2", Origin: "origin-s2.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Visible: true, Sort: 2},
+		{Key: "s3", Name: "S3", Origin: "origin-s3.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Visible: true, Sort: 3},
+		{Key: "s4", Name: "S4", Origin: "origin-s4.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Visible: true, Sort: 4},
+		{Key: "spg", Name: "SPG", Origin: "", Type: RoutingNodeTypeDatabase, Enabled: true, Visible: true, MonitorEnabled: true, Sort: 5},
 	}
 	for i := range defaults {
 		now := common.GetTimestamp()

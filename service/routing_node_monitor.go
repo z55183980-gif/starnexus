@@ -46,23 +46,37 @@ var (
 )
 
 type RoutingNodeMonitorReport struct {
-	NodeName             string  `json:"node_name"`
-	CPUUsage             float64 `json:"cpu_usage"`
-	CPUCores             int     `json:"cpu_cores"`
-	LoadOne              float64 `json:"load_one"`
-	LoadPercent          float64 `json:"load_percent"`
-	MemoryUsed           uint64  `json:"memory_used"`
-	MemoryTotal          uint64  `json:"memory_total"`
-	MemoryPercent        float64 `json:"memory_percent"`
-	DiskUsed             uint64  `json:"disk_used"`
-	DiskTotal            uint64  `json:"disk_total"`
-	DiskPercent          float64 `json:"disk_percent"`
-	NetworkBytesSent     uint64  `json:"network_bytes_sent"`
-	NetworkBytesReceived uint64  `json:"network_bytes_received"`
-	NetworkUploadBps     float64 `json:"network_upload_bps"`
-	NetworkDownloadBps   float64 `json:"network_download_bps"`
-	UptimeSeconds        uint64  `json:"uptime_seconds"`
-	AppVersion           string  `json:"app_version"`
+	NodeName                        string  `json:"node_name"`
+	CPUUsage                        float64 `json:"cpu_usage"`
+	CPUCores                        int     `json:"cpu_cores"`
+	LoadOne                         float64 `json:"load_one"`
+	LoadPercent                     float64 `json:"load_percent"`
+	MemoryUsed                      uint64  `json:"memory_used"`
+	MemoryTotal                     uint64  `json:"memory_total"`
+	MemoryPercent                   float64 `json:"memory_percent"`
+	DiskUsed                        uint64  `json:"disk_used"`
+	DiskTotal                       uint64  `json:"disk_total"`
+	DiskPercent                     float64 `json:"disk_percent"`
+	NetworkBytesSent                uint64  `json:"network_bytes_sent"`
+	NetworkBytesReceived            uint64  `json:"network_bytes_received"`
+	NetworkUploadBps                float64 `json:"network_upload_bps"`
+	NetworkDownloadBps              float64 `json:"network_download_bps"`
+	DatabaseMetricsEnabled          bool    `json:"database_metrics_enabled"`
+	PostgreSQLStatus                string  `json:"postgresql_status"`
+	PostgreSQLConnections           int     `json:"postgresql_connections"`
+	PostgreSQLMaxConnections        int     `json:"postgresql_max_connections"`
+	PostgreSQLDatabaseSize          uint64  `json:"postgresql_database_size"`
+	PostgreSQLCacheHitPercent       float64 `json:"postgresql_cache_hit_percent"`
+	PostgreSQLReplicationStatus     string  `json:"postgresql_replication_status"`
+	PostgreSQLReplicationLagSeconds float64 `json:"postgresql_replication_lag_seconds"`
+	RedisStatus                     string  `json:"redis_status"`
+	RedisMemoryUsed                 uint64  `json:"redis_memory_used"`
+	RedisMemoryMax                  uint64  `json:"redis_memory_max"`
+	PgBouncerStatus                 string  `json:"pgbouncer_status"`
+	BackupLastAt                    int64   `json:"backup_last_at"`
+	BackupSize                      uint64  `json:"backup_size"`
+	UptimeSeconds                   uint64  `json:"uptime_seconds"`
+	AppVersion                      string  `json:"app_version"`
 }
 
 type RoutingNodeMonitorEnrollmentRequest struct {
@@ -189,26 +203,40 @@ func SubmitRoutingNodeMonitorReport(token string, report *RoutingNodeMonitorRepo
 	}
 	now := common.GetTimestamp()
 	return model.SaveRoutingNodeMonitorStatus(&model.RoutingNodeMonitorStatus{
-		NodeId:               node.Id,
-		NodeName:             strings.TrimSpace(report.NodeName),
-		CPUUsage:             report.CPUUsage,
-		CPUCores:             report.CPUCores,
-		LoadOne:              report.LoadOne,
-		LoadPercent:          report.LoadPercent,
-		MemoryUsed:           report.MemoryUsed,
-		MemoryTotal:          report.MemoryTotal,
-		MemoryPercent:        report.MemoryPercent,
-		DiskUsed:             report.DiskUsed,
-		DiskTotal:            report.DiskTotal,
-		DiskPercent:          report.DiskPercent,
-		NetworkBytesSent:     report.NetworkBytesSent,
-		NetworkBytesReceived: report.NetworkBytesReceived,
-		NetworkUploadBps:     report.NetworkUploadBps,
-		NetworkDownloadBps:   report.NetworkDownloadBps,
-		UptimeSeconds:        report.UptimeSeconds,
-		AppVersion:           strings.TrimSpace(report.AppVersion),
-		ReportedAt:           now,
-		UpdatedAt:            now,
+		NodeId:                          node.Id,
+		NodeName:                        strings.TrimSpace(report.NodeName),
+		CPUUsage:                        report.CPUUsage,
+		CPUCores:                        report.CPUCores,
+		LoadOne:                         report.LoadOne,
+		LoadPercent:                     report.LoadPercent,
+		MemoryUsed:                      report.MemoryUsed,
+		MemoryTotal:                     report.MemoryTotal,
+		MemoryPercent:                   report.MemoryPercent,
+		DiskUsed:                        report.DiskUsed,
+		DiskTotal:                       report.DiskTotal,
+		DiskPercent:                     report.DiskPercent,
+		NetworkBytesSent:                report.NetworkBytesSent,
+		NetworkBytesReceived:            report.NetworkBytesReceived,
+		NetworkUploadBps:                report.NetworkUploadBps,
+		NetworkDownloadBps:              report.NetworkDownloadBps,
+		DatabaseMetricsEnabled:          report.DatabaseMetricsEnabled,
+		PostgreSQLStatus:                report.PostgreSQLStatus,
+		PostgreSQLConnections:           report.PostgreSQLConnections,
+		PostgreSQLMaxConnections:        report.PostgreSQLMaxConnections,
+		PostgreSQLDatabaseSize:          report.PostgreSQLDatabaseSize,
+		PostgreSQLCacheHitPercent:       report.PostgreSQLCacheHitPercent,
+		PostgreSQLReplicationStatus:     report.PostgreSQLReplicationStatus,
+		PostgreSQLReplicationLagSeconds: report.PostgreSQLReplicationLagSeconds,
+		RedisStatus:                     report.RedisStatus,
+		RedisMemoryUsed:                 report.RedisMemoryUsed,
+		RedisMemoryMax:                  report.RedisMemoryMax,
+		PgBouncerStatus:                 report.PgBouncerStatus,
+		BackupLastAt:                    report.BackupLastAt,
+		BackupSize:                      report.BackupSize,
+		UptimeSeconds:                   report.UptimeSeconds,
+		AppVersion:                      strings.TrimSpace(report.AppVersion),
+		ReportedAt:                      now,
+		UpdatedAt:                       now,
 	})
 }
 
@@ -222,6 +250,17 @@ func validateRoutingNodeMonitorReport(report *RoutingNodeMonitorReport) error {
 	if len(strings.TrimSpace(report.NodeName)) > 128 || len(strings.TrimSpace(report.AppVersion)) > 64 {
 		return ErrInvalidRoutingNodeMonitorReport
 	}
+	if report.PostgreSQLConnections < 0 || report.PostgreSQLMaxConnections < 0 || report.PostgreSQLConnections > 1_000_000 || report.PostgreSQLMaxConnections > 1_000_000 {
+		return ErrInvalidRoutingNodeMonitorReport
+	}
+	for _, status := range []string{report.PostgreSQLStatus, report.RedisStatus, report.PgBouncerStatus} {
+		if !validDatabaseServiceStatus(status) {
+			return ErrInvalidRoutingNodeMonitorReport
+		}
+	}
+	if !validDatabaseReplicationStatus(report.PostgreSQLReplicationStatus) || report.BackupLastAt < 0 {
+		return ErrInvalidRoutingNodeMonitorReport
+	}
 	values := []struct {
 		value float64
 		max   float64
@@ -233,6 +272,8 @@ func validateRoutingNodeMonitorReport(report *RoutingNodeMonitorReport) error {
 		{report.DiskPercent, 100},
 		{report.NetworkUploadBps, 1e15},
 		{report.NetworkDownloadBps, 1e15},
+		{report.PostgreSQLCacheHitPercent, 100},
+		{report.PostgreSQLReplicationLagSeconds, 31_536_000},
 	}
 	for _, item := range values {
 		if math.IsNaN(item.value) || math.IsInf(item.value, 0) || item.value < 0 || item.value > item.max {
@@ -500,7 +541,7 @@ func collectRoutingNodeMonitorReport() (*RoutingNodeMonitorReport, error) {
 	if nodeName == "" {
 		nodeName, _ = os.Hostname()
 	}
-	return &RoutingNodeMonitorReport{
+	report := &RoutingNodeMonitorReport{
 		NodeName:             nodeName,
 		CPUUsage:             percentages[0],
 		CPUCores:             cores,
@@ -518,7 +559,9 @@ func collectRoutingNodeMonitorReport() (*RoutingNodeMonitorReport, error) {
 		NetworkDownloadBps:   downloadBps,
 		UptimeSeconds:        uptime,
 		AppVersion:           common.Version,
-	}, nil
+	}
+	collectRoutingNodeDatabaseMetrics(report)
+	return report, nil
 }
 
 func collectRoutingNodeDiskMetrics() (uint64, uint64, float64, error) {

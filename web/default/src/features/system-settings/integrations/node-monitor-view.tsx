@@ -240,6 +240,108 @@ export function RoutingNodeResourceOverview({ node }: { node: RoutingNode }) {
   )
 }
 
+function DatabaseServiceBadge({
+  status,
+}: {
+  status: 'up' | 'down' | 'not_configured' | ''
+}) {
+  const { t } = useTranslation()
+  if (status === 'up') return <Badge variant='success'>{t('Online')}</Badge>
+  if (status === 'down') {
+    return <Badge variant='destructive'>{t('Offline')}</Badge>
+  }
+  return <Badge variant='outline'>{t('Not configured')}</Badge>
+}
+
+export function RoutingNodeDatabaseOverview({ node }: { node: RoutingNode }) {
+  const { t } = useTranslation()
+  const status = node.monitor_status
+  const connections = status
+    ? `${status.postgresql_connections} / ${status.postgresql_max_connections || '-'}`
+    : '-'
+  const redisMemory = status
+    ? status.redis_memory_max > 0
+      ? `${formatBytes(status.redis_memory_used)} / ${formatBytes(status.redis_memory_max)}`
+      : formatBytes(status.redis_memory_used)
+    : '-'
+  const replication = status
+    ? status.postgresql_replication_status === 'primary'
+      ? t('Primary')
+      : status.postgresql_replication_status === 'streaming'
+        ? `${t('Streaming')} · ${status.postgresql_replication_lag_seconds.toFixed(1)}s`
+        : status.postgresql_replication_status === 'stopped'
+          ? t('Offline')
+          : t('Not configured')
+    : '-'
+  const backup = status?.backup_last_at
+    ? new Date(status.backup_last_at * 1000).toLocaleString()
+    : '-'
+
+  const metrics = [
+    { label: t('Connections'), value: connections },
+    {
+      label: t('Database size'),
+      value: status ? formatBytes(status.postgresql_database_size) : '-',
+    },
+    {
+      label: t('Cache hit ratio'),
+      value: status
+        ? `${status.postgresql_cache_hit_percent.toFixed(1)}%`
+        : '-',
+    },
+    { label: t('Redis memory'), value: redisMemory },
+    { label: t('Replication'), value: replication },
+    {
+      label: t('Last backup'),
+      value: backup,
+      title: status?.backup_size
+        ? `${backup} · ${formatBytes(status.backup_size)}`
+        : backup,
+    },
+  ]
+
+  return (
+    <div className='flex flex-col gap-3'>
+      <div className='grid grid-cols-3 gap-2'>
+        {[
+          ['PostgreSQL', status?.postgresql_status ?? ''],
+          ['Redis', status?.redis_status ?? ''],
+          ['PgBouncer', status?.pgbouncer_status ?? ''],
+        ].map(([label, serviceStatus]) => (
+          <Item
+            key={label}
+            variant='muted'
+            size='xs'
+            className='bg-background/60 min-w-0 px-2'
+          >
+            <ItemContent className='min-w-0 items-start gap-1'>
+              <ItemTitle className='truncate text-xs'>{label}</ItemTitle>
+              <DatabaseServiceBadge
+                status={serviceStatus as 'up' | 'down' | 'not_configured' | ''}
+              />
+            </ItemContent>
+          </Item>
+        ))}
+      </div>
+      <div className='grid grid-cols-3 gap-2'>
+        {metrics.map((metric) => (
+          <Item key={metric.label} variant='muted' size='xs'>
+            <ItemContent className='min-w-0'>
+              <ItemDescription>{metric.label}</ItemDescription>
+              <ItemTitle
+                className='w-full truncate font-mono tabular-nums'
+                title={metric.title ?? metric.value}
+              >
+                {metric.value}
+              </ItemTitle>
+            </ItemContent>
+          </Item>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function RoutingNodeNetworkTraffic({ node }: { node: RoutingNode }) {
   const { t } = useTranslation()
   const status = node.monitor_status

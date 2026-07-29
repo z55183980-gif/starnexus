@@ -5,6 +5,7 @@ export interface RoutingNode {
   origin: string
   type: 'application' | 'database'
   enabled: boolean
+  visible: boolean
   sort: number
   monitor_enabled: boolean
   monitor_configured: boolean
@@ -20,6 +21,7 @@ export interface RoutingNodeInput {
   origin: string
   type: 'application' | 'database'
   enabled: boolean
+  visible: boolean
   sort: number
   monitor_enabled: boolean
 }
@@ -41,6 +43,25 @@ export interface RoutingNodeMonitorStatus {
   network_bytes_received: number
   network_upload_bps: number
   network_download_bps: number
+  database_metrics_enabled: boolean
+  postgresql_status: 'up' | 'down' | 'not_configured' | ''
+  postgresql_connections: number
+  postgresql_max_connections: number
+  postgresql_database_size: number
+  postgresql_cache_hit_percent: number
+  postgresql_replication_status:
+    | 'primary'
+    | 'streaming'
+    | 'stopped'
+    | 'not_configured'
+    | ''
+  postgresql_replication_lag_seconds: number
+  redis_status: 'up' | 'down' | 'not_configured' | ''
+  redis_memory_used: number
+  redis_memory_max: number
+  pgbouncer_status: 'up' | 'down' | 'not_configured' | ''
+  backup_last_at: number
+  backup_size: number
   network_samples?: RoutingNodeMonitorNetworkSample[]
   uptime_seconds: number
   app_version: string

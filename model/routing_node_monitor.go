@@ -9,27 +9,41 @@ import (
 )
 
 type RoutingNodeMonitorStatus struct {
-	NodeId               int                               `json:"node_id" gorm:"primaryKey;autoIncrement:false"`
-	NodeName             string                            `json:"node_name" gorm:"type:varchar(128);not null"`
-	CPUUsage             float64                           `json:"cpu_usage" gorm:"not null"`
-	CPUCores             int                               `json:"cpu_cores" gorm:"not null"`
-	LoadOne              float64                           `json:"load_one" gorm:"not null"`
-	LoadPercent          float64                           `json:"load_percent" gorm:"not null"`
-	MemoryUsed           uint64                            `json:"memory_used" gorm:"not null"`
-	MemoryTotal          uint64                            `json:"memory_total" gorm:"not null"`
-	MemoryPercent        float64                           `json:"memory_percent" gorm:"not null"`
-	DiskUsed             uint64                            `json:"disk_used" gorm:"not null"`
-	DiskTotal            uint64                            `json:"disk_total" gorm:"not null"`
-	DiskPercent          float64                           `json:"disk_percent" gorm:"not null"`
-	NetworkBytesSent     uint64                            `json:"network_bytes_sent" gorm:"default:0;not null"`
-	NetworkBytesReceived uint64                            `json:"network_bytes_received" gorm:"default:0;not null"`
-	NetworkUploadBps     float64                           `json:"network_upload_bps" gorm:"default:0;not null"`
-	NetworkDownloadBps   float64                           `json:"network_download_bps" gorm:"default:0;not null"`
-	UptimeSeconds        uint64                            `json:"uptime_seconds" gorm:"not null"`
-	AppVersion           string                            `json:"app_version" gorm:"type:varchar(64);not null"`
-	ReportedAt           int64                             `json:"reported_at" gorm:"bigint;index;not null"`
-	UpdatedAt            int64                             `json:"updated_at" gorm:"bigint;not null"`
-	NetworkSamples       []RoutingNodeMonitorNetworkSample `json:"network_samples,omitempty" gorm:"-"`
+	NodeId                          int                               `json:"node_id" gorm:"primaryKey;autoIncrement:false"`
+	NodeName                        string                            `json:"node_name" gorm:"type:varchar(128);not null"`
+	CPUUsage                        float64                           `json:"cpu_usage" gorm:"not null"`
+	CPUCores                        int                               `json:"cpu_cores" gorm:"not null"`
+	LoadOne                         float64                           `json:"load_one" gorm:"not null"`
+	LoadPercent                     float64                           `json:"load_percent" gorm:"not null"`
+	MemoryUsed                      uint64                            `json:"memory_used" gorm:"not null"`
+	MemoryTotal                     uint64                            `json:"memory_total" gorm:"not null"`
+	MemoryPercent                   float64                           `json:"memory_percent" gorm:"not null"`
+	DiskUsed                        uint64                            `json:"disk_used" gorm:"not null"`
+	DiskTotal                       uint64                            `json:"disk_total" gorm:"not null"`
+	DiskPercent                     float64                           `json:"disk_percent" gorm:"not null"`
+	NetworkBytesSent                uint64                            `json:"network_bytes_sent" gorm:"default:0;not null"`
+	NetworkBytesReceived            uint64                            `json:"network_bytes_received" gorm:"default:0;not null"`
+	NetworkUploadBps                float64                           `json:"network_upload_bps" gorm:"default:0;not null"`
+	NetworkDownloadBps              float64                           `json:"network_download_bps" gorm:"default:0;not null"`
+	DatabaseMetricsEnabled          bool                              `json:"database_metrics_enabled" gorm:"default:false;not null"`
+	PostgreSQLStatus                string                            `json:"postgresql_status" gorm:"type:varchar(24);default:'not_configured';not null"`
+	PostgreSQLConnections           int                               `json:"postgresql_connections" gorm:"default:0;not null"`
+	PostgreSQLMaxConnections        int                               `json:"postgresql_max_connections" gorm:"default:0;not null"`
+	PostgreSQLDatabaseSize          uint64                            `json:"postgresql_database_size" gorm:"default:0;not null"`
+	PostgreSQLCacheHitPercent       float64                           `json:"postgresql_cache_hit_percent" gorm:"default:0;not null"`
+	PostgreSQLReplicationStatus     string                            `json:"postgresql_replication_status" gorm:"type:varchar(24);default:'not_configured';not null"`
+	PostgreSQLReplicationLagSeconds float64                           `json:"postgresql_replication_lag_seconds" gorm:"default:0;not null"`
+	RedisStatus                     string                            `json:"redis_status" gorm:"type:varchar(24);default:'not_configured';not null"`
+	RedisMemoryUsed                 uint64                            `json:"redis_memory_used" gorm:"default:0;not null"`
+	RedisMemoryMax                  uint64                            `json:"redis_memory_max" gorm:"default:0;not null"`
+	PgBouncerStatus                 string                            `json:"pgbouncer_status" gorm:"type:varchar(24);default:'not_configured';not null"`
+	BackupLastAt                    int64                             `json:"backup_last_at" gorm:"bigint;default:0;not null"`
+	BackupSize                      uint64                            `json:"backup_size" gorm:"default:0;not null"`
+	UptimeSeconds                   uint64                            `json:"uptime_seconds" gorm:"not null"`
+	AppVersion                      string                            `json:"app_version" gorm:"type:varchar(64);not null"`
+	ReportedAt                      int64                             `json:"reported_at" gorm:"bigint;index;not null"`
+	UpdatedAt                       int64                             `json:"updated_at" gorm:"bigint;not null"`
+	NetworkSamples                  []RoutingNodeMonitorNetworkSample `json:"network_samples,omitempty" gorm:"-"`
 }
 
 type RoutingNodeMonitorNetworkSample struct {

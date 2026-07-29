@@ -18,6 +18,7 @@ type routingNodeRequest struct {
 	Origin         string `json:"origin"`
 	Type           string `json:"type"`
 	Enabled        bool   `json:"enabled"`
+	Visible        *bool  `json:"visible"`
 	Sort           int    `json:"sort"`
 	MonitorEnabled bool   `json:"monitor_enabled"`
 }
@@ -81,12 +82,17 @@ func CreateRoutingNode(c *gin.Context) {
 			return
 		}
 	}
+	visible := true
+	if input.Visible != nil {
+		visible = *input.Visible
+	}
 	node := &model.RoutingNode{
 		Key:            key,
 		Name:           input.Name,
 		Origin:         origin,
 		Type:           nodeType,
 		Enabled:        input.Enabled,
+		Visible:        visible,
 		Sort:           input.Sort,
 		MonitorEnabled: input.MonitorEnabled,
 	}
@@ -146,6 +152,9 @@ func UpdateRoutingNode(c *gin.Context) {
 	current.Origin = origin
 	current.Type = nodeType
 	current.Enabled = input.Enabled
+	if input.Visible != nil {
+		current.Visible = *input.Visible
+	}
 	current.Sort = input.Sort
 	current.MonitorEnabled = input.MonitorEnabled
 	if err := model.UpdateRoutingNode(current); err != nil {
