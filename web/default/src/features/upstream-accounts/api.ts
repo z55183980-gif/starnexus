@@ -6,6 +6,7 @@ it under the terms of the GNU Affero General Public License as
 published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
+import type { AxiosRequestConfig } from 'axios'
 import { api } from '@/lib/api'
 import type {
   ApiResponse,
@@ -30,6 +31,16 @@ import type {
   UpstreamProxyPayload,
   UpstreamDataImportResult,
 } from './types'
+
+type LocalFeedbackApiConfig = AxiosRequestConfig & {
+  skipBusinessError?: boolean
+  skipErrorHandler?: boolean
+}
+
+const localFeedbackApiConfig: LocalFeedbackApiConfig = {
+  skipBusinessError: true,
+  skipErrorHandler: true,
+}
 
 export async function listUpstreamPools(): Promise<
   ApiResponse<UpstreamAccountPool[]>
@@ -190,7 +201,8 @@ export async function getUpstreamAccountQuota(
   id: number,
   options?: { force?: boolean; includeCredits?: boolean }
 ): Promise<ApiResponse<UpstreamAccountQuotaUsage>> {
-  const response = await api.get(`/api/upstream/accounts/${id}/quota`, {
+  const config: LocalFeedbackApiConfig = {
+    ...localFeedbackApiConfig,
     params: {
       force: options?.force || undefined,
       include_credits:
@@ -198,14 +210,19 @@ export async function getUpstreamAccountQuota(
           ? undefined
           : options.includeCredits,
     },
-  })
+  }
+  const response = await api.get(`/api/upstream/accounts/${id}/quota`, config)
   return response.data
 }
 
 export async function resetUpstreamAccountQuota(
   id: number
 ): Promise<ApiResponse<UpstreamAccountQuotaResetResult>> {
-  const response = await api.post(`/api/upstream/accounts/${id}/reset-quota`)
+  const response = await api.post(
+    `/api/upstream/accounts/${id}/reset-quota`,
+    undefined,
+    localFeedbackApiConfig
+  )
   return response.data
 }
 

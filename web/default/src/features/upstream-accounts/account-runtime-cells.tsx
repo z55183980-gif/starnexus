@@ -15,7 +15,6 @@ import {
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -561,6 +560,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   const [usage, setUsage] = useState<UpstreamAccountQuotaUsage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [resetMessage, setResetMessage] = useState('')
   const [resetting, setResetting] = useState(false)
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -575,9 +575,10 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   }, [usage])
 
   const query = useCallback(
-    async (force = true, notifyError = true) => {
+    async (force = true) => {
       setLoading(true)
       setError('')
+      setResetMessage('')
       try {
         const data = await loadAccountUsage(account.id, {
           force,
@@ -591,7 +592,6 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
             ? queryError.message
             : t('Failed to fetch usage')
         setError(message)
-        if (notifyError) toast.error(message)
       } finally {
         setLoading(false)
       }
@@ -602,8 +602,10 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   useEffect(() => {
     if (!supported) return
     let active = true
+    setUsage(null)
     setLoading(true)
     setError('')
+    setResetMessage('')
     void loadAccountUsage(account.id, {
       force: false,
       includeCredits: false,
@@ -631,15 +633,17 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
 
   const reset = async () => {
     setResetting(true)
+    setError('')
+    setResetMessage('')
     try {
       const response = await resetUpstreamAccountQuota(account.id)
       if (!response.success)
         throw new Error(response.message || t('Reset failed'))
-      toast.success(t('Quota reset successfully'))
       setResetConfirmOpen(false)
-      await query(true, false)
+      await query(true)
+      setResetMessage(t('Quota reset successfully'))
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Reset failed'))
+      setError(error instanceof Error ? error.message : t('Reset failed'))
     } finally {
       setResetting(false)
     }
@@ -663,12 +667,17 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
             <UsageWindow label='7d' window={windows.weekly} now={now} />
           </>
         )}
-        {error && !usage && (
+        {error && (
           <span
             className='text-destructive block max-w-44 truncate text-[10px]'
             title={error}
           >
             {error}
+          </span>
+        )}
+        {!error && resetMessage && (
+          <span className='text-success block max-w-44 truncate text-[10px]'>
+            {resetMessage}
           </span>
         )}
         <div className='flex items-center gap-2 text-[11px]'>
