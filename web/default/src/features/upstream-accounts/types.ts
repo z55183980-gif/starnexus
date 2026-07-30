@@ -360,4 +360,5 @@ export interface UpstreamAccountTestResult {
   content_encoding?: string
   body_bytes?: number
   mode: 'default' | 'compact'
+  output_text?: string
 }

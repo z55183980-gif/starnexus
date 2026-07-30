@@ -21,6 +21,7 @@ import (
 )
 
 const upstreamManagementTestBodyLimit = 64 * 1024
+const upstreamAccountProbeOutputLimit = 8 * 1024
 
 const (
 	upstreamAccountProbeOpenAIUserAgent    = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
@@ -51,6 +52,7 @@ type UpstreamAccountTestResult struct {
 	ContentEncoding      string   `json:"content_encoding,omitempty"`
 	BodyBytes            int      `json:"body_bytes,omitempty"`
 	Mode                 string   `json:"mode"`
+	OutputText           string   `json:"output_text,omitempty"`
 }
 
 type UpstreamAccountTestOptions struct {
@@ -74,6 +76,7 @@ type upstreamGenerationProbeResult struct {
 	ContentType          string
 	ContentEncoding      string
 	BodyBytes            int
+	OutputText           string
 }
 
 type UpstreamProxyTestResult struct {
@@ -146,6 +149,7 @@ func TestUpstreamAccount(ctx context.Context, accountId int, testOptions ...Upst
 		TerminalType: probe.TerminalType, EventTypes: probe.EventTypes,
 		HTTPVersion: probe.HTTPVersion, ContentType: probe.ContentType,
 		ContentEncoding: probe.ContentEncoding, BodyBytes: probe.BodyBytes, Mode: options.Mode,
+		OutputText: probe.OutputText,
 	}
 	if options.Mode == UpstreamAccountTestModeCompact {
 		recordUpstreamAccountCompactProbeState(&account, success, probe.StatusCode, resultCode)
@@ -245,7 +249,10 @@ func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, ac
 		result.Body, err = io.ReadAll(io.LimitReader(response.Body, upstreamManagementTestBodyLimit))
 		result.BodyBytes = len(result.Body)
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
-		if err == nil && generationProbeJSONHasVisibleOutput(protocol, result.Body) {
+		if err == nil {
+			result.OutputText = generationProbeJSONOutputText(protocol, result.Body)
+		}
+		if strings.TrimSpace(result.OutputText) != "" {
 			result.FirstOutputLatencyMs = maxInt64(1, result.LatencyMs)
 		}
 		if err == nil {
@@ -284,10 +291,12 @@ func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, ac
 			break
 		}
 		result.EventTypes = appendProbeEventType(result.EventTypes, generationProbeEventType(data))
-		if generationProbeEventHasVisibleOutput(protocol, data) && !visibleOutput {
+		delta := generationProbeEventOutputText(protocol, data)
+		if strings.TrimSpace(delta) != "" && !visibleOutput {
 			visibleOutput = true
 			result.FirstOutputLatencyMs = maxInt64(1, time.Since(startedAt).Milliseconds())
 		}
+		result.OutputText = appendGenerationProbeOutput(result.OutputText, delta)
 		completed, failed, terminalType := generationProbeEventTerminal(protocol, data)
 		if completed || failed {
 			result.Completed = completed
@@ -504,7 +513,7 @@ func applyUpstreamAccountOpenAIProbeHeaders(header http.Header) {
 	header.Set("X-Codex-Window-ID", uuid.NewString())
 }
 
-func generationProbeEventHasVisibleOutput(protocol string, data []byte) bool {
+func generationProbeEventOutputText(protocol string, data []byte) string {
 	var event struct {
 		Type    string `json:"type"`
 		Delta   any    `json:"delta"`
@@ -516,27 +525,47 @@ func generationProbeEventHasVisibleOutput(protocol string, data []byte) bool {
 		} `json:"choices"`
 	}
 	if common.Unmarshal(data, &event) != nil {
-		return false
+		return ""
 	}
 	switch protocol {
 	case "http_sse_chat":
+		var output strings.Builder
 		for _, choice := range event.Choices {
-			if (choice.Delta.Content != nil && *choice.Delta.Content != "") || (choice.Delta.ReasoningContent != nil && *choice.Delta.ReasoningContent != "") {
-				return true
+			if choice.Delta.Content != nil {
+				output.WriteString(*choice.Delta.Content)
+			} else if choice.Delta.ReasoningContent != nil {
+				output.WriteString(*choice.Delta.ReasoningContent)
 			}
 		}
+		return output.String()
 	case "http_sse_messages":
 		if event.Type != "content_block_delta" {
-			return false
+			return ""
 		}
 		if delta, ok := event.Delta.(map[string]any); ok {
-			return strings.TrimSpace(common.Interface2String(delta["text"])) != "" || strings.TrimSpace(common.Interface2String(delta["thinking"])) != ""
+			if text := common.Interface2String(delta["text"]); text != "" {
+				return text
+			}
+			return common.Interface2String(delta["thinking"])
 		}
-		return false
+		return ""
 	default:
-		return strings.Contains(event.Type, ".delta") && strings.TrimSpace(common.Interface2String(event.Delta)) != ""
+		if strings.Contains(event.Type, ".delta") {
+			return common.Interface2String(event.Delta)
+		}
 	}
-	return false
+	return ""
+}
+
+func appendGenerationProbeOutput(current string, delta string) string {
+	if delta == "" || len([]rune(current)) >= upstreamAccountProbeOutputLimit {
+		return current
+	}
+	combined := []rune(current + delta)
+	if len(combined) > upstreamAccountProbeOutputLimit {
+		combined = combined[:upstreamAccountProbeOutputLimit]
+	}
+	return string(combined)
 }
 
 func generationProbeEventType(data []byte) string {
@@ -638,7 +667,7 @@ func generationProbeJSONTerminal(protocol string, data []byte) (completed bool, 
 	return false, false, ""
 }
 
-func generationProbeJSONHasVisibleOutput(protocol string, data []byte) bool {
+func generationProbeJSONOutputText(protocol string, data []byte) string {
 	if protocol == "http_sse_messages" {
 		var response struct {
 			Content []struct {
@@ -646,13 +675,13 @@ func generationProbeJSONHasVisibleOutput(protocol string, data []byte) bool {
 			} `json:"content"`
 		}
 		if common.Unmarshal(data, &response) == nil {
+			var output string
 			for _, content := range response.Content {
-				if content.Text != "" {
-					return true
-				}
+				output = appendGenerationProbeOutput(output, content.Text)
 			}
+			return output
 		}
-		return false
+		return ""
 	}
 	var response struct {
 		Output []struct {
@@ -667,16 +696,21 @@ func generationProbeJSONHasVisibleOutput(protocol string, data []byte) bool {
 		} `json:"choices"`
 	}
 	if common.Unmarshal(data, &response) != nil {
-		return false
+		return ""
 	}
+	var result string
 	for _, output := range response.Output {
 		for _, content := range output.Content {
-			if content.Text != "" {
-				return true
-			}
+			result = appendGenerationProbeOutput(result, content.Text)
 		}
 	}
-	return len(response.Choices) > 0 && response.Choices[0].Message.Content != ""
+	if result != "" {
+		return result
+	}
+	for _, choice := range response.Choices {
+		result = appendGenerationProbeOutput(result, choice.Message.Content)
+	}
+	return result
 }
 
 func recordUpstreamAccountTestState(account *model.UpstreamAccount, success bool, statusCode int, result string, header http.Header, body []byte) {

@@ -99,12 +99,22 @@ function resultLines(
   translate: (key: string, options?: Record<string, unknown>) => string
 ) {
   const lines = [
-    translate('Result: {{result}}', { result: result.result }),
     translate('Model: {{model}}', { model: result.model || '-' }),
     translate('Protocol: {{protocol}}', { protocol: result.protocol || '-' }),
     translate('HTTP status: {{status}}', { status: result.status_code || '-' }),
     translate('Total latency: {{latency}} ms', { latency: result.latency_ms }),
   ]
+  if (result.output_text?.trim()) {
+    lines.unshift(
+      translate('Response:'),
+      ...result.output_text.split(/\r?\n/).filter(Boolean)
+    )
+  }
+  if (!result.success) {
+    lines.unshift(
+      translate('Failure reason: {{result}}', { result: result.result })
+    )
+  }
   if (result.first_output_latency_ms > 0) {
     lines.push(
       translate('First output latency: {{latency}} ms', {
@@ -181,8 +191,8 @@ export function AccountTestDialog({
       setState(succeeded ? 'success' : 'error')
       setLines((current) => [
         ...current,
-        succeeded ? t('Request completed') : t('Request failed'),
         ...resultLines(result, t),
+        succeeded ? t('Request completed') : t('Request failed'),
       ])
       onTested()
     } catch (error) {

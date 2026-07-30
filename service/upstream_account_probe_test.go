@@ -28,7 +28,8 @@ func TestUpstreamAPIKeyAccountProbeUsesStoredCredential(t *testing.T) {
 		requestBody <- string(body)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_probe\"}}\n\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"STARNEXUS_PROBE_OK\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi! \"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"How can I help?\"}\n\n"))
 		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{}}\n\ndata: [DONE]\n\n"))
 	}))
 	defer upstream.Close()
@@ -55,6 +56,7 @@ func TestUpstreamAPIKeyAccountProbeUsesStoredCredential(t *testing.T) {
 	require.True(t, result.Success)
 	require.Equal(t, http.StatusOK, result.StatusCode)
 	require.Positive(t, result.FirstOutputLatencyMs)
+	require.Equal(t, "Hi! How can I help?", result.OutputText)
 	require.Equal(t, "http_sse_responses", result.Protocol)
 	require.Equal(t, "Bearer probe-secret", <-authorization)
 	headers := <-requestHeaders
@@ -131,6 +133,7 @@ func TestUpstreamAccountProbeAcceptsCompletedWithoutVisibleOutput(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Equal(t, "ok", result.Result)
+	require.Empty(t, result.OutputText)
 	require.Zero(t, result.FirstOutputLatencyMs)
 	require.Equal(t, "response.completed", result.TerminalType)
 	require.Equal(t, []string{"response.created", "response.completed"}, result.EventTypes)
@@ -193,6 +196,7 @@ func TestUpstreamAPIKeyProbeUsesChatWhenResponsesProbeWasUnsupported(t *testing.
 	require.NoError(t, err)
 	require.True(t, result.Success)
 	require.Equal(t, "http_sse_chat", result.Protocol)
+	require.Equal(t, "ok", result.OutputText)
 	require.Equal(t, "/v1/chat/completions", <-requestPath)
 }
 
@@ -261,6 +265,7 @@ func TestUpstreamClaudeProbeAcceptsCleanEOFLikeSub2API(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_probe\"}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n\n"))
 	}))
 	defer upstream.Close()
 
@@ -276,6 +281,7 @@ func TestUpstreamClaudeProbeAcceptsCleanEOFLikeSub2API(t *testing.T) {
 	require.True(t, probe.Completed)
 	require.False(t, probe.Failed)
 	require.Equal(t, "eof", probe.TerminalType)
+	require.Equal(t, "Hello", probe.OutputText)
 }
 
 func TestUpstreamOpenAICompactProbeUsesCompactPathAndMapping(t *testing.T) {
