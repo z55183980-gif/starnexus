@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"io"
@@ -16,25 +17,45 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/google/uuid"
 )
 
 const upstreamManagementTestBodyLimit = 64 * 1024
 
+const (
+	upstreamAccountProbeOpenAIUserAgent    = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	upstreamAccountProbeOpenAIVersion      = "0.144.1"
+	upstreamAccountProbeDefaultOpenAIModel = "gpt-5.4"
+	UpstreamAccountTestModeDefault         = "default"
+	UpstreamAccountTestModeCompact         = "compact"
+)
+
+//go:embed upstream_account_probe_instructions.txt
+var upstreamAccountProbeInstructions string
+
 type UpstreamAccountTestResult struct {
-	AccountId            int    `json:"account_id"`
-	Success              bool   `json:"success"`
-	StatusCode           int    `json:"status_code"`
-	LatencyMs            int64  `json:"latency_ms"`
-	FirstOutputLatencyMs int64  `json:"first_output_latency_ms"`
-	ProxyId              int    `json:"proxy_id"`
-	Result               string `json:"result"`
-	CredentialType       string `json:"credential_type"`
-	Protocol             string `json:"protocol"`
-	Model                string `json:"model"`
+	AccountId            int      `json:"account_id"`
+	Success              bool     `json:"success"`
+	StatusCode           int      `json:"status_code"`
+	LatencyMs            int64    `json:"latency_ms"`
+	FirstOutputLatencyMs int64    `json:"first_output_latency_ms"`
+	ProxyId              int      `json:"proxy_id"`
+	Result               string   `json:"result"`
+	CredentialType       string   `json:"credential_type"`
+	Protocol             string   `json:"protocol"`
+	Model                string   `json:"model"`
+	TerminalType         string   `json:"terminal_type,omitempty"`
+	EventTypes           []string `json:"event_types,omitempty"`
+	HTTPVersion          string   `json:"http_version,omitempty"`
+	ContentType          string   `json:"content_type,omitempty"`
+	ContentEncoding      string   `json:"content_encoding,omitempty"`
+	BodyBytes            int      `json:"body_bytes,omitempty"`
+	Mode                 string   `json:"mode"`
 }
 
 type UpstreamAccountTestOptions struct {
 	Model string
+	Mode  string
 }
 
 type upstreamGenerationProbeResult struct {
@@ -46,6 +67,13 @@ type upstreamGenerationProbeResult struct {
 	Protocol             string
 	Model                string
 	Failed               bool
+	Completed            bool
+	TerminalType         string
+	EventTypes           []string
+	HTTPVersion          string
+	ContentType          string
+	ContentEncoding      string
+	BodyBytes            int
 }
 
 type UpstreamProxyTestResult struct {
@@ -74,13 +102,18 @@ func TestUpstreamAccount(ctx context.Context, accountId int, testOptions ...Upst
 	proxy, proxyURL, err := resolveUpstreamProxy(ctx, &account, nil, "")
 	if err != nil {
 		result := &UpstreamAccountTestResult{AccountId: account.Id, Result: "proxy_unavailable", CredentialType: account.Type}
-		recordUpstreamAccountTestState(account.Id, false, 0, result.Result, nil, nil)
+		recordUpstreamAccountTestState(&account, false, 0, result.Result, nil, nil)
 		return result, nil
 	}
-	client, err := NewProxyHttpClient(proxyURL)
+	var client *http.Client
+	if account.Platform == constant.UpstreamPlatformOpenAI {
+		client, err = NewOpenAIUpstreamHttpClient(proxyURL)
+	} else {
+		client, err = NewProxyHttpClient(proxyURL)
+	}
 	if err != nil {
 		result := &UpstreamAccountTestResult{AccountId: account.Id, Result: "proxy_configuration_invalid", CredentialType: account.Type}
-		recordUpstreamAccountTestState(account.Id, false, 0, result.Result, nil, nil)
+		recordUpstreamAccountTestState(&account, false, 0, result.Result, nil, nil)
 		return result, nil
 	}
 	resultCode := "connection_failed"
@@ -88,16 +121,17 @@ func TestUpstreamAccount(ctx context.Context, accountId int, testOptions ...Upst
 	if len(testOptions) > 0 {
 		options = testOptions[0]
 	}
-	probe, err := probeUpstreamAccountGeneration(ctx, client, &account, credentials, options.Model)
+	options.Mode = normalizeUpstreamAccountTestMode(options.Mode)
+	probe, err := probeUpstreamAccountGeneration(ctx, client, &account, credentials, options.Model, options.Mode)
 	if probe == nil {
 		probe = &upstreamGenerationProbeResult{}
 	}
 	if err == nil {
 		resultCode = "upstream_rejected"
-		if probe.StatusCode >= http.StatusOK && probe.StatusCode < http.StatusMultipleChoices && probe.FirstOutputLatencyMs > 0 && !probe.Failed {
+		if probe.StatusCode >= http.StatusOK && probe.StatusCode < http.StatusMultipleChoices && probe.Completed && !probe.Failed {
 			resultCode = "ok"
 		} else if probe.StatusCode >= http.StatusOK && probe.StatusCode < http.StatusMultipleChoices && !probe.Failed {
-			resultCode = "no_visible_output"
+			resultCode = "incomplete_response"
 		}
 	}
 	success := resultCode == "ok"
@@ -109,16 +143,58 @@ func TestUpstreamAccount(ctx context.Context, accountId int, testOptions ...Upst
 		AccountId: account.Id, Success: success, StatusCode: probe.StatusCode, LatencyMs: probe.LatencyMs,
 		FirstOutputLatencyMs: probe.FirstOutputLatencyMs, ProxyId: proxyId, Result: resultCode,
 		CredentialType: account.Type, Protocol: probe.Protocol, Model: probe.Model,
+		TerminalType: probe.TerminalType, EventTypes: probe.EventTypes,
+		HTTPVersion: probe.HTTPVersion, ContentType: probe.ContentType,
+		ContentEncoding: probe.ContentEncoding, BodyBytes: probe.BodyBytes, Mode: options.Mode,
 	}
-	recordUpstreamAccountTestState(account.Id, success, probe.StatusCode, resultCode, probe.Header, probe.Body)
+	if options.Mode == UpstreamAccountTestModeCompact {
+		recordUpstreamAccountCompactProbeState(&account, success, probe.StatusCode, resultCode)
+	}
+	recordUpstreamAccountTestState(&account, success, probe.StatusCode, resultCode, probe.Header, probe.Body)
 	recordUpstreamAccountEvent(account.Id, proxyId, "account_test", resultCode, resultCode, map[string]any{
 		"status_code": probe.StatusCode, "latency_ms": probe.LatencyMs, "first_output_latency_ms": probe.FirstOutputLatencyMs,
-		"protocol": probe.Protocol, "model": probe.Model,
+		"protocol": probe.Protocol, "model": probe.Model, "terminal_type": probe.TerminalType, "event_types": probe.EventTypes,
+		"http_version": probe.HTTPVersion, "content_type": probe.ContentType, "content_encoding": probe.ContentEncoding,
+		"body_bytes": probe.BodyBytes, "mode": options.Mode,
 	})
 	return result, nil
 }
 
-func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, account *model.UpstreamAccount, credentials map[string]any, requestedModel string) (*upstreamGenerationProbeResult, error) {
+func recordUpstreamAccountCompactProbeState(account *model.UpstreamAccount, success bool, statusCode int, result string) {
+	if account == nil || account.Id <= 0 || account.Platform != constant.UpstreamPlatformOpenAI {
+		return
+	}
+	extra := map[string]any{}
+	if strings.TrimSpace(account.Extra) != "" {
+		_ = common.UnmarshalJsonStr(account.Extra, &extra)
+	}
+	extra["openai_compact_checked_at"] = time.Now().UTC().Format(time.RFC3339)
+	extra["openai_compact_last_status"] = statusCode
+	extra["openai_compact_last_error"] = ""
+	if success {
+		extra["openai_compact_supported"] = true
+	} else {
+		extra["openai_compact_last_error"] = result
+		if statusCode == http.StatusNotFound || statusCode == http.StatusMethodNotAllowed || statusCode == http.StatusNotImplemented {
+			extra["openai_compact_supported"] = false
+		}
+	}
+	encoded, err := common.Marshal(extra)
+	if err != nil {
+		return
+	}
+	account.Extra = string(encoded)
+	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update("extra", account.Extra).Error
+}
+
+func normalizeUpstreamAccountTestMode(mode string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), UpstreamAccountTestModeCompact) {
+		return UpstreamAccountTestModeCompact
+	}
+	return UpstreamAccountTestModeDefault
+}
+
+func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, account *model.UpstreamAccount, credentials map[string]any, requestedModel string, mode string) (*upstreamGenerationProbeResult, error) {
 	if account == nil {
 		return nil, errors.New("upstream account is nil")
 	}
@@ -129,7 +205,19 @@ func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, ac
 	if modelName == "" {
 		modelName = upstreamAccountProbeModel(account, credentials)
 	}
-	request, protocol, err := buildUpstreamGenerationProbeRequest(ctx, account, credentials, modelName)
+	accountOptions, _ := model.ParseUpstreamAccountOptionsWithCredentials(account.Extra, credentials)
+	modelMapping := upstreamAccountModelMapping(credentials)
+	if mode == UpstreamAccountTestModeCompact {
+		if account.Platform != constant.UpstreamPlatformOpenAI {
+			return nil, errors.New("compact account test only supports OpenAI accounts")
+		}
+		modelMapping = accountOptions.CompactModelMapping
+	}
+	if mappedModel, matched := resolveUpstreamAccountModelMapping(modelMapping, modelName); matched {
+		modelName = mappedModel
+	}
+	modelName = normalizeUpstreamAccountProbeModel(account, modelName)
+	request, protocol, err := buildUpstreamGenerationProbeRequest(ctx, account, credentials, modelName, mode)
 	if err != nil {
 		return nil, err
 	}
@@ -141,17 +229,35 @@ func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, ac
 	defer response.Body.Close()
 	result := &upstreamGenerationProbeResult{
 		StatusCode: response.StatusCode, Header: response.Header.Clone(), Protocol: protocol, Model: modelName,
+		HTTPVersion: response.Proto, ContentType: response.Header.Get("Content-Type"),
+		ContentEncoding: response.Header.Get("Content-Encoding"),
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		result.Body, _ = io.ReadAll(io.LimitReader(response.Body, upstreamManagementTestBodyLimit))
+		result.BodyBytes = len(result.Body)
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 		return result, nil
 	}
-	if !strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+	// SUB2API parses a successful streaming probe as SSE even when an upstream
+	// proxy strips Content-Type. The probe payload explicitly requests a stream,
+	// so protocol intent is more reliable than the optional response header.
+	if !strings.HasPrefix(protocol, "http_sse_") {
 		result.Body, err = io.ReadAll(io.LimitReader(response.Body, upstreamManagementTestBodyLimit))
+		result.BodyBytes = len(result.Body)
 		result.LatencyMs = time.Since(startedAt).Milliseconds()
 		if err == nil && generationProbeJSONHasVisibleOutput(protocol, result.Body) {
 			result.FirstOutputLatencyMs = maxInt64(1, result.LatencyMs)
+		}
+		if err == nil {
+			result.Completed, result.Failed, result.TerminalType = generationProbeJSONTerminal(protocol, result.Body)
+			if protocol == "http_json_responses_compact" && !result.Failed {
+				// Match SUB2API: a 2xx compact probe is a capability success even
+				// when the compact response has no generation status field.
+				result.Completed = true
+				if result.TerminalType == "" {
+					result.TerminalType = "http.2xx"
+				}
+			}
 		}
 		return result, err
 	}
@@ -161,24 +267,47 @@ func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, ac
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		result.BodyBytes += len(line) + 1
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
 		}
 		data := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) {
+		if len(data) == 0 {
 			continue
 		}
+		if bytes.Equal(data, []byte("[DONE]")) {
+			result.TerminalType = "[DONE]"
+			result.EventTypes = appendProbeEventType(result.EventTypes, "[DONE]")
+			if protocol == "http_sse_chat" || protocol == "http_sse_messages" {
+				result.Completed = true
+			}
+			break
+		}
+		result.EventTypes = appendProbeEventType(result.EventTypes, generationProbeEventType(data))
 		if generationProbeEventHasVisibleOutput(protocol, data) && !visibleOutput {
 			visibleOutput = true
 			result.FirstOutputLatencyMs = maxInt64(1, time.Since(startedAt).Milliseconds())
 		}
-		if generationProbeEventFailed(protocol, data) {
-			result.Failed = true
+		completed, failed, terminalType := generationProbeEventTerminal(protocol, data)
+		if completed || failed {
+			result.Completed = completed
+			result.Failed = failed
+			result.TerminalType = terminalType
+		}
+		if failed {
 			if len(data) > upstreamManagementTestBodyLimit {
 				data = data[:upstreamManagementTestBodyLimit]
 			}
 			result.Body = append(result.Body[:0], data...)
 		}
+		if completed || failed {
+			break
+		}
+	}
+	if protocol == "http_sse_messages" && !result.Failed && !result.Completed {
+		// SUB2API treats a clean Claude SSE EOF as a successful account probe.
+		result.Completed = true
+		result.TerminalType = "eof"
 	}
 	result.LatencyMs = time.Since(startedAt).Milliseconds()
 	return result, scanner.Err()
@@ -191,7 +320,7 @@ func maxInt64(a int64, b int64) int64 {
 	return b
 }
 
-func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.UpstreamAccount, credentials map[string]any, modelName string) (*http.Request, string, error) {
+func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.UpstreamAccount, credentials map[string]any, modelName string, mode string) (*http.Request, string, error) {
 	prompt := upstreamAccountProbePrompt()
 	baseURL := strings.TrimRight(upstreamCredentialMapString(credentials, "base_url"), "/")
 	protocol := ""
@@ -205,21 +334,31 @@ func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.Ups
 			if baseURL == "" {
 				baseURL = "https://chatgpt.com"
 			}
-			path = "/backend-api/codex/responses"
-			protocol = "http_sse_responses"
-			payload = openAIResponsesProbePayload(modelName, prompt)
+			if mode == UpstreamAccountTestModeCompact {
+				path = "/backend-api/codex/responses/compact"
+				protocol = "http_json_responses_compact"
+				payload = openAICompactProbePayload(modelName)
+			} else {
+				path = "/backend-api/codex/responses"
+				protocol = "http_sse_responses"
+				payload = openAIResponsesProbePayload(modelName, prompt, true)
+			}
 		} else if account.Type == constant.UpstreamAccountTypeAPIKey {
 			if baseURL == "" {
 				baseURL = "https://api.openai.com"
 			}
-			if options.OpenAIResponsesMode == model.UpstreamOpenAIResponsesModeForceChatCompletions {
+			if mode == UpstreamAccountTestModeCompact {
+				path = "/v1/responses/compact"
+				protocol = "http_json_responses_compact"
+				payload = openAICompactProbePayload(modelName)
+			} else if options.EffectiveOpenAIResponsesMode() == model.UpstreamOpenAIResponsesModeForceChatCompletions {
 				path = "/v1/chat/completions"
 				protocol = "http_sse_chat"
 				payload = map[string]any{"model": modelName, "stream": true, "messages": []map[string]any{{"role": "user", "content": prompt}}}
 			} else {
 				path = "/v1/responses"
 				protocol = "http_sse_responses"
-				payload = openAIResponsesProbePayload(modelName, prompt)
+				payload = openAIResponsesProbePayload(modelName, prompt, false)
 			}
 		} else {
 			return nil, "", errors.New("unsupported OpenAI account type")
@@ -247,16 +386,24 @@ func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.Ups
 		return nil, "", err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "text/event-stream")
+	if mode == UpstreamAccountTestModeCompact {
+		request.Header.Set("Accept", "application/json")
+		probeSessionID := fmt.Sprintf("probe_compact_%d", account.Id)
+		request.Header.Set("Session_ID", probeSessionID)
+		request.Header.Set("Conversation_ID", probeSessionID)
+	} else {
+		request.Header.Set("Accept", "text/event-stream")
+	}
 	if account.Platform == constant.UpstreamPlatformOpenAI {
 		if account.Type == constant.UpstreamAccountTypeOAuth {
 			request.Header.Set("Authorization", "Bearer "+upstreamCredentialMapString(credentials, "access_token"))
 			request.Header.Set("chatgpt-account-id", upstreamCredentialMapString(credentials, "account_id"))
 			request.Header.Set("OpenAI-Beta", "responses=experimental")
 			request.Header.Set("originator", "codex_cli_rs")
-			request.Header.Set("User-Agent", "codex_cli_rs/starnexus-account-test")
+			request.Header.Set("User-Agent", upstreamAccountProbeOpenAIUserAgent)
 		} else {
 			request.Header.Set("Authorization", "Bearer "+upstreamCredentialMapString(credentials, "api_key"))
+			applyUpstreamAccountOpenAIProbeHeaders(request.Header)
 		}
 	} else if account.Type == constant.UpstreamAccountTypeAPIKey {
 		if options.AnthropicAPIKeyAuthScheme == model.UpstreamAnthropicAuthSchemeBearer {
@@ -272,19 +419,33 @@ func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.Ups
 		request.Header.Set("User-Agent", "claude-cli/2.1.220 (external, cli)")
 		request.Header.Set("X-App", "cli")
 	}
+	ApplyUpstreamAccountHeaderOverrides(request.Header, account, credentials)
 	return request, protocol, nil
 }
 
-func openAIResponsesProbePayload(modelName string, prompt string) map[string]any {
+func openAICompactProbePayload(modelName string) map[string]any {
 	return map[string]any{
-		"model": modelName, "stream": true, "store": false, "instructions": "",
-		"input": []map[string]any{{"role": "user", "content": []map[string]any{{"type": "input_text", "text": prompt}}}},
+		"model":        modelName,
+		"instructions": "You are a helpful coding assistant.",
+		"input": []map[string]any{{
+			"type": "message", "role": "user", "content": "Respond with OK.",
+		}},
 	}
 }
 
+func openAIResponsesProbePayload(modelName string, prompt string, isOAuth bool) map[string]any {
+	payload := map[string]any{
+		"model": modelName, "stream": true, "instructions": upstreamAccountProbeInstructions,
+		"input": []map[string]any{{"role": "user", "content": []map[string]any{{"type": "input_text", "text": prompt}}}},
+	}
+	if isOAuth {
+		payload["store"] = false
+	}
+	return payload
+}
+
 func upstreamAccountProbePrompt() string {
-	paragraph := "This is a latency and protocol verification request for an AI gateway. Read the following operational context carefully: the gateway performs account selection, proxy routing, request conversion, streaming response forwarding, usage accounting, and error recovery. The purpose is to measure time to the first generated output under a realistic prompt size rather than a one-token health check. No tools, web search, or external data are required. "
-	return strings.Repeat(paragraph, 8) + "After reading the context, reply with exactly: STARNEXUS_PROBE_OK"
+	return "hi"
 }
 
 func upstreamAccountProbeModel(account *model.UpstreamAccount, credentials map[string]any) string {
@@ -317,7 +478,30 @@ func upstreamAccountProbeModel(account *model.UpstreamAccount, credentials map[s
 	if value := strings.TrimSpace(os.Getenv("UPSTREAM_ACCOUNT_TEST_OPENAI_MODEL")); value != "" {
 		return value
 	}
-	return "gpt-5.6-sol"
+	return upstreamAccountProbeDefaultOpenAIModel
+}
+
+func normalizeUpstreamAccountProbeModel(account *model.UpstreamAccount, modelName string) string {
+	modelName = strings.TrimSpace(modelName)
+	if account == nil || account.Platform != constant.UpstreamPlatformOpenAI || account.Type != constant.UpstreamAccountTypeOAuth {
+		return modelName
+	}
+	normalized := strings.ToLower(modelName)
+	if normalized == "gpt-5.6" || normalized == "openai/gpt-5.6" {
+		return "gpt-5.6-sol"
+	}
+	return modelName
+}
+
+func applyUpstreamAccountOpenAIProbeHeaders(header http.Header) {
+	if header == nil {
+		return
+	}
+	header.Set("OpenAI-Beta", "responses=experimental")
+	header.Set("originator", "codex_cli_rs")
+	header.Set("User-Agent", upstreamAccountProbeOpenAIUserAgent)
+	header.Set("version", upstreamAccountProbeOpenAIVersion)
+	header.Set("X-Codex-Window-ID", uuid.NewString())
 }
 
 func generationProbeEventHasVisibleOutput(protocol string, data []byte) bool {
@@ -355,14 +539,103 @@ func generationProbeEventHasVisibleOutput(protocol string, data []byte) bool {
 	return false
 }
 
-func generationProbeEventFailed(_ string, data []byte) bool {
+func generationProbeEventType(data []byte) string {
 	var event struct {
 		Type string `json:"type"`
 	}
 	if common.Unmarshal(data, &event) != nil {
-		return false
+		return "invalid_json"
 	}
-	return event.Type == "error" || event.Type == "response.failed"
+	if strings.TrimSpace(event.Type) == "" {
+		return "untyped"
+	}
+	return strings.TrimSpace(event.Type)
+}
+
+func appendProbeEventType(eventTypes []string, eventType string) []string {
+	if eventType == "" || len(eventTypes) >= 32 {
+		return eventTypes
+	}
+	if len(eventTypes) > 0 && eventTypes[len(eventTypes)-1] == eventType {
+		return eventTypes
+	}
+	return append(eventTypes, eventType)
+}
+
+func generationProbeEventTerminal(protocol string, data []byte) (completed bool, failed bool, terminalType string) {
+	var event struct {
+		Type    string `json:"type"`
+		Error   any    `json:"error"`
+		Choices []struct {
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if common.Unmarshal(data, &event) != nil {
+		return false, false, ""
+	}
+	if event.Type == "error" || event.Error != nil {
+		return false, true, event.Type
+	}
+	switch protocol {
+	case "http_sse_chat":
+		for _, choice := range event.Choices {
+			if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
+				return true, false, "finish_reason"
+			}
+		}
+	case "http_sse_messages":
+		if event.Type == "message_stop" {
+			return true, false, event.Type
+		}
+	default:
+		switch event.Type {
+		case "response.completed", "response.done":
+			return true, false, event.Type
+		case "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
+			return false, true, event.Type
+		}
+	}
+	return false, false, ""
+}
+
+func generationProbeJSONTerminal(protocol string, data []byte) (completed bool, failed bool, terminalType string) {
+	if terminalCompleted, terminalFailed, eventType := generationProbeEventTerminal(protocol, data); terminalCompleted || terminalFailed {
+		return terminalCompleted, terminalFailed, eventType
+	}
+	var response struct {
+		Status     string `json:"status"`
+		StopReason string `json:"stop_reason"`
+		Error      any    `json:"error"`
+		Choices    []struct {
+			FinishReason *string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if common.Unmarshal(data, &response) != nil {
+		return false, false, ""
+	}
+	if response.Error != nil {
+		return false, true, "error"
+	}
+	switch protocol {
+	case "http_sse_chat":
+		for _, choice := range response.Choices {
+			if choice.FinishReason != nil && strings.TrimSpace(*choice.FinishReason) != "" {
+				return true, false, "finish_reason"
+			}
+		}
+	case "http_sse_messages":
+		if strings.TrimSpace(response.StopReason) != "" {
+			return true, false, "stop_reason"
+		}
+	default:
+		switch strings.ToLower(strings.TrimSpace(response.Status)) {
+		case "completed", "done":
+			return true, false, "status." + strings.ToLower(strings.TrimSpace(response.Status))
+		case "failed", "incomplete", "cancelled", "canceled":
+			return false, true, "status." + strings.ToLower(strings.TrimSpace(response.Status))
+		}
+	}
+	return false, false, ""
 }
 
 func generationProbeJSONHasVisibleOutput(protocol string, data []byte) bool {
@@ -406,13 +679,21 @@ func generationProbeJSONHasVisibleOutput(protocol string, data []byte) bool {
 	return len(response.Choices) > 0 && response.Choices[0].Message.Content != ""
 }
 
-func recordUpstreamAccountTestState(accountId int, success bool, statusCode int, result string, header http.Header, body []byte) {
+func recordUpstreamAccountTestState(account *model.UpstreamAccount, success bool, statusCode int, result string, header http.Header, body []byte) {
+	if account == nil || account.Id <= 0 {
+		return
+	}
+	accountId := account.Id
 	now := common.GetTimestamp()
-	updates := map[string]any{"error_message": result, "updated_at": now}
+	updates := map[string]any{"updated_at": now}
 	if success {
-		updates["status"] = constant.UpstreamStatusActive
-		updates["schedulable"] = true
-		updates["error_message"] = ""
+		// Match SUB2API recovery semantics: a successful test may recover an
+		// error state, but it must not override an operator's manual pause.
+		if account.Status == constant.UpstreamStatusError {
+			updates["status"] = constant.UpstreamStatusActive
+			updates["schedulable"] = true
+			updates["error_message"] = ""
+		}
 		updates["temp_unschedulable_until"] = nil
 		updates["temp_unschedulable_reason"] = ""
 		updates["rate_limit_reset_at"] = nil
@@ -438,9 +719,6 @@ func recordUpstreamAccountTestState(accountId int, success bool, statusCode int,
 	} else if statusCode == 529 {
 		updates["overload_until"] = now + int64((10 * time.Minute).Seconds())
 		updates["temp_unschedulable_reason"] = "upstream_overloaded"
-	} else {
-		updates["temp_unschedulable_until"] = now + int64((time.Minute).Seconds())
-		updates["temp_unschedulable_reason"] = result
 	}
 	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
 	if success {

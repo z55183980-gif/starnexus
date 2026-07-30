@@ -148,6 +148,11 @@ export const channelFormSchema = channelFormBaseSchema.superRefine(
 
 export type ChannelFormValues = z.infer<typeof channelFormSchema>
 export type ChannelCreationMode = 'upstream' | 'local'
+export type LocalAccountPoolChannelPreset = {
+  id: number
+  name: string
+  platform: 'openai' | 'anthropic'
+}
 
 // ============================================================================
 // Default Form Values
@@ -211,14 +216,16 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
 }
 
 export function getChannelCreateDefaultValues(
-  mode: ChannelCreationMode
+  mode: ChannelCreationMode,
+  accountPool?: LocalAccountPoolChannelPreset | null
 ): ChannelFormValues {
   if (mode === 'local') {
     return {
       ...CHANNEL_FORM_DEFAULT_VALUES,
-      type: 1,
+      name: accountPool?.name ?? '',
+      type: accountPool?.platform === 'anthropic' ? 14 : 1,
       credential_source: 'local_account_pool',
-      upstream_account_pool_id: null,
+      upstream_account_pool_id: accountPool?.id ?? null,
       multi_key_mode: 'single',
       responses_websocket_v2_enabled: false,
       responses_websocket_v2_replay_enabled: false,

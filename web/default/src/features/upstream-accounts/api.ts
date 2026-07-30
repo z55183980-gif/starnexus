@@ -191,9 +191,14 @@ export async function deleteUpstreamAccount(
 }
 
 export async function testUpstreamAccount(
-  id: number
+  id: number,
+  model?: string,
+  mode: 'default' | 'compact' = 'default'
 ): Promise<ApiResponse<UpstreamAccountTestResult>> {
-  const response = await api.post(`/api/upstream/accounts/${id}/test`)
+  const response = await api.post(`/api/upstream/accounts/${id}/test`, {
+    model_id: model,
+    mode,
+  })
   return response.data
 }
 

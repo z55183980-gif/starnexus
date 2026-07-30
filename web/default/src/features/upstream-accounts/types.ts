@@ -353,4 +353,11 @@ export interface UpstreamAccountTestResult {
   credential_type: string
   protocol: string
   model: string
+  terminal_type?: string
+  event_types?: string[]
+  http_version?: string
+  content_type?: string
+  content_encoding?: string
+  body_bytes?: number
+  mode: 'default' | 'compact'
 }

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -206,4 +207,25 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 	default:
 		return nil, fmt.Errorf("unsupported proxy scheme: %s, must be http, https, socks5 or socks5h", parsedURL.Scheme)
 	}
+}
+
+// NewOpenAIUpstreamHttpClient isolates account probes from the cached provider
+// transport while retaining HTTP/2 negotiation for direct and proxied traffic.
+func NewOpenAIUpstreamHttpClient(proxyURL string) (*http.Client, error) {
+	client, err := NewProxyHttpClient(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, errors.New("OpenAI upstream HTTP client is unavailable")
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport == nil {
+		return client, nil
+	}
+	openAITransport := transport.Clone()
+	openAITransport.ForceAttemptHTTP2 = true
+	openAIClient := *client
+	openAIClient.Transport = openAITransport
+	return &openAIClient, nil
 }

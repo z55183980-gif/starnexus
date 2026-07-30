@@ -38,6 +38,7 @@ type UpstreamAccountOptions struct {
 	OpenAICompactSupported          *bool             `json:"openai_compact_supported,omitempty"`
 	CompactModelMapping             map[string]string `json:"compact_model_mapping,omitempty"`
 	OpenAIResponsesMode             string            `json:"openai_responses_mode,omitempty"`
+	OpenAIResponsesSupported        *bool             `json:"openai_responses_supported,omitempty"`
 	OpenAIEndpointCapabilities      []string          `json:"openai_capabilities,omitempty"`
 	AnthropicPassthrough            bool              `json:"anthropic_passthrough,omitempty"`
 	AnthropicAPIKeyAuthScheme       string            `json:"anthropic_apikey_auth_scheme,omitempty"`
@@ -186,7 +187,7 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 	if account.Platform != constant.UpstreamPlatformOpenAI {
 		if options.OpenAIPassthrough || options.OpenAIOAuthWSMode != "" || options.OpenAIAPIKeyWSMode != "" ||
 			options.OpenAILongContextBillingEnabled || options.CodexCLIOnly || options.CodexCLIOnlyAllowAppServer ||
-			options.OpenAICompactMode != "" || options.OpenAICompactSupported != nil || len(options.CompactModelMapping) > 0 || options.OpenAIResponsesMode != "" ||
+			options.OpenAICompactMode != "" || options.OpenAICompactSupported != nil || len(options.CompactModelMapping) > 0 || options.OpenAIResponsesMode != "" || options.OpenAIResponsesSupported != nil ||
 			len(options.OpenAIEndpointCapabilities) > 0 {
 			return errors.New("OpenAI account options require the OpenAI platform")
 		}
@@ -204,7 +205,7 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 	if account.Platform == constant.UpstreamPlatformOpenAI {
 		switch account.Type {
 		case constant.UpstreamAccountTypeOAuth:
-			if options.OpenAIAPIKeyWSMode != "" || options.OpenAIResponsesMode != "" || len(options.OpenAIEndpointCapabilities) > 0 {
+			if options.OpenAIAPIKeyWSMode != "" || options.OpenAIResponsesMode != "" || options.OpenAIResponsesSupported != nil || len(options.OpenAIEndpointCapabilities) > 0 {
 				return errors.New("OpenAI API key options require an API key account")
 			}
 		case constant.UpstreamAccountTypeAPIKey:
@@ -260,6 +261,16 @@ func (options UpstreamAccountOptions) OpenAIWSMode(accountType string) string {
 		return UpstreamOpenAIWSModeOff
 	}
 	return mode
+}
+
+func (options UpstreamAccountOptions) EffectiveOpenAIResponsesMode() string {
+	if options.OpenAIResponsesMode == UpstreamOpenAIResponsesModeForceResponses || options.OpenAIResponsesMode == UpstreamOpenAIResponsesModeForceChatCompletions {
+		return options.OpenAIResponsesMode
+	}
+	if options.OpenAIResponsesSupported != nil && !*options.OpenAIResponsesSupported {
+		return UpstreamOpenAIResponsesModeForceChatCompletions
+	}
+	return options.OpenAIResponsesMode
 }
 
 func (options UpstreamAccountOptions) AllowsOpenAICompact() bool {

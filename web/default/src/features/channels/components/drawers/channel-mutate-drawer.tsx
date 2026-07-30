@@ -108,7 +108,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
-import { listUpstreamPools } from '@/features/upstream-accounts'
+import { listUpstreamPools } from '@/features/upstream-accounts/api'
 import {
   createChannel,
   fetchModels,
@@ -150,13 +150,13 @@ import {
   findMissingModelsInMapping,
   validateModelMappingJson,
   type ChannelCreationMode,
+  type LocalAccountPoolChannelPreset,
 } from '../../lib'
 import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
 import type { Channel } from '../../types'
-import { useChannels } from '../channels-provider'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
 import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
 import {
@@ -172,6 +172,8 @@ type ChannelMutateDrawerProps = {
   onOpenChange: (open: boolean) => void
   currentRow?: Channel | null
   creationMode?: ChannelCreationMode
+  initialAccountPool?: LocalAccountPoolChannelPreset | null
+  onSaved?: () => void
 }
 
 type ModelMappingGuardrail = {
@@ -303,10 +305,11 @@ export function ChannelMutateDrawer({
   onOpenChange,
   currentRow,
   creationMode = 'upstream',
+  initialAccountPool,
+  onSaved,
 }: ChannelMutateDrawerProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const { setOpen } = useChannels()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [customModel, setCustomModel] = useState('')
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
@@ -399,7 +402,10 @@ export function ChannelMutateDrawer({
   // Form setup
   const form = useForm<ChannelFormValues>({
     resolver: zodResolver(channelFormSchema),
-    defaultValues: getChannelCreateDefaultValues(creationMode),
+    defaultValues: getChannelCreateDefaultValues(
+      creationMode,
+      initialAccountPool
+    ),
   })
 
   // Watch form values for conditional rendering
@@ -529,10 +535,9 @@ export function ChannelMutateDrawer({
 
   const currentTypeLabel = useMemo(
     () =>
-      CHANNEL_TYPE_OPTIONS.find(
-        (option) => option.value === (isLocalChannel ? 1 : currentType)
-      )?.label || `#${currentType}`,
-    [currentType, isLocalChannel]
+      CHANNEL_TYPE_OPTIONS.find((option) => option.value === currentType)
+        ?.label || `#${currentType}`,
+    [currentType]
   )
 
   const channelTypeOptions = useMemo(() => {
@@ -681,13 +686,15 @@ export function ChannelMutateDrawer({
       initialStatusCodeMappingRef.current =
         channelData.data.status_code_mapping || ''
     } else if (!isEditing) {
-      form.reset(getChannelCreateDefaultValues(creationMode))
+      form.reset(
+        getChannelCreateDefaultValues(creationMode, initialAccountPool)
+      )
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelData, creationMode, form, open])
+  }, [isEditing, channelData, creationMode, initialAccountPool, form, open])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -955,9 +962,9 @@ export function ChannelMutateDrawer({
   // Handle successful submission
   const handleSuccess = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
+    onSaved?.()
     onOpenChange(false)
-    setOpen(null)
-  }, [queryClient, onOpenChange, setOpen])
+  }, [queryClient, onOpenChange, onSaved])
 
   // Show missing models confirmation dialog
   const confirmMissingModelMappings = useCallback(
@@ -1151,11 +1158,13 @@ export function ChannelMutateDrawer({
     (v: boolean) => {
       onOpenChange(v)
       if (!v) {
-        form.reset(getChannelCreateDefaultValues(creationMode))
+        form.reset(
+          getChannelCreateDefaultValues(creationMode, initialAccountPool)
+        )
         setAdvancedSettingsOpen(false)
       }
     },
-    [onOpenChange, creationMode, form]
+    [onOpenChange, creationMode, initialAccountPool, form]
   )
 
   const handleAdvancedSettingsOpenChange = useCallback((nextOpen: boolean) => {
@@ -1237,7 +1246,7 @@ export function ChannelMutateDrawer({
                     <FormItem>
                       <FormLabel>{t('Type *')}</FormLabel>
                       <FormControl>
-                        <Input value={t('OpenAI')} disabled />
+                        <Input value={t(currentTypeLabel)} disabled />
                       </FormControl>
                     </FormItem>
                   ) : (

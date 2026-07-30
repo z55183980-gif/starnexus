@@ -40,6 +40,15 @@ func TestValidateUpstreamAccountOptionsAllowsHTTPBridge(t *testing.T) {
 	require.Equal(t, UpstreamOpenAIWSModeHTTPBridge, options.OpenAIWSMode(account.Type))
 }
 
+func TestOpenAIResponsesSupportProbeControlsAutoMode(t *testing.T) {
+	unsupported := false
+	options := UpstreamAccountOptions{OpenAIResponsesSupported: &unsupported}
+	require.Equal(t, UpstreamOpenAIResponsesModeForceChatCompletions, options.EffectiveOpenAIResponsesMode())
+
+	options.OpenAIResponsesMode = UpstreamOpenAIResponsesModeForceResponses
+	require.Equal(t, UpstreamOpenAIResponsesModeForceResponses, options.EffectiveOpenAIResponsesMode())
+}
+
 func TestParseUpstreamAccountOptionsWithCredentialsPrefersSub2Locations(t *testing.T) {
 	options, err := ParseUpstreamAccountOptionsWithCredentials(
 		`{"intercept_warmup_requests":false,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"]}`,
@@ -88,6 +97,7 @@ func TestValidateUpstreamAccountOptionsRejectsInvalidCombinations(t *testing.T) 
 		{name: "invalid websocket mode", type_: constant.UpstreamAccountTypeOAuth, extra: `{"openai_oauth_responses_websockets_v2_mode":"shared"}`},
 		{name: "invalid compact mapping", type_: constant.UpstreamAccountTypeOAuth, extra: `{"compact_model_mapping":{"":"gpt-5.4"}}`},
 		{name: "API key websocket mode on OAuth", type_: constant.UpstreamAccountTypeOAuth, extra: `{"openai_apikey_responses_websockets_v2_mode":"off"}`},
+		{name: "API key responses support on OAuth", type_: constant.UpstreamAccountTypeOAuth, extra: `{"openai_responses_supported":false}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

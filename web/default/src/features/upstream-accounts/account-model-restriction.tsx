@@ -39,7 +39,7 @@ import type { UpstreamPlatform } from './types'
 export type AccountModelRestrictionMode = 'whitelist' | 'mapping'
 export type AccountModelMapping = { from: string; to: string }
 
-const openAIModels = [
+export const openAIAccountModels = [
   'gpt-5.2',
   'gpt-5.2-2025-12-11',
   'gpt-5.2-chat-latest',
@@ -62,7 +62,7 @@ const openAIModels = [
   'gpt-image-2',
 ]
 
-const anthropicModels = [
+export const anthropicAccountModels = [
   'claude-3-5-sonnet-20241022',
   'claude-3-5-sonnet-20240620',
   'claude-3-5-haiku-20241022',
@@ -120,7 +120,8 @@ export function AccountModelRestriction({
   const { t } = useTranslation()
   const [customModel, setCustomModel] = useState('')
   const availableModels = useMemo(() => {
-    const curated = platform === 'openai' ? openAIModels : anthropicModels
+    const curated =
+      platform === 'openai' ? openAIAccountModels : anthropicAccountModels
     return Array.from(
       new Set([
         ...curated,

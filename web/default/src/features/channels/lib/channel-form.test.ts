@@ -136,6 +136,19 @@ describe('Channel creation modes', () => {
     assert.equal(payload.channel.upstream_account_pool_id, 9)
   })
 
+  test('prefills a published local channel from its account pool', () => {
+    const defaults = getChannelCreateDefaultValues('local', {
+      id: 10,
+      name: 'Claude primary pool',
+      platform: 'anthropic',
+    })
+
+    assert.equal(defaults.name, 'Claude primary pool')
+    assert.equal(defaults.type, 14)
+    assert.equal(defaults.credential_source, 'local_account_pool')
+    assert.equal(defaults.upstream_account_pool_id, 10)
+  })
+
   test('normalizes an edited legacy local Codex channel to OpenAI', () => {
     const payload = transformFormDataToUpdatePayload(
       {

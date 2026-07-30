@@ -22,6 +22,7 @@ import {
   MoreHorizontalIcon,
   PlayIcon,
   RefreshIcon,
+  Rocket01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
@@ -82,12 +83,14 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
+import { ChannelMutateDrawer } from '@/features/channels/components/drawers/channel-mutate-drawer'
 import { AccountBatchUpdateDialog } from './account-batch-update-dialog'
 import { AccountDialog } from './account-dialog'
 import {
   AccountScheduledTestsDialog,
   AccountStatsDialog,
 } from './account-more-dialogs'
+import { AccountTestDialog } from './account-test-dialog'
 import {
   AccountCapacityCell,
   AccountIdentityCell,
@@ -113,7 +116,6 @@ import {
   refreshUpstreamOAuth,
   replaceUpstreamPoolMembers,
   startUpstreamOAuth,
-  testUpstreamAccount,
   updateUpstreamAccountsBatch,
   updateUpstreamPool,
 } from './api'
@@ -734,9 +736,13 @@ export function AccountManagement() {
   const [statsAccount, setStatsAccount] = useState<UpstreamAccount | null>(null)
   const [scheduledTestsAccount, setScheduledTestsAccount] =
     useState<UpstreamAccount | null>(null)
+  const [testingAccount, setTestingAccount] =
+    useState<UpstreamAccount | null>(null)
   const [selectedPool, setSelectedPool] = useState<UpstreamAccountPool | null>(
     null
   )
+  const [publishingPool, setPublishingPool] =
+    useState<UpstreamAccountPool | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{
     kind: 'account' | 'pool'
     id: number
@@ -805,28 +811,13 @@ export function AccountManagement() {
     account: UpstreamAccount,
     action: 'test' | 'refresh' | 'recover'
   ) => {
+    if (action === 'test') {
+      setTestingAccount(account)
+      return
+    }
     setBusyId(account.id)
     try {
-      if (action === 'test') {
-        const response = await testUpstreamAccount(account.id)
-        if (!response.success || !response.data?.success) {
-          throw new Error(
-            response.message ||
-              t('Account test failed: {{result}}', {
-                result: response.data?.result || 'unknown',
-              })
-          )
-        }
-        toast.success(
-          t(
-            'Account test succeeded: first output {{firstOutput}} ms, total {{total}} ms',
-            {
-              firstOutput: response.data.first_output_latency_ms,
-              total: response.data.latency_ms,
-            }
-          )
-        )
-      } else if (action === 'recover') {
+      if (action === 'recover') {
         const response = await recoverUpstreamAccount(account.id)
         if (!response.success)
           throw new Error(response.message || t('Request failed'))
@@ -1696,6 +1687,28 @@ export function AccountManagement() {
                         </TableCell>
                         <TableCell>
                           <div className='flex justify-end gap-1'>
+                            {pool.channel_count === 0 ? (
+                              <Button
+                                type='button'
+                                size='sm'
+                                disabled={pool.status !== 'active'}
+                                onClick={() => setPublishingPool(pool)}
+                              >
+                                <HugeiconsIcon
+                                  data-icon='inline-start'
+                                  icon={Rocket01Icon}
+                                  strokeWidth={2}
+                                />
+                                {t('Publish as local channel')}
+                              </Button>
+                            ) : (
+                              <IconButton
+                                label={t('Publish as local channel')}
+                                icon={Rocket01Icon}
+                                disabled={pool.status !== 'active'}
+                                onClick={() => setPublishingPool(pool)}
+                              />
+                            )}
                             <IconButton
                               label={t('Manage pool members')}
                               icon={Link01Icon}
@@ -1752,6 +1765,12 @@ export function AccountManagement() {
           account={scheduledTestsAccount}
           onOpenChange={(open) => !open && setScheduledTestsAccount(null)}
         />
+        <AccountTestDialog
+          open={testingAccount !== null}
+          account={testingAccount}
+          onOpenChange={(open) => !open && setTestingAccount(null)}
+          onTested={refresh}
+        />
         <BatchImportDialog
           open={batchImportOpen}
           onOpenChange={setBatchImportOpen}
@@ -1780,6 +1799,18 @@ export function AccountManagement() {
             onOpenChange={setPoolDialog}
             pool={selectedPool}
             proxies={proxies}
+            onSaved={refresh}
+          />
+        )}
+        {publishingPool && (
+          <ChannelMutateDrawer
+            key={publishingPool.id}
+            open
+            onOpenChange={(open) => {
+              if (!open) setPublishingPool(null)
+            }}
+            creationMode='local'
+            initialAccountPool={publishingPool}
             onSaved={refresh}
           />
         )}

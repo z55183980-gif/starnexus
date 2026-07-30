@@ -721,9 +721,24 @@ func TestUpstreamAccount(c *gin.Context) {
 	if !ok {
 		return
 	}
+	var request struct {
+		Model   string `json:"model"`
+		ModelId string `json:"model_id"`
+		Mode    string `json:"mode"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
-	result, err := service.TestUpstreamAccount(ctx, id)
+	testModel := strings.TrimSpace(request.ModelId)
+	if testModel == "" {
+		testModel = request.Model
+	}
+	result, err := service.TestUpstreamAccount(ctx, id, service.UpstreamAccountTestOptions{Model: testModel, Mode: request.Mode})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -733,16 +748,23 @@ func TestUpstreamAccount(c *gin.Context) {
 
 func TestUpstreamAccountsBatch(c *gin.Context) {
 	var request struct {
-		Ids []int `json:"ids"`
+		Ids     []int  `json:"ids"`
+		Model   string `json:"model"`
+		ModelId string `json:"model_id"`
+		Mode    string `json:"mode"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil || len(request.Ids) == 0 || len(request.Ids) > 100 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	results := make([]*service.UpstreamAccountTestResult, 0, len(request.Ids))
+	testModel := strings.TrimSpace(request.ModelId)
+	if testModel == "" {
+		testModel = request.Model
+	}
 	for _, id := range request.Ids {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
-		result, err := service.TestUpstreamAccount(ctx, id)
+		result, err := service.TestUpstreamAccount(ctx, id, service.UpstreamAccountTestOptions{Model: testModel, Mode: request.Mode})
 		cancel()
 		if err != nil {
 			results = append(results, &service.UpstreamAccountTestResult{AccountId: id, Result: "test_failed"})

@@ -579,6 +579,12 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		otherSettings.ResponsesWebSocketV2Enabled = wsMode == model.UpstreamOpenAIWSModeContextPool || wsMode == model.UpstreamOpenAIWSModePassthrough
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, otherSettings)
+	accountHeaderOverrides := service.MergeUpstreamAccountHeaderOverrides(
+		common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride),
+		&selection.Account,
+		selection.Credentials,
+	)
+	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, accountHeaderOverrides)
 	common.SetContextKey(c, constant.ContextKeyChannelType, effectiveChannelType)
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
 	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, localUpstreamBaseURL(effectiveChannelType, selection.Credentials, channel.GetBaseURL()))
@@ -588,7 +594,7 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, selection.Account.Platform)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, selection.Account.Type)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAnthropicAuthScheme, options.AnthropicAPIKeyAuthScheme)
-	common.SetContextKey(c, constant.ContextKeyUpstreamOpenAIResponsesMode, options.OpenAIResponsesMode)
+	common.SetContextKey(c, constant.ContextKeyUpstreamOpenAIResponsesMode, options.EffectiveOpenAIResponsesMode())
 	common.SetContextKey(c, constant.ContextKeyUpstreamOpenAILongContextBilling, options.OpenAILongContextBillingEnabled)
 	common.SetContextKey(c, constant.ContextKeyUpstreamInterceptWarmup, options.InterceptWarmupRequests)
 	if selection.Account.RateMultiplier != nil {

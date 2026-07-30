@@ -468,6 +468,9 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 	if err := validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, input.Credentials); err != nil {
 		return err
 	}
+	if err := ValidateUpstreamAccountHeaderOverrides(&input.Account, input.Credentials); err != nil {
+		return err
+	}
 	keyring, err := LoadUpstreamCredentialKeyringFromEnv()
 	if err != nil {
 		return err
@@ -540,6 +543,9 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 		if err = validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, *input.Credentials); err != nil {
 			return err
 		}
+		if err = ValidateUpstreamAccountHeaderOverrides(&input.Account, *input.Credentials); err != nil {
+			return err
+		}
 	}
 	if credentialUpdateRequested {
 		keyring, err = LoadUpstreamCredentialKeyringFromEnv()
@@ -580,6 +586,9 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 				merged[key] = value
 			}
 			if err := validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, merged); err != nil {
+				return err
+			}
+			if err := ValidateUpstreamAccountHeaderOverrides(&input.Account, merged); err != nil {
 				return err
 			}
 			credentialsToStore = &merged
