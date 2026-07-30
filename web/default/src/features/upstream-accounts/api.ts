@@ -20,6 +20,10 @@ import type {
   UpstreamAccountPool,
   UpstreamAccountQuotaResetResult,
   UpstreamAccountQuotaUsage,
+  UpstreamAccountScheduledTestPlan,
+  UpstreamAccountScheduledTestPlanPayload,
+  UpstreamAccountScheduledTestResult,
+  UpstreamAccountStats,
   UpstreamBatchResult,
   UpstreamPoolPayload,
   UpstreamProxy,
@@ -183,9 +187,18 @@ export async function testUpstreamAccount(
 }
 
 export async function getUpstreamAccountQuota(
-  id: number
+  id: number,
+  options?: { force?: boolean; includeCredits?: boolean }
 ): Promise<ApiResponse<UpstreamAccountQuotaUsage>> {
-  const response = await api.get(`/api/upstream/accounts/${id}/quota`)
+  const response = await api.get(`/api/upstream/accounts/${id}/quota`, {
+    params: {
+      force: options?.force || undefined,
+      include_credits:
+        options?.includeCredits === undefined
+          ? undefined
+          : options.includeCredits,
+    },
+  })
   return response.data
 }
 
@@ -193,6 +206,68 @@ export async function resetUpstreamAccountQuota(
   id: number
 ): Promise<ApiResponse<UpstreamAccountQuotaResetResult>> {
   const response = await api.post(`/api/upstream/accounts/${id}/reset-quota`)
+  return response.data
+}
+
+export async function getUpstreamAccountStats(
+  id: number,
+  days = 30
+): Promise<ApiResponse<UpstreamAccountStats>> {
+  const response = await api.get(`/api/upstream/accounts/${id}/stats`, {
+    params: { days },
+  })
+  return response.data
+}
+
+export async function listUpstreamAccountScheduledTests(
+  accountId: number
+): Promise<ApiResponse<UpstreamAccountScheduledTestPlan[]>> {
+  const response = await api.get(
+    `/api/upstream/accounts/${accountId}/scheduled-tests`
+  )
+  return response.data
+}
+
+export async function createUpstreamAccountScheduledTest(
+  accountId: number,
+  payload: UpstreamAccountScheduledTestPlanPayload
+): Promise<ApiResponse<UpstreamAccountScheduledTestPlan>> {
+  const response = await api.post(
+    `/api/upstream/accounts/${accountId}/scheduled-tests`,
+    payload
+  )
+  return response.data
+}
+
+export async function updateUpstreamAccountScheduledTest(
+  accountId: number,
+  planId: number,
+  payload: Partial<UpstreamAccountScheduledTestPlanPayload>
+): Promise<ApiResponse<UpstreamAccountScheduledTestPlan>> {
+  const response = await api.put(
+    `/api/upstream/accounts/${accountId}/scheduled-tests/${planId}`,
+    payload
+  )
+  return response.data
+}
+
+export async function deleteUpstreamAccountScheduledTest(
+  accountId: number,
+  planId: number
+): Promise<ApiResponse<null>> {
+  const response = await api.delete(
+    `/api/upstream/accounts/${accountId}/scheduled-tests/${planId}`
+  )
+  return response.data
+}
+
+export async function listUpstreamAccountScheduledTestResults(
+  accountId: number,
+  planId: number
+): Promise<ApiResponse<UpstreamAccountScheduledTestResult[]>> {
+  const response = await api.get(
+    `/api/upstream/accounts/${accountId}/scheduled-tests/${planId}/results`
+  )
   return response.data
 }
 

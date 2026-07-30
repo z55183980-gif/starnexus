@@ -50,6 +50,21 @@ export async function removeRoutingNodeUserBinding(
   return res.data
 }
 
+export async function bindRoutingNodeUser(
+  userId: number,
+  node: string
+): Promise<{ success: boolean; message?: string }> {
+  const res = await api.put(
+    `/api/user/${userId}/node_binding`,
+    { node },
+    {
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    } as Record<string, unknown>
+  )
+  return res.data
+}
+
 export async function createRoutingNode(
   input: RoutingNodeInput
 ): Promise<{ success: boolean; message?: string; data?: RoutingNode }> {

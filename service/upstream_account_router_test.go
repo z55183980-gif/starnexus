@@ -78,12 +78,12 @@ func TestUpstreamAccountRouterUsesChannelProxyWhenNoLocalProxy(t *testing.T) {
 }
 
 func TestResolveUpstreamAccountModelUsesClaudeGroupDefaultOnlyForClaudeFamilies(t *testing.T) {
-	mapped, matched, supported := resolveUpstreamAccountModel(nil, model.UpstreamAccountOptions{}, "claude-opus-4-6", false, "gpt-5.4")
+	mapped, matched, supported := resolveUpstreamAccountModel(nil, nil, model.UpstreamAccountOptions{}, "claude-opus-4-6", false, "gpt-5.4")
 	require.True(t, matched)
 	require.True(t, supported)
 	require.Equal(t, "gpt-5.4", mapped)
 
-	mapped, matched, supported = resolveUpstreamAccountModel(nil, model.UpstreamAccountOptions{}, "gpt6", false, "gpt-5.4")
+	mapped, matched, supported = resolveUpstreamAccountModel(nil, nil, model.UpstreamAccountOptions{}, "gpt6", false, "gpt-5.4")
 	require.False(t, matched)
 	require.True(t, supported)
 	require.Equal(t, "gpt6", mapped)
@@ -92,6 +92,7 @@ func TestResolveUpstreamAccountModelUsesClaudeGroupDefaultOnlyForClaudeFamilies(
 func TestResolveUpstreamAccountModelUsesCompactMappingFirst(t *testing.T) {
 	options := model.UpstreamAccountOptions{CompactModelMapping: map[string]string{"gpt-5.*": "gpt-5.4-compact"}}
 	mapped, matched, supported := resolveUpstreamAccountModel(
+		nil,
 		map[string]any{"model_mapping": map[string]any{"gpt-5.*": "gpt-5.4"}},
 		options,
 		"gpt-5.6-sol",
@@ -101,6 +102,21 @@ func TestResolveUpstreamAccountModelUsesCompactMappingFirst(t *testing.T) {
 	require.True(t, matched)
 	require.True(t, supported)
 	require.Equal(t, "gpt-5.4-compact", mapped)
+}
+
+func TestResolveUpstreamAccountModelRejectsForeignModelsForOpenAIOAuthWithoutMapping(t *testing.T) {
+	account := &model.UpstreamAccount{Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth}
+
+	mapped, matched, supported := resolveUpstreamAccountModel(account, nil, model.UpstreamAccountOptions{}, "deepseek-v3", false, "")
+	require.False(t, matched)
+	require.False(t, supported)
+	require.Equal(t, "deepseek-v3", mapped)
+
+	_, _, supported = resolveUpstreamAccountModel(account, nil, model.UpstreamAccountOptions{}, "openai/gpt-5.6-sol", false, "")
+	require.True(t, supported)
+
+	_, _, supported = resolveUpstreamAccountModel(account, nil, model.UpstreamAccountOptions{OpenAIPassthrough: true}, "gemini-3-pro", false, "")
+	require.True(t, supported)
 }
 
 func TestUpstreamAccountRouterHonorsCompactAndCodexRestrictions(t *testing.T) {
@@ -159,6 +175,39 @@ func TestUpstreamAccountRouterFiltersMixedPoolByAllowedAccountTypes(t *testing.T
 	require.Equal(t, apiKey.Id, apiKeySelection.Account.Id)
 	require.Equal(t, "sk-apikey", apiKeySelection.Credentials["api_key"])
 	require.NoError(t, apiKeySelection.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterFiltersOffModeAndPinsPreferredWSAccount(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "ws-mode-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccountWithExtra(t, "off", pool.Id, `{"openai_oauth_responses_websockets_v2_mode":"off"}`)
+	first := createRouterTestAccountWithExtra(t, "ctx-one", pool.Id, `{"openai_oauth_responses_websockets_v2_mode":"ctx_pool"}`)
+	second := createRouterTestAccountWithExtra(t, "ctx-two", pool.Id, `{"openai_oauth_responses_websockets_v2_mode":"ctx_pool"}`)
+	bridge := createRouterTestAccountWithExtra(t, "bridge", pool.Id, `{"openai_oauth_responses_websockets_v2_mode":"http_bridge"}`)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, ResponsesWebSocket: true,
+		PreferredAccountId: second.Id, RequirePreferred: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, second.Id, selection.Account.Id)
+	require.NotEqual(t, first.Id, selection.Account.Id)
+	require.NoError(t, selection.Release(context.Background()))
+
+	bridgeSelection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, ResponsesWebSocket: true,
+		RequiredWebSocketMode: model.UpstreamOpenAIWSModeHTTPBridge,
+	})
+	require.NoError(t, err)
+	require.Equal(t, bridge.Id, bridgeSelection.Account.Id)
+	require.NoError(t, bridgeSelection.Release(context.Background()))
 }
 
 func TestResolveUpstreamProxyRechecksMigratedFallbackOrigin(t *testing.T) {

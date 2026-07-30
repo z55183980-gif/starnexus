@@ -248,6 +248,41 @@ type UpstreamAccountEvent struct {
 
 func (UpstreamAccountEvent) TableName() string { return "upstream_account_events" }
 
+type UpstreamAccountScheduledTestPlan struct {
+	Id              int    `json:"id"`
+	AccountId       int    `json:"account_id" gorm:"not null;index"`
+	Name            string `json:"name" gorm:"type:varchar(128);not null"`
+	Model           string `json:"model" gorm:"type:varchar(128);not null"`
+	IntervalMinutes int    `json:"interval_minutes" gorm:"not null;default:60"`
+	Enabled         bool   `json:"enabled" gorm:"not null;index"`
+	AutoRecover     bool   `json:"auto_recover" gorm:"not null"`
+	NextRunAt       *int64 `json:"next_run_at" gorm:"bigint;index"`
+	LastRunAt       *int64 `json:"last_run_at" gorm:"bigint"`
+	CreatedAt       int64  `json:"created_at" gorm:"bigint;not null"`
+	UpdatedAt       int64  `json:"updated_at" gorm:"bigint;not null"`
+}
+
+func (UpstreamAccountScheduledTestPlan) TableName() string {
+	return "upstream_account_scheduled_test_plans"
+}
+
+type UpstreamAccountScheduledTestResult struct {
+	Id                   int    `json:"id"`
+	PlanId               int    `json:"plan_id" gorm:"not null;index"`
+	AccountId            int    `json:"account_id" gorm:"not null;index"`
+	Success              bool   `json:"success" gorm:"not null"`
+	StatusCode           int    `json:"status_code" gorm:"not null"`
+	LatencyMs            int64  `json:"latency_ms" gorm:"bigint;not null"`
+	FirstOutputLatencyMs int64  `json:"first_output_latency_ms" gorm:"bigint;not null"`
+	Result               string `json:"result" gorm:"type:varchar(64);not null"`
+	Model                string `json:"model" gorm:"type:varchar(128);not null"`
+	CreatedAt            int64  `json:"created_at" gorm:"bigint;not null;index"`
+}
+
+func (UpstreamAccountScheduledTestResult) TableName() string {
+	return "upstream_account_scheduled_test_results"
+}
+
 type UpstreamOAuthSession struct {
 	Id                 int    `json:"id"`
 	StateHash          string `json:"-" gorm:"type:varchar(64);not null;uniqueIndex"`

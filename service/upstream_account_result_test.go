@@ -84,6 +84,40 @@ func TestApplyUpstreamAccountErrorUsesCodexResetWindow(t *testing.T) {
 	require.NotNil(t, updated.SessionWindowEnd)
 	require.GreaterOrEqual(t, *updated.SessionWindowEnd, before+300)
 	require.Equal(t, "rejected", updated.SessionWindowStatus)
+	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
+	require.True(t, updated.Schedulable)
+	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
+}
+
+func TestApplyUpstreamAccountErrorStoresRevokedTokenMessage(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "revoked-token-account")
+	apiErr := types.NewErrorWithStatusCode(errors.New("unauthorized"), types.ErrorCodeBadResponseStatusCode, http.StatusUnauthorized)
+	apiErr.SetUpstreamResponse(nil, []byte(`{"error":{"code":"token_revoked","message":"Encountered invalidated oauth token for user, failing request"}}`))
+
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.Equal(t, constant.UpstreamStatusError, updated.Status)
+	require.False(t, updated.Schedulable)
+	require.Equal(t, "Token revoked (401): Encountered invalidated oauth token for user, failing request", updated.ErrorMessage)
+}
+
+func TestApplyUpstreamAccountErrorUsesOverloadCooldown(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "overloaded-account")
+	apiErr := types.NewErrorWithStatusCode(errors.New("overloaded"), types.ErrorCodeBadResponseStatusCode, 529)
+	apiErr.SetUpstreamResponse(http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"error":{"message":"Overloaded"}}`))
+
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.OverloadUntil)
+	require.GreaterOrEqual(t, *updated.OverloadUntil, before+int64((10*time.Minute).Seconds()))
+	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
+	require.True(t, updated.Schedulable)
+	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
 }
 
 func TestShouldRetryUpstreamAccountHonorsCountAndBudget(t *testing.T) {

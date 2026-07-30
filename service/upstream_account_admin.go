@@ -40,11 +40,24 @@ type UpstreamAccountView struct {
 }
 
 type UpstreamAccountMetadata struct {
-	Email            string `json:"email,omitempty"`
-	PlanType         string `json:"plan_type,omitempty"`
-	PrivacyMode      string `json:"privacy_mode,omitempty"`
-	CompactMode      string `json:"compact_mode,omitempty"`
-	CompactSupported bool   `json:"compact_supported"`
+	Email                      string            `json:"email,omitempty"`
+	PlanType                   string            `json:"plan_type,omitempty"`
+	PrivacyMode                string            `json:"privacy_mode,omitempty"`
+	CompactMode                string            `json:"compact_mode,omitempty"`
+	CompactSupported           bool              `json:"compact_supported"`
+	CredentialReadable         bool              `json:"credential_readable"`
+	CredentialReadError        string            `json:"credential_read_error,omitempty"`
+	BaseURL                    string            `json:"base_url,omitempty"`
+	ModelMapping               map[string]string `json:"model_mapping,omitempty"`
+	CompactModelMapping        map[string]string `json:"compact_model_mapping,omitempty"`
+	OpenAIEndpointCapabilities []string          `json:"openai_capabilities,omitempty"`
+	InterceptWarmupRequests    bool              `json:"intercept_warmup_requests"`
+	BedrockAuthMode            string            `json:"bedrock_auth_mode,omitempty"`
+	AWSRegion                  string            `json:"aws_region,omitempty"`
+	AWSAccessKeyID             string            `json:"aws_access_key_id,omitempty"`
+	VertexProjectID            string            `json:"vertex_project_id,omitempty"`
+	VertexClientEmail          string            `json:"vertex_client_email,omitempty"`
+	VertexLocation             string            `json:"vertex_location,omitempty"`
 }
 
 type UpstreamAccountPoolView struct {
@@ -90,9 +103,10 @@ type UpstreamAccountCreateInput struct {
 }
 
 type UpstreamAccountUpdateInput struct {
-	Account     model.UpstreamAccount
-	Credentials *map[string]any
-	PoolIds     *[]int
+	Account         model.UpstreamAccount
+	Credentials     *map[string]any
+	CredentialPatch *map[string]any
+	PoolIds         *[]int
 }
 
 type UpstreamAccountRecoveryScope string
@@ -516,12 +530,18 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 	if err := model.ValidateUpstreamAccount(&input.Account); err != nil {
 		return err
 	}
+	if input.Credentials != nil && input.CredentialPatch != nil {
+		return errors.New("credentials and credential_patch cannot be updated together")
+	}
+	credentialUpdateRequested := input.Credentials != nil || input.CredentialPatch != nil
 	var keyring *UpstreamCredentialKeyring
 	var err error
 	if input.Credentials != nil {
 		if err = validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, *input.Credentials); err != nil {
 			return err
 		}
+	}
+	if credentialUpdateRequested {
 		keyring, err = LoadUpstreamCredentialKeyringFromEnv()
 		if err != nil {
 			return err
@@ -532,8 +552,37 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 		if err := tx.First(&current, input.Account.Id).Error; err != nil {
 			return err
 		}
-		if current.Type != input.Account.Type && input.Credentials == nil {
+		if current.Type != input.Account.Type && !credentialUpdateRequested {
 			return errors.New("changing account type requires replacement credentials")
+		}
+		credentialsToStore := input.Credentials
+		if input.CredentialPatch != nil {
+			var merged map[string]any
+			if err := keyring.DecryptJSON(UpstreamCredentialEnvelope{
+				Ciphertext: current.CredentialCiphertext,
+				Nonce:      current.CredentialNonce,
+				KeyVersion: current.CredentialKeyVersion,
+			}, upstreamAccountCredentialRecordKind, current.Id, current.CredentialVersion, &merged); err != nil {
+				return err
+			}
+			if merged == nil {
+				merged = map[string]any{}
+			}
+			for key, value := range *input.CredentialPatch {
+				key = strings.TrimSpace(key)
+				if key == "" {
+					continue
+				}
+				if value == nil {
+					delete(merged, key)
+					continue
+				}
+				merged[key] = value
+			}
+			if err := validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, merged); err != nil {
+				return err
+			}
+			credentialsToStore = &merged
 		}
 		poolIds, err := listUpstreamAccountPoolIds(tx, current.Id)
 		if err != nil {
@@ -556,9 +605,9 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			"oauth_refresh_owner": input.Account.OAuthRefreshOwner,
 			"updated_at":          common.GetTimestamp(),
 		}
-		if input.Credentials != nil {
+		if credentialsToStore != nil {
 			newVersion := current.CredentialVersion + 1
-			envelope, err := keyring.EncryptJSON(upstreamAccountCredentialRecordKind, current.Id, newVersion, *input.Credentials)
+			envelope, err := keyring.EncryptJSON(upstreamAccountCredentialRecordKind, current.Id, newVersion, *credentialsToStore)
 			if err != nil {
 				return err
 			}
@@ -591,6 +640,18 @@ func DeleteUpstreamAccount(id int) error {
 			return err
 		}
 		if err := tx.Where("account_id = ?", id).Delete(&model.UpstreamAccountPoolMember{}).Error; err != nil {
+			return err
+		}
+		var planIds []int
+		if err := tx.Model(&model.UpstreamAccountScheduledTestPlan{}).Where("account_id = ?", id).Pluck("id", &planIds).Error; err != nil {
+			return err
+		}
+		if len(planIds) > 0 {
+			if err := tx.Where("plan_id IN ?", planIds).Delete(&model.UpstreamAccountScheduledTestResult{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("account_id = ?", id).Delete(&model.UpstreamAccountScheduledTestPlan{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&account).Error
@@ -839,6 +900,14 @@ func validateUpstreamCredentialPayload(platform string, accountType string, cred
 	if !model.IsSupportedUpstreamAccountType(platform, accountType) {
 		return errors.New("unsupported account type")
 	}
+	credentialOptions, err := model.ParseUpstreamAccountOptionsWithCredentials("{}", credentials)
+	if err != nil {
+		return err
+	}
+	if platform != constant.UpstreamPlatformOpenAI &&
+		(len(credentialOptions.CompactModelMapping) > 0 || len(credentialOptions.OpenAIEndpointCapabilities) > 0) {
+		return errors.New("OpenAI credential options require the OpenAI platform")
+	}
 	switch accountType {
 	case constant.UpstreamAccountTypeOAuth:
 		if getString("access_token") == "" {
@@ -858,7 +927,7 @@ func validateUpstreamCredentialPayload(platform string, accountType string, cred
 	case constant.UpstreamAccountTypeBedrock:
 		authMethod := strings.ToLower(getString("auth_mode"))
 		switch authMethod {
-		case "api_key":
+		case "apikey", "api_key":
 			if getString("api_key") == "" || getString("aws_region") == "" {
 				return errors.New("Bedrock API key credentials require api_key and region")
 			}
@@ -1047,7 +1116,17 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 	if account == nil {
 		return metadata
 	}
-	if credentials, err := DecryptUpstreamAccountCredentials(account); err == nil {
+	credentials, credentialErr := DecryptUpstreamAccountCredentials(account)
+	if credentialErr == nil {
+		metadata.CredentialReadable = true
+		metadata.BaseURL = upstreamCredentialMapString(credentials, "base_url")
+		metadata.ModelMapping = upstreamCredentialStringMap(credentials["model_mapping"])
+		metadata.BedrockAuthMode = upstreamCredentialMapString(credentials, "auth_mode")
+		metadata.AWSRegion = upstreamCredentialMapString(credentials, "aws_region")
+		metadata.AWSAccessKeyID = upstreamCredentialMapString(credentials, "aws_access_key_id")
+		metadata.VertexProjectID = upstreamCredentialMapString(credentials, "project_id")
+		metadata.VertexClientEmail = upstreamCredentialMapString(credentials, "client_email")
+		metadata.VertexLocation = upstreamCredentialMapString(credentials, "location")
 		metadata.Email = upstreamCredentialMapString(credentials, "email")
 		metadata.PlanType = upstreamCredentialMapString(credentials, "plan_type")
 		if metadata.PlanType == "" {
@@ -1066,12 +1145,19 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 				metadata.PrivacyMode = upstreamCredentialMapString(nested, "privacy_mode")
 			}
 		}
+	} else {
+		metadata.CredentialReadError = credentialErr.Error()
 	}
 	var extra map[string]any
 	if common.UnmarshalJsonStr(account.Extra, &extra) == nil {
 		if metadata.PrivacyMode == "" {
 			metadata.PrivacyMode = upstreamCredentialMapString(extra, "privacy_mode")
 		}
+	}
+	if options, err := model.ParseUpstreamAccountOptionsWithCredentials(account.Extra, credentials); err == nil {
+		metadata.CompactModelMapping = options.CompactModelMapping
+		metadata.OpenAIEndpointCapabilities = options.OpenAIEndpointCapabilities
+		metadata.InterceptWarmupRequests = options.InterceptWarmupRequests
 	}
 	if account.Platform == constant.UpstreamPlatformOpenAI {
 		options, err := model.ParseUpstreamAccountOptions(account.Extra)
@@ -1082,6 +1168,33 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 		metadata.CompactSupported = options.AllowsOpenAICompact()
 	}
 	return metadata
+}
+
+func upstreamCredentialStringMap(value any) map[string]string {
+	result := map[string]string{}
+	switch values := value.(type) {
+	case map[string]string:
+		for key, mapped := range values {
+			key = strings.TrimSpace(key)
+			mapped = strings.TrimSpace(mapped)
+			if key != "" && mapped != "" {
+				result[key] = mapped
+			}
+		}
+	case map[string]any:
+		for key, raw := range values {
+			mapped, ok := raw.(string)
+			key = strings.TrimSpace(key)
+			mapped = strings.TrimSpace(mapped)
+			if ok && key != "" && mapped != "" {
+				result[key] = mapped
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func upstreamProxyView(db *gorm.DB, proxy model.UpstreamProxy) (UpstreamProxyView, error) {

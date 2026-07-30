@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -22,6 +25,23 @@ const (
 	upstreamAccountUsagePath        = "/backend-api/wham/usage"
 	upstreamAccountCreditsPath      = "/backend-api/wham/rate-limit-reset-credits"
 	upstreamAccountResetCreditsPath = "/backend-api/wham/rate-limit-reset-credits/consume"
+	upstreamAccountQuotaCacheTTL    = 5 * time.Minute
+)
+
+type UpstreamAccountQuotaQueryOptions struct {
+	Force          bool
+	IncludeCredits bool
+}
+
+type upstreamAccountQuotaCacheEntry struct {
+	usage          UpstreamAccountQuotaUsage
+	cachedAt       time.Time
+	includeCredits bool
+}
+
+var (
+	upstreamAccountQuotaCache  sync.Map
+	upstreamAccountQuotaFlight singleflight.Group
 )
 
 type UpstreamAccountRateLimitWindow struct {
@@ -97,7 +117,57 @@ func (err *upstreamAccountQuotaHTTPError) Error() string {
 	return err.message
 }
 
-func QueryUpstreamAccountQuota(ctx context.Context, accountId int) (*UpstreamAccountQuotaUsage, error) {
+func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions ...UpstreamAccountQuotaQueryOptions) (*UpstreamAccountQuotaUsage, error) {
+	options := UpstreamAccountQuotaQueryOptions{IncludeCredits: true}
+	if len(queryOptions) > 0 {
+		options = queryOptions[0]
+	}
+	if !options.Force {
+		if cached := cachedUpstreamAccountQuota(accountId, options.IncludeCredits); cached != nil {
+			return cached, nil
+		}
+	}
+	flightKey := strconv.Itoa(accountId) + ":" + strconv.FormatBool(options.IncludeCredits)
+	result, err, _ := upstreamAccountQuotaFlight.Do(flightKey, func() (any, error) {
+		if !options.Force {
+			if cached := cachedUpstreamAccountQuota(accountId, options.IncludeCredits); cached != nil {
+				return cached, nil
+			}
+		}
+		usage, queryErr := queryUpstreamAccountQuota(ctx, accountId, options.IncludeCredits)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
+			usage: *usage, cachedAt: time.Now(), includeCredits: options.IncludeCredits,
+		})
+		return usage, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	usage, _ := result.(*UpstreamAccountQuotaUsage)
+	return usage, nil
+}
+
+func cachedUpstreamAccountQuota(accountId int, includeCredits bool) *UpstreamAccountQuotaUsage {
+	if accountId <= 0 {
+		return nil
+	}
+	value, ok := upstreamAccountQuotaCache.Load(accountId)
+	if !ok {
+		return nil
+	}
+	entry, ok := value.(upstreamAccountQuotaCacheEntry)
+	if !ok || time.Since(entry.cachedAt) >= upstreamAccountQuotaCacheTTL || (includeCredits && !entry.includeCredits) {
+		upstreamAccountQuotaCache.Delete(accountId)
+		return nil
+	}
+	usage := entry.usage
+	return &usage
+}
+
+func queryUpstreamAccountQuota(ctx context.Context, accountId int, includeCredits bool) (*UpstreamAccountQuotaUsage, error) {
 	call, err := prepareUpstreamAccountQuotaCall(ctx, accountId)
 	if err != nil {
 		return nil, err
@@ -116,10 +186,12 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int) (*UpstreamAcc
 			return nil, err
 		}
 	}
-	var creditPayload any
-	if err := call.request(ctx, http.MethodGet, upstreamAccountCreditsPath, nil, &creditPayload); err == nil {
-		if credits := parseUpstreamAccountResetCredits(creditPayload); credits != nil {
-			usage.RateLimitResetCredits = credits
+	if includeCredits {
+		var creditPayload any
+		if err := call.request(ctx, http.MethodGet, upstreamAccountCreditsPath, nil, &creditPayload); err == nil {
+			if credits := parseUpstreamAccountResetCredits(creditPayload); credits != nil {
+				usage.RateLimitResetCredits = credits
+			}
 		}
 	}
 	usage.FetchedAt = time.Now().Unix()
@@ -216,6 +288,7 @@ func ResetUpstreamAccountQuota(ctx context.Context, accountId int) (*UpstreamAcc
 			return nil, err
 		}
 	}
+	upstreamAccountQuotaCache.Delete(accountId)
 	return &result, nil
 }
 

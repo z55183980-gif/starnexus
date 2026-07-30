@@ -47,8 +47,11 @@ func TestImportSnapshotIsIdempotentAndRollbackSafe(t *testing.T) {
 		&model.Channel{}, &model.UpstreamProxy{}, &model.UpstreamAccountPool{},
 		&model.UpstreamAccount{}, &model.UpstreamAccountPoolMember{},
 		&model.UpstreamAccountEvent{}, &model.UpstreamOAuthSession{},
+		&model.UpstreamAccountScheduledTestPlan{}, &model.UpstreamAccountScheduledTestResult{},
 	))
+	originalDB := model.DB
 	model.DB = destination
+	t.Cleanup(func() { model.DB = originalDB })
 
 	snapshot, err := loadSourceSnapshot(source)
 	require.NoError(t, err)

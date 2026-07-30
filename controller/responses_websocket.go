@@ -99,6 +99,12 @@ type responsesWebSocketTurn struct {
 	releaseBusiness        func()
 	cancel                 context.CancelFunc
 	finishOnce             sync.Once
+	replayInput            []json.RawMessage
+	replayInputExists      bool
+	replayToolContext      []json.RawMessage
+	replayToolContextSeen  map[string]struct{}
+	accountID              int
+	turnState              string
 }
 
 func (t *responsesWebSocketTurn) setReplayState(outbound []byte, reconnect func() (*websocket.Conn, *http.Response, error)) {
@@ -233,18 +239,26 @@ func (t *responsesWebSocketTurn) finish(success bool) {
 }
 
 type responsesWebSocketSession struct {
-	baseCtx         *gin.Context
-	client          *websocket.Conn
-	upstream        *responsesWSUpstreamConnection
-	channel         *model.Channel
-	lockedModel     string
-	activeTurn      *responsesWebSocketTurn
-	mu              sync.Mutex
-	clientWriteMu   sync.Mutex
-	upstreamWriteMu sync.Mutex
-	closeOnce       sync.Once
-	closed          chan struct{}
-	wg              sync.WaitGroup
+	baseCtx           *gin.Context
+	client            *websocket.Conn
+	upstream          *responsesWSUpstreamConnection
+	channel           *model.Channel
+	lockedModel       string
+	lockedAccountID   int
+	lockedChannelID   int
+	lockedWSMode      string
+	turnState         string
+	replayInput       []json.RawMessage
+	replayInputExists bool
+	lastResponseID    string
+	activeTurn        *responsesWebSocketTurn
+	clientGone        bool
+	mu                sync.Mutex
+	clientWriteMu     sync.Mutex
+	upstreamWriteMu   sync.Mutex
+	closeOnce         sync.Once
+	closed            chan struct{}
+	wg                sync.WaitGroup
 }
 
 func RelayResponsesWebSocket(c *gin.Context) {
@@ -267,8 +281,9 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		closed:  make(chan struct{}),
 	}
 	defer func() {
-		session.close()
+		session.handleClientLoopExit()
 		session.wg.Wait()
+		session.close()
 	}()
 	session.configureClientLiveness()
 	session.startSessionBackgroundLoops()
@@ -294,6 +309,14 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		}
 		if event.Type != "response.create" {
 			session.sendError(types.NewErrorWithStatusCode(fmt.Errorf("unsupported Responses WebSocket event type %q", event.Type), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
+			continue
+		}
+		if err := session.inferToolContinuation(request, envelope); err != nil {
+			session.sendError(types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
+			continue
+		}
+		if restoreErr := session.restoreContinuation(request); restoreErr != nil {
+			session.sendError(restoreErr)
 			continue
 		}
 
@@ -322,6 +345,12 @@ func RelayResponsesWebSocket(c *gin.Context) {
 
 		selectedChannel := session.getChannel()
 		if selectedChannel == nil {
+			session.mu.Lock()
+			preferredChannelID := session.lockedChannelID
+			session.mu.Unlock()
+			if preferredChannelID > 0 {
+				common.SetContextKey(c, appconstant.ContextKeyResponsesWebSocketPreferredChannelId, preferredChannelID)
+			}
 			candidateChannel, selectErr := middleware.SelectChannelForModelFiltered(c, request.Model, supportsResponsesWebSocketChannel)
 			if selectErr != nil {
 				session.sendError(selectErr)
@@ -339,9 +368,15 @@ func RelayResponsesWebSocket(c *gin.Context) {
 			session.sendError(prepareErr)
 			continue
 		}
+		preparedResponse, prepareErr = session.prepareReplayPayload(turn, preparedResponse)
+		if prepareErr != nil {
+			turn.finish(false)
+			session.sendError(prepareErr)
+			continue
+		}
 		turn.channel = selectedChannel
 		turn.upstreamIdentity = responsesWSUpstreamIdentity(turn.ctx, selectedChannel)
-		turn.closeUpstreamAfterTurn = common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId) > 0
+		turn.closeUpstreamAfterTurn = false
 		turn.ctx.Set("use_channel", []string{fmt.Sprintf("%d", selectedChannel.Id)})
 		upstreamWebSocket := responsesWSModeUsesUpstreamWebSocket(turn.upstreamMode)
 		upstreamTransport := "sse"
@@ -375,7 +410,11 @@ func RelayResponsesWebSocket(c *gin.Context) {
 		turn.setReplayState(outbound, func() (*websocket.Conn, *http.Response, error) {
 			return channel.DoResponsesWssRequest(adaptor, turn.ctx, turn.info)
 		})
-		turn.replayEnabled = turn.upstreamMode == model.UpstreamOpenAIWSModeContextPool && selectedChannel.GetOtherSettings().ResponsesWebSocketV2ReplayEnabled
+		// Context-pool mode promises SUB2API-compatible continuity. A request that
+		// failed before any upstream event is therefore replayable once even when
+		// the legacy per-channel replay switch is disabled. The switch remains the
+		// opt-in for other future modes.
+		turn.replayEnabled = turn.upstreamMode == model.UpstreamOpenAIWSModeContextPool || selectedChannel.GetOtherSettings().ResponsesWebSocketV2ReplayEnabled
 
 		upstream := session.getUpstreamForIdentity(turn.upstreamIdentity)
 		if upstream == nil {
@@ -390,6 +429,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 					_ = resp.Body.Close()
 				}
 				apiErr := types.NewErrorWithStatusCode(dialErr, types.ErrorCodeDoRequestFailed, status, types.ErrOptionWithSkipRetry())
+				recordResponsesWSNativeFailure(turn, apiErr)
 				processChannelError(turn.ctx, *types.NewChannelError(selectedChannel.Id, selectedChannel.Type, selectedChannel.Name, selectedChannel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), selectedChannel.GetAutoBan()), apiErr)
 				session.clearChannel(selectedChannel)
 				session.sendTurnFailure(turn, apiErr)
@@ -431,7 +471,11 @@ func supportsResponsesWebSocketChannel(candidate *model.Channel) bool {
 	if candidate == nil {
 		return false
 	}
-	if candidate.GetOtherSettings().ResponsesWebSocketV2Enabled {
+	otherSettings := candidate.GetOtherSettings()
+	if otherSettings.ResponsesWebSocketV2Mode == model.UpstreamOpenAIWSModeOff {
+		return false
+	}
+	if otherSettings.ResponsesWebSocketV2Enabled {
 		return true
 	}
 	if candidate.Type == appconstant.ChannelTypeCodex &&
@@ -506,6 +550,22 @@ func responseRequestJSONFieldNames() map[string]struct{} {
 
 func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequest, selectedChannel *model.Channel) (*responsesWebSocketTurn, json.RawMessage, channel.Adaptor, *types.NewAPIError) {
 	turnCtx, cancel := newResponsesWSTurnContext(s.baseCtx, s.lockedModel)
+	common.SetContextKey(turnCtx, appconstant.ContextKeyResponsesWebSocketIngress, true)
+	s.mu.Lock()
+	preferredAccountID := s.lockedAccountID
+	preferredWSMode := s.lockedWSMode
+	turnState := s.turnState
+	s.mu.Unlock()
+	if preferredAccountID > 0 {
+		common.SetContextKey(turnCtx, appconstant.ContextKeyUpstreamAccountPreferredId, preferredAccountID)
+		common.SetContextKey(turnCtx, appconstant.ContextKeyUpstreamAccountPreferredRequired, true)
+		if preferredWSMode != "" {
+			common.SetContextKey(turnCtx, appconstant.ContextKeyUpstreamAccountRequiredWSMode, preferredWSMode)
+		}
+	}
+	if turnState != "" {
+		turnCtx.Request.Header.Set("X-Codex-Turn-State", turnState)
+	}
 	rateFinish, rateErr := middleware.AcquireModelRequestRateLimit(turnCtx)
 	if rateErr != nil {
 		cancel()
@@ -536,7 +596,21 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		return nil, nil, nil, apiErr
 	}
 	upstreamMode := responsesWSUpstreamMode(turnCtx, selectedChannel)
+	if upstreamMode == model.UpstreamOpenAIWSModeOff {
+		cleanup()
+		return nil, nil, nil, types.NewErrorWithStatusCode(errors.New("Responses WebSocket mode is disabled for the selected upstream account"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+	}
 	forceStream := !responsesWSModeUsesUpstreamWebSocket(upstreamMode)
+	accountID := common.GetContextKeyInt(turnCtx, appconstant.ContextKeyUpstreamAccountId)
+	if accountID > 0 {
+		s.mu.Lock()
+		lockedAccountID := s.lockedAccountID
+		s.mu.Unlock()
+		if lockedAccountID > 0 && lockedAccountID != accountID {
+			cleanup()
+			return nil, nil, nil, types.NewErrorWithStatusCode(errors.New("Responses WebSocket continuation account is unavailable"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		}
+	}
 	relayInfo, err := relaycommon.GenRelayInfo(turnCtx, types.RelayFormatOpenAIResponses, request, nil)
 	if err != nil {
 		cleanup()
@@ -585,6 +659,7 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		originalRequest:   request,
 		forceSSEStream:    forceStream,
 		upstreamMode:      upstreamMode,
+		accountID:         accountID,
 		failoverStartedAt: time.Now(),
 		rateLimitFinish:   rateFinish,
 		releaseUser:       releaseUser,
@@ -626,13 +701,20 @@ func responsesWSUpstreamIdentity(c *gin.Context, selectedChannel *model.Channel)
 	if c == nil || selectedChannel == nil {
 		return ""
 	}
-	identity := fmt.Sprintf("%d|%d|%d|%s|%s|%s",
+	accountID := common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId)
+	credentialIdentity := common.GetContextKeyString(c, appconstant.ContextKeyChannelKey)
+	if accountID > 0 {
+		// OAuth access tokens can rotate between leases. The account is the stable
+		// continuation boundary; changing its short-lived token must not discard a
+		// healthy native WebSocket carrying previous_response_id state.
+		credentialIdentity = ""
+	}
+	identity := fmt.Sprintf("%d|%d|%d|%s|%s",
 		selectedChannel.Id,
 		common.GetContextKeyInt(c, appconstant.ContextKeyChannelType),
-		common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId),
+		accountID,
 		common.GetContextKeyString(c, appconstant.ContextKeyChannelBaseUrl),
-		common.GetContextKeyString(c, appconstant.ContextKeyChannelKey),
-		common.GetContextKeyString(c, appconstant.ContextKeyUpstreamAccountLeaseId),
+		credentialIdentity,
 	)
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(identity)))
 }
@@ -720,6 +802,9 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 		var finished *responsesWebSocketTurn
 		var successful bool
 		var turn *responsesWebSocketTurn
+		var clientGone bool
+		var recoverPreviousResponse bool
+		var recoveryAPIError *types.NewAPIError
 		// Serialize state transition and downstream delivery with sendError. This
 		// prevents a heartbeat failure from writing an error before a frame that
 		// has already been accepted by this reader.
@@ -733,6 +818,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 		turn = s.activeTurn
 		if messageType == websocket.TextMessage {
 			if turn != nil {
+				turn.collectReplayContext(data)
 				event, consumeErr := turn.accumulator.Consume(turn.ctx, turn.info, data)
 				if consumeErr != nil {
 					logger.LogError(turn.ctx, "failed to parse Responses WebSocket event: "+consumeErr.Error())
@@ -742,26 +828,74 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 						turn.info.SetFirstResponseTime()
 					}
 					if event != nil && turn.accumulator.Terminal() {
-						finished = turn
 						successful = turn.accumulator.Successful()
+						if !successful && shouldRecoverResponsesWSPreviousResponse(turn) {
+							recoveryAPIError = responsesWSTerminalAPIError(turn)
+							turn.replayCount++
+							turn.accumulator = openairelay.NewResponsesEventAccumulator()
+							turn.upstreamEvent = false
+							s.upstream = nil
+							s.channel = nil
+							recoverPreviousResponse = true
+						} else {
+							finished = turn
+						}
 					}
 				}
 			}
 		}
 		if finished != nil {
 			if successful && finished.channel != nil {
+				s.commitReplayState(finished)
 				finished.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+				recordResponsesWSNativeSuccess(finished)
 				service.RecordChannelAffinity(finished.ctx, finished.channel.Id)
 			} else {
-				finished.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, errors.New("upstream Responses WebSocket returned a terminal failure"))
+				terminalErr := responsesWSTerminalAPIError(finished)
+				finished.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, terminalErr)
+				recordResponsesWSNativeFailure(finished, terminalErr)
 			}
 			finished.finish(successful)
 			s.activeTurn = nil
 		}
+		clientGone = s.clientGone
 		s.mu.Unlock()
-		writeErr := s.client.WriteMessage(messageType, data)
+		if recoverPreviousResponse {
+			s.clientWriteMu.Unlock()
+			s.upstreamWriteMu.Lock()
+			upstream.close()
+			s.upstreamWriteMu.Unlock()
+			logger.LogWarn(turn.ctx, "Responses WebSocket previous_response_id was rejected; replaying once as a full create")
+			if s.replayTurn(turn) {
+				return
+			}
+			if recoveryAPIError == nil {
+				recoveryAPIError = types.NewErrorWithStatusCode(errors.New("previous_response_id recovery failed"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			}
+			turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, recoveryAPIError)
+			recordResponsesWSNativeFailure(turn, recoveryAPIError)
+			turn.finish(false)
+			s.mu.Lock()
+			if s.activeTurn == turn {
+				s.activeTurn = nil
+			}
+			s.mu.Unlock()
+			s.sendTurnFailure(turn, recoveryAPIError)
+			if clientGone {
+				s.close()
+			}
+			return
+		}
+		var writeErr error
+		if !clientGone && s.client != nil {
+			writeErr = s.client.WriteMessage(messageType, data)
+		}
 		s.clientWriteMu.Unlock()
 		if writeErr != nil {
+			s.handleClientLoopExit()
+			return
+		}
+		if finished != nil && clientGone {
 			s.close()
 			return
 		}
@@ -777,12 +911,15 @@ func (s *responsesWebSocketSession) clientHeartbeat() {
 	for {
 		select {
 		case now := <-ticker.C:
+			if s.isClientGone() {
+				return
+			}
 			deadline := now.Add(10 * time.Second)
 			s.clientWriteMu.Lock()
 			clientErr := s.client.WriteControl(websocket.PingMessage, nil, deadline)
 			s.clientWriteMu.Unlock()
 			if clientErr != nil {
-				s.close()
+				s.handleClientLoopExit()
 				return
 			}
 		case <-s.closed:
@@ -965,6 +1102,7 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn) {
 		s.failSSETurn(turn, apiErr)
 		return
 	}
+	turn.turnState = strings.TrimSpace(resp.Header.Get("X-Codex-Turn-State"))
 	defer service.CloseResponseBodyGracefully(resp)
 
 	terminal := false
@@ -972,6 +1110,7 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn) {
 	_, scanErr := helper.ScanSSEDataWithIdleTimeout(turn.ctx.Request.Context(), resp.Body, idleTimeout, func(data []byte) (bool, error) {
 		var finished bool
 		var successful bool
+		var clientGone bool
 
 		s.clientWriteMu.Lock()
 		s.mu.Lock()
@@ -980,6 +1119,7 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn) {
 			s.clientWriteMu.Unlock()
 			return true, nil
 		}
+		turn.collectReplayContext(data)
 		event, consumeErr := turn.accumulator.Consume(turn.ctx, turn.info, data)
 		if consumeErr != nil {
 			s.mu.Unlock()
@@ -997,22 +1137,33 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn) {
 			finished = true
 			successful = turn.accumulator.Successful()
 			if successful && turn.channel != nil {
+				s.commitReplayState(turn)
 				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 				service.RecordUpstreamAccountSuccess(common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId))
 				recordUpstreamRequestEvent(turn.ctx, "request_success", "success", "")
 				service.RecordChannelAffinity(turn.ctx, turn.channel.Id)
 			} else {
-				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, errors.New("upstream Responses SSE returned a terminal failure"))
+				terminalErr := responsesWSTerminalAPIError(turn)
+				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, terminalErr)
+				recordResponsesWSNativeFailure(turn, terminalErr)
 			}
 			turn.finish(successful)
 			s.activeTurn = nil
 		}
+		clientGone = s.clientGone
 		s.mu.Unlock()
-		writeErr := s.client.WriteMessage(websocket.TextMessage, data)
+		var writeErr error
+		if !clientGone && s.client != nil {
+			writeErr = s.client.WriteMessage(websocket.TextMessage, data)
+		}
 		s.clientWriteMu.Unlock()
 		if writeErr != nil {
-			s.close()
+			s.handleClientLoopExit()
 			return true, writeErr
+		}
+		if finished && clientGone {
+			s.close()
+			return true, nil
 		}
 		return finished, nil
 	})
@@ -1077,6 +1228,7 @@ func (s *responsesWebSocketSession) retrySSETurnWithAnotherAccount(turn *respons
 	}
 	excludedIds[accountId] = struct{}{}
 	common.SetContextKey(turn.ctx, appconstant.ContextKeyUpstreamAccountExcluded, excludedIds)
+	common.SetContextKey(turn.ctx, appconstant.ContextKeyUpstreamAccountRequiredWSMode, turn.upstreamMode)
 	if setupErr := middleware.SetupContextForSelectedChannel(turn.ctx, turn.channel, turn.info.OriginModelName); setupErr != nil {
 		return false, true
 	}
@@ -1087,6 +1239,10 @@ func (s *responsesWebSocketSession) retrySSETurnWithAnotherAccount(turn *respons
 	}
 	if turn.originalRequest != nil {
 		prepared, adaptor, prepareErr := relay.PrepareResponsesWebSocketRequest(turn.ctx, turn.info, turn.originalRequest, turn.forceSSEStream)
+		if prepareErr != nil {
+			return false, true
+		}
+		prepared, prepareErr = s.prepareReplayPayload(turn, prepared)
 		if prepareErr != nil {
 			return false, true
 		}
@@ -1119,6 +1275,9 @@ func (s *responsesWebSocketSession) finishFailedSSETurn(turn *responsesWebSocket
 	}
 	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket upstream SSE turn failed without closing downstream websocket: %v", apiErr))
 	s.sendTurnFailure(turn, apiErr)
+	if s.isClientGone() {
+		s.close()
+	}
 }
 
 func (s *responsesWebSocketSession) isCurrentUpstream(upstream *responsesWSUpstreamConnection) bool {
@@ -1164,6 +1323,9 @@ func (s *responsesWebSocketSession) handleUpstreamFailure(upstream *responsesWSU
 		logger.LogWarn(s.baseCtx, fmt.Sprintf("responses websocket upstream disconnected: %v", err))
 	}
 	if turn == nil {
+		if s.isClientGone() {
+			s.close()
+		}
 		return
 	}
 	if replay {
@@ -1176,9 +1338,14 @@ func (s *responsesWebSocketSession) handleUpstreamFailure(upstream *responsesWSU
 		logger.LogWarn(s.baseCtx, "responses websocket replay skipped because the upstream request was already acknowledged or delivered")
 	}
 	turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, err)
+	apiErr := types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses WebSocket disconnected: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+	recordResponsesWSNativeFailure(turn, apiErr)
 	turn.finish(false)
 	logger.LogWarn(s.baseCtx, "responses websocket upstream turn failed without closing downstream websocket")
-	s.sendTurnFailure(turn, types.NewErrorWithStatusCode(fmt.Errorf("upstream Responses WebSocket disconnected: %w", err), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
+	s.sendTurnFailure(turn, apiErr)
+	if s.isClientGone() {
+		s.close()
+	}
 }
 
 func isRecoverableResponsesWSDisconnect(err error) bool {
@@ -1219,6 +1386,15 @@ func (s *responsesWebSocketSession) replayTurn(turn *responsesWebSocketTurn) boo
 	outbound, reconnect, ok := turn.replaySnapshot()
 	if !ok {
 		return false
+	}
+	if turn.originalRequest != nil && strings.TrimSpace(turn.originalRequest.PreviousResponseID) != "" {
+		var err error
+		outbound, err = prepareResponsesWSStatelessReplayOutbound(turn, outbound)
+		if err != nil {
+			logger.LogWarn(s.baseCtx, "responses websocket stateless replay preparation failed: "+err.Error())
+			s.abandonReplay(turn)
+			return false
+		}
 	}
 	conn, resp, err := reconnect()
 	status := 0
@@ -1269,6 +1445,25 @@ func (s *responsesWebSocketSession) replayTurn(turn *responsesWebSocketTurn) boo
 	return true
 }
 
+func shouldRecoverResponsesWSPreviousResponse(turn *responsesWebSocketTurn) bool {
+	if turn == nil || !turn.replayEnabled || turn.replayCount != 0 || !turn.replayInputExists || turn.originalRequest == nil ||
+		strings.TrimSpace(turn.originalRequest.PreviousResponseID) == "" || turn.accumulator == nil {
+		return false
+	}
+	failure := turn.accumulator.FailureError()
+	if failure == nil {
+		return false
+	}
+	text := strings.ToLower(strings.Join([]string{
+		failure.Message, failure.Type, failure.Param, fmt.Sprint(failure.Code),
+	}, " "))
+	if !strings.Contains(text, "previous_response") {
+		return false
+	}
+	return strings.Contains(text, "not_found") || strings.Contains(text, "not found") ||
+		strings.Contains(text, "unsupported parameter") || strings.Contains(text, "only supported")
+}
+
 func (s *responsesWebSocketSession) isReplayCurrent(upstream *responsesWSUpstreamConnection, turn *responsesWebSocketTurn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1285,7 +1480,7 @@ func (s *responsesWebSocketSession) abandonReplay(turn *responsesWebSocketTurn) 
 }
 
 func (s *responsesWebSocketSession) sendError(apiErr *types.NewAPIError) {
-	if apiErr == nil || s.client == nil {
+	if apiErr == nil || s.client == nil || s.isClientGone() {
 		return
 	}
 	payload, err := common.Marshal(responsesWSErrorEvent{Type: "error", Status: apiErr.StatusCode, Error: apiErr.ToOpenAIError()})
@@ -1298,7 +1493,7 @@ func (s *responsesWebSocketSession) sendError(apiErr *types.NewAPIError) {
 }
 
 func (s *responsesWebSocketSession) sendTurnFailure(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) {
-	if turn == nil || apiErr == nil || s.client == nil {
+	if turn == nil || apiErr == nil || s.client == nil || s.isClientGone() {
 		return
 	}
 	responseID := ""
@@ -1349,6 +1544,42 @@ func (s *responsesWebSocketSession) closeWithCode(code int, reason string) {
 	_ = s.client.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(5*time.Second))
 	s.clientWriteMu.Unlock()
 	s.close()
+}
+
+func (s *responsesWebSocketSession) isClientGone() bool {
+	if s == nil {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clientGone
+}
+
+func (s *responsesWebSocketSession) handleClientLoopExit() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.clientGone {
+		drain := s.activeTurn != nil
+		s.mu.Unlock()
+		if !drain {
+			s.close()
+		}
+		return
+	}
+	s.clientGone = true
+	drain := s.activeTurn != nil
+	s.mu.Unlock()
+
+	if s.client != nil {
+		s.clientWriteMu.Lock()
+		_ = s.client.Close()
+		s.clientWriteMu.Unlock()
+	}
+	if !drain {
+		s.close()
+	}
 }
 
 func (s *responsesWebSocketSession) close() {

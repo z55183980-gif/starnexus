@@ -7,6 +7,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import {
   Card,
@@ -67,9 +68,10 @@ function formatNetworkRate(value: number): string {
 }
 
 function formatNetworkAxisRate(value: number): string {
-  if (value >= 1024 ** 2) return `${Math.round(value / 1024 ** 2)} MB`
-  if (value >= 1024) return `${Math.round(value / 1024)} KB`
-  return `${Math.round(value)} B`
+  if (value >= 1024 ** 3) return `${Math.round(value / 1024 ** 3)}G`
+  if (value >= 1024 ** 2) return `${Math.round(value / 1024 ** 2)}M`
+  if (value >= 1024) return `${Math.round(value / 1024)}K`
+  return value > 0 ? `${Math.round(value)}B` : '0'
 }
 
 function formatReportedAt(
@@ -138,13 +140,20 @@ function monitorHealthLabel(node: RoutingNode, t: (key: string) => string) {
 function ResourceUsageRing({
   percent,
   available,
+  compact = false,
 }: {
   percent: number
   available: boolean
+  compact?: boolean
 }) {
   const safePercent = Math.min(100, Math.max(0, percent))
   return (
-    <div className='relative size-16 shrink-0'>
+    <div
+      className={cn(
+        'relative shrink-0',
+        compact ? 'size-12' : 'size-16'
+      )}
+    >
       <svg
         viewBox='0 0 64 64'
         className='size-full -rotate-90'
@@ -174,7 +183,9 @@ function ResourceUsageRing({
       <div className='absolute inset-0 flex items-center justify-center font-semibold tabular-nums'>
         {available ? (
           <>
-            <span className='text-lg'>{Math.round(safePercent)}</span>
+            <span className={cn(compact ? 'text-base' : 'text-lg')}>
+              {Math.round(safePercent)}
+            </span>
             <span className='text-chart-2 text-[10px]'>%</span>
           </>
         ) : (
@@ -185,7 +196,13 @@ function ResourceUsageRing({
   )
 }
 
-export function RoutingNodeResourceOverview({ node }: { node: RoutingNode }) {
+export function RoutingNodeResourceOverview({
+  node,
+  compact = false,
+}: {
+  node: RoutingNode
+  compact?: boolean
+}) {
   const { t } = useTranslation()
   const status = node.monitor_status
   const resources = [
@@ -221,18 +238,27 @@ export function RoutingNodeResourceOverview({ node }: { node: RoutingNode }) {
         <Item
           key={resource.label}
           variant='muted'
-          size='sm'
-          className='bg-background/55 min-h-24 flex-nowrap justify-between'
+          size={compact ? 'xs' : 'sm'}
+          className={cn(
+            'bg-background/55 flex-nowrap justify-between',
+            compact ? 'min-h-16 px-3 py-2' : 'min-h-24'
+          )}
         >
           <ItemContent className='min-w-0'>
             <ItemDescription>{resource.label}</ItemDescription>
-            <ItemTitle className='w-full text-base tabular-nums'>
+            <ItemTitle
+              className={cn(
+                'w-full tabular-nums',
+                compact ? 'text-sm' : 'text-base'
+              )}
+            >
               {resource.value}
             </ItemTitle>
           </ItemContent>
           <ResourceUsageRing
             percent={resource.percent}
             available={Boolean(status)}
+            compact={compact}
           />
         </Item>
       ))}
@@ -342,7 +368,13 @@ export function RoutingNodeDatabaseOverview({ node }: { node: RoutingNode }) {
   )
 }
 
-export function RoutingNodeNetworkTraffic({ node }: { node: RoutingNode }) {
+export function RoutingNodeNetworkTraffic({
+  node,
+  compact = false,
+}: {
+  node: RoutingNode
+  compact?: boolean
+}) {
   const { t } = useTranslation()
   const status = node.monitor_status
   const samples = status?.network_samples ?? []
@@ -392,7 +424,9 @@ export function RoutingNodeNetworkTraffic({ node }: { node: RoutingNode }) {
         </div>
       </div>
 
-      <div className='grid grid-cols-2 gap-2'>
+      <div
+        className={cn('grid gap-2', compact ? 'grid-cols-4' : 'grid-cols-2')}
+      >
         {summary.map((item) => (
           <Item key={item.label} variant='muted' size='xs'>
             <ItemContent>
@@ -414,7 +448,7 @@ export function RoutingNodeNetworkTraffic({ node }: { node: RoutingNode }) {
           <AreaChart
             accessibilityLayer
             data={samples}
-            margin={{ top: 8, right: 4, bottom: 0, left: 0 }}
+            margin={{ top: 12, right: 6, bottom: 0, left: 4 }}
           >
             <defs>
               <linearGradient
@@ -470,7 +504,8 @@ export function RoutingNodeNetworkTraffic({ node }: { node: RoutingNode }) {
             <YAxis
               axisLine={false}
               tickLine={false}
-              width={42}
+              width={40}
+              tickMargin={6}
               tickFormatter={formatNetworkAxisRate}
             />
             <ChartTooltip

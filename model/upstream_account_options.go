@@ -54,6 +54,130 @@ func ParseUpstreamAccountOptions(extra string) (UpstreamAccountOptions, error) {
 	return options, nil
 }
 
+// ParseUpstreamAccountOptionsWithCredentials reads the credential-backed
+// account settings used by sub2api while retaining support for older
+// StarNexus records that stored the same settings in extra.
+func ParseUpstreamAccountOptionsWithCredentials(extra string, credentials map[string]any) (UpstreamAccountOptions, error) {
+	options, err := ParseUpstreamAccountOptions(extra)
+	if err != nil {
+		return UpstreamAccountOptions{}, err
+	}
+	if len(credentials) == 0 {
+		return options, nil
+	}
+	if raw, ok := credentials["intercept_warmup_requests"]; ok {
+		if raw == nil {
+			options.InterceptWarmupRequests = false
+		} else {
+			enabled, valid := raw.(bool)
+			if !valid {
+				return UpstreamAccountOptions{}, errors.New("intercept_warmup_requests must be a boolean")
+			}
+			options.InterceptWarmupRequests = enabled
+		}
+	}
+	if raw, ok := credentials["compact_model_mapping"]; ok {
+		if raw == nil {
+			options.CompactModelMapping = nil
+		} else {
+			mapping, parseErr := parseUpstreamStringMapping(raw)
+			if parseErr != nil {
+				return UpstreamAccountOptions{}, errors.New("compact_model_mapping must contain string model pairs")
+			}
+			options.CompactModelMapping = mapping
+		}
+	}
+	if raw, ok := credentials["openai_capabilities"]; ok {
+		if raw == nil {
+			options.OpenAIEndpointCapabilities = nil
+		} else {
+			capabilities, parseErr := parseOpenAIEndpointCapabilities(raw)
+			if parseErr != nil {
+				return UpstreamAccountOptions{}, errors.New("openai_capabilities must be a string array or boolean map")
+			}
+			options.OpenAIEndpointCapabilities = capabilities
+		}
+	}
+	return options, nil
+}
+
+func parseUpstreamStringMapping(raw any) (map[string]string, error) {
+	result := map[string]string{}
+	switch mapping := raw.(type) {
+	case map[string]string:
+		for source, target := range mapping {
+			source = strings.TrimSpace(source)
+			target = strings.TrimSpace(target)
+			if source == "" || target == "" {
+				return nil, errors.New("mapping entries require source and target models")
+			}
+			result[source] = target
+		}
+	case map[string]any:
+		for source, value := range mapping {
+			target, ok := value.(string)
+			source = strings.TrimSpace(source)
+			target = strings.TrimSpace(target)
+			if !ok || source == "" || target == "" {
+				return nil, errors.New("mapping entries require string source and target models")
+			}
+			result[source] = target
+		}
+	default:
+		return nil, errors.New("mapping must be an object")
+	}
+	return result, nil
+}
+
+func parseOpenAIEndpointCapabilities(raw any) ([]string, error) {
+	selected := map[string]bool{}
+	add := func(value string) {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "chat_completions" || value == "embeddings" {
+			selected[value] = true
+		}
+	}
+	switch capabilities := raw.(type) {
+	case []string:
+		for _, value := range capabilities {
+			add(value)
+		}
+	case []any:
+		for _, item := range capabilities {
+			value, ok := item.(string)
+			if !ok {
+				return nil, errors.New("capability entries must be strings")
+			}
+			add(value)
+		}
+	case map[string]bool:
+		for value, enabled := range capabilities {
+			if enabled {
+				add(value)
+			}
+		}
+	case map[string]any:
+		for value, rawEnabled := range capabilities {
+			enabled, ok := rawEnabled.(bool)
+			if !ok {
+				return nil, errors.New("capability map values must be booleans")
+			}
+			if enabled {
+				add(value)
+			}
+		}
+	default:
+		return nil, errors.New("capabilities must be an array or object")
+	}
+	result := make([]string, 0, 2)
+	for _, capability := range []string{"chat_completions", "embeddings"} {
+		if selected[capability] {
+			result = append(result, capability)
+		}
+	}
+	return result, nil
+}
+
 func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 	options, err := ParseUpstreamAccountOptions(account.Extra)
 	if err != nil {

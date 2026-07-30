@@ -17,17 +17,21 @@ import (
 )
 
 type UpstreamAccountSelectionRequest struct {
-	PoolId              int
-	ChannelType         int
-	AllowedAccountTypes []string
-	Model               string
-	RequestPath         string
-	CompactRequest      bool
-	CodexClient         bool
-	CodexAppServer      bool
-	ChannelProxy        string
-	ExcludedIds         map[int]struct{}
-	RequestId           string
+	PoolId                int
+	ChannelType           int
+	AllowedAccountTypes   []string
+	Model                 string
+	RequestPath           string
+	CompactRequest        bool
+	CodexClient           bool
+	CodexAppServer        bool
+	ChannelProxy          string
+	ExcludedIds           map[int]struct{}
+	RequestId             string
+	ResponsesWebSocket    bool
+	PreferredAccountId    int
+	RequirePreferred      bool
+	RequiredWebSocketMode string
 }
 
 type UpstreamAccountSelection struct {
@@ -167,13 +171,18 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 				exclusions["credential_invalid"]++
 				continue
 			}
-			options, optionsErr := model.ParseUpstreamAccountOptions(candidate.account.Extra)
+			options, optionsErr := model.ParseUpstreamAccountOptionsWithCredentials(candidate.account.Extra, credentials)
 			if optionsErr != nil {
 				_ = lease.Release(context.Background())
 				exclusions["option_invalid"]++
 				continue
 			}
-			mappedModel, modelMapped, modelSupported := resolveUpstreamAccountModel(credentials, options, request.Model, request.CompactRequest, schedulerConfig.DefaultMappedModel)
+			if candidate.account.Platform == constant.UpstreamPlatformOpenAI && !options.SupportsOpenAIEndpoint(request.RequestPath) {
+				_ = lease.Release(context.Background())
+				exclusions["endpoint_unsupported"]++
+				continue
+			}
+			mappedModel, modelMapped, modelSupported := resolveUpstreamAccountModel(&candidate.account, credentials, options, request.Model, request.CompactRequest, schedulerConfig.DefaultMappedModel)
 			if !modelSupported {
 				_ = lease.Release(context.Background())
 				exclusions["model_unsupported"]++
@@ -299,8 +308,14 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 			exclusions["option_invalid"]++
 			continue
 		}
-		if account.Platform == constant.UpstreamPlatformOpenAI && !options.SupportsOpenAIEndpoint(request.RequestPath) {
-			exclusions["endpoint_unsupported"]++
+		if request.ResponsesWebSocket && account.Platform == constant.UpstreamPlatformOpenAI &&
+			options.OpenAIWSMode(account.Type) == model.UpstreamOpenAIWSModeOff {
+			exclusions["websocket_disabled"]++
+			continue
+		}
+		if requiredMode := strings.TrimSpace(request.RequiredWebSocketMode); requiredMode != "" &&
+			account.Platform == constant.UpstreamPlatformOpenAI && options.OpenAIWSMode(account.Type) != requiredMode {
+			exclusions["websocket_mode_mismatch"]++
 			continue
 		}
 		if request.CompactRequest && account.Platform == constant.UpstreamPlatformOpenAI && !options.AllowsOpenAICompact() {
@@ -347,6 +362,19 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 	if routed := routedUpstreamCandidates(pool, schedulerConfig, request.Model, candidates); len(routed) > 0 {
 		exclusions["outside_model_route"] += len(candidates) - len(routed)
 		candidates = routed
+	}
+	// A continued native WebSocket must stay on the same account, but the
+	// preferred account must still be eligible for the configured model route.
+	if request.PreferredAccountId > 0 {
+		for _, candidate := range candidates {
+			if candidate.account.Id == request.PreferredAccountId {
+				return []upstreamAccountCandidate{candidate}, exclusions, nil
+			}
+		}
+		if request.RequirePreferred {
+			exclusions["preferred_account_unavailable"]++
+			return nil, exclusions, nil
+		}
 	}
 	bestPriority := candidates[0].membershipPriority
 	for _, candidate := range candidates[1:] {
@@ -416,7 +444,7 @@ func upstreamAccountSupportsModel(extra string, modelName string) (bool, error) 
 	return false, nil
 }
 
-func resolveUpstreamAccountModel(credentials map[string]any, options model.UpstreamAccountOptions, requestedModel string, compactRequest bool, defaultMappedModel string) (string, bool, bool) {
+func resolveUpstreamAccountModel(account *model.UpstreamAccount, credentials map[string]any, options model.UpstreamAccountOptions, requestedModel string, compactRequest bool, defaultMappedModel string) (string, bool, bool) {
 	requestedModel = strings.TrimSpace(requestedModel)
 	if compactRequest {
 		if mappedModel, matched := resolveUpstreamAccountModelMapping(options.CompactModelMapping, requestedModel); matched {
@@ -428,6 +456,10 @@ func resolveUpstreamAccountModel(credentials map[string]any, options model.Upstr
 		return requestedModel, false, true
 	}
 	if len(mapping) == 0 {
+		if account != nil && account.Platform == constant.UpstreamPlatformOpenAI && account.Type == constant.UpstreamAccountTypeOAuth &&
+			!options.OpenAIPassthrough && !isOpenAIOAuthServableModel(requestedModel) {
+			return requestedModel, false, false
+		}
 		if isClaudeMessagesDispatchModel(requestedModel) && strings.TrimSpace(defaultMappedModel) != "" {
 			return strings.TrimSpace(defaultMappedModel), true, true
 		}
@@ -440,6 +472,29 @@ func resolveUpstreamAccountModel(credentials map[string]any, options model.Upstr
 		return strings.TrimSpace(defaultMappedModel), true, true
 	}
 	return requestedModel, false, false
+}
+
+var openAIOAuthForeignModelPrefixes = []string{
+	"deepseek-", "glm-", "kimi-", "moonshot-", "qwen-", "qwen2-", "qwen3-", "qwen4-", "qwq-",
+	"minimax-", "gemini-", "gemma-", "grok-", "doubao-", "hunyuan-", "llama-", "llama2-", "llama3-",
+	"meta-llama", "mistral-", "mixtral-", "baichuan-", "ernie-", "step-", "seed-", "yi-",
+}
+
+func isOpenAIOAuthServableModel(requestedModel string) bool {
+	modelName := strings.TrimSpace(requestedModel)
+	if separator := strings.LastIndex(modelName, "/"); separator >= 0 {
+		modelName = modelName[separator+1:]
+	}
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	if modelName == "" {
+		return true
+	}
+	for _, prefix := range openAIOAuthForeignModelPrefixes {
+		if strings.HasPrefix(modelName, prefix) {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveUpstreamAccountModelMapping(mapping map[string]string, requestedModel string) (string, bool) {

@@ -55,6 +55,33 @@ func TestResponsesEventAccumulatorErrorIsTerminal(t *testing.T) {
 	require.True(t, accumulator.Terminal())
 	require.True(t, accumulator.Failed())
 	require.False(t, accumulator.Successful())
+	require.Equal(t, "failed", accumulator.FailureError().Message)
+	require.Equal(t, "error", accumulator.TerminalEventType())
+}
+
+func TestResponsesEventAccumulatorTerminalVariants(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	tests := []struct {
+		event      string
+		successful bool
+	}{
+		{event: "response.done", successful: true},
+		{event: "response.cancelled", successful: false},
+		{event: "response.canceled", successful: false},
+	}
+	for _, test := range tests {
+		t.Run(test.event, func(t *testing.T) {
+			accumulator := NewResponsesEventAccumulator()
+			_, err := accumulator.Consume(ctx, &relaycommon.RelayInfo{}, []byte(`{"type":"`+test.event+`","response":{"id":"resp_variant"}}`))
+			require.NoError(t, err)
+			require.True(t, accumulator.Terminal())
+			require.Equal(t, test.successful, accumulator.Successful())
+			require.Equal(t, !test.successful, accumulator.Failed())
+			require.Equal(t, test.event, accumulator.TerminalEventType())
+		})
+	}
 }
 
 func TestResponsesEventAccumulatorCapturesCreatedResponseID(t *testing.T) {

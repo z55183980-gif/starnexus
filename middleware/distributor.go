@@ -530,6 +530,10 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		), Model: selectionModel, RequestPath: c.Request.URL.Path, CompactRequest: compactRequest,
 		CodexClient: codexClient, CodexAppServer: codexAppServer,
 		ChannelProxy: setting.Proxy, RequestId: c.GetString(common.RequestIdKey), ExcludedIds: excludedIds,
+		ResponsesWebSocket:    common.GetContextKeyBool(c, constant.ContextKeyResponsesWebSocketIngress),
+		PreferredAccountId:    common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountPreferredId),
+		RequirePreferred:      common.GetContextKeyBool(c, constant.ContextKeyUpstreamAccountPreferredRequired),
+		RequiredWebSocketMode: common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountRequiredWSMode),
 	})
 	if err != nil {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
@@ -539,7 +543,7 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		_ = selection.Release(context.Background())
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
-	options, err := model.ParseUpstreamAccountOptions(selection.Account.Extra)
+	options, err := model.ParseUpstreamAccountOptionsWithCredentials(selection.Account.Extra, selection.Credentials)
 	if err != nil {
 		_ = selection.Release(context.Background())
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
@@ -557,7 +561,7 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 	otherSettings, _ := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
 	switch effectiveChannelType {
 	case constant.ChannelTypeAws:
-		if strings.EqualFold(upstreamCredentialString(selection.Credentials, "auth_mode"), "api_key") {
+		if isUpstreamBedrockAPIKeyMode(selection.Credentials) {
 			otherSettings.AwsKeyType = dto.AwsKeyTypeApiKey
 		} else {
 			otherSettings.AwsKeyType = dto.AwsKeyTypeAKSK
@@ -675,7 +679,7 @@ func localUpstreamChannelKey(platform string, accountType string, credentials ma
 		return key, nil
 	case platform == constant.UpstreamPlatformAnthropic && accountType == constant.UpstreamAccountTypeBedrock:
 		region := upstreamCredentialString(credentials, "aws_region")
-		if strings.EqualFold(upstreamCredentialString(credentials, "auth_mode"), "api_key") {
+		if isUpstreamBedrockAPIKeyMode(credentials) {
 			key := upstreamCredentialString(credentials, "api_key")
 			if key == "" || region == "" {
 				return "", errors.New("local Bedrock API key credential is incomplete")
@@ -769,6 +773,11 @@ func upstreamCredentialString(credentials map[string]any, key string) string {
 	return strings.TrimSpace(fmt.Sprintf("%v", value))
 }
 
+func isUpstreamBedrockAPIKeyMode(credentials map[string]any) bool {
+	mode := strings.ToLower(upstreamCredentialString(credentials, "auth_mode"))
+	return mode == "apikey" || mode == "api_key"
+}
+
 // SelectChannelForModel selects and initializes a channel without reading an
 // HTTP request body. It is used by protocols whose model arrives after the
 // initial HTTP handshake, such as Responses WebSocket v2.
@@ -821,23 +830,48 @@ func SelectChannelForModelFiltered(c *gin.Context, modelName string, filter func
 	} else {
 		usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
 		selectGroup := usingGroup
-		if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
-			preferred, err := model.CacheGetChannel(preferredChannelID)
-			if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled && (filter == nil || filter(preferred)) {
-				if usingGroup == "auto" {
-					userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
-					for _, group := range service.GetUserAutoGroup(userGroup) {
-						if model.IsChannelEnabledForGroupModel(group, modelName, preferred.Id) {
-							selectGroup = group
-							common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
-							channel = preferred
-							service.MarkChannelAffinityUsed(c, group, preferred.Id)
-							break
-						}
+		continuationChannelID := common.GetContextKeyInt(c, constant.ContextKeyResponsesWebSocketPreferredChannelId)
+		if continuationChannelID > 0 {
+			preferred, err := model.CacheGetChannel(continuationChannelID)
+			if err != nil || preferred == nil || preferred.Status != common.ChannelStatusEnabled || (filter != nil && !filter(preferred)) {
+				return nil, types.NewErrorWithStatusCode(errors.New("Responses WebSocket continuation channel is unavailable"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+			if usingGroup == "auto" {
+				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+				for _, group := range service.GetUserAutoGroup(userGroup) {
+					if model.IsChannelEnabledForGroupModel(group, modelName, preferred.Id) {
+						selectGroup = group
+						common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+						channel = preferred
+						break
 					}
-				} else if model.IsChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
-					channel = preferred
-					service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+				}
+			} else if model.IsChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
+				channel = preferred
+			}
+			if channel == nil {
+				return nil, types.NewErrorWithStatusCode(errors.New("Responses WebSocket continuation channel no longer serves this model and group"), types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+			}
+		}
+		if channel == nil {
+			if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelName, usingGroup); found {
+				preferred, err := model.CacheGetChannel(preferredChannelID)
+				if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled && (filter == nil || filter(preferred)) {
+					if usingGroup == "auto" {
+						userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+						for _, group := range service.GetUserAutoGroup(userGroup) {
+							if model.IsChannelEnabledForGroupModel(group, modelName, preferred.Id) {
+								selectGroup = group
+								common.SetContextKey(c, constant.ContextKeyAutoGroup, group)
+								channel = preferred
+								service.MarkChannelAffinityUsed(c, group, preferred.Id)
+								break
+							}
+						}
+					} else if model.IsChannelEnabledForGroupModel(usingGroup, modelName, preferred.Id) {
+						channel = preferred
+						service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
+					}
 				}
 			}
 		}

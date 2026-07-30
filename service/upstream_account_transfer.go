@@ -185,6 +185,7 @@ func ExportUpstreamAccounts(ids []int) (*UpstreamAccountExport, error) {
 		if err := common.UnmarshalJsonStr(account.Extra, &extra); err != nil {
 			return nil, fmt.Errorf("parse upstream account %d extra: %w", account.Id, err)
 		}
+		normalizeSub2CredentialBackedOptions(credentials, extra)
 		var proxyKey *string
 		if account.ProxyId != nil {
 			if key, ok := proxyKeyById[*account.ProxyId]; ok {
@@ -311,6 +312,20 @@ func ImportUpstreamData(payload UpstreamAccountExport) (*UpstreamDataImportResul
 			result.Errors = append(result.Errors, UpstreamDataImportError{Kind: "account", Name: item.Name, Message: err.Error()})
 			continue
 		}
+		var extraObject map[string]any
+		if err := common.UnmarshalJsonStr(extra, &extraObject); err != nil {
+			result.AccountFailed++
+			result.Errors = append(result.Errors, UpstreamDataImportError{Kind: "account", Name: item.Name, Message: err.Error()})
+			continue
+		}
+		normalizeSub2CredentialBackedOptions(credentials, extraObject)
+		extraRaw, err := common.Marshal(extraObject)
+		if err != nil {
+			result.AccountFailed++
+			result.Errors = append(result.Errors, UpstreamDataImportError{Kind: "account", Name: item.Name, Message: err.Error()})
+			continue
+		}
+		extra = string(extraRaw)
 		proxyId := item.ProxyId
 		if item.ProxyKey != nil && strings.TrimSpace(*item.ProxyKey) != "" {
 			mappedId, ok := proxyKeyToId[strings.TrimSpace(*item.ProxyKey)]
@@ -409,6 +424,23 @@ func normalizeUpstreamDataExtra(value any) (string, error) {
 		return "", errors.New("account extra must be a JSON object")
 	}
 	return string(raw), nil
+}
+
+func normalizeSub2CredentialBackedOptions(credentials map[string]any, extra map[string]any) {
+	if credentials == nil || extra == nil {
+		return
+	}
+	for _, key := range []string{"intercept_warmup_requests", "compact_model_mapping", "openai_capabilities"} {
+		if _, exists := credentials[key]; !exists {
+			if value, ok := extra[key]; ok {
+				credentials[key] = value
+			}
+		}
+		delete(extra, key)
+	}
+	if mode := strings.ToLower(strings.TrimSpace(upstreamDataCredentialString(credentials, "auth_mode"))); mode == "api_key" {
+		credentials["auth_mode"] = "apikey"
+	}
 }
 
 type CRSSyncInput struct {
@@ -722,6 +754,7 @@ func syncCRSAccount(source crsAccount, existing *model.UpstreamAccount, syncProx
 		_ = common.UnmarshalJsonStr(existing.Extra, &extra)
 	}
 	extra = mergeAnyMap(extra, source.Extra)
+	normalizeSub2CredentialBackedOptions(credentials, extra)
 	extra["crs_account_id"] = source.ID
 	extra["crs_kind"] = source.Kind
 	extra["crs_synced_at"] = time.Now().UTC().Format(time.RFC3339)

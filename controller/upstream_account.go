@@ -31,6 +31,7 @@ type upstreamAccountRequest struct {
 	Platform           *string                   `json:"platform"`
 	Type               *string                   `json:"type"`
 	Credentials        *map[string]any           `json:"credentials"`
+	CredentialPatch    *map[string]any           `json:"credential_patch"`
 	Extra              *string                   `json:"extra"`
 	ProxyId            optionalNullable[int]     `json:"proxy_id"`
 	Concurrency        *int                      `json:"concurrency"`
@@ -57,6 +58,14 @@ type upstreamProxyRequest struct {
 	FallbackMode   *string                         `json:"fallback_mode"`
 	BackupProxyId  optionalNullable[int]           `json:"backup_proxy_id"`
 	ExpiryWarnDays *int                            `json:"expiry_warn_days"`
+}
+
+type upstreamScheduledTestPlanRequest struct {
+	Name            *string `json:"name"`
+	Model           *string `json:"model"`
+	IntervalMinutes *int    `json:"interval_minutes"`
+	Enabled         *bool   `json:"enabled"`
+	AutoRecover     *bool   `json:"auto_recover"`
 }
 
 type optionalNullable[T any] struct {
@@ -310,7 +319,10 @@ func GetUpstreamAccountQuota(c *gin.Context) {
 	if !ok {
 		return
 	}
-	usage, err := service.QueryUpstreamAccountQuota(c.Request.Context(), id)
+	usage, err := service.QueryUpstreamAccountQuota(c.Request.Context(), id, service.UpstreamAccountQuotaQueryOptions{
+		Force:          strings.EqualFold(strings.TrimSpace(c.Query("force")), "true"),
+		IncludeCredits: !strings.EqualFold(strings.TrimSpace(c.Query("include_credits")), "false"),
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -330,6 +342,117 @@ func ResetUpstreamAccountQuota(c *gin.Context) {
 	}
 	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("reset upstream account %d quota", id))
 	common.ApiSuccess(c, result)
+}
+
+func GetUpstreamAccountStats(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	stats, err := service.GetUpstreamAccountStats(id, queryPositiveInt(c, "days"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stats)
+}
+
+func ListUpstreamAccountScheduledTestPlans(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	plans, err := service.ListUpstreamAccountScheduledTestPlans(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, plans)
+}
+
+func CreateUpstreamAccountScheduledTestPlan(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	var request upstreamScheduledTestPlanRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	plan := model.UpstreamAccountScheduledTestPlan{
+		AccountId: id, Name: stringValue(request.Name, "Scheduled test"), Model: stringValue(request.Model, ""),
+		IntervalMinutes: 60, Enabled: true, AutoRecover: true,
+	}
+	applyScheduledTestPlanRequest(&plan, request)
+	if err := service.CreateUpstreamAccountScheduledTestPlan(&plan); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("created upstream account %d scheduled test plan %d", id, plan.Id))
+	common.ApiSuccess(c, plan)
+}
+
+func UpdateUpstreamAccountScheduledTestPlan(c *gin.Context) {
+	accountId, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	planId, ok := positiveNamedPathId(c, "planId")
+	if !ok {
+		return
+	}
+	var request upstreamScheduledTestPlanRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	plan, err := service.GetUpstreamAccountScheduledTestPlan(accountId, planId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	applyScheduledTestPlanRequest(plan, request)
+	if err := service.UpdateUpstreamAccountScheduledTestPlan(plan); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("updated upstream account %d scheduled test plan %d", accountId, planId))
+	common.ApiSuccess(c, plan)
+}
+
+func DeleteUpstreamAccountScheduledTestPlan(c *gin.Context) {
+	accountId, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	planId, ok := positiveNamedPathId(c, "planId")
+	if !ok {
+		return
+	}
+	if err := service.DeleteUpstreamAccountScheduledTestPlan(accountId, planId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("deleted upstream account %d scheduled test plan %d", accountId, planId))
+	common.ApiSuccess(c, nil)
+}
+
+func ListUpstreamAccountScheduledTestResults(c *gin.Context) {
+	accountId, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	planId, ok := positiveNamedPathId(c, "planId")
+	if !ok {
+		return
+	}
+	results, err := service.ListUpstreamAccountScheduledTestResults(accountId, planId)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, results)
 }
 
 func CreateUpstreamAccount(c *gin.Context) {
@@ -375,7 +498,7 @@ func UpdateUpstreamAccount(c *gin.Context) {
 	}
 	account := current.UpstreamAccount
 	applyAccountRequest(&account, request)
-	if err := service.UpdateUpstreamAccount(&service.UpstreamAccountUpdateInput{Account: account, Credentials: request.Credentials, PoolIds: request.PoolIds}); err != nil {
+	if err := service.UpdateUpstreamAccount(&service.UpstreamAccountUpdateInput{Account: account, Credentials: request.Credentials, CredentialPatch: request.CredentialPatch, PoolIds: request.PoolIds}); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -498,7 +621,7 @@ func UpdateUpstreamAccountsBatch(c *gin.Context) {
 		}
 		account := current.UpstreamAccount
 		applyAccountRequest(&account, request.Patch)
-		err = service.UpdateUpstreamAccount(&service.UpstreamAccountUpdateInput{Account: account, Credentials: request.Patch.Credentials, PoolIds: request.Patch.PoolIds})
+		err = service.UpdateUpstreamAccount(&service.UpstreamAccountUpdateInput{Account: account, Credentials: request.Patch.Credentials, CredentialPatch: request.Patch.CredentialPatch, PoolIds: request.Patch.PoolIds})
 		if err != nil {
 			result.Failures = append(result.Failures, upstreamBatchFailure{Id: id, Message: err.Error()})
 			continue
@@ -956,6 +1079,24 @@ func applyProxyRequest(proxy *model.UpstreamProxy, request upstreamProxyRequest)
 	}
 }
 
+func applyScheduledTestPlanRequest(plan *model.UpstreamAccountScheduledTestPlan, request upstreamScheduledTestPlanRequest) {
+	if request.Name != nil {
+		plan.Name = *request.Name
+	}
+	if request.Model != nil {
+		plan.Model = *request.Model
+	}
+	if request.IntervalMinutes != nil {
+		plan.IntervalMinutes = *request.IntervalMinutes
+	}
+	if request.Enabled != nil {
+		plan.Enabled = *request.Enabled
+	}
+	if request.AutoRecover != nil {
+		plan.AutoRecover = *request.AutoRecover
+	}
+}
+
 func stringValue(value *string, fallback string) string {
 	if value == nil {
 		return fallback
@@ -978,7 +1119,11 @@ func optionalPositiveId(value optionalNullable[int]) *int {
 }
 
 func positivePathId(c *gin.Context) (int, bool) {
-	id, err := strconv.Atoi(c.Param("id"))
+	return positiveNamedPathId(c, "id")
+}
+
+func positiveNamedPathId(c *gin.Context, name string) (int, bool) {
+	id, err := strconv.Atoi(c.Param(name))
 	if err != nil || id <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return 0, false

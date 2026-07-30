@@ -24,6 +24,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -51,9 +52,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import {
+  AccountModelRestriction,
+  splitAccountModelMapping,
+  type AccountModelMapping,
+  type AccountModelRestrictionMode,
+} from './account-model-restriction'
 import {
   completeUpstreamOAuth,
   createUpstreamAccount,
@@ -132,6 +140,9 @@ type AccountDraft = {
   openaiEndpointCapabilities: OpenAIEndpointCapability[]
   anthropicPassthrough: boolean
   anthropicAPIKeyAuthScheme: AnthropicAPIKeyAuthScheme
+  modelRestrictionMode: AccountModelRestrictionMode
+  allowedModels: string[]
+  modelMappings: AccountModelMapping[]
 }
 
 const defaultOpenAIEndpointCapabilities: OpenAIEndpointCapability[] = [
@@ -158,9 +169,11 @@ function timestampToLocalInput(timestamp?: number | null) {
   return localDate.toISOString().slice(0, 16)
 }
 
-function compactMappingsFromExtra(extra: AccountExtra): ModelMapping[] {
-  if (!extra.compact_model_mapping) return []
-  return Object.entries(extra.compact_model_mapping).map(([from, to]) => ({
+function compactMappingsFromMap(
+  mapping?: Record<string, string>
+): ModelMapping[] {
+  if (!mapping) return []
+  return Object.entries(mapping).map(([from, to]) => ({
     from,
     to,
   }))
@@ -168,6 +181,8 @@ function compactMappingsFromExtra(extra: AccountExtra): ModelMapping[] {
 
 function accountDraft(account?: UpstreamAccount | null): AccountDraft {
   const extra = parseAccountExtra(account?.extra)
+  const metadata = account?.metadata
+  const modelRestriction = splitAccountModelMapping(metadata?.model_mapping)
   const websocketMode =
     account?.type === 'apikey'
       ? extra.openai_apikey_responses_websockets_v2_mode
@@ -178,7 +193,7 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
     platform: account?.platform ?? 'openai',
     type: account?.type ?? 'oauth',
     apiKey: '',
-    baseUrl: '',
+    baseUrl: metadata?.base_url ?? '',
     oauthInput: '',
     proxyId: account?.proxy_id ? String(account.proxy_id) : '',
     concurrency: String(account?.concurrency ?? 1),
@@ -199,15 +214,21 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
     schedulable: account?.schedulable ?? true,
     starnexusOwnsOAuthRefresh: account?.oauth_refresh_owner !== 'external',
     poolIds: account?.pool_ids ?? [],
-    bedrockAuthMode: 'sigv4',
-    bedrockRegion: 'us-east-1',
-    bedrockAccessKeyId: '',
+    bedrockAuthMode:
+      metadata?.bedrock_auth_mode === 'apikey' ||
+      metadata?.bedrock_auth_mode === 'api_key'
+        ? 'api_key'
+        : 'sigv4',
+    bedrockRegion: metadata?.aws_region || 'us-east-1',
+    bedrockAccessKeyId: metadata?.aws_access_key_id || '',
     bedrockSecretAccessKey: '',
     bedrockSessionToken: '',
     bedrockApiKey: '',
     vertexServiceAccountJson: '',
-    vertexLocation: 'global',
-    interceptWarmupRequests: extra.intercept_warmup_requests === true,
+    vertexLocation: metadata?.vertex_location || 'global',
+    interceptWarmupRequests:
+      metadata?.intercept_warmup_requests ??
+      extra.intercept_warmup_requests === true,
     openaiPassthrough: extra.openai_passthrough === true,
     openaiWebSocketMode: websocketMode || 'off',
     openaiLongContextBilling:
@@ -215,14 +236,25 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
     codexCLIOnly: extra.codex_cli_only === true,
     codexCLIOnlyAllowAppServer: extra.codex_cli_only_allow_app_server === true,
     openaiCompactMode: extra.openai_compact_mode || 'auto',
-    compactModelMappings: compactMappingsFromExtra(extra),
+    compactModelMappings: compactMappingsFromMap(
+      metadata?.compact_model_mapping || extra.compact_model_mapping
+    ),
     openaiResponsesMode: extra.openai_responses_mode || 'auto',
-    openaiEndpointCapabilities: extra.openai_capabilities?.length
-      ? extra.openai_capabilities
-      : [...defaultOpenAIEndpointCapabilities],
+    openaiEndpointCapabilities: metadata?.openai_capabilities?.length
+      ? (metadata.openai_capabilities as OpenAIEndpointCapability[])
+      : extra.openai_capabilities?.length
+        ? extra.openai_capabilities
+        : [...defaultOpenAIEndpointCapabilities],
     anthropicPassthrough: extra.anthropic_passthrough === true,
     anthropicAPIKeyAuthScheme:
       extra.anthropic_apikey_auth_scheme || 'x_api_key',
+    modelRestrictionMode:
+      modelRestriction.modelMappings.length > 0 &&
+      modelRestriction.allowedModels.length === 0
+        ? 'mapping'
+        : 'whitelist',
+    allowedModels: modelRestriction.allowedModels,
+    modelMappings: modelRestriction.modelMappings,
   }
 }
 
@@ -372,7 +404,7 @@ export function AccountDialog({
     setStep(2)
   }
 
-  const buildCredentialPayload = (): Record<string, string> | undefined => {
+  const buildCredentialPayload = (): Record<string, unknown> | undefined => {
     if (draft.type === 'apikey') {
       if (!draft.apiKey.trim()) return undefined
       const credentials: Record<string, string> = {
@@ -387,7 +419,7 @@ export function AccountDialog({
       if (draft.bedrockAuthMode === 'api_key') {
         if (!draft.bedrockApiKey.trim()) return undefined
         return {
-          auth_mode: 'api_key',
+          auth_mode: 'apikey',
           aws_region: region,
           api_key: draft.bedrockApiKey.trim(),
         }
@@ -440,10 +472,162 @@ export function AccountDialog({
     return undefined
   }
 
+  const buildModelRestrictionMapping = () => {
+    const mapping: Record<string, string> = {}
+    for (const rawModel of draft.allowedModels) {
+      const model = rawModel.trim()
+      if (model && !model.includes('*')) mapping[model] = model
+    }
+    for (const row of draft.modelMappings) {
+      const from = row.from.trim()
+      const to = row.to.trim()
+      if (!from && !to) continue
+      if (!from || !to) {
+        throw new Error(t('Model mappings require both model names'))
+      }
+      const wildcardIndex = from.indexOf('*')
+      if (
+        wildcardIndex >= 0 &&
+        (wildcardIndex !== from.length - 1 ||
+          from.lastIndexOf('*') !== wildcardIndex)
+      ) {
+        throw new Error(t('A wildcard can only appear once at the end'))
+      }
+      if (to.includes('*')) {
+        throw new Error(t('Target models cannot contain wildcards'))
+      }
+      mapping[from] = to
+    }
+    return Object.keys(mapping).length > 0 ? mapping : null
+  }
+
+  const buildCompactModelMapping = () => {
+    const mapping: Record<string, string> = {}
+    for (const row of draft.compactModelMappings) {
+      const from = row.from.trim()
+      const to = row.to.trim()
+      if (!from && !to) continue
+      if (!from || !to) {
+        throw new Error(t('Compact model mappings require both models'))
+      }
+      if (mapping[from]) {
+        throw new Error(t('Compact model mapping sources must be unique'))
+      }
+      mapping[from] = to
+    }
+    return Object.keys(mapping).length > 0 ? mapping : null
+  }
+
+  const applyCredentialBackedSettings = (
+    credentials: Record<string, unknown>
+  ) => {
+    if (!(draft.platform === 'openai' && draft.openaiPassthrough)) {
+      const modelMapping = buildModelRestrictionMapping()
+      if (modelMapping) credentials.model_mapping = modelMapping
+      else delete credentials.model_mapping
+    }
+    if (draft.interceptWarmupRequests) {
+      credentials.intercept_warmup_requests = true
+    } else {
+      delete credentials.intercept_warmup_requests
+    }
+    if (draft.platform === 'openai') {
+      const compactModelMapping = buildCompactModelMapping()
+      if (compactModelMapping) {
+        credentials.compact_model_mapping = compactModelMapping
+      } else {
+        delete credentials.compact_model_mapping
+      }
+      if (
+        draft.type === 'apikey' &&
+        draft.openaiEndpointCapabilities.length !==
+          defaultOpenAIEndpointCapabilities.length
+      ) {
+        credentials.openai_capabilities =
+          draft.openaiEndpointCapabilities.filter((value) =>
+            defaultOpenAIEndpointCapabilities.includes(value)
+          )
+      } else {
+        delete credentials.openai_capabilities
+      }
+    }
+  }
+
+  const buildCredentialPatch = (allowUnreadable = false) => {
+    const patch: Record<string, unknown> = {}
+    if (
+      account &&
+      account.metadata.credential_readable === false &&
+      !allowUnreadable
+    ) {
+      return patch
+    }
+    if (!(draft.platform === 'openai' && draft.openaiPassthrough)) {
+      patch.model_mapping = buildModelRestrictionMapping()
+    }
+    patch.intercept_warmup_requests = draft.interceptWarmupRequests
+      ? true
+      : null
+    if (draft.platform === 'openai') {
+      patch.compact_model_mapping = buildCompactModelMapping()
+      if (draft.type === 'apikey') {
+        const capabilities = draft.openaiEndpointCapabilities.filter((value) =>
+          defaultOpenAIEndpointCapabilities.includes(value)
+        )
+        patch.openai_capabilities =
+          capabilities.length === defaultOpenAIEndpointCapabilities.length
+            ? null
+            : capabilities
+      }
+    }
+    if (draft.type === 'apikey') {
+      patch.base_url = draft.baseUrl.trim() || null
+      if (draft.apiKey.trim()) patch.api_key = draft.apiKey.trim()
+    } else if (draft.type === 'bedrock') {
+      const region = draft.bedrockRegion.trim()
+      if (!region) throw new Error(t('AWS region is required'))
+      patch.auth_mode = draft.bedrockAuthMode === 'api_key' ? 'apikey' : 'sigv4'
+      patch.aws_region = region
+      if (draft.bedrockAuthMode === 'api_key') {
+        if (draft.bedrockApiKey.trim()) {
+          patch.api_key = draft.bedrockApiKey.trim()
+        }
+      } else {
+        if (draft.bedrockAccessKeyId.trim()) {
+          patch.aws_access_key_id = draft.bedrockAccessKeyId.trim()
+        }
+        if (draft.bedrockSecretAccessKey.trim()) {
+          patch.aws_secret_access_key = draft.bedrockSecretAccessKey.trim()
+        }
+        if (draft.bedrockSessionToken.trim()) {
+          patch.aws_session_token = draft.bedrockSessionToken.trim()
+        }
+      }
+    } else if (draft.type === 'service_account') {
+      if (!draft.vertexLocation.trim()) {
+        throw new Error(t('Vertex location is required'))
+      }
+      patch.location = draft.vertexLocation.trim()
+      const raw = draft.vertexServiceAccountJson.trim()
+      if (raw) {
+        let parsed: { project_id?: string; client_email?: string }
+        try {
+          parsed = JSON.parse(raw) as typeof parsed
+        } catch {
+          throw new Error(t('Service account JSON is invalid'))
+        }
+        patch.service_account_json = raw
+        patch.project_id = parsed.project_id || ''
+        patch.client_email = parsed.client_email || ''
+        patch.tier_id = 'vertex'
+      }
+    }
+    return patch
+  }
+
   const buildAccountExtra = () => {
     const extra = parseAccountExtra(account?.extra)
     const managedKeys = [
-      'intercept_warmup_requests',
       'openai_passthrough',
       'openai_oauth_passthrough',
       'openai_oauth_responses_websockets_v2_mode',
@@ -457,16 +641,19 @@ export function AccountDialog({
       'codex_cli_only_allow_app_server',
       'codex_cli_only_allowed_clients',
       'openai_compact_mode',
-      'compact_model_mapping',
       'openai_responses_mode',
-      'openai_capabilities',
       'anthropic_passthrough',
       'anthropic_apikey_auth_scheme',
     ]
     managedKeys.forEach((key) => delete extra[key])
-
-    if (draft.interceptWarmupRequests) {
-      extra.intercept_warmup_requests = true
+    if (!account || account.metadata.credential_readable !== false) {
+      for (const key of [
+        'intercept_warmup_requests',
+        'compact_model_mapping',
+        'openai_capabilities',
+      ]) {
+        delete extra[key]
+      }
     }
 
     if (draft.platform === 'openai') {
@@ -493,28 +680,6 @@ export function AccountDialog({
       }
       if (draft.openaiCompactMode !== 'auto') {
         extra.openai_compact_mode = draft.openaiCompactMode
-      }
-      const compactModelMapping: Record<string, string> = {}
-      for (const mapping of draft.compactModelMappings) {
-        const from = mapping.from.trim()
-        const to = mapping.to.trim()
-        if (!from && !to) continue
-        if (!from || !to) {
-          throw new Error(t('Compact model mappings require both models'))
-        }
-        if (compactModelMapping[from]) {
-          throw new Error(t('Compact model mapping sources must be unique'))
-        }
-        compactModelMapping[from] = to
-      }
-      if (Object.keys(compactModelMapping).length > 0) {
-        extra.compact_model_mapping = compactModelMapping
-      }
-      const capabilities = defaultOpenAIEndpointCapabilities.filter((value) =>
-        draft.openaiEndpointCapabilities.includes(value)
-      )
-      if (capabilities.length !== defaultOpenAIEndpointCapabilities.length) {
-        extra.openai_capabilities = capabilities
       }
     }
 
@@ -610,6 +775,14 @@ export function AccountDialog({
             : 'external',
         pool_ids: draft.poolIds,
       }
+      if (account || oauthType) {
+        const credentialPatch = buildCredentialPatch(
+          oauthType && Boolean(draft.oauthInput.trim())
+        )
+        if (Object.keys(credentialPatch).length > 0) {
+          payload.credential_patch = credentialPatch
+        }
+      }
 
       if (oauthType) {
         if (draft.oauthInput.trim() && !draft.starnexusOwnsOAuthRefresh) {
@@ -641,9 +814,19 @@ export function AccountDialog({
           throw new Error(response.message || t('Save failed'))
         }
       } else {
-        payload.credentials = buildCredentialPayload()
-        if (!account && !payload.credentials) {
-          throw new Error(t('Credentials are required'))
+        if (!account) {
+          payload.credentials = buildCredentialPayload()
+          if (!payload.credentials) {
+            throw new Error(t('Credentials are required'))
+          }
+          applyCredentialBackedSettings(payload.credentials)
+        } else if (account.metadata.credential_readable === false) {
+          const replacementCredentials = buildCredentialPayload()
+          if (replacementCredentials) {
+            applyCredentialBackedSettings(replacementCredentials)
+            payload.credentials = replacementCredentials
+            delete payload.credential_patch
+          }
         }
         const response = account
           ? await updateUpstreamAccount(account.id, payload)
@@ -664,12 +847,12 @@ export function AccountDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl'>
+      <DialogContent className='flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl'>
         <DialogHeader className='shrink-0 border-b px-6 py-5 pr-12'>
           <DialogTitle>
             {account ? t('Edit account') : t('Add account')}
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className={account ? 'sr-only' : undefined}>
             {account
               ? t('Update account credentials and scheduling settings.')
               : t(
@@ -838,15 +1021,89 @@ export function AccountDialog({
             </FieldGroup>
           ) : (
             <FieldGroup>
-              <div className='bg-muted/40 flex flex-wrap items-center gap-2 rounded-lg border p-3'>
-                <Badge variant='outline'>{draft.platform}</Badge>
-                <Badge variant='secondary'>
-                  {draft.type === 'setup_token' ? t('Setup Token') : draft.type}
-                </Badge>
-                <span className='min-w-0 flex-1 truncate text-sm font-medium'>
-                  {draft.name}
-                </span>
-              </div>
+              {account ? (
+                <>
+                  <Field>
+                    <FieldLabel htmlFor='edit-account-name'>
+                      {t('Name')}
+                    </FieldLabel>
+                    <Input
+                      id='edit-account-name'
+                      value={draft.name}
+                      onChange={(event) => set('name', event.target.value)}
+                    />
+                  </Field>
+                  <Field>
+                    <FieldLabel htmlFor='edit-account-notes'>
+                      {t('Notes')}
+                    </FieldLabel>
+                    <Textarea
+                      id='edit-account-notes'
+                      rows={3}
+                      value={draft.notes}
+                      placeholder={t('Optional notes')}
+                      onChange={(event) => set('notes', event.target.value)}
+                    />
+                    <FieldDescription>
+                      {t('Notes are optional')}
+                    </FieldDescription>
+                  </Field>
+                  {account.metadata.credential_readable === false && (
+                    <Alert variant='destructive'>
+                      <AlertDescription>
+                        {t(
+                          'Stored credentials could not be read. Replace the credentials to restore credential-backed settings.'
+                        )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <Separator />
+                  <Field>
+                    <FieldLabel>{t('Model restriction (optional)')}</FieldLabel>
+                    {draft.platform === 'openai' && draft.openaiPassthrough && (
+                      <Alert>
+                        <AlertDescription>
+                          {t(
+                            'Model whitelist and mapping are disabled while passthrough is enabled.'
+                          )}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    <AccountModelRestriction
+                      platform={draft.platform}
+                      mode={draft.modelRestrictionMode}
+                      allowedModels={draft.allowedModels}
+                      modelMappings={draft.modelMappings}
+                      disabled={
+                        account.metadata.credential_readable === false ||
+                        (draft.platform === 'openai' && draft.openaiPassthrough)
+                      }
+                      onModeChange={(value) =>
+                        set('modelRestrictionMode', value)
+                      }
+                      onAllowedModelsChange={(value) =>
+                        set('allowedModels', value)
+                      }
+                      onModelMappingsChange={(value) =>
+                        set('modelMappings', value)
+                      }
+                    />
+                  </Field>
+                  <Separator />
+                </>
+              ) : (
+                <div className='bg-muted/40 flex flex-wrap items-center gap-2 rounded-lg border p-3'>
+                  <Badge variant='outline'>{draft.platform}</Badge>
+                  <Badge variant='secondary'>
+                    {draft.type === 'setup_token'
+                      ? t('Setup Token')
+                      : draft.type}
+                  </Badge>
+                  <span className='min-w-0 flex-1 truncate text-sm font-medium'>
+                    {draft.name}
+                  </span>
+                </div>
+              )}
 
               {isOAuthAccountType(draft.type) && (
                 <>
@@ -1737,7 +1994,7 @@ export function AccountDialog({
           )}
         </div>
 
-        <DialogFooter className='bg-background mx-0 mb-0 shrink-0 flex-row justify-end rounded-b-lg px-6 py-4'>
+        <DialogFooter className='bg-background mx-0 mb-0 shrink-0 flex-row justify-end rounded-b-lg border-t px-6 py-4'>
           {step === 1 ? (
             <>
               <Button variant='outline' onClick={() => onOpenChange(false)}>
@@ -1754,6 +2011,11 @@ export function AccountDialog({
             </>
           ) : (
             <>
+              {account && (
+                <Button variant='outline' onClick={() => onOpenChange(false)}>
+                  {t('Cancel')}
+                </Button>
+              )}
               {!account && (
                 <Button variant='outline' onClick={() => setStep(1)}>
                   <HugeiconsIcon
@@ -1772,7 +2034,7 @@ export function AccountDialog({
                     strokeWidth={2}
                   />
                 )}
-                {t('Save')}
+                {account ? t('Update') : t('Save')}
               </Button>
             </>
           )}

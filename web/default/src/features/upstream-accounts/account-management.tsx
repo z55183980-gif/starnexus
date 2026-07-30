@@ -11,18 +11,22 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Add01Icon,
   ArrowDown01Icon,
+  ChartIcon,
+  Clock01Icon,
   Delete02Icon,
   Edit02Icon,
   FileExportIcon,
   FileImportIcon,
   Link01Icon,
   Loading03Icon,
+  MoreHorizontalIcon,
+  PlayIcon,
   RefreshIcon,
-  TestTubeIcon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +54,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -80,11 +85,16 @@ import { SectionPageLayout } from '@/components/layout/components/section-page-l
 import { AccountBatchUpdateDialog } from './account-batch-update-dialog'
 import { AccountDialog } from './account-dialog'
 import {
+  AccountScheduledTestsDialog,
+  AccountStatsDialog,
+} from './account-more-dialogs'
+import {
   AccountCapacityCell,
   AccountIdentityCell,
   AccountPlatformCell,
   AccountPoolsCell,
   AccountSchedulingCell,
+  AccountStatusCell,
   AccountUsageCell,
 } from './account-runtime-cells'
 import {
@@ -102,6 +112,7 @@ import {
   recoverUpstreamAccounts,
   refreshUpstreamOAuth,
   replaceUpstreamPoolMembers,
+  startUpstreamOAuth,
   testUpstreamAccount,
   updateUpstreamAccountsBatch,
   updateUpstreamPool,
@@ -155,16 +166,6 @@ function credentialTypeLabel(
     : translate('OpenAI API Key')
 }
 
-function accountStatusLabel(
-  status: UpstreamAccount['status'],
-  translate: (key: string) => string
-) {
-  if (status === 'active') return translate('Active')
-  if (status === 'inactive') return translate('Inactive')
-  if (status === 'expired') return translate('Expired')
-  return translate('Error')
-}
-
 function IconButton({
   label,
   icon,
@@ -189,6 +190,38 @@ function IconButton({
       onClick={onClick}
     >
       <HugeiconsIcon icon={icon} strokeWidth={2} />
+    </Button>
+  )
+}
+
+function AccountRowActionButton({
+  label,
+  icon,
+  onClick,
+  disabled,
+  destructive,
+}: {
+  label: string
+  icon: typeof Edit02Icon
+  onClick: () => void
+  disabled?: boolean
+  destructive?: boolean
+}) {
+  return (
+    <Button
+      type='button'
+      variant='ghost'
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        'text-muted-foreground h-auto min-w-10 flex-col gap-0.5 rounded-lg px-1.5 py-1.5 font-normal',
+        destructive && 'hover:bg-destructive/10 hover:text-destructive'
+      )}
+    >
+      <HugeiconsIcon icon={icon} strokeWidth={1.5} />
+      <span className='text-xs'>{label}</span>
     </Button>
   )
 }
@@ -698,6 +731,9 @@ export function AccountManagement() {
   const [memberPool, setMemberPool] = useState<UpstreamAccountPool | null>(null)
   const [selectedAccount, setSelectedAccount] =
     useState<UpstreamAccount | null>(null)
+  const [statsAccount, setStatsAccount] = useState<UpstreamAccount | null>(null)
+  const [scheduledTestsAccount, setScheduledTestsAccount] =
+    useState<UpstreamAccount | null>(null)
   const [selectedPool, setSelectedPool] = useState<UpstreamAccountPool | null>(
     null
   )
@@ -802,6 +838,30 @@ export function AccountManagement() {
         toast.success(t('Credential refreshed'))
       }
       refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Request failed'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const reauthorizeAccount = async (account: UpstreamAccount) => {
+    setBusyId(account.id)
+    try {
+      const response = await startUpstreamOAuth({
+        account_id: account.id,
+        proxy_id: account.proxy_id,
+        platform: account.platform,
+        credential_type:
+          account.type === 'setup_token' ? 'setup_token' : 'oauth',
+      })
+      if (!response.success || !response.data?.authorize_url) {
+        throw new Error(response.message || t('Failed to start authorization'))
+      }
+      window.open(response.data.authorize_url, '_blank', 'noopener,noreferrer')
+      setSelectedAccount(account)
+      setAccountDialog(true)
+      toast.success(t('Authorization page opened'))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Request failed'))
     } finally {
@@ -1305,18 +1365,18 @@ export function AccountManagement() {
                     <TableHead>{t('Scheduling')}</TableHead>
                     <TableHead>{t('Groups')}</TableHead>
                     <TableHead>{t('Usage window')}</TableHead>
-                    <TableHead className='text-right'>{t('Actions')}</TableHead>
+                    <TableHead className='w-36'>{t('Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {accountsQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={8}>{t('Loading...')}</TableCell>
+                      <TableCell colSpan={9}>{t('Loading...')}</TableCell>
                     </TableRow>
                   ) : accounts.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={8}
+                        colSpan={9}
                         className='text-muted-foreground py-10 text-center'
                       >
                         {t('No accounts')}
@@ -1352,24 +1412,7 @@ export function AccountManagement() {
                           <AccountCapacityCell account={account} />
                         </TableCell>
                         <TableCell>
-                          <div className='max-w-40 space-y-1'>
-                            <div className='flex items-center gap-1'>
-                              <Badge variant={statusVariant(account.status)}>
-                                {accountStatusLabel(account.status, t)}
-                              </Badge>
-                              {!account.schedulable && (
-                                <Badge variant='outline'>{t('Paused')}</Badge>
-                              )}
-                            </div>
-                            {account.error_message && (
-                              <div
-                                className='text-destructive max-w-40 truncate text-[11px]'
-                                title={account.error_message}
-                              >
-                                {account.error_message}
-                              </div>
-                            )}
-                          </div>
+                          <AccountStatusCell account={account} />
                         </TableCell>
                         <TableCell>
                           <AccountSchedulingCell
@@ -1390,49 +1433,9 @@ export function AccountManagement() {
                         <TableCell>
                           <AccountUsageCell account={account} />
                         </TableCell>
-                        <TableCell>
-                          <div className='flex justify-end gap-1'>
-                            <IconButton
-                              label={t('Test')}
-                              icon={
-                                busyId === account.id
-                                  ? Loading03Icon
-                                  : TestTubeIcon
-                              }
-                              disabled={busyId === account.id}
-                              onClick={() => runAccountAction(account, 'test')}
-                            />
-                            {(account.type === 'oauth' ||
-                              account.type === 'setup_token') && (
-                              <IconButton
-                                label={
-                                  account.oauth_refresh_owner === 'starnexus'
-                                    ? t('Refresh credential')
-                                    : t('OAuth refresh is managed externally')
-                                }
-                                icon={RefreshIcon}
-                                disabled={
-                                  busyId === account.id ||
-                                  account.oauth_refresh_owner !== 'starnexus'
-                                }
-                                onClick={() =>
-                                  runAccountAction(account, 'refresh')
-                                }
-                              />
-                            )}
-                            {(account.status === 'error' ||
-                              account.rate_limit_reset_at != null ||
-                              account.temp_unschedulable_until != null) && (
-                              <IconButton
-                                label={t('Restore scheduling')}
-                                icon={RefreshIcon}
-                                disabled={busyId === account.id}
-                                onClick={() =>
-                                  runAccountAction(account, 'recover')
-                                }
-                              />
-                            )}
-                            <IconButton
+                        <TableCell className='w-36'>
+                          <div className='flex items-center gap-1'>
+                            <AccountRowActionButton
                               label={t('Edit')}
                               icon={Edit02Icon}
                               onClick={() => {
@@ -1440,7 +1443,7 @@ export function AccountManagement() {
                                 setAccountDialog(true)
                               }}
                             />
-                            <IconButton
+                            <AccountRowActionButton
                               label={t('Delete')}
                               icon={Delete02Icon}
                               destructive
@@ -1452,6 +1455,142 @@ export function AccountManagement() {
                                 })
                               }
                             />
+                            <DropdownMenu modal={false}>
+                              <DropdownMenuTrigger
+                                render={
+                                  <Button
+                                    type='button'
+                                    variant='ghost'
+                                    aria-label={t('More')}
+                                    title={t('More')}
+                                    className='text-muted-foreground h-auto min-w-10 flex-col gap-0.5 rounded-lg px-1.5 py-1.5 font-normal'
+                                  />
+                                }
+                              >
+                                <HugeiconsIcon
+                                  icon={MoreHorizontalIcon}
+                                  strokeWidth={1.5}
+                                />
+                                <span className='text-xs'>{t('More')}</span>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align='end'
+                                sideOffset={6}
+                                className='w-52 rounded-xl p-1.5'
+                              >
+                                <DropdownMenuGroup>
+                                  <DropdownMenuItem
+                                    className='gap-2.5 px-3 py-2.5'
+                                    disabled={busyId === account.id}
+                                    onClick={() =>
+                                      runAccountAction(account, 'test')
+                                    }
+                                  >
+                                    <HugeiconsIcon
+                                      icon={
+                                        busyId === account.id
+                                          ? Loading03Icon
+                                          : PlayIcon
+                                      }
+                                      className={cn(
+                                        'text-success',
+                                        busyId === account.id && 'animate-spin'
+                                      )}
+                                      strokeWidth={2}
+                                    />
+                                    {t('Test Connection')}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className='gap-2.5 px-3 py-2.5'
+                                    onClick={() => setStatsAccount(account)}
+                                  >
+                                    <HugeiconsIcon
+                                      icon={ChartIcon}
+                                      className='text-info'
+                                      strokeWidth={2}
+                                    />
+                                    {t('View statistics')}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className='gap-2.5 px-3 py-2.5'
+                                    onClick={() =>
+                                      setScheduledTestsAccount(account)
+                                    }
+                                  >
+                                    <HugeiconsIcon
+                                      icon={Clock01Icon}
+                                      className='text-warning'
+                                      strokeWidth={2}
+                                    />
+                                    {t('Scheduled test')}
+                                  </DropdownMenuItem>
+                                  {(account.type === 'oauth' ||
+                                    account.type === 'setup_token') && (
+                                    <>
+                                      <DropdownMenuItem
+                                        className='gap-2.5 px-3 py-2.5'
+                                        disabled={busyId === account.id}
+                                        onClick={() =>
+                                          void reauthorizeAccount(account)
+                                        }
+                                      >
+                                        <HugeiconsIcon
+                                          icon={Link01Icon}
+                                          className='text-info'
+                                          strokeWidth={2}
+                                        />
+                                        {t('Reauthorize')}
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        className='gap-2.5 px-3 py-2.5'
+                                        disabled={
+                                          busyId === account.id ||
+                                          account.oauth_refresh_owner !==
+                                            'starnexus'
+                                        }
+                                        onClick={() =>
+                                          runAccountAction(account, 'refresh')
+                                        }
+                                      >
+                                        <HugeiconsIcon
+                                          icon={RefreshIcon}
+                                          className='text-chart-5'
+                                          strokeWidth={2}
+                                        />
+                                        {account.oauth_refresh_owner ===
+                                        'starnexus'
+                                          ? t('Refresh token')
+                                          : t(
+                                              'OAuth refresh is managed externally'
+                                            )}
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                  {(account.status === 'error' ||
+                                    account.rate_limit_reset_at != null ||
+                                    account.temp_unschedulable_until !=
+                                      null) && (
+                                    <>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem
+                                        className='gap-2.5 px-3 py-2.5'
+                                        disabled={busyId === account.id}
+                                        onClick={() =>
+                                          runAccountAction(account, 'recover')
+                                        }
+                                      >
+                                        <HugeiconsIcon
+                                          icon={RefreshIcon}
+                                          className='text-success'
+                                          strokeWidth={2}
+                                        />
+                                        {t('Restore scheduling')}
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                </DropdownMenuGroup>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1603,6 +1742,16 @@ export function AccountManagement() {
             onSaved={refresh}
           />
         )}
+        <AccountStatsDialog
+          open={statsAccount !== null}
+          account={statsAccount}
+          onOpenChange={(open) => !open && setStatsAccount(null)}
+        />
+        <AccountScheduledTestsDialog
+          open={scheduledTestsAccount !== null}
+          account={scheduledTestsAccount}
+          onOpenChange={(open) => !open && setScheduledTestsAccount(null)}
+        />
         <BatchImportDialog
           open={batchImportOpen}
           onOpenChange={setBatchImportOpen}

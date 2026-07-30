@@ -40,6 +40,43 @@ func TestValidateUpstreamAccountOptionsAllowsHTTPBridge(t *testing.T) {
 	require.Equal(t, UpstreamOpenAIWSModeHTTPBridge, options.OpenAIWSMode(account.Type))
 }
 
+func TestParseUpstreamAccountOptionsWithCredentialsPrefersSub2Locations(t *testing.T) {
+	options, err := ParseUpstreamAccountOptionsWithCredentials(
+		`{"intercept_warmup_requests":false,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"]}`,
+		map[string]any{
+			"intercept_warmup_requests": true,
+			"compact_model_mapping":     map[string]any{"gpt-5.*": "gpt-5.4"},
+			"openai_capabilities":       []any{"chat_completions"},
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, options.InterceptWarmupRequests)
+	require.Equal(t, map[string]string{"gpt-5.*": "gpt-5.4"}, options.CompactModelMapping)
+	require.Equal(t, []string{"chat_completions"}, options.OpenAIEndpointCapabilities)
+}
+
+func TestParseUpstreamAccountOptionsWithCredentialsRejectsInvalidValues(t *testing.T) {
+	_, err := ParseUpstreamAccountOptionsWithCredentials("{}", map[string]any{
+		"compact_model_mapping": map[string]any{"gpt-5.*": 42},
+	})
+	require.Error(t, err)
+}
+
+func TestParseUpstreamAccountOptionsWithCredentialsTreatsNullAsUnset(t *testing.T) {
+	options, err := ParseUpstreamAccountOptionsWithCredentials(
+		`{"intercept_warmup_requests":true,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"]}`,
+		map[string]any{
+			"intercept_warmup_requests": nil,
+			"compact_model_mapping":     nil,
+			"openai_capabilities":       nil,
+		},
+	)
+	require.NoError(t, err)
+	require.False(t, options.InterceptWarmupRequests)
+	require.Nil(t, options.CompactModelMapping)
+	require.Nil(t, options.OpenAIEndpointCapabilities)
+}
+
 func TestValidateUpstreamAccountOptionsRejectsInvalidCombinations(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -85,6 +85,12 @@ func TestLocalUpstreamChannelKeyUsesEffectiveChannelType(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "ak|sk|session|us-east-1", bedrockKey)
+
+	bedrockAPIKey, err := localUpstreamChannelKey(constant.UpstreamPlatformAnthropic, constant.UpstreamAccountTypeBedrock, map[string]any{
+		"auth_mode": "apikey", "api_key": "bedrock-key", "aws_region": "us-west-2",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "bedrock-key|us-west-2", bedrockAPIKey)
 }
 
 func TestLocalUpstreamBaseURLUsesSelectedAccountType(t *testing.T) {

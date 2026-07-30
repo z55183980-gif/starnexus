@@ -40,6 +40,73 @@ func TestExportUpstreamAccountsIncludesImportableCredentials(t *testing.T) {
 	require.Equal(t, []int{pool.Id}, exported.Accounts[0].PoolIds)
 }
 
+func TestExportUpstreamAccountsMovesLegacyCredentialBackedOptionsToSub2Locations(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "legacy-options", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+			Extra:       `{"intercept_warmup_requests":true,"compact_model_mapping":{"gpt-5.*":"gpt-5.4"},"openai_capabilities":["chat_completions"]}`,
+			Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{"api_key": "secret"},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	exported, err := ExportUpstreamAccounts([]int{input.Account.Id})
+	require.NoError(t, err)
+	require.Len(t, exported.Accounts, 1)
+	credentials := exported.Accounts[0].Credentials
+	require.Equal(t, true, credentials["intercept_warmup_requests"])
+	require.Equal(t, map[string]any{"gpt-5.*": "gpt-5.4"}, credentials["compact_model_mapping"])
+	require.Equal(t, []any{"chat_completions"}, credentials["openai_capabilities"])
+	extra := exported.Accounts[0].Extra.(map[string]any)
+	require.NotContains(t, extra, "intercept_warmup_requests")
+	require.NotContains(t, extra, "compact_model_mapping")
+	require.NotContains(t, extra, "openai_capabilities")
+}
+
+func TestImportUpstreamAccountsKeepsSub2CredentialBackedOptionsCanonical(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	payload := UpstreamAccountExport{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Accounts: []UpstreamAccountExportItem{
+			{
+				Name: "sub2-options", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+				Credentials: map[string]any{
+					"api_key":                   "secret",
+					"intercept_warmup_requests": true,
+					"compact_model_mapping":     map[string]any{"gpt-5.*": "gpt-5.4-compact"},
+					"openai_capabilities":       []any{"chat_completions"},
+				},
+				Extra: map[string]any{
+					"intercept_warmup_requests": false,
+					"compact_model_mapping":     map[string]any{"legacy": "legacy"},
+					"openai_capabilities":       []any{"embeddings"},
+				},
+				Concurrency: 1, Priority: 50,
+			},
+		},
+	}
+
+	result, err := ImportUpstreamData(payload)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.AccountCreated)
+	require.Zero(t, result.AccountFailed)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.Where("name = ?", "sub2-options").First(&account).Error)
+	credentials, err := DecryptUpstreamAccountCredentials(&account)
+	require.NoError(t, err)
+	require.Equal(t, true, credentials["intercept_warmup_requests"])
+	require.Equal(t, map[string]any{"gpt-5.*": "gpt-5.4-compact"}, credentials["compact_model_mapping"])
+	require.Equal(t, []any{"chat_completions"}, credentials["openai_capabilities"])
+	var extra map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(account.Extra, &extra))
+	require.NotContains(t, extra, "intercept_warmup_requests")
+	require.NotContains(t, extra, "compact_model_mapping")
+	require.NotContains(t, extra, "openai_capabilities")
+}
+
 func TestSub2APICompatibleExportImportRoundTripWithoutKeyring(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	t.Setenv(upstreamCredentialKeysEnv, "")

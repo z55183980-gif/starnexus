@@ -73,8 +73,11 @@ export interface UpstreamAccount {
   schedulable: boolean
   error_message: string
   last_used_at?: number | null
+  rate_limited_at?: number | null
   rate_limit_reset_at?: number | null
+  overload_until?: number | null
   temp_unschedulable_until?: number | null
+  temp_unschedulable_reason: string
   expires_at?: number | null
   auto_pause_on_expired: boolean
   oauth_refresh_owner: UpstreamOAuthRefreshOwner
@@ -85,6 +88,19 @@ export interface UpstreamAccount {
     privacy_mode?: string
     compact_mode?: string
     compact_supported: boolean
+    credential_readable: boolean
+    credential_read_error?: string
+    base_url?: string
+    model_mapping?: Record<string, string>
+    compact_model_mapping?: Record<string, string>
+    openai_capabilities?: string[]
+    intercept_warmup_requests: boolean
+    bedrock_auth_mode?: string
+    aws_region?: string
+    aws_access_key_id?: string
+    vertex_project_id?: string
+    vertex_client_email?: string
+    vertex_location?: string
   }
   created_at: number
   updated_at: number
@@ -128,6 +144,61 @@ export interface UpstreamAccountQuotaResetResult {
   windows_reset: number
 }
 
+export interface UpstreamAccountTestHistory {
+  success: boolean
+  status_code: number
+  latency_ms: number
+  first_output_latency_ms: number
+  result: string
+  model: string
+  created_at: number
+}
+
+export interface UpstreamAccountStats {
+  days: number
+  selected_count: number
+  success_count: number
+  error_count: number
+  test_count: number
+  success_rate: number
+  recent_tests: UpstreamAccountTestHistory[]
+}
+
+export interface UpstreamAccountScheduledTestPlan {
+  id: number
+  account_id: number
+  name: string
+  model: string
+  interval_minutes: number
+  enabled: boolean
+  auto_recover: boolean
+  next_run_at?: number | null
+  last_run_at?: number | null
+  created_at: number
+  updated_at: number
+}
+
+export interface UpstreamAccountScheduledTestResult {
+  id: number
+  plan_id: number
+  account_id: number
+  success: boolean
+  status_code: number
+  latency_ms: number
+  first_output_latency_ms: number
+  result: string
+  model: string
+  created_at: number
+}
+
+export interface UpstreamAccountScheduledTestPlanPayload {
+  name: string
+  model: string
+  interval_minutes: number
+  enabled: boolean
+  auto_recover: boolean
+}
+
 export interface UpstreamProxy {
   id: number
   name: string
@@ -163,6 +234,7 @@ export interface UpstreamAccountPayload {
   platform: UpstreamPlatform
   type: UpstreamAccountType
   credentials?: Record<string, unknown>
+  credential_patch?: Record<string, unknown>
   extra: string
   proxy_id?: number | null
   concurrency: number

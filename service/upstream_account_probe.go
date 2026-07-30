@@ -33,6 +33,10 @@ type UpstreamAccountTestResult struct {
 	Model                string `json:"model"`
 }
 
+type UpstreamAccountTestOptions struct {
+	Model string
+}
+
 type upstreamGenerationProbeResult struct {
 	StatusCode           int
 	LatencyMs            int64
@@ -55,7 +59,7 @@ type UpstreamProxyTestResult struct {
 	City      string `json:"city"`
 }
 
-func TestUpstreamAccount(ctx context.Context, accountId int) (*UpstreamAccountTestResult, error) {
+func TestUpstreamAccount(ctx context.Context, accountId int, testOptions ...UpstreamAccountTestOptions) (*UpstreamAccountTestResult, error) {
 	if accountId <= 0 {
 		return nil, errors.New("invalid upstream account id")
 	}
@@ -80,7 +84,11 @@ func TestUpstreamAccount(ctx context.Context, accountId int) (*UpstreamAccountTe
 		return result, nil
 	}
 	resultCode := "connection_failed"
-	probe, err := probeUpstreamAccountGeneration(ctx, client, &account, credentials)
+	options := UpstreamAccountTestOptions{}
+	if len(testOptions) > 0 {
+		options = testOptions[0]
+	}
+	probe, err := probeUpstreamAccountGeneration(ctx, client, &account, credentials, options.Model)
 	if probe == nil {
 		probe = &upstreamGenerationProbeResult{}
 	}
@@ -110,14 +118,17 @@ func TestUpstreamAccount(ctx context.Context, accountId int) (*UpstreamAccountTe
 	return result, nil
 }
 
-func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, account *model.UpstreamAccount, credentials map[string]any) (*upstreamGenerationProbeResult, error) {
+func probeUpstreamAccountGeneration(ctx context.Context, client *http.Client, account *model.UpstreamAccount, credentials map[string]any, requestedModel string) (*upstreamGenerationProbeResult, error) {
 	if account == nil {
 		return nil, errors.New("upstream account is nil")
 	}
 	if client == nil {
 		return nil, errors.New("upstream HTTP client is nil")
 	}
-	modelName := upstreamAccountProbeModel(account, credentials)
+	modelName := strings.TrimSpace(requestedModel)
+	if modelName == "" {
+		modelName = upstreamAccountProbeModel(account, credentials)
+	}
 	request, protocol, err := buildUpstreamGenerationProbeRequest(ctx, account, credentials, modelName)
 	if err != nil {
 		return nil, err
@@ -405,10 +416,13 @@ func recordUpstreamAccountTestState(accountId int, success bool, statusCode int,
 		updates["temp_unschedulable_until"] = nil
 		updates["temp_unschedulable_reason"] = ""
 		updates["rate_limit_reset_at"] = nil
+		updates["rate_limited_at"] = nil
+		updates["overload_until"] = nil
 	} else if statusCode == http.StatusUnauthorized {
-		updates["status"] = constant.UpstreamStatusError
-		updates["schedulable"] = false
-		updates["temp_unschedulable_reason"] = "authentication_failed"
+		apiErr := types.NewErrorWithStatusCode(errors.New("upstream authentication failed"), types.ErrorCodeBadResponseStatusCode, statusCode)
+		apiErr.SetUpstreamResponse(header, body)
+		ApplyUpstreamAccountError(accountId, 0, apiErr)
+		return
 	} else if statusCode == http.StatusTooManyRequests {
 		apiErr := types.NewErrorWithStatusCode(errors.New("upstream rate limited"), types.ErrorCodeBadResponseStatusCode, statusCode)
 		apiErr.SetUpstreamResponse(header, body)
@@ -421,6 +435,9 @@ func recordUpstreamAccountTestState(accountId int, success bool, statusCode int,
 			updates["session_window_end"] = *windowEnd
 			updates["session_window_status"] = "rejected"
 		}
+	} else if statusCode == 529 {
+		updates["overload_until"] = now + int64((10 * time.Minute).Seconds())
+		updates["temp_unschedulable_reason"] = "upstream_overloaded"
 	} else {
 		updates["temp_unschedulable_until"] = now + int64((time.Minute).Seconds())
 		updates["temp_unschedulable_reason"] = result

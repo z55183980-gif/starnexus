@@ -488,7 +488,10 @@ func DoResponsesWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo) (*
 	for key, value := range headerOverride {
 		targetHeader.Set(key, value)
 	}
-	for _, name := range []string{"originator", "session_id", "User-Agent", "x-codex-window-id", "x-codex-installation-id"} {
+	for _, name := range []string{
+		"originator", "session_id", "conversation_id", "User-Agent", "x-codex-window-id", "x-codex-installation-id",
+		"x-codex-turn-state", "x-codex-turn-metadata", "x-codex-beta-features",
+	} {
 		if targetHeader.Get(name) == "" && c.Request.Header.Get(name) != "" {
 			targetHeader.Set(name, c.Request.Header.Get(name))
 		}

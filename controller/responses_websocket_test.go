@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -26,6 +27,7 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 )
 
@@ -160,6 +162,10 @@ func TestSupportsResponsesWebSocketChannel(t *testing.T) {
 		Type:          constant.ChannelTypeCodex,
 		OtherSettings: `{"responses_websocket_v2_enabled":true}`,
 	}))
+	require.False(t, supportsResponsesWebSocketChannel(&model.Channel{
+		Type:          constant.ChannelTypeOpenAI,
+		OtherSettings: `{"responses_websocket_v2_mode":"off"}`,
+	}))
 }
 
 func TestResponsesWSUpstreamMode(t *testing.T) {
@@ -197,6 +203,174 @@ func TestResponsesWSUpstreamIdentityChangesWithLocalAccount(t *testing.T) {
 	second := responsesWSUpstreamIdentity(ctx, channel)
 	require.NotEmpty(t, first)
 	require.NotEqual(t, first, second)
+}
+
+func TestResponsesWSUpstreamIdentityIgnoresLeaseRotation(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	channel := &model.Channel{Id: 42, Type: constant.ChannelTypeCodex}
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	common.SetContextKey(ctx, constant.ContextKeyChannelBaseUrl, "https://chatgpt.com")
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "credential-a")
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountId, 10)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountLeaseId, "lease-a")
+	first := responsesWSUpstreamIdentity(ctx, channel)
+
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountLeaseId, "lease-b")
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "credential-b")
+	second := responsesWSUpstreamIdentity(ctx, channel)
+	require.Equal(t, first, second)
+}
+
+func TestResponsesWSHTTPBridgeReplaysInputAndDropsPreviousResponseID(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{
+		replayInput:       []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"first"}`)},
+		replayInputExists: true,
+	}
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeHTTPBridge,
+		originalRequest: &dto.OpenAIResponsesRequest{PreviousResponseID: "resp_first"},
+	}
+	prepared, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{
+		"model":"gpt-5","input":"second","previous_response_id":"resp_first","stream":true
+	}`))
+	require.Nil(t, apiErr)
+	var payload map[string]json.RawMessage
+	require.NoError(t, common.Unmarshal(prepared, &payload))
+	require.NotContains(t, payload, "previous_response_id")
+	var input []map[string]any
+	require.NoError(t, common.Unmarshal(payload["input"], &input))
+	require.Len(t, input, 2)
+	require.Equal(t, "first", input[0]["content"])
+	require.Equal(t, "second", input[1]["content"])
+}
+
+func TestResponsesWSNativeConnectionKeepsPreviousResponseID(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{
+		upstream:          &responsesWSUpstreamConnection{},
+		replayInput:       []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"first"}`)},
+		replayInputExists: true,
+	}
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeContextPool,
+		originalRequest: &dto.OpenAIResponsesRequest{PreviousResponseID: "resp_first"},
+	}
+	prepared, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{"input":[{"role":"user","content":"second"}],"previous_response_id":"resp_first"}`))
+	require.Nil(t, apiErr)
+	require.Equal(t, "resp_first", gjson.GetBytes(prepared, "previous_response_id").String())
+}
+
+func TestResponsesWSNativeReconnectReplaysInputAndDropsPreviousResponseID(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{
+		replayInput:       []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"first"}`)},
+		replayInputExists: true,
+	}
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModePassthrough,
+		originalRequest: &dto.OpenAIResponsesRequest{PreviousResponseID: "resp_first"},
+	}
+	prepared, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{"input":"second","previous_response_id":"resp_first"}`))
+	require.Nil(t, apiErr)
+	require.False(t, gjson.GetBytes(prepared, "previous_response_id").Exists())
+	require.Equal(t, int64(2), gjson.GetBytes(prepared, "input.#").Int())
+}
+
+func TestResponsesWSReplayCollectsToolCallContextOnce(t *testing.T) {
+	t.Parallel()
+	turn := &responsesWebSocketTurn{}
+	event := []byte(`{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{}"}}`)
+	turn.collectReplayContext(event)
+	turn.collectReplayContext(event)
+	require.Len(t, turn.replayToolContext, 1)
+	require.Equal(t, "fc_1", gjson.GetBytes(turn.replayToolContext[0], "id").String())
+}
+
+func TestResponsesWSReplayPrefixUsesCanonicalJSON(t *testing.T) {
+	t.Parallel()
+	previous := []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"first"}`)}
+	current := []json.RawMessage{json.RawMessage(`{ "content": "first", "role": "user", "type": "message" }`)}
+	require.True(t, responsesWSRawMessagesHavePrefix(current, previous))
+}
+
+func TestResponsesWSHTTPBridgeRejectsToolOutputWithoutCallContext(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{}
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeHTTPBridge,
+		originalRequest: &dto.OpenAIResponsesRequest{PreviousResponseID: "resp_missing"},
+	}
+	_, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{
+		"input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}],
+		"previous_response_id":"resp_missing"
+	}`))
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusConflict, apiErr.StatusCode)
+}
+
+func TestResponsesWSHTTPBridgeAllowsToolOutputWithCallContext(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{
+		replayInput: []json.RawMessage{
+			json.RawMessage(`{"type":"message","role":"user","content":"lookup"}`),
+			json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{}"}`),
+		},
+		replayInputExists: true,
+	}
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeHTTPBridge,
+		originalRequest: &dto.OpenAIResponsesRequest{PreviousResponseID: "resp_first"},
+	}
+	prepared, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{
+		"input":[{"type":"function_call_output","call_id":"call_1","output":"ok"}],
+		"previous_response_id":"resp_first"
+	}`))
+	require.Nil(t, apiErr)
+	require.False(t, gjson.GetBytes(prepared, "previous_response_id").Exists())
+	require.Equal(t, int64(3), gjson.GetBytes(prepared, "input.#").Int())
+}
+
+func TestResponsesWSContinuationStoreIsScopedAndRestored(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserId, 7)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 11)
+	responseID := "resp_scoped_7_11"
+	defaultResponsesWSContinuationStore.put(ctx, responseID, responsesWSContinuationState{
+		accountID: 6, channelID: 44, upstreamMode: model.UpstreamOpenAIWSModeHTTPBridge, model: "gpt-5",
+		turnState: "turn-state", replayInput: []json.RawMessage{json.RawMessage(`{"role":"user","content":"first"}`)}, replayInputExists: true,
+	})
+
+	session := &responsesWebSocketSession{baseCtx: ctx}
+	require.Nil(t, session.restoreContinuation(&dto.OpenAIResponsesRequest{Model: "gpt-5", PreviousResponseID: responseID}))
+	require.Equal(t, 6, session.lockedAccountID)
+	require.Equal(t, 44, session.lockedChannelID)
+	require.Equal(t, model.UpstreamOpenAIWSModeHTTPBridge, session.lockedWSMode)
+	require.Equal(t, "turn-state", session.turnState)
+	require.True(t, session.replayInputExists)
+
+	otherCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	otherCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	common.SetContextKey(otherCtx, constant.ContextKeyUserId, 8)
+	common.SetContextKey(otherCtx, constant.ContextKeyTokenId, 11)
+	_, found := defaultResponsesWSContinuationStore.get(otherCtx, responseID)
+	require.False(t, found)
+}
+
+func TestResponsesWSInfersPreviousResponseIDForToolOutput(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{lastResponseID: "resp_previous"}
+	request := &dto.OpenAIResponsesRequest{Input: json.RawMessage(`[{"type":"function_call_output","call_id":"call_1","output":"ok"}]`)}
+	envelope := map[string]json.RawMessage{}
+	require.NoError(t, session.inferToolContinuation(request, envelope))
+	require.Equal(t, "resp_previous", request.PreviousResponseID)
+	var encodedPrevious string
+	require.NoError(t, common.Unmarshal(envelope["previous_response_id"], &encodedPrevious))
+	require.Equal(t, "resp_previous", encodedPrevious)
 }
 
 func TestResponsesWSTurnReplaySnapshotSurvivesFinish(t *testing.T) {
@@ -280,6 +454,72 @@ func TestResponsesWSTerminalEventWaitsForTurnRelease(t *testing.T) {
 	}
 
 	session.close()
+}
+
+func TestResponsesWSClientDisconnectDrainsTerminalUsage(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Log{}, &model.Token{}))
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	originalBatchUpdateEnabled := common.BatchUpdateEnabled
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	model.DB = db
+	model.LOG_DB = db
+	common.BatchUpdateEnabled = false
+	common.RedisEnabled = false
+	common.RDB = nil
+	common.LogConsumeEnabled = false
+	t.Cleanup(func() {
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		common.BatchUpdateEnabled = originalBatchUpdateEnabled
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+		common.LogConsumeEnabled = originalLogConsumeEnabled
+	})
+
+	clientServer, _, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+	upstreamServer, upstreamPeer, closeUpstream := newResponsesWSTestPair(t)
+	defer closeUpstream()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	released := make(chan struct{})
+	upstream := newResponsesWSUpstreamConnection(upstreamServer)
+	info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{}
+	turn := &responsesWebSocketTurn{
+		ctx:         ctx,
+		info:        info,
+		accumulator: openairelay.NewResponsesEventAccumulator(),
+		releaseUser: func() { close(released) },
+	}
+	session := &responsesWebSocketSession{
+		baseCtx: ctx, client: clientServer, upstream: upstream, activeTurn: turn, closed: make(chan struct{}),
+	}
+	go session.readUpstream(upstream)
+	session.handleClientLoopExit()
+	require.True(t, session.isClientGone())
+
+	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{
+		"type":"response.completed",
+		"response":{"id":"resp_drained","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}
+	}`)))
+	select {
+	case <-released:
+	case <-time.After(5 * time.Second):
+		t.Fatal("turn was not settled after downstream disconnect")
+	}
+	select {
+	case <-session.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session did not close after draining terminal usage")
+	}
+	require.Equal(t, 12, turn.accumulator.Usage(turn.info).TotalTokens)
 }
 
 func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
@@ -469,6 +709,72 @@ func TestResponsesWSUpstreamFailureReplaysOnceBeforeDownstreamEvents(t *testing.
 	session.activeTurn = nil
 	session.mu.Unlock()
 
+	session.close()
+	session.wg.Wait()
+}
+
+func TestResponsesWSPreviousResponseNotFoundReplaysAsFullCreate(t *testing.T) {
+	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+	upstreamServer, upstreamPeer, closeUpstream := newResponsesWSTestPair(t)
+	defer closeUpstream()
+	replacementServer, replacementPeer, closeReplacement := newResponsesWSTestPair(t)
+	defer closeReplacement()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5"}
+	selectedChannel := &model.Channel{Id: 2}
+	upstream := newResponsesWSUpstreamConnection(upstreamServer)
+	turn := &responsesWebSocketTurn{
+		ctx:               ctx,
+		info:              info,
+		accumulator:       openairelay.NewResponsesEventAccumulator(),
+		originalRequest:   &dto.OpenAIResponsesRequest{Model: "gpt-5", PreviousResponseID: "resp_stale"},
+		outbound:          []byte(`{"type":"response.create","model":"gpt-5","previous_response_id":"resp_stale","input":[{"type":"message","role":"user","content":"second"}]}`),
+		channel:           selectedChannel,
+		replayEnabled:     true,
+		requestDispatched: true,
+		replayInput: []json.RawMessage{
+			json.RawMessage(`{"type":"message","role":"user","content":"first"}`),
+			json.RawMessage(`{"type":"message","role":"user","content":"second"}`),
+		},
+		replayInputExists: true,
+		reconnect: func() (*websocket.Conn, *http.Response, error) {
+			return replacementServer, nil, nil
+		},
+	}
+	session := &responsesWebSocketSession{
+		baseCtx: ctx, client: clientServer, upstream: upstream, channel: selectedChannel,
+		activeTurn: turn, closed: make(chan struct{}),
+	}
+	go session.readUpstream(upstream)
+
+	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{
+		"type":"response.failed",
+		"response":{"id":"resp_failed","error":{"code":"previous_response_not_found","message":"Previous response not found"}}
+	}`)))
+	require.NoError(t, replacementPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
+	messageType, replayed, err := replacementPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.False(t, gjson.GetBytes(replayed, "previous_response_id").Exists())
+	require.Equal(t, int64(2), gjson.GetBytes(replayed, "input.#").Int())
+	require.Equal(t, "first", gjson.GetBytes(replayed, "input.0.content").String())
+	require.Equal(t, "second", gjson.GetBytes(replayed, "input.1.content").String())
+
+	require.NoError(t, replacementPeer.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.created","response":{"id":"resp_recovered"}}`)))
+	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
+	messageType, downstream, err := clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.Equal(t, "response.created", gjson.GetBytes(downstream, "type").String())
+	require.Equal(t, 1, turn.replayCount)
+
+	session.mu.Lock()
+	session.activeTurn = nil
+	session.mu.Unlock()
 	session.close()
 	session.wg.Wait()
 }

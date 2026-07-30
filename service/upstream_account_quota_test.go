@@ -1,6 +1,9 @@
 package service
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestParseUpstreamAccountResetCredits(t *testing.T) {
 	payload := map[string]any{
@@ -30,5 +33,27 @@ func TestParseUpstreamAccountResetCreditsArray(t *testing.T) {
 	credits := parseUpstreamAccountResetCredits(payload)
 	if credits == nil || credits.AvailableCount != 1 {
 		t.Fatalf("unexpected reset credit count: %+v", credits)
+	}
+}
+
+func TestCachedUpstreamAccountQuotaHonorsCreditRequirementAndTTL(t *testing.T) {
+	const accountId = 987654
+	t.Cleanup(func() { upstreamAccountQuotaCache.Delete(accountId) })
+	usage := UpstreamAccountQuotaUsage{AccountId: "acct-test", FetchedAt: time.Now().Unix()}
+	upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
+		usage: usage, cachedAt: time.Now(), includeCredits: false,
+	})
+	if cached := cachedUpstreamAccountQuota(accountId, false); cached == nil || cached.AccountId != usage.AccountId {
+		t.Fatalf("expected cached usage, got %+v", cached)
+	}
+	if cached := cachedUpstreamAccountQuota(accountId, true); cached != nil {
+		t.Fatalf("expected cache miss when credit details are required, got %+v", cached)
+	}
+
+	upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
+		usage: usage, cachedAt: time.Now().Add(-upstreamAccountQuotaCacheTTL), includeCredits: true,
+	})
+	if cached := cachedUpstreamAccountQuota(accountId, true); cached != nil {
+		t.Fatalf("expected expired cache miss, got %+v", cached)
 	}
 }

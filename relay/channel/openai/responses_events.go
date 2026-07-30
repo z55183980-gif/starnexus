@@ -7,17 +7,20 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
 
 type ResponsesEventAccumulator struct {
-	usage      dto.Usage
-	outputText strings.Builder
-	terminal   bool
-	successful bool
-	failed     bool
-	responseID string
+	usage        dto.Usage
+	outputText   strings.Builder
+	terminal     bool
+	successful   bool
+	failed       bool
+	responseID   string
+	failure      *types.OpenAIError
+	terminalType string
 }
 
 func NewResponsesEventAccumulator() *ResponsesEventAccumulator {
@@ -67,16 +70,26 @@ func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.Re
 	}
 
 	switch event.Type {
-	case "response.completed", "response.failed", "response.incomplete", "error":
+	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled", "error":
 		a.terminal = true
-		a.successful = event.Type == "response.completed" || event.Type == "response.incomplete"
-		a.failed = event.Type == "response.failed" || event.Type == "error"
+		a.terminalType = event.Type
+		a.successful = event.Type == "response.completed" || event.Type == "response.done" || event.Type == "response.incomplete"
+		a.failed = !a.successful
 		if event.Response != nil {
+			a.failure = event.Response.GetOpenAIError()
 			a.applyResponseUsage(event.Response)
 			if event.Response.HasImageGenerationCall() {
 				c.Set("image_generation_call", true)
 				c.Set("image_generation_call_quality", event.Response.GetQuality())
 				c.Set("image_generation_call_size", event.Response.GetSize())
+			}
+		}
+		if event.Type == "error" && a.failure == nil {
+			var errorEnvelope struct {
+				Error any `json:"error"`
+			}
+			if common.Unmarshal(data, &errorEnvelope) == nil {
+				a.failure = dto.GetOpenAIError(errorEnvelope.Error)
 			}
 		}
 	case "response.output_text.delta":
@@ -133,4 +146,12 @@ func (a *ResponsesEventAccumulator) Failed() bool {
 
 func (a *ResponsesEventAccumulator) ResponseID() string {
 	return a.responseID
+}
+
+func (a *ResponsesEventAccumulator) FailureError() *types.OpenAIError {
+	return a.failure
+}
+
+func (a *ResponsesEventAccumulator) TerminalEventType() string {
+	return a.terminalType
 }

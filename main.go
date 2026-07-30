@@ -127,6 +127,7 @@ func main() {
 	service.StartCodexCredentialAutoRefreshTask()
 	service.StartUpstreamAccountOAuthRefreshTask()
 	service.StartUpstreamProxyExpiryTask()
+	service.StartUpstreamAccountScheduledTestTask()
 
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()

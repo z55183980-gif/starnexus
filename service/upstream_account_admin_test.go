@@ -24,6 +24,8 @@ func setupUpstreamAdminTestDB(t *testing.T) {
 		&model.UpstreamAccountPoolMember{},
 		&model.UpstreamAccountEvent{},
 		&model.UpstreamOAuthSession{},
+		&model.UpstreamAccountScheduledTestPlan{},
+		&model.UpstreamAccountScheduledTestResult{},
 	))
 	originalDB := model.DB
 	model.DB = db
@@ -189,6 +191,54 @@ func TestCreateUpstreamAccountPreservesExplicitZeroValues(t *testing.T) {
 	require.False(t, stored.Schedulable)
 	require.False(t, stored.AutoPauseOnExpired)
 	require.Equal(t, constant.UpstreamOAuthRefreshOwnerExternal, stored.OAuthRefreshOwner)
+}
+
+func TestUpdateUpstreamAccountCredentialPatchPreservesSecretsAndDeletesFields(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "patch-account", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+			Extra: `{"compact_model_mapping":{"legacy":"legacy"}}`, Concurrency: 1, Priority: 50, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{
+			"api_key": "secret", "base_url": "https://old.example.com",
+			"model_mapping": map[string]any{"gpt-5.2": "gpt-5.2"},
+		},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	patch := map[string]any{
+		"base_url":                  nil,
+		"model_mapping":             map[string]any{"gpt-5.*": "gpt-5.4"},
+		"compact_model_mapping":     map[string]any{"gpt-5.*": "gpt-5.4-compact"},
+		"openai_capabilities":       []any{"chat_completions"},
+		"intercept_warmup_requests": true,
+	}
+	require.NoError(t, UpdateUpstreamAccount(&UpstreamAccountUpdateInput{Account: input.Account, CredentialPatch: &patch}))
+
+	var stored model.UpstreamAccount
+	require.NoError(t, model.DB.First(&stored, input.Account.Id).Error)
+	credentials, err := DecryptUpstreamAccountCredentials(&stored)
+	require.NoError(t, err)
+	require.Equal(t, "secret", credentials["api_key"])
+	require.NotContains(t, credentials, "base_url")
+	require.Equal(t, map[string]any{"gpt-5.*": "gpt-5.4"}, credentials["model_mapping"])
+	require.Equal(t, map[string]any{"gpt-5.*": "gpt-5.4-compact"}, credentials["compact_model_mapping"])
+
+	view, err := GetUpstreamAccount(input.Account.Id)
+	require.NoError(t, err)
+	require.True(t, view.Metadata.CredentialReadable)
+	require.Equal(t, map[string]string{"gpt-5.*": "gpt-5.4"}, view.Metadata.ModelMapping)
+	require.Equal(t, map[string]string{"gpt-5.*": "gpt-5.4-compact"}, view.Metadata.CompactModelMapping)
+	require.Equal(t, []string{"chat_completions"}, view.Metadata.OpenAIEndpointCapabilities)
+	require.True(t, view.Metadata.InterceptWarmupRequests)
+
+	invalidPatch := map[string]any{"api_key": nil}
+	credentialVersion := stored.CredentialVersion
+	require.Error(t, UpdateUpstreamAccount(&UpstreamAccountUpdateInput{Account: stored, CredentialPatch: &invalidPatch}))
+	require.NoError(t, model.DB.First(&stored, input.Account.Id).Error)
+	require.Equal(t, credentialVersion, stored.CredentialVersion)
 }
 
 func TestUpstreamAccountPoolRuntimeStats(t *testing.T) {

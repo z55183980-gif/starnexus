@@ -12,6 +12,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { useDebounce } from '@/hooks/use-debounce'
 import { cn } from '@/lib/utils'
 import {
   AlertDialog,
@@ -27,6 +28,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardFooter,
@@ -53,8 +55,6 @@ import {
   FieldDescription,
   FieldGroup,
   FieldLabel,
-  FieldLegend,
-  FieldSet,
   FieldTitle,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
@@ -74,22 +74,22 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout'
 import {
+  bindRoutingNodeUser,
   getRoutingNodeBoundUsers,
   getRoutingNodeMonitorEnrollmentToken,
   getRoutingNodes,
   reconcileRoutingNodes,
   removeRoutingNodeUserBinding,
   rotateRoutingNodeMonitorEnrollmentToken,
-  rotateRoutingNodeMonitorToken,
   updateRoutingNode,
 } from '@/features/node-routing/api'
 import type {
   RoutingNode,
   RoutingNodeBoundUser,
   RoutingNodeInput,
-  RoutingNodeMonitorEnrollment,
   RoutingNodeMonitorSharedEnrollment,
 } from '@/features/node-routing/types'
+import { searchUsers } from '@/features/users/api'
 import {
   RoutingNodeDatabaseOverview,
   RoutingNodeMonitorBadge,
@@ -111,13 +111,11 @@ const emptyNode: RoutingNodeInput = {
 const nodeCardTone = {
   card: 'border-chart-2/25 bg-chart-2/[0.025] ring-chart-2/10 before:bg-chart-2/80',
   header: 'border-chart-2/15 bg-chart-2/[0.025]',
-  footer: 'border-chart-2/15 bg-chart-2/[0.06]',
 } as const
 
 const databaseNodeCardTone = {
   card: 'border-chart-3/30 bg-chart-3/[0.035] ring-chart-3/10 before:bg-chart-3/75',
   header: 'border-chart-3/20 bg-chart-3/[0.04]',
-  footer: 'border-chart-3/20 bg-chart-3/[0.075]',
 } as const
 
 const fixedNodeKeys = new Set(['s1', 's2', 's3', 's4', 'spg'])
@@ -134,13 +132,14 @@ export function NodeRoutingSettingsSection() {
   const [boundUsersNode, setBoundUsersNode] = useState<RoutingNode | null>(null)
   const [boundUsersPage, setBoundUsersPage] = useState(1)
   const [boundUsersEditing, setBoundUsersEditing] = useState(false)
+  const [boundUserSearch, setBoundUserSearch] = useState('')
+  const [recentlyBoundUserIds, setRecentlyBoundUserIds] = useState<number[]>([])
   const [removeBindingTarget, setRemoveBindingTarget] =
     useState<RoutingNodeBoundUser | null>(null)
-  const [monitorEnrollment, setMonitorEnrollment] =
-    useState<RoutingNodeMonitorEnrollment | null>(null)
   const [sharedMonitorEnrollment, setSharedMonitorEnrollment] =
     useState<RoutingNodeMonitorSharedEnrollment | null>(null)
   const [form, setForm] = useState<RoutingNodeInput>(emptyNode)
+  const deferredBoundUserSearch = useDebounce(boundUserSearch.trim(), 300)
 
   const nodesQuery = useQuery({
     queryKey: ['routing-nodes', 'all'],
@@ -153,6 +152,20 @@ export function NodeRoutingSettingsSection() {
     queryFn: () =>
       getRoutingNodeBoundUsers(boundUsersNode!.id, boundUsersPage, 20),
     enabled: Boolean(boundUsersNode),
+  })
+
+  const boundUserSearchQuery = useQuery({
+    queryKey: ['routing-node-user-search', deferredBoundUserSearch],
+    queryFn: () =>
+      searchUsers({
+        keyword: deferredBoundUserSearch,
+        status: 1,
+        p: 1,
+        page_size: 50,
+      }),
+    enabled: Boolean(
+      boundUsersNode && boundUsersEditing && deferredBoundUserSearch
+    ),
   })
 
   const refreshNodes = async () => {
@@ -226,22 +239,6 @@ export function NodeRoutingSettingsSection() {
     onError: (error: Error) => toast.error(error.message),
   })
 
-  const tokenMutation = useMutation({
-    mutationFn: async (node: RoutingNode) => {
-      const result = await rotateRoutingNodeMonitorToken(node.id)
-      if (!result.success || !result.data) {
-        throw new Error(result.message || t('Failed to generate monitor token'))
-      }
-      return result.data
-    },
-    onSuccess: async (enrollment) => {
-      await refreshNodes()
-      setMonitorEnrollment(enrollment)
-      toast.success(t('Monitor token generated'))
-    },
-    onError: (error: Error) => toast.error(error.message),
-  })
-
   const sharedEnrollmentMutation = useMutation({
     mutationFn: async () => {
       const result = await rotateRoutingNodeMonitorEnrollmentToken()
@@ -302,21 +299,53 @@ export function NodeRoutingSettingsSection() {
     onError: (error: Error) => toast.error(error.message),
   })
 
+  const bindUserMutation = useMutation({
+    mutationFn: async (userId: number) => {
+      if (!boundUsersNode) {
+        throw new Error(t('Failed to update node binding'))
+      }
+      const result = await bindRoutingNodeUser(userId, boundUsersNode.key)
+      if (!result.success) {
+        throw new Error(
+          result.message || t('Failed to update node binding')
+        )
+      }
+      return userId
+    },
+    onSuccess: async (userId) => {
+      setRecentlyBoundUserIds((current) => [...current, userId])
+      setBoundUsersPage(1)
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['routing-node-bound-users', boundUsersNode?.id],
+        }),
+        refreshNodes(),
+      ])
+      toast.success(t('Node binding updated'))
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+
   const nodes = nodesQuery.data?.data || []
   const fixedNodes = nodes.filter((node) => fixedNodeKeys.has(node.key))
   const visibleNodes = fixedNodes.filter((node) => node.visible)
   const boundUsers = boundUsersQuery.data?.data?.items || []
   const boundUsersTotal = boundUsersQuery.data?.data?.total || 0
   const boundUsersTotalPages = Math.max(1, Math.ceil(boundUsersTotal / 20))
+  const boundUserIds = new Set(boundUsers.map((user) => user.user_id))
+  const boundUserSearchResults = (
+    boundUserSearchQuery.data?.data?.items || []
+  ).filter(
+    (user) =>
+      !user.DeletedAt &&
+      user.username
+        .toLocaleLowerCase()
+        .includes(deferredBoundUserSearch.toLocaleLowerCase()) &&
+      !boundUserIds.has(user.id) &&
+      !recentlyBoundUserIds.includes(user.id)
+  )
   const reportOrigin =
     typeof window === 'undefined' ? '' : window.location.origin
-  const enrollmentConfig = monitorEnrollment
-    ? [
-        'NODE_MONITOR_ENABLED=true',
-        `NODE_MONITOR_REPORT_URL=${reportOrigin}${monitorEnrollment.report_path}`,
-        `NODE_MONITOR_TOKEN=${monitorEnrollment.token}`,
-      ].join('\n')
-    : ''
   const sharedEnrollmentConfig = sharedMonitorEnrollment
     ? [
         'NODE_MONITOR_ENABLED=true',
@@ -471,6 +500,30 @@ export function NodeRoutingSettingsSection() {
                         {databaseNode ? t('Database') : node.origin}
                       </span>
                     </CardDescription>
+                    <CardAction>
+                      <Button
+                        size='sm'
+                        variant='ghost'
+                        title={t('Edit')}
+                        aria-label={t('Edit')}
+                        onClick={() => {
+                          setEditing(node)
+                          setForm({
+                            key: node.key,
+                            name: node.name,
+                            origin: node.origin,
+                            type: node.type,
+                            enabled: node.enabled,
+                            visible: node.visible,
+                            sort: node.sort,
+                            monitor_enabled: node.monitor_enabled,
+                          })
+                          setDialogOpen(true)
+                        }}
+                      >
+                        {t('Edit')}
+                      </Button>
+                    </CardAction>
                   </CardHeader>
 
                   <CardContent className='flex flex-1 flex-col gap-4'>
@@ -482,12 +535,14 @@ export function NodeRoutingSettingsSection() {
                             node.binding_count > 0 ? 'secondary' : 'outline'
                           }
                           render={<button type='button' />}
-                          className='cursor-pointer tabular-nums'
+                          className='h-7 cursor-pointer px-3 text-sm tabular-nums'
                           title={t('View bound users')}
                           aria-label={t('View bound users')}
                           onClick={() => {
                             setBoundUsersPage(1)
                             setBoundUsersEditing(false)
+                            setBoundUserSearch('')
+                            setRecentlyBoundUserIds([])
                             setBoundUsersNode(node)
                           }}
                         >
@@ -505,11 +560,17 @@ export function NodeRoutingSettingsSection() {
                       </>
                     )}
 
-                    <RoutingNodeResourceOverview node={node} />
+                    <RoutingNodeResourceOverview
+                      node={node}
+                      compact={databaseNode}
+                    />
 
                     <Separator />
 
-                    <RoutingNodeNetworkTraffic node={node} />
+                    <RoutingNodeNetworkTraffic
+                      node={node}
+                      compact={databaseNode}
+                    />
 
                     <div className='text-muted-foreground mt-auto text-xs'>
                       {node.monitor_status?.reported_at
@@ -522,72 +583,6 @@ export function NodeRoutingSettingsSection() {
                     </div>
                   </CardContent>
 
-                  <CardFooter
-                    className={cn(
-                      'grid gap-2 p-2',
-                      databaseNode ? 'grid-cols-2' : 'grid-cols-3',
-                      cardTone.footer
-                    )}
-                  >
-                    {!databaseNode && (
-                      <Button
-                        size='sm'
-                        variant='ghost'
-                        onClick={() => {
-                          setBoundUsersPage(1)
-                          setBoundUsersEditing(false)
-                          setBoundUsersNode(node)
-                        }}
-                      >
-                        <HugeiconsIcon
-                          icon={UserRemove01Icon}
-                          data-icon='inline-start'
-                        />
-                        {t('Users')}
-                      </Button>
-                    )}
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      onClick={() => {
-                        setEditing(node)
-                        setForm({
-                          key: node.key,
-                          name: node.name,
-                          origin: node.origin,
-                          type: node.type,
-                          enabled: node.enabled,
-                          visible: node.visible,
-                          sort: node.sort,
-                          monitor_enabled: node.monitor_enabled,
-                        })
-                        setDialogOpen(true)
-                      }}
-                    >
-                      <HugeiconsIcon
-                        icon={Edit02Icon}
-                        data-icon='inline-start'
-                      />
-                      {t('Edit')}
-                    </Button>
-                    <Button
-                      size='sm'
-                      variant='ghost'
-                      title={
-                        node.monitor_configured
-                          ? t('Rotate monitor token')
-                          : t('Generate monitor token')
-                      }
-                      disabled={tokenMutation.isPending}
-                      onClick={() => tokenMutation.mutate(node)}
-                    >
-                      <HugeiconsIcon
-                        icon={Key01Icon}
-                        data-icon='inline-start'
-                      />
-                      {t('Token')}
-                    </Button>
-                  </CardFooter>
                 </Card>
               )
             })}
@@ -733,52 +728,27 @@ export function NodeRoutingSettingsSection() {
                 />
               </Field>
               <Field orientation='horizontal'>
-                <FieldLabel htmlFor='routing-node-enabled'>
-                  {t('Enabled')}
-                </FieldLabel>
+                <FieldContent>
+                  <FieldTitle id='routing-node-monitor-label'>
+                    {t('Receive monitoring data')}
+                  </FieldTitle>
+                  <FieldDescription>
+                    {t(
+                      'Report load, CPU, memory, disk, uptime, and version'
+                    )}
+                  </FieldDescription>
+                </FieldContent>
                 <Switch
-                  id='routing-node-enabled'
-                  checked={form.enabled}
-                  disabled={Boolean(editing?.binding_count)}
-                  onCheckedChange={(enabled) =>
-                    setForm((current) => ({ ...current, enabled }))
+                  aria-labelledby='routing-node-monitor-label'
+                  checked={form.monitor_enabled}
+                  onCheckedChange={(monitor_enabled) =>
+                    setForm((current) => ({
+                      ...current,
+                      monitor_enabled,
+                    }))
                   }
                 />
               </Field>
-              <FieldSet>
-                <FieldLegend variant='label'>
-                  {t('Node monitoring')}
-                </FieldLegend>
-                <FieldDescription>
-                  {t(
-                    'The node reports system metrics with a dedicated token. No server password is required.'
-                  )}
-                </FieldDescription>
-                <FieldGroup className='gap-3'>
-                  <Field orientation='horizontal'>
-                    <FieldContent>
-                      <FieldTitle id='routing-node-monitor-label'>
-                        {t('Enable monitoring')}
-                      </FieldTitle>
-                      <FieldDescription>
-                        {t(
-                          'Report load, CPU, memory, disk, uptime, and version'
-                        )}
-                      </FieldDescription>
-                    </FieldContent>
-                    <Switch
-                      aria-labelledby='routing-node-monitor-label'
-                      checked={form.monitor_enabled}
-                      onCheckedChange={(monitor_enabled) =>
-                        setForm((current) => ({
-                          ...current,
-                          monitor_enabled,
-                        }))
-                      }
-                    />
-                  </Field>
-                </FieldGroup>
-              </FieldSet>
             </FieldGroup>
             <DialogFooter>
               <Button variant='outline' onClick={() => setDialogOpen(false)}>
@@ -806,6 +776,8 @@ export function NodeRoutingSettingsSection() {
             if (!open) {
               setBoundUsersNode(null)
               setBoundUsersEditing(false)
+              setBoundUserSearch('')
+              setRecentlyBoundUserIds([])
               setRemoveBindingTarget(null)
             }
           }}
@@ -815,8 +787,11 @@ export function NodeRoutingSettingsSection() {
               variant={boundUsersEditing ? 'secondary' : 'outline'}
               size='sm'
               className='absolute top-2 right-10'
-              disabled={boundUsersQuery.isLoading || boundUsersTotal === 0}
-              onClick={() => setBoundUsersEditing((editing) => !editing)}
+              disabled={boundUsersQuery.isLoading}
+              onClick={() => {
+                if (boundUsersEditing) setBoundUserSearch('')
+                setBoundUsersEditing((editing) => !editing)
+              }}
             >
               {!boundUsersEditing && (
                 <HugeiconsIcon icon={Edit02Icon} data-icon='inline-start' />
@@ -831,6 +806,76 @@ export function NodeRoutingSettingsSection() {
                 })}
               </DialogDescription>
             </DialogHeader>
+
+            {boundUsersEditing && (
+              <Field>
+                <FieldLabel htmlFor='routing-node-user-search'>
+                  {t('Username')}
+                </FieldLabel>
+                <Input
+                  id='routing-node-user-search'
+                  value={boundUserSearch}
+                  placeholder={t('Search username...')}
+                  autoComplete='off'
+                  onChange={(event) => setBoundUserSearch(event.target.value)}
+                />
+                {deferredBoundUserSearch && (
+                  <div className='rounded-lg border'>
+                    {boundUserSearchQuery.isLoading ||
+                    boundUserSearchQuery.isFetching ? (
+                      <div className='flex items-center justify-center p-6'>
+                        <Spinner />
+                      </div>
+                    ) : boundUserSearchQuery.isError ? (
+                      <p className='text-destructive p-4 text-sm'>
+                        {t('Failed to search users')}
+                      </p>
+                    ) : boundUserSearchResults.length === 0 ? (
+                      <p className='text-muted-foreground p-4 text-sm'>
+                        {t('No matching users')}
+                      </p>
+                    ) : (
+                      <Table>
+                        <TableBody>
+                          {boundUserSearchResults.map((user) => (
+                            <TableRow key={user.id}>
+                              <TableCell className='w-20 font-mono tabular-nums'>
+                                {user.id}
+                              </TableCell>
+                              <TableCell>
+                                <div className='font-medium'>{user.username}</div>
+                                <div className='text-muted-foreground text-xs'>
+                                  {user.display_name || '-'}
+                                </div>
+                              </TableCell>
+                              <TableCell className='w-24 text-right'>
+                                <Button
+                                  size='sm'
+                                  disabled={bindUserMutation.isPending}
+                                  onClick={() =>
+                                    bindUserMutation.mutate(user.id)
+                                  }
+                                >
+                                  {bindUserMutation.isPending &&
+                                  bindUserMutation.variables === user.id ? (
+                                    <>
+                                      <Spinner data-icon='inline-start' />
+                                      {t('Binding...')}
+                                    </>
+                                  ) : (
+                                    t('Bind')
+                                  )}
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    )}
+                  </div>
+                )}
+              </Field>
+            )}
 
             {boundUsersQuery.isLoading ? (
               <div className='flex flex-col gap-2'>
@@ -983,53 +1028,6 @@ export function NodeRoutingSettingsSection() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-
-        <Dialog
-          open={Boolean(monitorEnrollment)}
-          onOpenChange={(open) => {
-            if (!open) setMonitorEnrollment(null)
-          }}
-        >
-          <DialogContent className='sm:max-w-2xl'>
-            <DialogHeader>
-              <DialogTitle>{t('Node monitor deployment')}</DialogTitle>
-              <DialogDescription>
-                {t(
-                  'This token is shown only once. Add these environment variables to the matching node and restart it.'
-                )}{' '}
-                {t('Keep the existing NODE_NAME unchanged.')}
-              </DialogDescription>
-            </DialogHeader>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor='node-monitor-config'>
-                  {t('Environment variables')}
-                </FieldLabel>
-                <Textarea
-                  id='node-monitor-config'
-                  readOnly
-                  value={enrollmentConfig}
-                  className='min-h-40 font-mono text-xs'
-                />
-              </Field>
-            </FieldGroup>
-            <DialogFooter>
-              <Button
-                variant='outline'
-                onClick={async () => {
-                  await navigator.clipboard.writeText(enrollmentConfig)
-                  toast.success(t('Configuration copied'))
-                }}
-              >
-                <HugeiconsIcon icon={Copy01Icon} data-icon='inline-start' />
-                {t('Copy configuration')}
-              </Button>
-              <Button onClick={() => setMonitorEnrollment(null)}>
-                {t('Done')}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         <Dialog
           open={Boolean(sharedMonitorEnrollment)}

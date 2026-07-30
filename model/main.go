@@ -282,6 +282,8 @@ func migrateDB() error {
 		&UpstreamAccount{},
 		&UpstreamAccountPoolMember{},
 		&UpstreamAccountEvent{},
+		&UpstreamAccountScheduledTestPlan{},
+		&UpstreamAccountScheduledTestResult{},
 		&UpstreamOAuthSession{},
 		&Token{},
 		&User{},

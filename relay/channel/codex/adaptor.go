@@ -1,14 +1,18 @@
 package codex
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -99,12 +103,30 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if isCompact {
 		return request, nil
 	}
+	if err := normalizeCodexResponsesRequest(&request); err != nil {
+		return nil, err
+	}
+	// ChatGPT's Codex HTTP endpoint does not accept previous_response_id. SUB2API
+	// only forwards it when the chosen upstream transport is Responses WS v2;
+	// HTTP (including client-WS/http_bridge) must use a full input payload.
+	if !codexResponsesUsesNativeWebSocket(c, info) {
+		request.PreviousResponseID = ""
+	}
 	// codex: store must be false
 	request.Store = json.RawMessage("false")
 	// rm max_output_tokens
 	request.MaxOutputTokens = nil
 	request.Temperature = nil
 	return request, nil
+}
+
+func codexResponsesUsesNativeWebSocket(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if c == nil || info == nil || !common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
+		return false
+	}
+	mode := strings.TrimSpace(info.ChannelOtherSettings.ResponsesWebSocketV2Mode)
+	return mode == model.UpstreamOpenAIWSModeContextPool || mode == model.UpstreamOpenAIWSModePassthrough ||
+		(mode == "" && info.ChannelOtherSettings.ResponsesWebSocketV2Enabled)
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -152,6 +174,17 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
+	for _, name := range []string{
+		"session_id", "conversation_id", "x-codex-turn-state", "x-codex-turn-metadata",
+		"x-codex-beta-features", "x-codex-window-id", "x-codex-installation-id", "User-Agent",
+	} {
+		if value := strings.TrimSpace(c.GetHeader(name)); value != "" && req.Get(name) == "" {
+			if name == "session_id" || name == "conversation_id" {
+				value = isolateCodexSessionHeader(c, value)
+			}
+			req.Set(name, value)
+		}
+	}
 
 	key := strings.TrimSpace(info.ApiKey)
 	if !strings.HasPrefix(key, "{") {
@@ -194,4 +227,18 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	}
 
 	return nil
+}
+
+func isolateCodexSessionHeader(c *gin.Context, value string) string {
+	value = strings.TrimSpace(value)
+	if c == nil || value == "" {
+		return value
+	}
+	tokenID := common.GetContextKeyInt(c, appconstant.ContextKeyTokenId)
+	userID := common.GetContextKeyInt(c, appconstant.ContextKeyUserId)
+	if tokenID <= 0 && userID <= 0 {
+		return value
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%s", userID, tokenID, value)))
+	return fmt.Sprintf("%x", sum[:])
 }
