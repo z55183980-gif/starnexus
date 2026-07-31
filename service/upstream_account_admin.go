@@ -52,6 +52,8 @@ type UpstreamAccountMetadata struct {
 	CompactModelMapping        map[string]string `json:"compact_model_mapping,omitempty"`
 	OpenAIEndpointCapabilities []string          `json:"openai_capabilities,omitempty"`
 	InterceptWarmupRequests    bool              `json:"intercept_warmup_requests"`
+	HeaderOverrideEnabled      bool              `json:"header_override_enabled"`
+	HeaderOverrides            map[string]string `json:"header_overrides,omitempty"`
 	BedrockAuthMode            string            `json:"bedrock_auth_mode,omitempty"`
 	AWSRegion                  string            `json:"aws_region,omitempty"`
 	AWSAccessKeyID             string            `json:"aws_access_key_id,omitempty"`
@@ -1130,6 +1132,8 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 		metadata.CredentialReadable = true
 		metadata.BaseURL = upstreamCredentialMapString(credentials, "base_url")
 		metadata.ModelMapping = upstreamCredentialStringMap(credentials["model_mapping"])
+		metadata.HeaderOverrideEnabled, _ = credentials["header_override_enabled"].(bool)
+		metadata.HeaderOverrides = upstreamCredentialStringMap(credentials["header_overrides"])
 		metadata.BedrockAuthMode = upstreamCredentialMapString(credentials, "auth_mode")
 		metadata.AWSRegion = upstreamCredentialMapString(credentials, "aws_region")
 		metadata.AWSAccessKeyID = upstreamCredentialMapString(credentials, "aws_access_key_id")

@@ -645,6 +645,11 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		cleanup()
 		return nil, nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
+	if accountMultiplier := relayInfo.GetAccountRateMultiplier(); accountMultiplier != 1 {
+		priceData.GroupRatioInfo.GroupRatio *= accountMultiplier
+		priceData.Quota = common.QuotaRound(float64(priceData.Quota) * accountMultiplier)
+		priceData.QuotaToPreConsume = common.QuotaRound(float64(priceData.QuotaToPreConsume) * accountMultiplier)
+	}
 	if !priceData.FreeModel {
 		if apiErr := service.PreConsumeBilling(turnCtx, priceData.QuotaToPreConsume, relayInfo); apiErr != nil {
 			cleanup()

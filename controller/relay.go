@@ -182,14 +182,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return
 	}
-	if accountMultiplier, ok := common.GetContextKeyType[float64](c, constant.ContextKeyUpstreamAccountRateMultiplier); ok {
+	if accountMultiplier := relayInfo.GetAccountRateMultiplier(); accountMultiplier != 1 {
 		priceData.GroupRatioInfo.GroupRatio *= accountMultiplier
 		priceData.Quota = common.QuotaRound(float64(priceData.Quota) * accountMultiplier)
 		priceData.QuotaToPreConsume = common.QuotaRound(float64(priceData.QuotaToPreConsume) * accountMultiplier)
 	}
 	if relayFormat == types.RelayFormatOpenAIAlphaSearch {
 		priceData.QuotaToPreConsume = service.AddKnownToolCallSurchargeToPreConsumeQuota(c, relayInfo, priceData.QuotaToPreConsume)
-		relayInfo.PriceData = priceData
 	}
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)

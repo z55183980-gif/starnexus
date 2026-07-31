@@ -91,6 +91,13 @@ func tokenPricingContextFromRelayInfo(relayInfo *relaycommon.RelayInfo) billing_
 	}
 }
 
+func effectiveAccountGroupRatio(relayInfo *relaycommon.RelayInfo) float64 {
+	if relayInfo == nil {
+		return 1
+	}
+	return relayInfo.PriceData.GroupRatioInfo.GroupRatio * relayInfo.GetAccountRateMultiplier()
+}
+
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
 	if summary.CacheCreationTokens5m > 0 || summary.CacheCreationTokens1h > 0 {
 		splitCacheWriteTokens := summary.CacheCreationTokens5m + summary.CacheCreationTokens1h
@@ -191,7 +198,7 @@ func AddKnownToolCallSurchargeToPreConsumeQuota(ctx *gin.Context, relayInfo *rel
 	}
 	summary := textQuotaSummary{
 		ModelName:  relayInfo.OriginModelName,
-		GroupRatio: relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		GroupRatio: effectiveAccountGroupRatio(relayInfo),
 	}
 	surcharge := calculateTextToolCallSurcharge(ctx, relayInfo, &summary)
 	if surcharge.IsZero() {
@@ -210,9 +217,9 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 	}
 
 	if tieredResult != nil {
-		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
+		if relayInfo.TieredBillingSnapshot != nil {
 			quota, clamp := common.QuotaFromDecimalChecked(decimal.NewFromFloat(tieredResult.ActualQuotaBeforeGroup).
-				Mul(decimal.NewFromFloat(snap.GroupRatio)).
+				Mul(decimal.NewFromFloat(summary.GroupRatio)).
 				Add(summary.ToolCallSurchargeQuota))
 			noteQuotaClamp(relayInfo, clamp)
 			return quota
@@ -240,7 +247,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		CacheRatio:           relayInfo.PriceData.CacheRatio,
 		ImageRatio:           relayInfo.PriceData.ImageRatio,
 		ModelRatio:           relayInfo.PriceData.ModelRatio,
-		GroupRatio:           relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		GroupRatio:           effectiveAccountGroupRatio(relayInfo),
 		ModelPrice:           relayInfo.PriceData.ModelPrice,
 		CacheCreationRatio:   relayInfo.PriceData.CacheCreationRatio,
 		CacheCreationRatio5m: relayInfo.PriceData.CacheCreation5mRatio,
@@ -431,7 +438,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 			tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
 		}
-		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, summary.IsClaudeUsageSemantic, tieredUsedVars, tokenPricingContextFromRelayInfo(relayInfo)))
+		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, summary.IsClaudeUsageSemantic, tieredUsedVars, tokenPricingContextFromRelayInfo(relayInfo)), relayInfo.GetAccountRateMultiplier())
 		if tieredOk {
 			tieredBillingApplied = true
 			tieredResult = tieredRes

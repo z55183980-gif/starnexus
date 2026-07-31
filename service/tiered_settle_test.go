@@ -372,6 +372,21 @@ func TestTryTieredSettle_GroupRatioScaling(t *testing.T) {
 	}
 }
 
+func TestTryTieredSettleAppliesFinalAccountRateMultiplier(t *testing.T) {
+	info := makeRelayInfo(flatExpr, 1.5, 1000, 500)
+	multiplier := 2.0
+	info.AccountRateMultiplier = &multiplier
+
+	ok, quota, _ := TryTieredSettle(info, billingexpr.TokenParams{P: 1000, C: 500})
+	if !ok {
+		t.Fatal("expected tiered settle")
+	}
+	// exprCost = 7000, quotaBeforeGroup = 3500, afterGroup = 3500 * 1.5 * 2.
+	if quota != 10500 {
+		t.Fatalf("quota = %d, want 10500", quota)
+	}
+}
+
 func TestTryTieredSettle_GroupRatioZero(t *testing.T) {
 	info := makeRelayInfo(flatExpr, 0, 1000, 500)
 

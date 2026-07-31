@@ -19,6 +19,8 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
@@ -103,6 +105,28 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
 		requestBody = common.ReaderOnly(storage)
+		if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+			accountMappedModel := common.GetContextKeyString(c, appconstant.ContextKeyUpstreamAccountMappedModel)
+			if accountMappedModel != "" {
+				rawBody, readErr := storage.Bytes()
+				if readErr != nil {
+					return types.NewError(readErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+				}
+				mappedBody, changed, mapErr := applyResponsesPassthroughAccountModel(rawBody, accountMappedModel)
+				if mapErr != nil {
+					return types.NewError(mapErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+				if changed {
+					body, size, closer, bodyErr := relaycommon.NewOutboundJSONBody(mappedBody)
+					if bodyErr != nil {
+						return types.NewError(bodyErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+					}
+					defer closer.Close()
+					info.UpstreamRequestBodySize = size
+					requestBody = body
+				}
+			}
+		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
 		if err != nil {
@@ -167,19 +191,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	usageDto := usage.(*dto.Usage)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-		originModelName := info.OriginModelName
-		originPriceData := info.PriceData
-
-		_, err := helper.ModelPriceHelper(c, info, info.GetEstimatePromptTokens(), &types.TokenCountMeta{})
-		if err != nil {
-			info.OriginModelName = originModelName
-			info.PriceData = originPriceData
-			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
-		}
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
-
-		info.OriginModelName = originModelName
-		info.PriceData = originPriceData
 		return nil
 	}
 
@@ -189,4 +201,19 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}
 	return nil
+}
+
+func applyResponsesPassthroughAccountModel(data []byte, mappedModel string) ([]byte, bool, error) {
+	mappedModel = strings.TrimSpace(mappedModel)
+	if mappedModel == "" {
+		return data, false, nil
+	}
+	if current := gjson.GetBytes(data, "model"); current.Exists() && current.Type == gjson.String && current.String() == mappedModel {
+		return data, false, nil
+	}
+	mappedBody, err := sjson.SetBytes(data, "model", mappedModel)
+	if err != nil {
+		return nil, false, fmt.Errorf("patch compact passthrough request: %w", err)
+	}
+	return mappedBody, true, nil
 }

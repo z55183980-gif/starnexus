@@ -71,6 +71,23 @@ func TestParseUpstreamAccountOptionsWithCredentialsRejectsInvalidValues(t *testi
 	require.Error(t, err)
 }
 
+func TestParseUpstreamAccountOptionsWithCredentialsRejectsInvalidCompactWildcards(t *testing.T) {
+	tests := []map[string]any{
+		{"compact_model_mapping": map[string]any{"gpt-*legacy": "gpt-5.4"}},
+		{"compact_model_mapping": map[string]any{"gpt-**": "gpt-5.4"}},
+		{"compact_model_mapping": map[string]any{"gpt-5.*": "gpt-*"}},
+	}
+	for _, credentials := range tests {
+		_, err := ParseUpstreamAccountOptionsWithCredentials("{}", credentials)
+		require.Error(t, err)
+	}
+	_, err := ParseUpstreamAccountOptionsWithCredentials(
+		`{"compact_model_mapping":{"gpt-*legacy":"gpt-5.4"}}`,
+		nil,
+	)
+	require.Error(t, err)
+}
+
 func TestParseUpstreamAccountOptionsWithCredentialsTreatsNullAsUnset(t *testing.T) {
 	options, err := ParseUpstreamAccountOptionsWithCredentials(
 		`{"intercept_warmup_requests":true,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"]}`,

@@ -63,9 +63,6 @@ func ParseUpstreamAccountOptionsWithCredentials(extra string, credentials map[st
 	if err != nil {
 		return UpstreamAccountOptions{}, err
 	}
-	if len(credentials) == 0 {
-		return options, nil
-	}
 	if raw, ok := credentials["intercept_warmup_requests"]; ok {
 		if raw == nil {
 			options.InterceptWarmupRequests = false
@@ -98,6 +95,9 @@ func ParseUpstreamAccountOptionsWithCredentials(extra string, credentials map[st
 			}
 			options.OpenAIEndpointCapabilities = capabilities
 		}
+	}
+	if err := validateUpstreamCompactModelMapping(options.CompactModelMapping); err != nil {
+		return UpstreamAccountOptions{}, err
 	}
 	return options, nil
 }
@@ -233,10 +233,8 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 	if err := validateUpstreamOptionValue(options.AnthropicAPIKeyAuthScheme, UpstreamAnthropicAuthSchemeAPIKey, UpstreamAnthropicAuthSchemeBearer); err != nil {
 		return errors.New("unsupported Anthropic API key authentication scheme")
 	}
-	for source, target := range options.CompactModelMapping {
-		if strings.TrimSpace(source) == "" || strings.TrimSpace(target) == "" {
-			return errors.New("compact model mapping entries require source and target models")
-		}
+	if err := validateUpstreamCompactModelMapping(options.CompactModelMapping); err != nil {
+		return err
 	}
 	seenCapabilities := make(map[string]struct{}, len(options.OpenAIEndpointCapabilities))
 	for _, capability := range options.OpenAIEndpointCapabilities {
@@ -248,6 +246,24 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 			return errors.New("OpenAI endpoint capabilities must be unique")
 		}
 		seenCapabilities[capability] = struct{}{}
+	}
+	return nil
+}
+
+func validateUpstreamCompactModelMapping(mapping map[string]string) error {
+	for source, target := range mapping {
+		source = strings.TrimSpace(source)
+		target = strings.TrimSpace(target)
+		if source == "" || target == "" {
+			return errors.New("compact model mapping entries require source and target models")
+		}
+		wildcardIndex := strings.Index(source, "*")
+		if wildcardIndex >= 0 && (wildcardIndex != len(source)-1 || strings.LastIndex(source, "*") != wildcardIndex) {
+			return errors.New("compact model mapping wildcard can only appear once at the end")
+		}
+		if strings.Contains(target, "*") {
+			return errors.New("compact model mapping target cannot contain a wildcard")
+		}
 	}
 	return nil
 }

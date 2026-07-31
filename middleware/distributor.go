@@ -431,6 +431,10 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyUpstreamProxyId, 0)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountLeaseId, "")
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountMappedModel, "")
+	// Do not let an account-less channel or the next failover attempt inherit
+	// the previous account's billing multiplier. setupLocalUpstreamAccount
+	// overwrites this with the selected account's value when one is configured.
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountRateMultiplier, 1.0)
 	common.SetContextKey(c, constant.ContextKeyUpstreamInterceptWarmup, false)
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {

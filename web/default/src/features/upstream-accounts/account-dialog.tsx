@@ -57,6 +57,18 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
+  buildHeaderOverridesObject,
+  buildValidatedModelMapping,
+  credentialBackedSettingsChanged,
+  editableAccountStatuses,
+  parseIntegerAtLeast,
+  splitHeaderOverridesObject,
+  validateHeaderOverrideRows,
+  type CredentialBackedSettings,
+  type HeaderOverrideRow,
+  type ModelMappingValidationError,
+} from './account-dialog-validation'
+import {
   AccountModelRestriction,
   splitAccountModelMapping,
   type AccountModelMapping,
@@ -129,6 +141,8 @@ type AccountDraft = {
   vertexServiceAccountJson: string
   vertexLocation: string
   interceptWarmupRequests: boolean
+  headerOverrideEnabled: boolean
+  headerOverrideRows: HeaderOverrideRow[]
   openaiPassthrough: boolean
   openaiWebSocketMode: OpenAIWebSocketMode
   openaiLongContextBilling: boolean
@@ -229,6 +243,8 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
     interceptWarmupRequests:
       metadata?.intercept_warmup_requests ??
       extra.intercept_warmup_requests === true,
+    headerOverrideEnabled: metadata?.header_override_enabled === true,
+    headerOverrideRows: splitHeaderOverridesObject(metadata?.header_overrides),
     openaiPassthrough: extra.openai_passthrough === true,
     openaiWebSocketMode: websocketMode || 'off',
     openaiLongContextBilling:
@@ -262,6 +278,49 @@ function isOAuthAccountType(type: UpstreamAccountType) {
   return type === 'oauth' || type === 'setup_token'
 }
 
+function isHeaderOverrideCapable(
+  platform: UpstreamPlatform,
+  type: UpstreamAccountType
+) {
+  return (
+    (platform === 'openai' || platform === 'anthropic') && type === 'apikey'
+  )
+}
+
+function credentialBackedSettings(
+  draft: AccountDraft
+): CredentialBackedSettings {
+  return {
+    baseUrl: draft.baseUrl,
+    bedrockAuthMode: draft.bedrockAuthMode,
+    bedrockRegion: draft.bedrockRegion,
+    vertexLocation: draft.vertexLocation,
+    interceptWarmupRequests: draft.interceptWarmupRequests,
+    compactModelMappings: draft.compactModelMappings,
+    openaiEndpointCapabilities: draft.openaiEndpointCapabilities,
+    allowedModels: draft.allowedModels,
+    modelMappings: draft.modelMappings,
+    headerOverrideEnabled: draft.headerOverrideEnabled,
+    headerOverrideRows: draft.headerOverrideRows,
+  }
+}
+
+function hasReplacementCredentials(draft: AccountDraft) {
+  if (isOAuthAccountType(draft.type)) return Boolean(draft.oauthInput.trim())
+  if (draft.type === 'apikey') return Boolean(draft.apiKey.trim())
+  if (draft.type === 'bedrock') {
+    return draft.bedrockAuthMode === 'api_key'
+      ? Boolean(draft.bedrockApiKey.trim())
+      : Boolean(
+          draft.bedrockAccessKeyId.trim() || draft.bedrockSecretAccessKey.trim()
+        )
+  }
+  if (draft.type === 'service_account') {
+    return Boolean(draft.vertexServiceAccountJson.trim())
+  }
+  return false
+}
+
 export function AccountDialog({
   open,
   onOpenChange,
@@ -283,10 +342,15 @@ export function AccountDialog({
   const [busy, setBusy] = useState(false)
   const [oauthStarted, setOAuthStarted] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
+  const initialCredentialSettingsRef = useRef<CredentialBackedSettings>(
+    credentialBackedSettings(accountDraft(account))
+  )
 
   useEffect(() => {
     if (!open) return
-    setDraft(accountDraft(account))
+    const nextDraft = accountDraft(account)
+    setDraft(nextDraft)
+    initialCredentialSettingsRef.current = credentialBackedSettings(nextDraft)
     setStep(account ? 2 : 1)
     setOAuthStarted(false)
   }, [account, open])
@@ -358,6 +422,25 @@ export function AccountDialog({
     draft.platform === 'anthropic' && draft.type === 'setup_token'
       ? 'oauth'
       : draft.type
+
+  const credentialSettingsDisabled = Boolean(
+    account?.metadata.credential_readable === false &&
+    !hasReplacementCredentials(draft)
+  )
+
+  const statusItems = editableAccountStatuses(account?.status).map(
+    (status) => ({
+      value: status,
+      label:
+        status === 'active'
+          ? t('Active')
+          : status === 'inactive'
+            ? t('Inactive')
+            : status === 'error'
+              ? t('Error')
+              : t('Expired'),
+    })
+  )
 
   const changePlatform = (platform: UpstreamPlatform) => {
     if (account || platform === draft.platform) return
@@ -472,50 +555,48 @@ export function AccountDialog({
     return undefined
   }
 
+  const modelMappingErrorMessage = (
+    error: ModelMappingValidationError,
+    compact: boolean
+  ) => {
+    if (error === 'missingPair') {
+      return t(
+        compact
+          ? 'Compact model mappings require both models'
+          : 'Model mappings require both model names'
+      )
+    }
+    if (error === 'invalidSourceWildcard') {
+      return t('A wildcard can only appear once at the end')
+    }
+    if (error === 'wildcardTarget') {
+      return t('Target models cannot contain wildcards')
+    }
+    return t('Compact model mapping sources must be unique')
+  }
+
   const buildModelRestrictionMapping = () => {
     const mapping: Record<string, string> = {}
     for (const rawModel of draft.allowedModels) {
       const model = rawModel.trim()
       if (model && !model.includes('*')) mapping[model] = model
     }
-    for (const row of draft.modelMappings) {
-      const from = row.from.trim()
-      const to = row.to.trim()
-      if (!from && !to) continue
-      if (!from || !to) {
-        throw new Error(t('Model mappings require both model names'))
-      }
-      const wildcardIndex = from.indexOf('*')
-      if (
-        wildcardIndex >= 0 &&
-        (wildcardIndex !== from.length - 1 ||
-          from.lastIndexOf('*') !== wildcardIndex)
-      ) {
-        throw new Error(t('A wildcard can only appear once at the end'))
-      }
-      if (to.includes('*')) {
-        throw new Error(t('Target models cannot contain wildcards'))
-      }
+    const result = buildValidatedModelMapping(draft.modelMappings)
+    if (result.error) {
+      throw new Error(modelMappingErrorMessage(result.error, false))
+    }
+    for (const [from, to] of Object.entries(result.mapping || {})) {
       mapping[from] = to
     }
     return Object.keys(mapping).length > 0 ? mapping : null
   }
 
   const buildCompactModelMapping = () => {
-    const mapping: Record<string, string> = {}
-    for (const row of draft.compactModelMappings) {
-      const from = row.from.trim()
-      const to = row.to.trim()
-      if (!from && !to) continue
-      if (!from || !to) {
-        throw new Error(t('Compact model mappings require both models'))
-      }
-      if (mapping[from]) {
-        throw new Error(t('Compact model mapping sources must be unique'))
-      }
-      mapping[from] = to
+    const result = buildValidatedModelMapping(draft.compactModelMappings, true)
+    if (result.error) {
+      throw new Error(modelMappingErrorMessage(result.error, true))
     }
-    return Object.keys(mapping).length > 0 ? mapping : null
+    return result.mapping
   }
 
   const applyCredentialBackedSettings = (
@@ -530,6 +611,17 @@ export function AccountDialog({
       credentials.intercept_warmup_requests = true
     } else {
       delete credentials.intercept_warmup_requests
+    }
+    if (isHeaderOverrideCapable(draft.platform, draft.type)) {
+      if (draft.headerOverrideEnabled) {
+        credentials.header_override_enabled = true
+        credentials.header_overrides = buildHeaderOverridesObject(
+          draft.headerOverrideRows
+        )
+      } else {
+        delete credentials.header_override_enabled
+        delete credentials.header_overrides
+      }
     }
     if (draft.platform === 'openai') {
       const compactModelMapping = buildCompactModelMapping()
@@ -568,6 +660,12 @@ export function AccountDialog({
     patch.intercept_warmup_requests = draft.interceptWarmupRequests
       ? true
       : null
+    if (isHeaderOverrideCapable(draft.platform, draft.type)) {
+      patch.header_override_enabled = draft.headerOverrideEnabled ? true : null
+      patch.header_overrides = draft.headerOverrideEnabled
+        ? buildHeaderOverridesObject(draft.headerOverrideRows)
+        : null
+    }
     if (draft.platform === 'openai') {
       patch.compact_model_mapping = buildCompactModelMapping()
       if (draft.type === 'apikey') {
@@ -724,6 +822,19 @@ export function AccountDialog({
     )
   }
 
+  const updateHeaderOverride = (
+    index: number,
+    key: keyof HeaderOverrideRow,
+    value: string
+  ) => {
+    set(
+      'headerOverrideRows',
+      draft.headerOverrideRows.map((row, rowIndex) =>
+        rowIndex === index ? { ...row, [key]: value } : row
+      )
+    )
+  }
+
   const submit = async () => {
     if (!draft.name.trim()) {
       toast.error(t('Account name is required'))
@@ -732,6 +843,50 @@ export function AccountDialog({
     setBusy(true)
     try {
       const oauthType = isOAuthAccountType(draft.type)
+      const concurrency = parseIntegerAtLeast(draft.concurrency, 1)
+      const priority = parseIntegerAtLeast(draft.priority, 0)
+      const weight = parseIntegerAtLeast(draft.weight, 1)
+      if (concurrency === null) {
+        throw new Error(t('Concurrency must be a whole number of at least 1'))
+      }
+      if (priority === null) {
+        throw new Error(t('Priority must be a non-negative whole number'))
+      }
+      if (weight === null) {
+        throw new Error(t('Weight must be a whole number of at least 1'))
+      }
+      if (draft.headerOverrideEnabled) {
+        const headerError = validateHeaderOverrideRows(draft.headerOverrideRows)
+        if (headerError === 'invalidName') {
+          throw new Error(t('Invalid HTTP header override name'))
+        }
+        if (headerError === 'blockedName') {
+          throw new Error(t('This HTTP header cannot be overridden'))
+        }
+        if (headerError === 'duplicateName') {
+          throw new Error(t('HTTP header override names must be unique'))
+        }
+        if (headerError === 'invalidValue') {
+          throw new Error(t('Invalid HTTP header override value'))
+        }
+        if (headerError === 'tooManyEntries') {
+          throw new Error(t('HTTP header overrides support at most 64 entries'))
+        }
+      }
+      if (
+        account?.metadata.credential_readable === false &&
+        !hasReplacementCredentials(draft) &&
+        credentialBackedSettingsChanged(
+          initialCredentialSettingsRef.current,
+          credentialBackedSettings(draft)
+        )
+      ) {
+        throw new Error(
+          t(
+            'Replace the stored credentials before changing credential-backed settings.'
+          )
+        )
+      }
       const loadFactor = draft.loadFactor.trim()
         ? Number(draft.loadFactor)
         : null
@@ -760,9 +915,9 @@ export function AccountDialog({
         type: draft.type,
         extra: buildAccountExtra(),
         proxy_id: draft.proxyId ? Number(draft.proxyId) : null,
-        concurrency: Math.max(1, Number(draft.concurrency) || 1),
-        priority: Number(draft.priority) || 0,
-        weight: Math.max(1, Number(draft.weight) || 1),
+        concurrency,
+        priority,
+        weight,
         load_factor: loadFactor,
         rate_multiplier: rateMultiplier,
         status: draft.status,
@@ -1075,7 +1230,7 @@ export function AccountDialog({
                       allowedModels={draft.allowedModels}
                       modelMappings={draft.modelMappings}
                       disabled={
-                        account.metadata.credential_readable === false ||
+                        credentialSettingsDisabled ||
                         (draft.platform === 'openai' && draft.openaiPassthrough)
                       }
                       onModeChange={(value) =>
@@ -1212,6 +1367,138 @@ export function AccountDialog({
                     />
                   </Field>
                 </div>
+              )}
+
+              {isHeaderOverrideCapable(draft.platform, draft.type) && (
+                <>
+                  <Field
+                    data-disabled={credentialSettingsDisabled || undefined}
+                    orientation='horizontal'
+                    className='items-center justify-between rounded-lg border p-3'
+                  >
+                    <div className='flex flex-col gap-1'>
+                      <FieldLabel htmlFor='account-header-override-enabled'>
+                        {t('Header override')}
+                      </FieldLabel>
+                      <FieldDescription>
+                        {t(
+                          'Override same-named outbound request headers for this account.'
+                        )}
+                      </FieldDescription>
+                    </div>
+                    <Switch
+                      id='account-header-override-enabled'
+                      disabled={credentialSettingsDisabled}
+                      checked={draft.headerOverrideEnabled}
+                      onCheckedChange={(checked) =>
+                        set('headerOverrideEnabled', checked)
+                      }
+                    />
+                  </Field>
+                  {draft.headerOverrideEnabled && (
+                    <Field
+                      data-disabled={credentialSettingsDisabled || undefined}
+                    >
+                      <FieldDescription>
+                        {t(
+                          'Authentication and connection-control headers cannot be overridden.'
+                        )}
+                      </FieldDescription>
+                      <FieldGroup className='gap-2'>
+                        {draft.headerOverrideRows.map((row, index) => (
+                          <FieldGroup
+                            key={index}
+                            className='grid grid-cols-[1fr_1fr_auto] items-end gap-2'
+                          >
+                            <Field>
+                              <FieldLabel
+                                htmlFor={`account-header-name-${index}`}
+                                className='sr-only'
+                              >
+                                {t('Header name')}
+                              </FieldLabel>
+                              <Input
+                                id={`account-header-name-${index}`}
+                                disabled={credentialSettingsDisabled}
+                                value={row.name}
+                                placeholder={t('Header name')}
+                                onChange={(event) =>
+                                  updateHeaderOverride(
+                                    index,
+                                    'name',
+                                    event.target.value
+                                  )
+                                }
+                              />
+                            </Field>
+                            <Field>
+                              <FieldLabel
+                                htmlFor={`account-header-value-${index}`}
+                                className='sr-only'
+                              >
+                                {t('Header value')}
+                              </FieldLabel>
+                              <Input
+                                id={`account-header-value-${index}`}
+                                disabled={credentialSettingsDisabled}
+                                value={row.value}
+                                placeholder={t('Header value')}
+                                onChange={(event) =>
+                                  updateHeaderOverride(
+                                    index,
+                                    'value',
+                                    event.target.value
+                                  )
+                                }
+                              />
+                            </Field>
+                            <Button
+                              type='button'
+                              variant='ghost'
+                              size='icon'
+                              disabled={credentialSettingsDisabled}
+                              title={t('Delete header')}
+                              onClick={() =>
+                                set(
+                                  'headerOverrideRows',
+                                  draft.headerOverrideRows.filter(
+                                    (_, rowIndex) => rowIndex !== index
+                                  )
+                                )
+                              }
+                            >
+                              <HugeiconsIcon
+                                data-icon='inline-start'
+                                icon={Delete02Icon}
+                                strokeWidth={2}
+                              />
+                            </Button>
+                          </FieldGroup>
+                        ))}
+                      </FieldGroup>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        className='w-fit'
+                        disabled={credentialSettingsDisabled}
+                        onClick={() =>
+                          set('headerOverrideRows', [
+                            ...draft.headerOverrideRows,
+                            { name: '', value: '' },
+                          ])
+                        }
+                      >
+                        <HugeiconsIcon
+                          data-icon='inline-start'
+                          icon={Add01Icon}
+                          strokeWidth={2}
+                        />
+                        {t('Add header')}
+                      </Button>
+                    </Field>
+                  )}
+                </>
               )}
 
               {draft.type === 'bedrock' && (
@@ -1357,6 +1644,31 @@ export function AccountDialog({
                 </div>
               )}
 
+              <Field
+                data-disabled={credentialSettingsDisabled || undefined}
+                orientation='horizontal'
+                className='items-center justify-between rounded-lg border p-3'
+              >
+                <div className='flex flex-col gap-1'>
+                  <FieldLabel htmlFor='account-intercept-warmup'>
+                    {t('Intercept warmup requests')}
+                  </FieldLabel>
+                  <FieldDescription>
+                    {t(
+                      'Return mock responses for warmup requests without consuming upstream tokens.'
+                    )}
+                  </FieldDescription>
+                </div>
+                <Switch
+                  id='account-intercept-warmup'
+                  disabled={credentialSettingsDisabled}
+                  checked={draft.interceptWarmupRequests}
+                  onCheckedChange={(checked) =>
+                    set('interceptWarmupRequests', checked)
+                  }
+                />
+              </Field>
+
               <div className='grid gap-4 sm:grid-cols-2'>
                 <Field>
                   <FieldLabel>{t('Proxy')}</FieldLabel>
@@ -1393,12 +1705,7 @@ export function AccountDialog({
                 <Field>
                   <FieldLabel>{t('Status')}</FieldLabel>
                   <Select
-                    items={[
-                      { value: 'active', label: t('Active') },
-                      { value: 'inactive', label: t('Inactive') },
-                      { value: 'error', label: t('Error') },
-                      { value: 'expired', label: t('Expired') },
-                    ]}
+                    items={statusItems}
                     value={draft.status}
                     onValueChange={(value) =>
                       set('status', value as AccountDraft['status'])
@@ -1409,12 +1716,11 @@ export function AccountDialog({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectGroup>
-                        <SelectItem value='active'>{t('Active')}</SelectItem>
-                        <SelectItem value='inactive'>
-                          {t('Inactive')}
-                        </SelectItem>
-                        <SelectItem value='error'>{t('Error')}</SelectItem>
-                        <SelectItem value='expired'>{t('Expired')}</SelectItem>
+                        {statusItems.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            {item.label}
+                          </SelectItem>
+                        ))}
                       </SelectGroup>
                     </SelectContent>
                   </Select>
@@ -1703,7 +2009,9 @@ export function AccountDialog({
                     </Select>
                   </Field>
 
-                  <Field>
+                  <Field
+                    data-disabled={credentialSettingsDisabled || undefined}
+                  >
                     <FieldLabel>{t('Compact model mapping')}</FieldLabel>
                     <FieldDescription>
                       {t('Only applies to /responses/compact requests.')}
@@ -1716,6 +2024,7 @@ export function AccountDialog({
                             className='grid grid-cols-[1fr_auto_1fr_auto] items-center gap-2'
                           >
                             <Input
+                              disabled={credentialSettingsDisabled}
                               value={mapping.from}
                               placeholder={t('Source model')}
                               onChange={(event) =>
@@ -1728,6 +2037,7 @@ export function AccountDialog({
                             />
                             <span className='text-muted-foreground'>→</span>
                             <Input
+                              disabled={credentialSettingsDisabled}
                               value={mapping.to}
                               placeholder={t('Target model')}
                               onChange={(event) =>
@@ -1742,6 +2052,7 @@ export function AccountDialog({
                               type='button'
                               variant='ghost'
                               size='icon'
+                              disabled={credentialSettingsDisabled}
                               title={t('Delete mapping')}
                               onClick={() =>
                                 set(
@@ -1766,6 +2077,7 @@ export function AccountDialog({
                       variant='outline'
                       size='sm'
                       className='w-fit'
+                      disabled={credentialSettingsDisabled}
                       onClick={() =>
                         set('compactModelMappings', [
                           ...draft.compactModelMappings,
@@ -1834,7 +2146,9 @@ export function AccountDialog({
                         </Select>
                       </Field>
 
-                      <Field>
+                      <Field
+                        data-disabled={credentialSettingsDisabled || undefined}
+                      >
                         <FieldLabel>{t('Endpoint capabilities')}</FieldLabel>
                         <div className='grid gap-2 sm:grid-cols-2'>
                           {defaultOpenAIEndpointCapabilities.map(
@@ -1844,6 +2158,7 @@ export function AccountDialog({
                                 className='flex cursor-pointer items-center gap-2 border px-3 py-2 text-sm'
                               >
                                 <Checkbox
+                                  disabled={credentialSettingsDisabled}
                                   checked={draft.openaiEndpointCapabilities.includes(
                                     capability
                                   )}

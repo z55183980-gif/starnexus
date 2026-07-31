@@ -214,6 +214,8 @@ func TestUpdateUpstreamAccountCredentialPatchPreservesSecretsAndDeletesFields(t 
 		"compact_model_mapping":     map[string]any{"gpt-5.*": "gpt-5.4-compact"},
 		"openai_capabilities":       []any{"chat_completions"},
 		"intercept_warmup_requests": true,
+		"header_override_enabled":   true,
+		"header_overrides":          map[string]any{"user-agent": "starnexus-test"},
 	}
 	require.NoError(t, UpdateUpstreamAccount(&UpstreamAccountUpdateInput{Account: input.Account, CredentialPatch: &patch}))
 
@@ -233,6 +235,8 @@ func TestUpdateUpstreamAccountCredentialPatchPreservesSecretsAndDeletesFields(t 
 	require.Equal(t, map[string]string{"gpt-5.*": "gpt-5.4-compact"}, view.Metadata.CompactModelMapping)
 	require.Equal(t, []string{"chat_completions"}, view.Metadata.OpenAIEndpointCapabilities)
 	require.True(t, view.Metadata.InterceptWarmupRequests)
+	require.True(t, view.Metadata.HeaderOverrideEnabled)
+	require.Equal(t, map[string]string{"user-agent": "starnexus-test"}, view.Metadata.HeaderOverrides)
 
 	invalidPatch := map[string]any{"api_key": nil}
 	credentialVersion := stored.CredentialVersion

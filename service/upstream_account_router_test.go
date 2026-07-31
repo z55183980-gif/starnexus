@@ -119,6 +119,37 @@ func TestResolveUpstreamAccountModelRejectsForeignModelsForOpenAIOAuthWithoutMap
 	require.True(t, supported)
 }
 
+func TestResolveUpstreamAccountModelPassthroughIgnoresStoredModelMapping(t *testing.T) {
+	account := &model.UpstreamAccount{Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth}
+	credentials := map[string]any{
+		"model_mapping": map[string]any{"gpt-5.*": "gpt-5.4"},
+	}
+	options := model.UpstreamAccountOptions{OpenAIPassthrough: true}
+
+	mapped, matched, supported := resolveUpstreamAccountModel(account, credentials, options, "gemini-3-pro", false, "")
+	require.True(t, supported)
+	require.False(t, matched)
+	require.Equal(t, "gemini-3-pro", mapped)
+
+	mapped, matched, supported = resolveUpstreamAccountModel(account, credentials, options, "gpt-5.6-sol", false, "")
+	require.True(t, supported)
+	require.False(t, matched)
+	require.Equal(t, "gpt-5.6-sol", mapped)
+}
+
+func TestResolveUpstreamAccountModelPassthroughKeepsCompactMapping(t *testing.T) {
+	account := &model.UpstreamAccount{Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey}
+	options := model.UpstreamAccountOptions{
+		OpenAIPassthrough:   true,
+		CompactModelMapping: map[string]string{"gpt-5.*": "gpt-5.4-compact"},
+	}
+
+	mapped, matched, supported := resolveUpstreamAccountModel(account, nil, options, "gpt-5.6-sol", true, "")
+	require.True(t, supported)
+	require.True(t, matched)
+	require.Equal(t, "gpt-5.4-compact", mapped)
+}
+
 func TestUpstreamAccountRouterHonorsCompactAndCodexRestrictions(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	pool := model.UpstreamAccountPool{

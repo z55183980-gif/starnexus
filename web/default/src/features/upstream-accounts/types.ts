@@ -95,6 +95,8 @@ export interface UpstreamAccount {
     compact_model_mapping?: Record<string, string>
     openai_capabilities?: string[]
     intercept_warmup_requests: boolean
+    header_override_enabled: boolean
+    header_overrides?: Record<string, string>
     bedrock_auth_mode?: string
     aws_region?: string
     aws_access_key_id?: string

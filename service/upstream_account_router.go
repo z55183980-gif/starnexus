@@ -451,13 +451,20 @@ func resolveUpstreamAccountModel(account *model.UpstreamAccount, credentials map
 			return mappedModel, true, mappedModel != ""
 		}
 	}
-	mapping := upstreamAccountModelMapping(credentials)
 	if requestedModel == "" {
 		return requestedModel, false, true
 	}
+	// OpenAI passthrough keeps the client model unchanged and must not use a
+	// stale account whitelist to reject otherwise valid models. Compact-only
+	// mappings remain effective because /responses/compact explicitly supports
+	// that override even in passthrough mode.
+	if account != nil && account.Platform == constant.UpstreamPlatformOpenAI && options.OpenAIPassthrough {
+		return requestedModel, false, true
+	}
+	mapping := upstreamAccountModelMapping(credentials)
 	if len(mapping) == 0 {
 		if account != nil && account.Platform == constant.UpstreamPlatformOpenAI && account.Type == constant.UpstreamAccountTypeOAuth &&
-			!options.OpenAIPassthrough && !isOpenAIOAuthServableModel(requestedModel) {
+			!isOpenAIOAuthServableModel(requestedModel) {
 			return requestedModel, false, false
 		}
 		if isClaudeMessagesDispatchModel(requestedModel) && strings.TrimSpace(defaultMappedModel) != "" {

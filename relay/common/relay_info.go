@@ -161,6 +161,12 @@ type RelayInfo struct {
 	// *bytes.Reader/Buffer/strings.Reader). 0 means "let net/http decide".
 	UpstreamRequestBodySize int64
 
+	// AccountRateMultiplier is the billing multiplier snapshot for the account
+	// currently serving the request. It is refreshed whenever account failover
+	// selects another upstream account; nil is treated as 1 for compatibility
+	// with RelayInfo values built by older callers and tests.
+	AccountRateMultiplier *float64
+
 	PriceData types.PriceData
 
 	// QuotaClamp is set when a quota conversion saturated at the int32 bound
@@ -193,6 +199,7 @@ type RelayInfo struct {
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
+	info.SetAccountRateMultiplierFromContext(c)
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)
 	headerOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride)
@@ -243,6 +250,28 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	if info.Request != nil {
 		info.Request.SetModelName(info.OriginModelName)
 	}
+}
+
+// SetAccountRateMultiplierFromContext refreshes the account billing multiplier
+// from the selected-account context. A missing or negative value is treated as
+// the legacy/default multiplier 1; zero remains a valid explicit multiplier.
+func (info *RelayInfo) SetAccountRateMultiplierFromContext(c *gin.Context) {
+	if info == nil {
+		return
+	}
+	multiplier := 1.0
+	if value, ok := common.GetContextKeyType[float64](c, constant.ContextKeyUpstreamAccountRateMultiplier); ok && value >= 0 {
+		multiplier = value
+	}
+	info.AccountRateMultiplier = &multiplier
+}
+
+// GetAccountRateMultiplier returns the effective account billing multiplier.
+func (info *RelayInfo) GetAccountRateMultiplier() float64 {
+	if info == nil || info.AccountRateMultiplier == nil || *info.AccountRateMultiplier < 0 {
+		return 1
+	}
+	return *info.AccountRateMultiplier
 }
 
 func (info *RelayInfo) ToString() string {
@@ -498,6 +527,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 			estimatePromptTokens: common.GetContextKeyInt(c, constant.ContextKeyEstimatedTokens),
 		},
 	}
+	info.SetAccountRateMultiplierFromContext(c)
 
 	if info.RelayMode == relayconstant.RelayModeUnknown {
 		info.RelayMode = c.GetInt("relay_mode")
