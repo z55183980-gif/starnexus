@@ -455,6 +455,15 @@ export function ChannelMutateDrawer({
     return pools.filter((pool) => pool.status === 'active')
   }, [upstreamPoolsData?.data])
 
+  const compatibleAccountPoolItems = useMemo(
+    () =>
+      compatibleAccountPools.map((pool) => ({
+        value: String(pool.id),
+        label: `${pool.name} (${pool.platform}, ${pool.account_count})`,
+      })),
+    [compatibleAccountPools]
+  )
+
   useEffect(() => {
     if (!isLocalChannel || !selectedAccountPoolId || !upstreamPoolsData?.data) {
       return
@@ -1358,6 +1367,7 @@ export function ChannelMutateDrawer({
                       <FormItem>
                         <FormLabel>{t('Local account pool')}</FormLabel>
                         <Select
+                          items={compatibleAccountPoolItems}
                           value={field.value ? String(field.value) : ''}
                           onValueChange={(value) =>
                             field.onChange(Number(value))
@@ -1372,13 +1382,9 @@ export function ChannelMutateDrawer({
                           </FormControl>
                           <SelectContent alignItemWithTrigger={false}>
                             <SelectGroup>
-                              {compatibleAccountPools.map((pool) => (
-                                <SelectItem
-                                  key={pool.id}
-                                  value={String(pool.id)}
-                                >
-                                  {pool.name} ({pool.platform},{' '}
-                                  {pool.account_count})
+                              {compatibleAccountPoolItems.map((item) => (
+                                <SelectItem key={item.value} value={item.value}>
+                                  {item.label}
                                 </SelectItem>
                               ))}
                             </SelectGroup>
