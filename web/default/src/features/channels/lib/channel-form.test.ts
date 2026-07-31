@@ -20,6 +20,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
+  collectAccountPoolModels,
   getChannelCreateDefaultValues,
   requiresChannelKeyForCreate,
   transformFormDataToCreatePayload,
@@ -109,6 +110,35 @@ describe('Responses WebSocket v2 channel settings', () => {
 })
 
 describe('Channel creation modes', () => {
+  test('collects concrete account models for local channel publishing', () => {
+    const models = collectAccountPoolModels([
+      {
+        metadata: {
+          model_mapping: {
+            ' gpt-5.6-sol ': 'gpt-5.6-sol',
+            'shared-model': 'upstream-model-a',
+            'gpt-5.*': 'gpt-5.6',
+          },
+        },
+      },
+      {
+        metadata: {
+          model_mapping: {
+            'claude-sonnet-4-6': 'claude-sonnet-4-6',
+            'shared-model': 'upstream-model-b',
+          },
+        },
+      },
+      { metadata: {} },
+    ])
+
+    assert.deepEqual(models, [
+      'claude-sonnet-4-6',
+      'gpt-5.6-sol',
+      'shared-model',
+    ])
+  })
+
   test('uses channel credentials for upstream channels', () => {
     const defaults = getChannelCreateDefaultValues('upstream')
 

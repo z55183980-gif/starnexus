@@ -78,6 +78,12 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import {
+  Item,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from '@/components/ui/item'
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -108,7 +114,11 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
-import { listUpstreamPools } from '@/features/upstream-accounts/api'
+import {
+  listUpstreamAccounts,
+  listUpstreamPools,
+} from '@/features/upstream-accounts/api'
+import type { UpstreamAccount } from '@/features/upstream-accounts/types'
 import {
   createChannel,
   fetchModels,
@@ -133,6 +143,7 @@ import {
 import {
   channelFormSchema,
   channelsQueryKeys,
+  collectAccountPoolModels,
   getChannelCreateDefaultValues,
   requiresChannelKeyForCreate,
   transformChannelToFormDefaults,
@@ -218,6 +229,45 @@ const createEmptyModelMappingGuardrail = (): ModelMappingGuardrail => ({
 
 const formatModelNames = (models: string[]): string =>
   models.map((model) => `"${model}"`).join(', ')
+
+const ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE = 100
+
+async function loadAccountPoolAccounts(
+  poolId: number
+): Promise<UpstreamAccount[]> {
+  const firstResponse = await listUpstreamAccounts({
+    page: 1,
+    page_size: ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE,
+    pool_id: poolId,
+  })
+  if (!firstResponse.success || !firstResponse.data) {
+    throw new Error(firstResponse.message || 'Failed to load account pool')
+  }
+
+  const accounts = [...firstResponse.data.items]
+  const pageCount = Math.ceil(
+    firstResponse.data.total / ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE
+  )
+  if (pageCount <= 1) return accounts
+
+  const remainingResponses = await Promise.all(
+    Array.from({ length: pageCount - 1 }, (_, index) =>
+      listUpstreamAccounts({
+        page: index + 2,
+        page_size: ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE,
+        pool_id: poolId,
+      })
+    )
+  )
+  for (const response of remainingResponses) {
+    if (!response.success || !response.data) {
+      throw new Error(response.message || 'Failed to load account pool')
+    }
+    accounts.push(...response.data.items)
+  }
+
+  return accounts
+}
 
 const MODEL_MAPPING_PREVIEW_FALLBACK: Array<{
   source: string
@@ -311,6 +361,7 @@ export function ChannelMutateDrawer({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSyncingAccountModels, setIsSyncingAccountModels] = useState(false)
   const [customModel, setCustomModel] = useState('')
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
@@ -463,6 +514,15 @@ export function ChannelMutateDrawer({
       })),
     [compatibleAccountPools]
   )
+  const selectedAccountPool = useMemo(
+    () =>
+      compatibleAccountPools.find(
+        (pool) => pool.id === selectedAccountPoolId
+      ) ?? initialAccountPool,
+    [compatibleAccountPools, initialAccountPool, selectedAccountPoolId]
+  )
+  const isPublishedLocalChannel =
+    creationMode === 'local' && initialAccountPool != null
 
   useEffect(() => {
     if (!isLocalChannel || !selectedAccountPoolId || !upstreamPoolsData?.data) {
@@ -920,6 +980,44 @@ export function ChannelMutateDrawer({
     )
   }, [allModelsList, updateModels, t])
 
+  const handleSyncAccountModels = useCallback(async () => {
+    const poolId = form.getValues('upstream_account_pool_id')
+    if (!poolId) {
+      toast.info(t('Select a local account pool first'))
+      return
+    }
+
+    setIsSyncingAccountModels(true)
+    try {
+      const accounts = await loadAccountPoolAccounts(poolId)
+      const accountModels = collectAccountPoolModels(accounts)
+      if (accountModels.length === 0) {
+        toast.info(t('No concrete account models found in this pool'))
+        return
+      }
+
+      const currentModelSet = new Set(
+        parseModelsString(form.getValues('models') || '')
+      )
+      const addedCount = accountModels.filter(
+        (model) => !currentModelSet.has(model)
+      ).length
+      if (addedCount === 0) {
+        toast.info(t('All account models are already included'))
+        return
+      }
+
+      updateModels(accountModels, true)
+      toast.success(
+        t('Synced {{count}} account model(s)', { count: addedCount })
+      )
+    } catch {
+      toast.error(t('Failed to sync account models'))
+    } finally {
+      setIsSyncingAccountModels(false)
+    }
+  }, [form, t, updateModels])
+
   const handleClearModels = useCallback(() => {
     form.setValue('models', '')
     toast.success(t('Cleared all models'))
@@ -1366,32 +1464,65 @@ export function ChannelMutateDrawer({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>{t('Local account pool')}</FormLabel>
-                        <Select
-                          items={compatibleAccountPoolItems}
-                          value={field.value ? String(field.value) : ''}
-                          onValueChange={(value) =>
-                            field.onChange(Number(value))
-                          }
-                        >
+                        {isPublishedLocalChannel && selectedAccountPool ? (
                           <FormControl>
-                            <SelectTrigger className='w-full'>
-                              <SelectValue
-                                placeholder={t('Select an account pool')}
-                              />
-                            </SelectTrigger>
+                            <Item variant='outline' className='bg-muted/30'>
+                              <ItemContent>
+                                <ItemTitle>
+                                  {selectedAccountPool.name}
+                                </ItemTitle>
+                                <ItemDescription className='flex flex-wrap gap-x-2 gap-y-1'>
+                                  <span>{selectedAccountPool.platform}</span>
+                                  {selectedAccountPool.account_count !=
+                                    null && (
+                                    <span>
+                                      {selectedAccountPool.active_count ??
+                                        selectedAccountPool.account_count}{' '}
+                                      / {selectedAccountPool.account_count}{' '}
+                                      {t('Accounts')}
+                                    </span>
+                                  )}
+                                  {selectedAccountPool.description && (
+                                    <span className='truncate'>
+                                      {selectedAccountPool.description}
+                                    </span>
+                                  )}
+                                </ItemDescription>
+                              </ItemContent>
+                            </Item>
                           </FormControl>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {compatibleAccountPoolItems.map((item) => (
-                                <SelectItem key={item.value} value={item.value}>
-                                  {item.label}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
+                        ) : (
+                          <Select
+                            items={compatibleAccountPoolItems}
+                            value={field.value ? String(field.value) : ''}
+                            onValueChange={(value) =>
+                              field.onChange(Number(value))
+                            }
+                          >
+                            <FormControl>
+                              <SelectTrigger className='w-full'>
+                                <SelectValue
+                                  placeholder={t('Select an account pool')}
+                                />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent alignItemWithTrigger={false}>
+                              <SelectGroup>
+                                {compatibleAccountPoolItems.map((item) => (
+                                  <SelectItem
+                                    key={item.value}
+                                    value={item.value}
+                                  >
+                                    {item.label}
+                                  </SelectItem>
+                                ))}
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                        )}
                         <FormDescription>
-                          {compatibleAccountPools.length === 0
+                          {!isPublishedLocalChannel &&
+                          compatibleAccountPools.length === 0
                             ? t(
                                 'No compatible active account pools are available'
                               )
@@ -2414,73 +2545,89 @@ export function ChannelMutateDrawer({
                         />
                       </FormControl>
                       <FormDescription>
-                        <div className='flex flex-col gap-2'>
-                          <span>{t(FIELD_DESCRIPTIONS.MODELS)}</span>
-                          <div className='flex flex-wrap gap-2'>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={handleFillRelatedModels}
-                              disabled={!basicModels.length}
-                            >
-                              <FileText className='mr-2 h-4 w-4' />
-                              {t('Fill Related Models')}
-                            </Button>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={handleFillAllModels}
-                              disabled={!allModelsList.length}
-                            >
-                              <Plus className='mr-2 h-4 w-4' />
-                              {t('Fill All Models')}
-                            </Button>
-                            {!isLocalChannel &&
-                              MODEL_FETCHABLE_TYPES.has(currentType) && (
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={handleFetchModels}
-                                >
-                                  <Sparkles className='mr-2 h-4 w-4' />
-                                  {t('Fetch from Upstream')}
-                                </Button>
-                              )}
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={handleClearModels}
-                            >
-                              <Eraser className='mr-2 h-4 w-4' />
-                              {t('Clear All')}
-                            </Button>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              size='sm'
-                              onClick={handleCopyModels}
-                            >
-                              <Copy className='mr-2 h-4 w-4' />
-                              {t('Copy All')}
-                            </Button>
-                            {prefillGroups.map((group) => (
-                              <Button
-                                key={group.id}
-                                type='button'
-                                variant='secondary'
-                                size='sm'
-                                onClick={() => handleAddPrefillGroup(group)}
-                              >
-                                {group.name}
-                              </Button>
-                            ))}
-                          </div>
-                        </div>
+                        {t(FIELD_DESCRIPTIONS.MODELS)}
                       </FormDescription>
+                      <div className='flex flex-wrap gap-2'>
+                        {isLocalChannel && (
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={handleSyncAccountModels}
+                            disabled={
+                              isSyncingAccountModels || !selectedAccountPoolId
+                            }
+                          >
+                            {isSyncingAccountModels ? (
+                              <Loader2 className='mr-2 h-4 w-4 animate-spin' />
+                            ) : (
+                              <RefreshCw className='mr-2 h-4 w-4' />
+                            )}
+                            {t('Sync Account Models')}
+                          </Button>
+                        )}
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={handleFillRelatedModels}
+                          disabled={!basicModels.length}
+                        >
+                          <FileText className='mr-2 h-4 w-4' />
+                          {t('Fill Related Models')}
+                        </Button>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={handleFillAllModels}
+                          disabled={!allModelsList.length}
+                        >
+                          <Plus className='mr-2 h-4 w-4' />
+                          {t('Fill All Models')}
+                        </Button>
+                        {!isLocalChannel &&
+                          MODEL_FETCHABLE_TYPES.has(currentType) && (
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={handleFetchModels}
+                            >
+                              <Sparkles className='mr-2 h-4 w-4' />
+                              {t('Fetch from Upstream')}
+                            </Button>
+                          )}
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={handleClearModels}
+                        >
+                          <Eraser className='mr-2 h-4 w-4' />
+                          {t('Clear All')}
+                        </Button>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          onClick={handleCopyModels}
+                        >
+                          <Copy className='mr-2 h-4 w-4' />
+                          {t('Copy All')}
+                        </Button>
+                        {prefillGroups.map((group) => (
+                          <Button
+                            key={group.id}
+                            type='button'
+                            variant='secondary'
+                            size='sm'
+                            onClick={() => handleAddPrefillGroup(group)}
+                          >
+                            {group.name}
+                          </Button>
+                        ))}
+                      </div>
                       {modelMappingGuardrail.exposedTargetModels.length > 0 && (
                         <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
                           <AlertDescription>

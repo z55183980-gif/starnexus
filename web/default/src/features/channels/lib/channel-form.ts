@@ -152,6 +152,28 @@ export type LocalAccountPoolChannelPreset = {
   id: number
   name: string
   platform: 'openai' | 'anthropic'
+  description?: string
+  account_count?: number
+  active_count?: number
+}
+
+export function collectAccountPoolModels(
+  accounts: Array<{
+    metadata?: { model_mapping?: Record<string, string> }
+  }>
+): string[] {
+  const models = new Set<string>()
+
+  for (const account of accounts) {
+    for (const rawModel of Object.keys(account.metadata?.model_mapping || {})) {
+      const model = rawModel.trim()
+      if (model && !model.includes('*')) {
+        models.add(model)
+      }
+    }
+  }
+
+  return Array.from(models).sort((left, right) => left.localeCompare(right))
 }
 
 // ============================================================================
