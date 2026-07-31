@@ -90,7 +90,6 @@ import {
   AccountScheduledTestsDialog,
   AccountStatsDialog,
 } from './account-more-dialogs'
-import { AccountTestDialog } from './account-test-dialog'
 import {
   AccountCapacityCell,
   AccountIdentityCell,
@@ -100,6 +99,7 @@ import {
   AccountStatusCell,
   AccountUsageCell,
 } from './account-runtime-cells'
+import { AccountTestDialog } from './account-test-dialog'
 import {
   createUpstreamPool,
   deleteUpstreamAccount,
@@ -196,7 +196,7 @@ function IconButton({
   )
 }
 
-function AccountRowActionButton({
+function RowActionButton({
   label,
   icon,
   onClick,
@@ -736,8 +736,9 @@ export function AccountManagement() {
   const [statsAccount, setStatsAccount] = useState<UpstreamAccount | null>(null)
   const [scheduledTestsAccount, setScheduledTestsAccount] =
     useState<UpstreamAccount | null>(null)
-  const [testingAccount, setTestingAccount] =
-    useState<UpstreamAccount | null>(null)
+  const [testingAccount, setTestingAccount] = useState<UpstreamAccount | null>(
+    null
+  )
   const [selectedPool, setSelectedPool] = useState<UpstreamAccountPool | null>(
     null
   )
@@ -1426,7 +1427,7 @@ export function AccountManagement() {
                         </TableCell>
                         <TableCell className='w-36'>
                           <div className='flex items-center gap-1'>
-                            <AccountRowActionButton
+                            <RowActionButton
                               label={t('Edit')}
                               icon={Edit02Icon}
                               onClick={() => {
@@ -1434,7 +1435,7 @@ export function AccountManagement() {
                                 setAccountDialog(true)
                               }}
                             />
-                            <AccountRowActionButton
+                            <RowActionButton
                               label={t('Delete')}
                               icon={Delete02Icon}
                               destructive
@@ -1628,7 +1629,7 @@ export function AccountManagement() {
                     <TableHead>{t('Channels')}</TableHead>
                     <TableHead>{t('Last 24 hours')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>
-                    <TableHead className='text-right'>{t('Actions')}</TableHead>
+                    <TableHead className='w-36'>{t('Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1643,7 +1644,7 @@ export function AccountManagement() {
                     </TableRow>
                   ) : (
                     pools.map((pool) => (
-                      <TableRow key={pool.id}>
+                      <TableRow key={pool.id} className='h-24 align-middle'>
                         <TableCell>
                           <div className='font-medium'>{pool.name}</div>
                           <div className='text-muted-foreground text-xs'>
@@ -1685,36 +1686,9 @@ export function AccountManagement() {
                               : t('Inactive')}
                           </Badge>
                         </TableCell>
-                        <TableCell>
-                          <div className='flex justify-end gap-1'>
-                            {pool.channel_count === 0 ? (
-                              <Button
-                                type='button'
-                                size='sm'
-                                disabled={pool.status !== 'active'}
-                                onClick={() => setPublishingPool(pool)}
-                              >
-                                <HugeiconsIcon
-                                  data-icon='inline-start'
-                                  icon={Rocket01Icon}
-                                  strokeWidth={2}
-                                />
-                                {t('Publish as local channel')}
-                              </Button>
-                            ) : (
-                              <IconButton
-                                label={t('Publish as local channel')}
-                                icon={Rocket01Icon}
-                                disabled={pool.status !== 'active'}
-                                onClick={() => setPublishingPool(pool)}
-                              />
-                            )}
-                            <IconButton
-                              label={t('Manage pool members')}
-                              icon={Link01Icon}
-                              onClick={() => setMemberPool(pool)}
-                            />
-                            <IconButton
+                        <TableCell className='w-36'>
+                          <div className='flex items-center gap-1'>
+                            <RowActionButton
                               label={t('Edit')}
                               icon={Edit02Icon}
                               onClick={() => {
@@ -1722,7 +1696,7 @@ export function AccountManagement() {
                                 setPoolDialog(true)
                               }}
                             />
-                            <IconButton
+                            <RowActionButton
                               label={t('Delete')}
                               icon={Delete02Icon}
                               destructive
@@ -1734,6 +1708,54 @@ export function AccountManagement() {
                                 })
                               }
                             />
+                            <DropdownMenu modal={false}>
+                              <DropdownMenuTrigger
+                                render={
+                                  <Button
+                                    type='button'
+                                    variant='ghost'
+                                    aria-label={t('More')}
+                                    title={t('More')}
+                                    className='text-muted-foreground h-auto min-w-10 flex-col gap-0.5 rounded-lg px-1.5 py-1.5 font-normal'
+                                  />
+                                }
+                              >
+                                <HugeiconsIcon
+                                  icon={MoreHorizontalIcon}
+                                  strokeWidth={1.5}
+                                />
+                                <span className='text-xs'>{t('More')}</span>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent
+                                align='end'
+                                sideOffset={6}
+                                className='w-52 rounded-xl p-1.5'
+                              >
+                                <DropdownMenuGroup>
+                                  <DropdownMenuItem
+                                    className='gap-2.5 px-3 py-2.5'
+                                    disabled={pool.status !== 'active'}
+                                    onClick={() => setPublishingPool(pool)}
+                                  >
+                                    <HugeiconsIcon
+                                      icon={Rocket01Icon}
+                                      strokeWidth={2}
+                                    />
+                                    {t('Publish as local channel')}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    className='gap-2.5 px-3 py-2.5'
+                                    onClick={() => setMemberPool(pool)}
+                                  >
+                                    <HugeiconsIcon
+                                      icon={Link01Icon}
+                                      strokeWidth={2}
+                                    />
+                                    {t('Manage pool members')}
+                                  </DropdownMenuItem>
+                                </DropdownMenuGroup>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </TableCell>
                       </TableRow>

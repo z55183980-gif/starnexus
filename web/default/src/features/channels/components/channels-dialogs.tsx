@@ -61,6 +61,7 @@ export function ChannelsDialogs() {
       <FetchModelsDialog
         open={open === 'fetch-models'}
         onOpenChange={(v) => !v && setOpen(null)}
+        currentRow={currentRow}
       />
 
       {/* Ollama Models Dialog */}

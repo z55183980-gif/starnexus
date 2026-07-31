@@ -51,7 +51,7 @@ import {
   normalizeModelName,
   parseModelsString,
 } from '../../lib'
-import { useChannels } from '../channels-provider'
+import type { Channel } from '../../types'
 
 function normalizeModelNameList(models: readonly string[]): string[] {
   return Array.from(
@@ -62,6 +62,7 @@ function normalizeModelNameList(models: readonly string[]): string[] {
 type FetchModelsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  currentRow?: Channel | null
   onModelsSelected?: (models: string[]) => void
   redirectModels?: string[]
   redirectSourceModels?: string[]
@@ -72,6 +73,7 @@ type FetchModelsDialogProps = {
 export function FetchModelsDialog({
   open,
   onOpenChange,
+  currentRow,
   onModelsSelected,
   redirectModels = [],
   redirectSourceModels = [],
@@ -79,7 +81,6 @@ export function FetchModelsDialog({
   existingModelsOverride,
 }: FetchModelsDialogProps) {
   const { t } = useTranslation()
-  const { currentRow } = useChannels()
   const queryClient = useQueryClient()
   const [isFetching, setIsFetching] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
