@@ -66,7 +66,8 @@ const (
 	ErrorCodeAccessDenied          ErrorCode = "access_denied"
 
 	// request error
-	ErrorCodeBadRequestBody ErrorCode = "bad_request_body"
+	ErrorCodeBadRequestBody        ErrorCode = "bad_request_body"
+	ErrorCodeContextLengthExceeded ErrorCode = "context_length_exceeded"
 
 	// response error
 	ErrorCodeReadResponseBodyFailed ErrorCode = "read_response_body_failed"

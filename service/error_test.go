@@ -1,11 +1,34 @@
 package service
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRelayErrorHandlerPreservesContextLengthExceededCode(t *testing.T) {
+	responseBody := `{"error":{"message":"Your input exceeds the context window of this model.","type":"invalid_request_error","code":"context_length_exceeded"}}`
+	resp := &http.Response{
+		StatusCode: http.StatusBadGateway,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(responseBody)),
+	}
+
+	apiErr := RelayErrorHandler(context.Background(), resp, false)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, types.ErrorCodeContextLengthExceeded, apiErr.GetErrorCode())
+	require.Equal(t, "Your input exceeds the context window of this model.", apiErr.Error())
+
+	header, body := apiErr.UpstreamResponse()
+	require.Equal(t, "application/json", header.Get("Content-Type"))
+	require.JSONEq(t, responseBody, string(body))
+}
 
 func TestResetStatusCode(t *testing.T) {
 	t.Parallel()
