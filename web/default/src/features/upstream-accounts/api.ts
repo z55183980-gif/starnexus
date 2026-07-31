@@ -17,9 +17,11 @@ import type {
   UpstreamAccountExport,
   UpstreamAccountTestResult,
   UpstreamAccountPoolMember,
+  UpstreamAccountPoolCapabilities,
   UpstreamAccountPayload,
   UpstreamAccountPool,
   UpstreamAccountQuotaResetResult,
+  UpstreamAccountPoolPublishResult,
   UpstreamAccountQuotaUsage,
   UpstreamAccountScheduledTestPlan,
   UpstreamAccountScheduledTestPlanPayload,
@@ -46,6 +48,28 @@ export async function listUpstreamPools(): Promise<
   ApiResponse<UpstreamAccountPool[]>
 > {
   const response = await api.get('/api/upstream/account-pools')
+  return response.data
+}
+
+export async function getUpstreamPoolCapabilities(
+  id: number
+): Promise<ApiResponse<UpstreamAccountPoolCapabilities>> {
+  const response = await api.get(
+    `/api/upstream/account-pools/${id}/capabilities`,
+    localFeedbackApiConfig
+  )
+  return response.data
+}
+
+export async function publishUpstreamPoolChannel(
+  id: number,
+  groups: string[]
+): Promise<ApiResponse<UpstreamAccountPoolPublishResult>> {
+  const response = await api.post(
+    `/api/upstream/account-pools/${id}/publish`,
+    { groups },
+    localFeedbackApiConfig
+  )
   return response.data
 }
 

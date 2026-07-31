@@ -1167,15 +1167,14 @@ func TestResponsesWSSSERetriesAnotherLocalAccountBeforeVisibleEvent(t *testing.T
 				Type: constant.UpstreamAccountTypeAPIKey, Extra: "{}", Concurrency: 1,
 				Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive, Schedulable: true,
 			},
-			Credentials: map[string]any{"api_key": candidate.key},
+			Credentials: map[string]any{"api_key": candidate.key, "base_url": upstream.URL},
 			PoolIds:     []int{pool.Id},
 		}
 		require.NoError(t, service.CreateUpstreamAccount(&input))
 	}
 
-	baseURL := upstream.URL
 	selectedChannel := &model.Channel{
-		Id: 77, Type: constant.ChannelTypeOpenAI, Name: "local-pool", BaseURL: &baseURL,
+		Id: 77, Type: constant.ChannelTypeOpenAI, Name: "local-pool",
 		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
 	}
 	baseCtx, _ := gin.CreateTestContext(httptest.NewRecorder())

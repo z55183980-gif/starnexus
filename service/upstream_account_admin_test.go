@@ -18,6 +18,7 @@ func setupUpstreamAdminTestDB(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&model.Channel{},
+		&model.Ability{},
 		&model.UpstreamProxy{},
 		&model.UpstreamAccountPool{},
 		&model.UpstreamAccount{},
@@ -275,6 +276,180 @@ func TestUpstreamAccountPoolRuntimeStats(t *testing.T) {
 	require.EqualValues(t, 1, view.SuccessCount24h)
 	require.EqualValues(t, 1, view.ErrorCount24h)
 	require.NotNil(t, view.LastEventAt)
+}
+
+func TestGetUpstreamAccountPoolCapabilities(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "capabilities", Platform: constant.UpstreamPlatformOpenAI, CredentialType: "mixed",
+		Status: constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	proxy := UpstreamProxyCreateInput{Proxy: model.UpstreamProxy{
+		Name: "capability-proxy", Protocol: constant.UpstreamProxyProtocolHTTP,
+		Host: "127.0.0.1", Port: 8080, Status: constant.UpstreamStatusActive,
+		FallbackMode: constant.UpstreamProxyFallbackNone,
+	}}
+	require.NoError(t, CreateUpstreamProxy(&proxy))
+
+	createAccount := func(name string, schedulable bool, extra string, credentials map[string]any, proxyID *int) {
+		t.Helper()
+		input := UpstreamAccountCreateInput{
+			Account: model.UpstreamAccount{
+				Name: name, Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+				Extra: extra, ProxyId: proxyID, Concurrency: 1, Priority: 50, Weight: 1,
+				Status: constant.UpstreamStatusActive, Schedulable: schedulable, AutoPauseOnExpired: true,
+			},
+			Credentials: credentials,
+			PoolIds:     []int{pool.Id},
+		}
+		require.NoError(t, CreateUpstreamAccount(&input))
+	}
+
+	createAccount("mapped", true, "{}", map[string]any{
+		"api_key": "mapped-key",
+		"model_mapping": map[string]any{
+			"public-model": "upstream-model",
+			"gpt-*":        "gpt-5.6",
+		},
+		"header_override_enabled": true,
+		"header_overrides":        map[string]any{"user-agent": "capability-test"},
+	}, nil)
+	createAccount("passthrough", true, `{"openai_passthrough":true}`, map[string]any{
+		"api_key": "passthrough-key",
+		"model_mapping": map[string]any{
+			"stale-model": "must-not-be-exposed",
+		},
+	}, &proxy.Proxy.Id)
+	createAccount("unrestricted", true, "{}", map[string]any{"api_key": "unrestricted-key"}, nil)
+	createAccount("not-schedulable", false, "{}", map[string]any{
+		"api_key":       "disabled-key",
+		"model_mapping": map[string]any{"hidden-model": "hidden-upstream"},
+	}, nil)
+
+	capabilities, err := GetUpstreamAccountPoolCapabilities(pool.Id)
+	require.NoError(t, err)
+	require.Equal(t, 4, capabilities.AccountCount)
+	require.Equal(t, 3, capabilities.SchedulableAccountCount)
+	require.Zero(t, capabilities.UnreadableAccountCount)
+	require.Equal(t, []string{"public-model"}, capabilities.Models)
+	require.Equal(t, 3, capabilities.WildcardModelAccountCount)
+	require.Equal(t, 1, capabilities.PassthroughAccountCount)
+	require.Equal(t, 1, capabilities.HeaderOverrideAccountCount)
+	require.Equal(t, 1, capabilities.ProxyConfiguredAccountCount)
+}
+
+func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "publish-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey,
+		Status:         constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	accountInput := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "publish-account", Platform: constant.UpstreamPlatformOpenAI,
+			Type: constant.UpstreamAccountTypeAPIKey, Extra: "{}", Concurrency: 1,
+			Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{
+			"api_key": "secret",
+			"model_mapping": map[string]any{
+				"model-b": "upstream-b",
+				"model-a": "upstream-a",
+			},
+			"base_url": "https://account.example.com",
+		},
+		PoolIds: []int{pool.Id},
+	}
+	require.NoError(t, CreateUpstreamAccount(&accountInput))
+
+	created, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"test3", "default", "test3"})
+	require.NoError(t, err)
+	require.True(t, created.Created)
+	require.Equal(t, []string{"model-a", "model-b"}, created.Models)
+	require.Equal(t, []string{"test3", "default"}, created.Groups)
+
+	var channel model.Channel
+	require.NoError(t, model.DB.First(&channel, created.ChannelId).Error)
+	require.Equal(t, pool.Name, channel.Name)
+	require.Equal(t, constant.ChannelTypeOpenAI, channel.Type)
+	require.Equal(t, constant.ChannelCredentialSourceAccountPool, channel.CredentialSource)
+	require.NotNil(t, channel.UpstreamAccountPoolId)
+	require.Equal(t, pool.Id, *channel.UpstreamAccountPoolId)
+	require.Equal(t, "model-a,model-b", channel.Models)
+	require.Equal(t, "test3,default", channel.Group)
+	require.Empty(t, channel.Key)
+	require.Nil(t, channel.BaseURL)
+	require.Nil(t, channel.ModelMapping)
+	require.NotNil(t, channel.AutoBan)
+	require.Zero(t, *channel.AutoBan)
+
+	var abilities []model.Ability
+	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Order("model ASC").Find(&abilities).Error)
+	require.Len(t, abilities, 4)
+
+	updated, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"vip"})
+	require.NoError(t, err)
+	require.False(t, updated.Created)
+	require.Equal(t, channel.Id, updated.ChannelId)
+	var channelCount int64
+	require.NoError(t, model.DB.Model(&model.Channel{}).
+		Where("credential_source = ? AND upstream_account_pool_id = ?", constant.ChannelCredentialSourceAccountPool, pool.Id).
+		Count(&channelCount).Error)
+	require.EqualValues(t, 1, channelCount)
+	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
+	require.Equal(t, "vip", channel.Group)
+	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+	require.Len(t, abilities, 2)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.First(&account, accountInput.Account.Id).Error)
+	updatedCredentials := map[string]any{
+		"api_key": "secret",
+		"model_mapping": map[string]any{
+			"model-c": "upstream-c",
+		},
+	}
+	require.NoError(t, UpdateUpstreamAccount(&UpstreamAccountUpdateInput{
+		Account: account, Credentials: &updatedCredentials,
+	}))
+	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
+	require.Equal(t, "model-c", channel.Models)
+	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+	require.Len(t, abilities, 1)
+	require.Equal(t, "model-c", abilities[0].Model)
+
+	require.NoError(t, DeleteUpstreamAccount(account.Id))
+	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
+	require.Empty(t, channel.Models)
+	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+	require.Empty(t, abilities)
+}
+
+func TestPublishUpstreamAccountPoolChannelRequiresConcreteModels(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "wildcard-only", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey,
+		Status:         constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "unrestricted", Platform: constant.UpstreamPlatformOpenAI,
+			Type: constant.UpstreamAccountTypeAPIKey, Extra: "{}", Concurrency: 1,
+			Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{"api_key": "secret"},
+		PoolIds:     []int{pool.Id},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	_, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"default"})
+	require.ErrorContains(t, err, "no concrete account models")
 }
 
 func TestUpdateUpstreamAccountPreservesExistingPoolMemberOverrides(t *testing.T) {

@@ -20,7 +20,6 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
-  collectAccountPoolModels,
   getChannelCreateDefaultValues,
   requiresChannelKeyForCreate,
   transformFormDataToCreatePayload,
@@ -110,35 +109,6 @@ describe('Responses WebSocket v2 channel settings', () => {
 })
 
 describe('Channel creation modes', () => {
-  test('collects concrete account models for local channel publishing', () => {
-    const models = collectAccountPoolModels([
-      {
-        metadata: {
-          model_mapping: {
-            ' gpt-5.6-sol ': 'gpt-5.6-sol',
-            'shared-model': 'upstream-model-a',
-            'gpt-5.*': 'gpt-5.6',
-          },
-        },
-      },
-      {
-        metadata: {
-          model_mapping: {
-            'claude-sonnet-4-6': 'claude-sonnet-4-6',
-            'shared-model': 'upstream-model-b',
-          },
-        },
-      },
-      { metadata: {} },
-    ])
-
-    assert.deepEqual(models, [
-      'claude-sonnet-4-6',
-      'gpt-5.6-sol',
-      'shared-model',
-    ])
-  })
-
   test('uses channel credentials for upstream channels', () => {
     const defaults = getChannelCreateDefaultValues('upstream')
 
@@ -164,6 +134,54 @@ describe('Channel creation modes', () => {
     assert.equal(payload.channel.key, null)
     assert.equal(payload.channel.credential_source, 'local_account_pool')
     assert.equal(payload.channel.upstream_account_pool_id, 9)
+  })
+
+  test('keeps account-owned protocol settings out of local channels', () => {
+    const payload = transformFormDataToCreatePayload({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'local openai pool',
+      type: 1,
+      credential_source: 'local_account_pool',
+      upstream_account_pool_id: 9,
+      models: 'public-model',
+      group: ['test3'],
+      key: 'legacy-key',
+      base_url: 'https://legacy.example.com',
+      openai_organization: 'legacy-org',
+      model_mapping: '{"public-model":"upstream-model"}',
+      header_override: '{"x-legacy":"value"}',
+      proxy: 'socks5://127.0.0.1:1080',
+      pass_through_body_enabled: true,
+      alpha_search_enabled: true,
+      settings: JSON.stringify({
+        alpha_search_enabled: true,
+        upstream_model_update_check_enabled: true,
+        upstream_model_update_auto_sync_enabled: true,
+      }),
+      system_prompt: 'keep-channel-policy',
+      allow_service_tier: true,
+    })
+    const setting = JSON.parse(payload.channel.setting || '{}') as Record<
+      string,
+      unknown
+    >
+    const settings = JSON.parse(payload.channel.settings || '{}') as Record<
+      string,
+      unknown
+    >
+
+    assert.equal(payload.channel.key, null)
+    assert.equal(payload.channel.base_url, null)
+    assert.equal(payload.channel.openai_organization, null)
+    assert.equal(payload.channel.model_mapping, null)
+    assert.equal(payload.channel.header_override, null)
+    assert.equal(setting.proxy, '')
+    assert.equal(setting.pass_through_body_enabled, false)
+    assert.equal(setting.system_prompt, 'keep-channel-policy')
+    assert.equal(settings.allow_service_tier, true)
+    assert.equal('alpha_search_enabled' in settings, false)
+    assert.equal('upstream_model_update_check_enabled' in settings, false)
+    assert.equal('upstream_model_update_auto_sync_enabled' in settings, false)
   })
 
   test('prefills a published local channel from its account pool', () => {

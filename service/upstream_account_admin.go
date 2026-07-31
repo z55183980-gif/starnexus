@@ -73,6 +73,26 @@ type UpstreamAccountPoolView struct {
 	LastEventAt     *int64 `json:"last_event_at"`
 }
 
+type UpstreamAccountPoolCapabilities struct {
+	Models                      []string `json:"models"`
+	AccountCount                int      `json:"account_count"`
+	SchedulableAccountCount     int      `json:"schedulable_account_count"`
+	UnreadableAccountCount      int      `json:"unreadable_account_count"`
+	WildcardModelAccountCount   int      `json:"wildcard_model_account_count"`
+	PassthroughAccountCount     int      `json:"passthrough_account_count"`
+	HeaderOverrideAccountCount  int      `json:"header_override_account_count"`
+	ProxyConfiguredAccountCount int      `json:"proxy_configured_account_count"`
+	PublishedChannelId          *int     `json:"published_channel_id"`
+	PublishedGroups             []string `json:"published_groups"`
+}
+
+type UpstreamAccountPoolPublishResult struct {
+	ChannelId int      `json:"channel_id"`
+	Created   bool     `json:"created"`
+	Models    []string `json:"models"`
+	Groups    []string `json:"groups"`
+}
+
 type UpstreamAccountPoolMemberInput struct {
 	AccountId int `json:"account_id"`
 	Priority  int `json:"priority"`
@@ -181,6 +201,302 @@ func GetUpstreamAccountPool(id int) (*UpstreamAccountPoolView, error) {
 	return view, nil
 }
 
+func GetUpstreamAccountPoolCapabilities(id int) (*UpstreamAccountPoolCapabilities, error) {
+	return getUpstreamAccountPoolCapabilities(model.DB, id)
+}
+
+func getUpstreamAccountPoolCapabilities(db *gorm.DB, id int) (*UpstreamAccountPoolCapabilities, error) {
+	if id <= 0 {
+		return nil, errors.New("invalid upstream account pool id")
+	}
+	var pool model.UpstreamAccountPool
+	if err := db.First(&pool, id).Error; err != nil {
+		return nil, err
+	}
+	var accounts []model.UpstreamAccount
+	if err := db.
+		Where("id IN (?)", db.Model(&model.UpstreamAccountPoolMember{}).Select("account_id").Where("pool_id = ?", id)).
+		Order("id ASC").
+		Find(&accounts).Error; err != nil {
+		return nil, err
+	}
+
+	capabilities := &UpstreamAccountPoolCapabilities{
+		AccountCount:    len(accounts),
+		Models:          []string{},
+		PublishedGroups: []string{},
+	}
+	models := make(map[string]struct{})
+	for i := range accounts {
+		account := &accounts[i]
+		if account.Status != constant.UpstreamStatusActive || !account.Schedulable {
+			continue
+		}
+		capabilities.SchedulableAccountCount++
+		credentials, err := DecryptUpstreamAccountCredentials(account)
+		if err != nil {
+			capabilities.UnreadableAccountCount++
+			continue
+		}
+		options, optionsErr := model.ParseUpstreamAccountOptionsWithCredentials(account.Extra, credentials)
+		passthrough := optionsErr == nil && (options.OpenAIPassthrough || options.AnthropicPassthrough)
+		if passthrough {
+			capabilities.PassthroughAccountCount++
+			capabilities.WildcardModelAccountCount++
+		} else {
+			mapping := upstreamAccountModelMapping(credentials)
+			hasWildcard := false
+			hasExplicitRules := len(mapping) > 0
+			for rawModel := range mapping {
+				addPublishedAccountModel(models, rawModel, &hasWildcard)
+			}
+
+			var accountCapabilities upstreamAccountCapabilities
+			if strings.TrimSpace(account.Extra) != "" && strings.TrimSpace(account.Extra) != "{}" &&
+				common.UnmarshalJsonStr(account.Extra, &accountCapabilities) == nil {
+				hasExplicitRules = hasExplicitRules || len(accountCapabilities.Models) > 0 ||
+					len(accountCapabilities.SupportedModels) > 0 || len(accountCapabilities.ModelPrefixes) > 0
+				for _, rawModel := range accountCapabilities.Models {
+					addPublishedAccountModel(models, rawModel, &hasWildcard)
+				}
+				for _, rawModel := range accountCapabilities.SupportedModels {
+					addPublishedAccountModel(models, rawModel, &hasWildcard)
+				}
+				if len(accountCapabilities.ModelPrefixes) > 0 {
+					hasWildcard = true
+				}
+			}
+			if hasWildcard || !hasExplicitRules {
+				capabilities.WildcardModelAccountCount++
+			}
+		}
+		if enabled, _ := credentials["header_override_enabled"].(bool); enabled && len(upstreamCredentialStringMap(credentials["header_overrides"])) > 0 {
+			capabilities.HeaderOverrideAccountCount++
+		}
+		if account.ProxyId != nil || pool.DefaultProxyId != nil {
+			capabilities.ProxyConfiguredAccountCount++
+		}
+	}
+
+	capabilities.Models = make([]string, 0, len(models))
+	for modelName := range models {
+		capabilities.Models = append(capabilities.Models, modelName)
+	}
+	sort.Strings(capabilities.Models)
+
+	var published model.Channel
+	err := db.Where("credential_source = ? AND upstream_account_pool_id = ?", constant.ChannelCredentialSourceAccountPool, id).
+		Order("id ASC").First(&published).Error
+	if err == nil {
+		channelId := published.Id
+		capabilities.PublishedChannelId = &channelId
+		capabilities.PublishedGroups = published.GetGroups()
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	return capabilities, nil
+}
+
+func addPublishedAccountModel(models map[string]struct{}, rawModel string, hasWildcard *bool) {
+	modelName := strings.TrimSpace(rawModel)
+	if modelName == "" {
+		return
+	}
+	if strings.Contains(modelName, "*") {
+		*hasWildcard = true
+		return
+	}
+	models[modelName] = struct{}{}
+}
+
+func PublishUpstreamAccountPoolChannel(id int, groups []string) (*UpstreamAccountPoolPublishResult, error) {
+	normalizedGroups, err := normalizePublishedChannelGroups(groups)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &UpstreamAccountPoolPublishResult{Groups: normalizedGroups}
+	channelsChanged := false
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		var pool model.UpstreamAccountPool
+		if err := tx.First(&pool, id).Error; err != nil {
+			return err
+		}
+		if pool.Status != constant.UpstreamStatusActive {
+			return errors.New("only active account pools can be published")
+		}
+
+		capabilities, err := getUpstreamAccountPoolCapabilities(tx, id)
+		if err != nil {
+			return err
+		}
+		if capabilities.SchedulableAccountCount == 0 {
+			return errors.New("account pool has no schedulable accounts")
+		}
+		if len(capabilities.Models) == 0 {
+			return errors.New("account pool has no concrete account models to publish")
+		}
+
+		channel, created, err := upsertPublishedAccountPoolChannel(tx, pool, capabilities.Models, normalizedGroups)
+		if err != nil {
+			return err
+		}
+		result.ChannelId = channel.Id
+		result.Created = created
+		result.Models = append([]string(nil), capabilities.Models...)
+		channelsChanged = true
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if channelsChanged {
+		refreshPublishedAccountPoolChannelCaches()
+	}
+	return result, nil
+}
+
+func normalizePublishedChannelGroups(groups []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(groups))
+	normalized := make([]string, 0, len(groups))
+	for _, rawGroup := range groups {
+		group := strings.TrimSpace(rawGroup)
+		if group == "" {
+			continue
+		}
+		if strings.Contains(group, ",") {
+			return nil, errors.New("channel group names cannot contain commas")
+		}
+		if _, exists := seen[group]; exists {
+			continue
+		}
+		seen[group] = struct{}{}
+		normalized = append(normalized, group)
+	}
+	if len(normalized) == 0 {
+		return nil, errors.New("at least one channel group is required")
+	}
+	if len(strings.Join(normalized, ",")) > 64 {
+		return nil, errors.New("published channel groups exceed the supported length")
+	}
+	return normalized, nil
+}
+
+func upsertPublishedAccountPoolChannel(tx *gorm.DB, pool model.UpstreamAccountPool, models []string, groups []string) (*model.Channel, bool, error) {
+	modelList := strings.Join(models, ",")
+	groupList := strings.Join(groups, ",")
+	channelType := constant.ChannelTypeOpenAI
+	if pool.Platform == constant.UpstreamPlatformAnthropic {
+		channelType = constant.ChannelTypeAnthropic
+	}
+
+	var channel model.Channel
+	err := tx.Where("credential_source = ? AND upstream_account_pool_id = ?", constant.ChannelCredentialSourceAccountPool, pool.Id).
+		Order("id ASC").First(&channel).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		autoBan := 0
+		priority := int64(0)
+		weight := uint(0)
+		emptyJSON := "{}"
+		channel = model.Channel{
+			Type: channelType, Key: "", Status: common.ChannelStatusEnabled, Name: pool.Name,
+			Weight: &weight, CreatedTime: common.GetTimestamp(), Models: modelList, Group: groupList,
+			Priority: &priority, AutoBan: &autoBan, Setting: &emptyJSON, OtherSettings: "{}",
+			CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
+		}
+		if err := tx.Create(&channel).Error; err != nil {
+			return nil, false, err
+		}
+		updates := publishedAccountPoolChannelUpdates(pool, channelType, modelList)
+		updates["group"] = groupList
+		if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+			return nil, false, err
+		}
+		if err := tx.First(&channel, channel.Id).Error; err != nil {
+			return nil, false, err
+		}
+		if err := channel.AddAbilities(tx); err != nil {
+			return nil, false, err
+		}
+		return &channel, true, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+
+	updates := publishedAccountPoolChannelUpdates(pool, channelType, modelList)
+	updates["group"] = groupList
+	if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+		return nil, false, err
+	}
+	if err := tx.First(&channel, channel.Id).Error; err != nil {
+		return nil, false, err
+	}
+	if err := channel.UpdateAbilities(tx); err != nil {
+		return nil, false, err
+	}
+	return &channel, false, nil
+}
+
+func publishedAccountPoolChannelUpdates(pool model.UpstreamAccountPool, channelType int, modelList string) map[string]any {
+	return map[string]any{
+		"type": channelType, "key": "", "name": pool.Name, "models": modelList,
+		"base_url": nil, "open_ai_organization": nil, "model_mapping": nil,
+		"status_code_mapping": nil, "param_override": nil, "header_override": nil,
+		"test_model": nil, "tag": nil, "remark": nil, "other": "", "other_info": "",
+		"setting": "{}", "settings": "{}", "channel_info": model.ChannelInfo{}, "auto_ban": 0,
+		"credential_source": constant.ChannelCredentialSourceAccountPool, "upstream_account_pool_id": pool.Id,
+	}
+}
+
+func syncPublishedAccountPoolChannelsTx(tx *gorm.DB, poolIds []int) (bool, error) {
+	changed := false
+	for _, poolId := range normalizePositiveIds(poolIds) {
+		var channels []model.Channel
+		if err := tx.Where("credential_source = ? AND upstream_account_pool_id = ?", constant.ChannelCredentialSourceAccountPool, poolId).
+			Order("id ASC").Find(&channels).Error; err != nil {
+			return false, err
+		}
+		if len(channels) == 0 {
+			continue
+		}
+
+		var pool model.UpstreamAccountPool
+		if err := tx.First(&pool, poolId).Error; err != nil {
+			return false, err
+		}
+		capabilities, err := getUpstreamAccountPoolCapabilities(tx, poolId)
+		if err != nil {
+			return false, err
+		}
+		channelType := constant.ChannelTypeOpenAI
+		if pool.Platform == constant.UpstreamPlatformAnthropic {
+			channelType = constant.ChannelTypeAnthropic
+		}
+		updates := publishedAccountPoolChannelUpdates(pool, channelType, strings.Join(capabilities.Models, ","))
+		for i := range channels {
+			channel := &channels[i]
+			if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
+				return false, err
+			}
+			if err := tx.First(channel, channel.Id).Error; err != nil {
+				return false, err
+			}
+			if err := channel.UpdateAbilities(tx); err != nil {
+				return false, err
+			}
+			changed = true
+		}
+	}
+	return changed, nil
+}
+
+func refreshPublishedAccountPoolChannelCaches() {
+	model.InitChannelCache()
+	model.InvalidatePricingCache()
+	ResetProxyClientCache()
+}
+
 func populateUpstreamAccountPoolRuntimeStats(view *UpstreamAccountPoolView) error {
 	if view == nil || view.Id <= 0 {
 		return errors.New("invalid upstream account pool stats request")
@@ -241,7 +557,8 @@ func UpdateUpstreamAccountPool(pool *model.UpstreamAccountPool) error {
 	if err := model.ValidateUpstreamAccountPool(pool); err != nil {
 		return err
 	}
-	return model.DB.Transaction(func(tx *gorm.DB) error {
+	channelsChanged := false
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var current model.UpstreamAccountPool
 		if err := tx.First(&current, pool.Id).Error; err != nil {
 			return err
@@ -271,7 +588,7 @@ func UpdateUpstreamAccountPool(pool *model.UpstreamAccountPool) error {
 		if err := validatePoolProxy(tx, pool.DefaultProxyId); err != nil {
 			return err
 		}
-		return tx.Model(&model.UpstreamAccountPool{}).Where("id = ?", pool.Id).Updates(map[string]any{
+		if err := tx.Model(&model.UpstreamAccountPool{}).Where("id = ?", pool.Id).Updates(map[string]any{
 			"name":             pool.Name,
 			"description":      pool.Description,
 			"platform":         pool.Platform,
@@ -280,8 +597,17 @@ func UpdateUpstreamAccountPool(pool *model.UpstreamAccountPool) error {
 			"default_proxy_id": pool.DefaultProxyId,
 			"scheduler_config": pool.SchedulerConfig,
 			"updated_at":       common.GetTimestamp(),
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		changed, err := syncPublishedAccountPoolChannelsTx(tx, []int{pool.Id})
+		channelsChanged = changed
+		return err
 	})
+	if err == nil && channelsChanged {
+		refreshPublishedAccountPoolChannelCaches()
+	}
+	return err
 }
 
 func DeleteUpstreamAccountPool(id int) error {
@@ -338,7 +664,8 @@ func ReplaceUpstreamAccountPoolMembers(poolId int, inputs []UpstreamAccountPoolM
 	if poolId <= 0 {
 		return errors.New("invalid upstream account pool id")
 	}
-	return model.DB.Transaction(func(tx *gorm.DB) error {
+	channelsChanged := false
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var pool model.UpstreamAccountPool
 		if err := tx.First(&pool, poolId).Error; err != nil {
 			return err
@@ -378,11 +705,19 @@ func ReplaceUpstreamAccountPoolMembers(poolId int, inputs []UpstreamAccountPoolM
 		if err := tx.Where("pool_id = ?", poolId).Delete(&model.UpstreamAccountPoolMember{}).Error; err != nil {
 			return err
 		}
-		if len(members) == 0 {
-			return nil
+		if len(members) > 0 {
+			if err := tx.Create(&members).Error; err != nil {
+				return err
+			}
 		}
-		return tx.Create(&members).Error
+		changed, err := syncPublishedAccountPoolChannelsTx(tx, []int{poolId})
+		channelsChanged = changed
+		return err
 	})
+	if err == nil && channelsChanged {
+		refreshPublishedAccountPoolChannelCaches()
+	}
+	return err
 }
 
 func ListUpstreamAccounts(filter UpstreamAccountListFilter) ([]UpstreamAccountView, int64, error) {
@@ -478,7 +813,8 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 		return err
 	}
 	poolIds := normalizePositiveIds(input.PoolIds)
-	return model.DB.Transaction(func(tx *gorm.DB) error {
+	channelsChanged := false
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := validateAccountReferences(tx, &input.Account, poolIds); err != nil {
 			return err
 		}
@@ -524,8 +860,17 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 		input.Account.CredentialCiphertext = envelope.Ciphertext
 		input.Account.CredentialNonce = envelope.Nonce
 		input.Account.CredentialKeyVersion = envelope.KeyVersion
-		return replaceUpstreamAccountMemberships(tx, input.Account.Id, poolIds, input.Account.Priority, input.Account.Weight)
+		if err := replaceUpstreamAccountMemberships(tx, input.Account.Id, poolIds, input.Account.Priority, input.Account.Weight); err != nil {
+			return err
+		}
+		changed, err := syncPublishedAccountPoolChannelsTx(tx, poolIds)
+		channelsChanged = changed
+		return err
 	})
+	if err == nil && channelsChanged {
+		refreshPublishedAccountPoolChannelCaches()
+	}
+	return err
 }
 
 func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
@@ -555,7 +900,8 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			return err
 		}
 	}
-	return model.DB.Transaction(func(tx *gorm.DB) error {
+	channelsChanged := false
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
 		var current model.UpstreamAccount
 		if err := tx.First(&current, input.Account.Id).Error; err != nil {
 			return err
@@ -595,10 +941,11 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			}
 			credentialsToStore = &merged
 		}
-		poolIds, err := listUpstreamAccountPoolIds(tx, current.Id)
+		existingPoolIds, err := listUpstreamAccountPoolIds(tx, current.Id)
 		if err != nil {
 			return err
 		}
+		poolIds := existingPoolIds
 		if input.PoolIds != nil {
 			poolIds = normalizePositiveIds(*input.PoolIds)
 		}
@@ -635,19 +982,33 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			return errors.New("upstream account was updated concurrently")
 		}
 		if input.PoolIds != nil {
-			return replaceUpstreamAccountMemberships(tx, current.Id, poolIds, input.Account.Priority, input.Account.Weight)
+			if err := replaceUpstreamAccountMemberships(tx, current.Id, poolIds, input.Account.Priority, input.Account.Weight); err != nil {
+				return err
+			}
 		}
-		return nil
+		affectedPoolIds := append(append([]int{}, existingPoolIds...), poolIds...)
+		changed, err := syncPublishedAccountPoolChannelsTx(tx, affectedPoolIds)
+		channelsChanged = changed
+		return err
 	})
+	if err == nil && channelsChanged {
+		refreshPublishedAccountPoolChannelCaches()
+	}
+	return err
 }
 
 func DeleteUpstreamAccount(id int) error {
 	if id <= 0 {
 		return errors.New("invalid upstream account id")
 	}
-	return model.DB.Transaction(func(tx *gorm.DB) error {
+	channelsChanged := false
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var account model.UpstreamAccount
 		if err := tx.First(&account, id).Error; err != nil {
+			return err
+		}
+		poolIds, err := listUpstreamAccountPoolIds(tx, id)
+		if err != nil {
 			return err
 		}
 		if err := tx.Where("account_id = ?", id).Delete(&model.UpstreamAccountPoolMember{}).Error; err != nil {
@@ -665,8 +1026,17 @@ func DeleteUpstreamAccount(id int) error {
 		if err := tx.Where("account_id = ?", id).Delete(&model.UpstreamAccountScheduledTestPlan{}).Error; err != nil {
 			return err
 		}
-		return tx.Delete(&account).Error
+		if err := tx.Delete(&account).Error; err != nil {
+			return err
+		}
+		changed, err := syncPublishedAccountPoolChannelsTx(tx, poolIds)
+		channelsChanged = changed
+		return err
 	})
+	if err == nil && channelsChanged {
+		refreshPublishedAccountPoolChannelCaches()
+	}
+	return err
 }
 
 func RecoverUpstreamAccountRuntimeState(id int, scope UpstreamAccountRecoveryScope) error {

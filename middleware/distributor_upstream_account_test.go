@@ -10,31 +10,31 @@ import (
 func TestLocalUpstreamAllowedAccountTypes(t *testing.T) {
 	require.ElementsMatch(t,
 		[]string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey},
-		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/responses", false, false),
+		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/responses", false),
 	)
 	require.ElementsMatch(t,
 		[]string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey},
-		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/responses/compact", false, false),
+		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/responses/compact", false),
 	)
 	require.Equal(t,
-		[]string{constant.UpstreamAccountTypeOAuth},
-		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/alpha/search", false, false),
+		[]string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey},
+		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/alpha/search", false),
 	)
 	require.ElementsMatch(t,
 		[]string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey},
-		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/alpha/search", false, true),
+		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/alpha/search", false),
 	)
 	require.ElementsMatch(t,
 		[]string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey},
-		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/chat/completions", true, false),
-	)
-	require.Equal(t,
-		[]string{constant.UpstreamAccountTypeAPIKey},
-		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/chat/completions", false, false),
+		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/chat/completions", true),
 	)
 	require.Equal(t,
 		[]string{constant.UpstreamAccountTypeAPIKey},
-		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/embeddings", true, false),
+		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/chat/completions", false),
+	)
+	require.Equal(t,
+		[]string{constant.UpstreamAccountTypeAPIKey},
+		localUpstreamAllowedAccountTypes(constant.ChannelTypeOpenAI, "/v1/embeddings", true),
 	)
 }
 

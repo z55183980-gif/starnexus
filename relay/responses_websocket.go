@@ -43,7 +43,7 @@ func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInf
 	adaptor.Init(info)
 
 	var upstreamRequest any = convertedRequest
-	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.PassThroughBodyEnabled {
+	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled && !info.ChannelSetting.ShouldPassThroughBody() {
 		upstreamRequest, err = adaptor.ConvertOpenAIResponsesRequest(c, info, *convertedRequest)
 		if err != nil {
 			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())

@@ -157,25 +157,6 @@ export type LocalAccountPoolChannelPreset = {
   active_count?: number
 }
 
-export function collectAccountPoolModels(
-  accounts: Array<{
-    metadata?: { model_mapping?: Record<string, string> }
-  }>
-): string[] {
-  const models = new Set<string>()
-
-  for (const account of accounts) {
-    for (const rawModel of Object.keys(account.metadata?.model_mapping || {})) {
-      const model = rawModel.trim()
-      if (model && !model.includes('*')) {
-        models.add(model)
-      }
-    }
-  }
-
-  return Array.from(models).sort((left, right) => left.localeCompare(right))
-}
-
 // ============================================================================
 // Default Form Values
 // ============================================================================
@@ -277,6 +258,7 @@ export function requiresChannelKeyForCreate(
 export function transformChannelToFormDefaults(
   channel: Channel
 ): ChannelFormValues {
+  const useAccountPool = channel.credential_source === 'local_account_pool'
   // Parse channel extra settings from setting field
   let extraSettings = {
     force_format: false,
@@ -293,8 +275,10 @@ export function transformChannelToFormDefaults(
       extraSettings = {
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
-        proxy: parsed.proxy || '',
-        pass_through_body_enabled: parsed.pass_through_body_enabled || false,
+        proxy: useAccountPool ? '' : parsed.proxy || '',
+        pass_through_body_enabled: useAccountPool
+          ? false
+          : parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
       }
@@ -383,7 +367,7 @@ export function transformChannelToFormDefaults(
     openai_organization: channel.openai_organization || '',
     models: channel.models || '',
     group: parseGroups(channel.group || 'default'),
-    model_mapping: channel.model_mapping || '',
+    model_mapping: useAccountPool ? '' : channel.model_mapping || '',
     priority: channel.priority || 0,
     weight: channel.weight || 0,
     test_model: channel.test_model || '',
@@ -394,7 +378,7 @@ export function transformChannelToFormDefaults(
     remark: channel.remark || '',
     setting: channel.setting || '',
     param_override: channel.param_override || '',
-    header_override: channel.header_override || '',
+    header_override: useAccountPool ? '' : channel.header_override || '',
     settings: channel.settings || '{}',
     advanced_custom_config: advancedCustomConfig,
     other: channel.other || '',
@@ -413,7 +397,7 @@ export function transformChannelToFormDefaults(
     disable_store: disableStore,
     responses_websocket_v2_enabled: responsesWebSocketV2Enabled,
     responses_websocket_v2_replay_enabled: responsesWebSocketV2ReplayEnabled,
-    alpha_search_enabled: alphaSearchEnabled,
+    alpha_search_enabled: useAccountPool ? false : alphaSearchEnabled,
     allow_include_obfuscation: allowIncludeObfuscation,
     allow_inference_geo: allowInferenceGeo,
     allow_speed: allowSpeed,
@@ -429,11 +413,14 @@ export function transformChannelToFormDefaults(
  * Build the setting JSON string from form extra settings
  */
 function buildSettingJSON(formData: ChannelFormValues): string {
+  const useAccountPool = formData.credential_source === 'local_account_pool'
   const settingObj = {
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
-    proxy: formData.proxy || '',
-    pass_through_body_enabled: formData.pass_through_body_enabled || false,
+    proxy: useAccountPool ? '' : formData.proxy || '',
+    pass_through_body_enabled: useAccountPool
+      ? false
+      : formData.pass_through_body_enabled || false,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
   }
@@ -444,6 +431,7 @@ function buildSettingJSON(formData: ChannelFormValues): string {
  * Build the settings JSON string (for type-specific config like vertex_key_type)
  */
 function buildSettingsJSON(formData: ChannelFormValues): string {
+  const useAccountPool = formData.credential_source === 'local_account_pool'
   let settingsObj: Record<string, unknown> = {}
 
   // Try to parse existing settings first
@@ -514,7 +502,9 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   }
 
   if (formData.type === 1) {
-    settingsObj.alpha_search_enabled = formData.alpha_search_enabled === true
+    if (useAccountPool) delete settingsObj.alpha_search_enabled
+    else
+      settingsObj.alpha_search_enabled = formData.alpha_search_enabled === true
     settingsObj.disable_store = formData.disable_store === true
     settingsObj.allow_safety_identifier =
       formData.allow_safety_identifier === true
@@ -544,7 +534,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   }
 
   // Upstream model update settings (for model-fetchable channel types)
-  if (MODEL_FETCHABLE_TYPES.has(formData.type)) {
+  if (MODEL_FETCHABLE_TYPES.has(formData.type) && !useAccountPool) {
     settingsObj.upstream_model_update_check_enabled =
       formData.upstream_model_update_check_enabled === true
     settingsObj.upstream_model_update_auto_sync_enabled =
@@ -567,6 +557,13 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     if (typeof settingsObj.upstream_model_update_last_check_time !== 'number') {
       settingsObj.upstream_model_update_last_check_time = 0
     }
+  } else {
+    delete settingsObj.upstream_model_update_check_enabled
+    delete settingsObj.upstream_model_update_auto_sync_enabled
+    delete settingsObj.upstream_model_update_ignored_models
+    delete settingsObj.upstream_model_update_last_detected_models
+    delete settingsObj.upstream_model_update_last_removed_models
+    delete settingsObj.upstream_model_update_last_check_time
   }
 
   return JSON.stringify(settingsObj)
@@ -587,16 +584,18 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
   const channel: Partial<Channel> = {
     name: formData.name,
     type: useAccountPool ? (formData.type === 14 ? 14 : 1) : formData.type,
-    base_url: formData.base_url || null,
+    base_url: useAccountPool ? null : formData.base_url || null,
     key: useAccountPool ? '' : formData.key,
     credential_source: useAccountPool ? 'local_account_pool' : 'channel_key',
     upstream_account_pool_id: useAccountPool
       ? formData.upstream_account_pool_id
       : null,
-    openai_organization: formData.openai_organization || null,
+    openai_organization: useAccountPool
+      ? null
+      : formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
-    model_mapping: formData.model_mapping || null,
+    model_mapping: useAccountPool ? null : formData.model_mapping || null,
     priority: formData.priority || null,
     weight: formData.weight || null,
     test_model: formData.test_model || null,
@@ -607,7 +606,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     remark: formData.remark || '',
     setting: buildSettingJSON(formData),
     param_override: formData.param_override || null,
-    header_override: formData.header_override || null,
+    header_override: useAccountPool ? null : formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
   }
@@ -646,11 +645,13 @@ export function transformFormDataToUpdatePayload(
       formData.credential_source === 'local_account_pool'
         ? formData.upstream_account_pool_id
         : null,
-    base_url: formData.base_url || null,
-    openai_organization: formData.openai_organization || null,
+    base_url: useAccountPool ? null : formData.base_url || null,
+    openai_organization: useAccountPool
+      ? null
+      : formData.openai_organization || null,
     models: formData.models,
     group: formatGroups(formData.group),
-    model_mapping: formData.model_mapping || null,
+    model_mapping: useAccountPool ? null : formData.model_mapping || null,
     priority: formData.priority ?? 0,
     weight: formData.weight ?? 0,
     test_model: formData.test_model || null,
@@ -661,7 +662,7 @@ export function transformFormDataToUpdatePayload(
     remark: formData.remark || '',
     setting: buildSettingJSON(formData),
     param_override: formData.param_override || null,
-    header_override: formData.header_override || null,
+    header_override: useAccountPool ? null : formData.header_override || null,
     settings: buildSettingsJSON(formData),
     other: formData.other || '',
   }
@@ -683,15 +684,17 @@ export function transformFormDataToUpdatePayload(
   })
 
   // Send explicit empty strings for nullable fields so GORM updates can clear them.
-  payload.base_url = formData.base_url || ''
-  payload.openai_organization = formData.openai_organization || ''
+  payload.base_url = useAccountPool ? '' : formData.base_url || ''
+  payload.openai_organization = useAccountPool
+    ? ''
+    : formData.openai_organization || ''
   payload.test_model = formData.test_model || ''
   payload.tag = formData.tag || ''
   payload.remark = formData.remark || ''
-  payload.model_mapping = formData.model_mapping || ''
+  payload.model_mapping = useAccountPool ? '' : formData.model_mapping || ''
   payload.status_code_mapping = formData.status_code_mapping || ''
   payload.param_override = formData.param_override || ''
-  payload.header_override = formData.header_override || ''
+  payload.header_override = useAccountPool ? '' : formData.header_override || ''
 
   return payload
 }

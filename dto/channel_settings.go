@@ -11,12 +11,20 @@ import (
 )
 
 type ChannelSettings struct {
-	ForceFormat            bool   `json:"force_format,omitempty"`
-	ThinkingToContent      bool   `json:"thinking_to_content,omitempty"`
-	Proxy                  string `json:"proxy"`
-	PassThroughBodyEnabled bool   `json:"pass_through_body_enabled,omitempty"`
-	SystemPrompt           string `json:"system_prompt,omitempty"`
-	SystemPromptOverride   bool   `json:"system_prompt_override,omitempty"`
+	ForceFormat                   bool   `json:"force_format,omitempty"`
+	ThinkingToContent             bool   `json:"thinking_to_content,omitempty"`
+	Proxy                         string `json:"proxy"`
+	PassThroughBodyEnabled        bool   `json:"pass_through_body_enabled,omitempty"`
+	AccountPassThroughBodyEnabled bool   `json:"-"`
+	SystemPrompt                  string `json:"system_prompt,omitempty"`
+	SystemPromptOverride          bool   `json:"system_prompt_override,omitempty"`
+}
+
+// ShouldPassThroughBody reports whether the request format is owned by either
+// the channel or the selected local upstream account. Account passthrough is an
+// internal transport capability and does not bypass channel field policies.
+func (s ChannelSettings) ShouldPassThroughBody() bool {
+	return s.PassThroughBodyEnabled || s.AccountPassThroughBodyEnabled
 }
 
 type VertexKeyType string

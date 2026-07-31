@@ -192,6 +192,8 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			upstreamRoute.GET("/account-pools", controller.ListUpstreamAccountPools)
 			upstreamRoute.GET("/account-pools/:id", controller.GetUpstreamAccountPool)
+			upstreamRoute.GET("/account-pools/:id/capabilities", controller.GetUpstreamAccountPoolCapabilities)
+			upstreamRoute.POST("/account-pools/:id/publish", controller.PublishUpstreamAccountPoolChannel)
 			upstreamRoute.POST("/account-pools", controller.CreateUpstreamAccountPool)
 			upstreamRoute.PUT("/account-pools/:id", controller.UpdateUpstreamAccountPool)
 			upstreamRoute.DELETE("/account-pools/:id", controller.DeleteUpstreamAccountPool)

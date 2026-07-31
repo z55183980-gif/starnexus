@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -54,6 +55,45 @@ func TestValidateChannelWithLocalAccountPool(t *testing.T) {
 	}
 	require.NoError(t, validateChannel(anthropicChannel, true))
 	require.Equal(t, constant.ChannelTypeAnthropic, anthropicChannel.Type)
+
+	publishedChannel := model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "published", Key: "",
+		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
+	}
+	require.NoError(t, db.Create(&publishedChannel).Error)
+	channel.Type = constant.ChannelTypeOpenAI
+	require.ErrorContains(t, validateChannel(channel, true), "already published")
+	require.NoError(t, db.Delete(&publishedChannel).Error)
+
+	baseURL := "https://legacy.example.com"
+	organization := "legacy-org"
+	modelMapping := `{"public-model":"upstream-model"}`
+	headerOverride := `{"x-legacy":"value"}`
+	legacyLocal := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "legacy-local", Key: "legacy-key",
+		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
+		BaseURL: &baseURL, OpenAIOrganization: &organization, ModelMapping: &modelMapping, HeaderOverride: &headerOverride,
+	}
+	legacyLocal.SetSetting(dto.ChannelSettings{
+		Proxy: "socks5://127.0.0.1:1080", PassThroughBodyEnabled: true,
+		SystemPrompt: "keep-channel-policy",
+	})
+	legacyLocal.SetOtherSettings(dto.ChannelOtherSettings{
+		ResponsesWebSocketV2Enabled: true, ResponsesWebSocketV2Mode: "passthrough",
+		ResponsesWebSocketV2ReplayEnabled: true, AlphaSearchEnabled: true, AllowServiceTier: true,
+	})
+	require.NoError(t, validateChannel(legacyLocal, true))
+	require.Empty(t, legacyLocal.Key)
+	require.Nil(t, legacyLocal.BaseURL)
+	require.Nil(t, legacyLocal.OpenAIOrganization)
+	require.Nil(t, legacyLocal.ModelMapping)
+	require.Nil(t, legacyLocal.HeaderOverride)
+	require.Empty(t, legacyLocal.GetSetting().Proxy)
+	require.False(t, legacyLocal.GetSetting().PassThroughBodyEnabled)
+	require.Equal(t, "keep-channel-policy", legacyLocal.GetSetting().SystemPrompt)
+	require.False(t, legacyLocal.GetOtherSettings().ResponsesWebSocketV2Enabled)
+	require.False(t, legacyLocal.GetOtherSettings().AlphaSearchEnabled)
+	require.True(t, legacyLocal.GetOtherSettings().AllowServiceTier)
 
 	channel.Type = constant.ChannelTypeOpenAI
 	channel.CredentialSource = constant.ChannelCredentialSourceKey

@@ -40,6 +40,26 @@ export interface UpstreamAccountPool {
   updated_at: number
 }
 
+export interface UpstreamAccountPoolCapabilities {
+  models: string[]
+  account_count: number
+  schedulable_account_count: number
+  unreadable_account_count: number
+  wildcard_model_account_count: number
+  passthrough_account_count: number
+  header_override_account_count: number
+  proxy_configured_account_count: number
+  published_channel_id?: number | null
+  published_groups: string[]
+}
+
+export interface UpstreamAccountPoolPublishResult {
+  channel_id: number
+  created: boolean
+  models: string[]
+  groups: string[]
+}
+
 export interface UpstreamAccountPoolMember {
   pool_id: number
   account_id: number

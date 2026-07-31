@@ -79,7 +79,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	forceAccountResponses := accountResponsesMode == model.UpstreamOpenAIResponsesModeForceResponses
 	if info.RelayMode == relayconstant.RelayModeResponses &&
 		!passThroughGlobal &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
+		!info.ChannelSetting.ShouldPassThroughBody() &&
 		(forceAccountChatCompletions ||
 			(!forceAccountResponses && service.ShouldResponsesUseChatCompletionsGlobal(info.ChannelId, info.ChannelType, info.OriginModelName))) {
 		usage, newAPIError := responsesViaChatCompletions(c, info, adaptor, request)
@@ -99,33 +99,14 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 
 	var requestBody io.Reader
-	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+	if passThroughGlobal || info.ChannelSetting.ShouldPassThroughBody() {
+		preparedBody, closer, requestErr := preparePassthroughRequestBody(c, info)
+		if requestErr != nil {
+			return requestErr
 		}
-		requestBody = common.ReaderOnly(storage)
-		if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-			accountMappedModel := common.GetContextKeyString(c, appconstant.ContextKeyUpstreamAccountMappedModel)
-			if accountMappedModel != "" {
-				rawBody, readErr := storage.Bytes()
-				if readErr != nil {
-					return types.NewError(readErr, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
-				}
-				mappedBody, changed, mapErr := applyResponsesPassthroughAccountModel(rawBody, accountMappedModel)
-				if mapErr != nil {
-					return types.NewError(mapErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-				}
-				if changed {
-					body, size, closer, bodyErr := relaycommon.NewOutboundJSONBody(mappedBody)
-					if bodyErr != nil {
-						return types.NewError(bodyErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-					}
-					defer closer.Close()
-					info.UpstreamRequestBodySize = size
-					requestBody = body
-				}
-			}
+		requestBody = preparedBody
+		if closer != nil {
+			defer closer.Close()
 		}
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)

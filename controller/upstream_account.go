@@ -120,6 +120,40 @@ func GetUpstreamAccountPool(c *gin.Context) {
 	common.ApiSuccess(c, pool)
 }
 
+func GetUpstreamAccountPoolCapabilities(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	capabilities, err := service.GetUpstreamAccountPoolCapabilities(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, capabilities)
+}
+
+func PublishUpstreamAccountPoolChannel(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Groups []string `json:"groups"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	result, err := service.PublishUpstreamAccountPoolChannel(id, request.Groups)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("published upstream account pool %d as local channel %d", id, result.ChannelId))
+	common.ApiSuccess(c, result)
+}
+
 func CreateUpstreamAccountPool(c *gin.Context) {
 	var request upstreamAccountPoolRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {

@@ -83,7 +83,6 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
-import { ChannelMutateDrawer } from '@/features/channels/components/drawers/channel-mutate-drawer'
 import { AccountBatchUpdateDialog } from './account-batch-update-dialog'
 import { AccountDialog } from './account-dialog'
 import {
@@ -122,6 +121,7 @@ import {
 import { mergeAccountImportDocuments } from './batch-import'
 import { BatchImportDialog } from './batch-import-dialog'
 import { CRSSyncDialog } from './crs-sync-dialog'
+import { PublishPoolChannelDrawer } from './publish-pool-channel-drawer'
 import type {
   UpstreamAccount,
   UpstreamAccountPayload,
@@ -1825,14 +1825,13 @@ export function AccountManagement() {
           />
         )}
         {publishingPool && (
-          <ChannelMutateDrawer
+          <PublishPoolChannelDrawer
             key={publishingPool.id}
             open
             onOpenChange={(open) => {
               if (!open) setPublishingPool(null)
             }}
-            creationMode='local'
-            initialAccountPool={publishingPool}
+            pool={publishingPool}
             onSaved={refresh}
           />
         )}

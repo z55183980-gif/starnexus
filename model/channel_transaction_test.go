@@ -80,3 +80,16 @@ func TestBatchSetChannelTagRebuildsAbilitiesWithNewTag(t *testing.T) {
 	require.NotNil(t, ability.Tag)
 	require.Equal(t, newTag, *ability.Tag)
 }
+
+func TestUpdateAbilitiesSkipsEmptyModelsAndGroups(t *testing.T) {
+	resetChannelTransactionTables(t)
+	channel := createTransactionTestChannel(t)
+
+	channel.Models = " , "
+	channel.Group = "default, "
+	require.NoError(t, channel.UpdateAbilities(nil))
+
+	var abilities []Ability
+	require.NoError(t, DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
+	require.Empty(t, abilities)
+}

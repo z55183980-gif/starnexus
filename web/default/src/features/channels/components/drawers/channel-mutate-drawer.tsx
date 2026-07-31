@@ -115,10 +115,9 @@ import {
   useSecureVerification,
 } from '@/features/auth/secure-verification'
 import {
-  listUpstreamAccounts,
+  getUpstreamPoolCapabilities,
   listUpstreamPools,
 } from '@/features/upstream-accounts/api'
-import type { UpstreamAccount } from '@/features/upstream-accounts/types'
 import {
   createChannel,
   fetchModels,
@@ -143,7 +142,6 @@ import {
 import {
   channelFormSchema,
   channelsQueryKeys,
-  collectAccountPoolModels,
   getChannelCreateDefaultValues,
   requiresChannelKeyForCreate,
   transformChannelToFormDefaults,
@@ -199,23 +197,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getErrorMessage(error: unknown): string | undefined {
+  if (isRecord(error)) {
+    const response = error.response
+    if (isRecord(response)) {
+      const data = response.data
+      if (isRecord(data)) {
+        const message = data.message
+        if (typeof message === 'string') return message
+      }
+    }
+
+    const message = error.message
+    if (typeof message === 'string') return message
+  }
+
   if (error instanceof Error && typeof error.message === 'string') {
     return error.message
   }
-
-  if (!isRecord(error)) return undefined
-
-  const response = error.response
-  if (isRecord(response)) {
-    const data = response.data
-    if (isRecord(data)) {
-      const message = data.message
-      if (typeof message === 'string') return message
-    }
-  }
-
-  const message = error.message
-  if (typeof message === 'string') return message
   return undefined
 }
 
@@ -229,45 +227,6 @@ const createEmptyModelMappingGuardrail = (): ModelMappingGuardrail => ({
 
 const formatModelNames = (models: string[]): string =>
   models.map((model) => `"${model}"`).join(', ')
-
-const ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE = 100
-
-async function loadAccountPoolAccounts(
-  poolId: number
-): Promise<UpstreamAccount[]> {
-  const firstResponse = await listUpstreamAccounts({
-    page: 1,
-    page_size: ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE,
-    pool_id: poolId,
-  })
-  if (!firstResponse.success || !firstResponse.data) {
-    throw new Error(firstResponse.message || 'Failed to load account pool')
-  }
-
-  const accounts = [...firstResponse.data.items]
-  const pageCount = Math.ceil(
-    firstResponse.data.total / ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE
-  )
-  if (pageCount <= 1) return accounts
-
-  const remainingResponses = await Promise.all(
-    Array.from({ length: pageCount - 1 }, (_, index) =>
-      listUpstreamAccounts({
-        page: index + 2,
-        page_size: ACCOUNT_POOL_ACCOUNTS_PAGE_SIZE,
-        pool_id: poolId,
-      })
-    )
-  )
-  for (const response of remainingResponses) {
-    if (!response.success || !response.data) {
-      throw new Error(response.message || 'Failed to load account pool')
-    }
-    accounts.push(...response.data.items)
-  }
-
-  return accounts
-}
 
 const MODEL_MAPPING_PREVIEW_FALLBACK: Array<{
   source: string
@@ -361,7 +320,6 @@ export function ChannelMutateDrawer({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isSyncingAccountModels, setIsSyncingAccountModels] = useState(false)
   const [customModel, setCustomModel] = useState('')
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
@@ -372,6 +330,7 @@ export function ChannelMutateDrawer({
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
+  const autoSyncedAccountPoolRef = useRef<number | null>(null)
   const [statusCodeRiskOpen, setStatusCodeRiskOpen] = useState(false)
   const [statusCodeRiskDetailItems, setStatusCodeRiskDetailItems] = useState<
     string[]
@@ -523,6 +482,16 @@ export function ChannelMutateDrawer({
   )
   const isPublishedLocalChannel =
     creationMode === 'local' && initialAccountPool != null
+  const {
+    data: accountPoolCapabilitiesData,
+    isFetching: isSyncingAccountModels,
+    refetch: refetchAccountPoolCapabilities,
+  } = useQuery({
+    queryKey: ['upstream-account-pools', selectedAccountPoolId, 'capabilities'],
+    queryFn: () => getUpstreamPoolCapabilities(selectedAccountPoolId!),
+    enabled: open && isRoot && isLocalChannel && Boolean(selectedAccountPoolId),
+  })
+  const accountPoolCapabilities = accountPoolCapabilitiesData?.data
 
   useEffect(() => {
     if (!isLocalChannel || !selectedAccountPoolId || !upstreamPoolsData?.data) {
@@ -553,12 +522,50 @@ export function ChannelMutateDrawer({
     form.setValue('multi_key_mode', 'single')
     form.setValue('responses_websocket_v2_enabled', false)
     form.setValue('responses_websocket_v2_replay_enabled', false)
+    form.setValue('model_mapping', '')
+    form.setValue('header_override', '')
+    form.setValue('base_url', '')
+    form.setValue('openai_organization', '')
+    form.setValue('proxy', '')
+    form.setValue('pass_through_body_enabled', false)
+    form.setValue('alpha_search_enabled', false)
   }, [
     compatibleAccountPools,
     credentialSource,
     currentType,
     form,
     isLocalChannel,
+    selectedAccountPoolId,
+  ])
+
+  useEffect(() => {
+    if (!open) {
+      autoSyncedAccountPoolRef.current = null
+      return
+    }
+    if (
+      isEditing ||
+      !isLocalChannel ||
+      !selectedAccountPoolId ||
+      autoSyncedAccountPoolRef.current === selectedAccountPoolId ||
+      !accountPoolCapabilities
+    ) {
+      return
+    }
+    autoSyncedAccountPoolRef.current = selectedAccountPoolId
+    if (accountPoolCapabilities.models.length > 0) {
+      form.setValue(
+        'models',
+        formatModelsArray(accountPoolCapabilities.models),
+        { shouldValidate: true }
+      )
+    }
+  }, [
+    accountPoolCapabilities,
+    form,
+    isEditing,
+    isLocalChannel,
+    open,
     selectedAccountPoolId,
   ])
 
@@ -987,10 +994,9 @@ export function ChannelMutateDrawer({
       return
     }
 
-    setIsSyncingAccountModels(true)
     try {
-      const accounts = await loadAccountPoolAccounts(poolId)
-      const accountModels = collectAccountPoolModels(accounts)
+      const result = await refetchAccountPoolCapabilities()
+      const accountModels = result.data?.data?.models ?? []
       if (accountModels.length === 0) {
         toast.info(t('No concrete account models found in this pool'))
         return
@@ -1013,10 +1019,8 @@ export function ChannelMutateDrawer({
       )
     } catch {
       toast.error(t('Failed to sync account models'))
-    } finally {
-      setIsSyncingAccountModels(false)
     }
-  }, [form, t, updateModels])
+  }, [form, refetchAccountPoolCapabilities, t, updateModels])
 
   const handleClearModels = useCallback(() => {
     form.setValue('models', '')
@@ -1167,6 +1171,7 @@ export function ChannelMutateDrawer({
 
       // Validate model_mapping JSON format
       const hasModelMapping =
+        !isLocalChannel &&
         typeof data.model_mapping === 'string' &&
         data.model_mapping.trim() !== ''
 
@@ -1251,6 +1256,7 @@ export function ChannelMutateDrawer({
     [
       isEditing,
       currentRow,
+      isLocalChannel,
       isMultiKeyChannel,
       form,
       handleSuccess,
@@ -1486,6 +1492,47 @@ export function ChannelMutateDrawer({
                                     <span className='truncate'>
                                       {selectedAccountPool.description}
                                     </span>
+                                  )}
+                                  {accountPoolCapabilities && (
+                                    <>
+                                      <span>
+                                        {
+                                          accountPoolCapabilities.schedulable_account_count
+                                        }{' '}
+                                        {t('Schedulable')}
+                                      </span>
+                                      <span>
+                                        {accountPoolCapabilities.models.length}{' '}
+                                        {t('Models')}
+                                      </span>
+                                      {accountPoolCapabilities.passthrough_account_count >
+                                        0 && (
+                                        <span>
+                                          {
+                                            accountPoolCapabilities.passthrough_account_count
+                                          }{' '}
+                                          {t('Passthrough')}
+                                        </span>
+                                      )}
+                                      {accountPoolCapabilities.header_override_account_count >
+                                        0 && (
+                                        <span>
+                                          {
+                                            accountPoolCapabilities.header_override_account_count
+                                          }{' '}
+                                          {t('Header Override')}
+                                        </span>
+                                      )}
+                                      {accountPoolCapabilities.proxy_configured_account_count >
+                                        0 && (
+                                        <span>
+                                          {
+                                            accountPoolCapabilities.proxy_configured_account_count
+                                          }{' '}
+                                          {t('Proxy')}
+                                        </span>
+                                      )}
+                                    </>
                                   )}
                                 </ItemDescription>
                               </ItemContent>
@@ -2566,26 +2613,30 @@ export function ChannelMutateDrawer({
                             {t('Sync Account Models')}
                           </Button>
                         )}
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          onClick={handleFillRelatedModels}
-                          disabled={!basicModels.length}
-                        >
-                          <FileText className='mr-2 h-4 w-4' />
-                          {t('Fill Related Models')}
-                        </Button>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          onClick={handleFillAllModels}
-                          disabled={!allModelsList.length}
-                        >
-                          <Plus className='mr-2 h-4 w-4' />
-                          {t('Fill All Models')}
-                        </Button>
+                        {!isLocalChannel && (
+                          <>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={handleFillRelatedModels}
+                              disabled={!basicModels.length}
+                            >
+                              <FileText className='mr-2 h-4 w-4' />
+                              {t('Fill Related Models')}
+                            </Button>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={handleFillAllModels}
+                              disabled={!allModelsList.length}
+                            >
+                              <Plus className='mr-2 h-4 w-4' />
+                              {t('Fill All Models')}
+                            </Button>
+                          </>
+                        )}
                         {!isLocalChannel &&
                           MODEL_FETCHABLE_TYPES.has(currentType) && (
                             <Button
@@ -2669,101 +2720,104 @@ export function ChannelMutateDrawer({
                   </Button>
                 </div>
 
-                <FormField
-                  control={form.control}
-                  name='model_mapping'
-                  render={({ field }) => (
-                    <FormItem>
-                      <div className='flex items-center gap-2'>
-                        <FormLabel className='mb-0'>
-                          {t('Model Mapping')}
-                        </FormLabel>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                type='button'
-                                variant='ghost'
-                                size='icon-sm'
-                                className='text-muted-foreground hover:text-foreground size-auto p-0'
-                                aria-label='How model mapping works'
-                              />
-                            }
-                          >
-                            <HelpCircle className='h-4 w-4' />
-                          </TooltipTrigger>
-                          <TooltipContent
-                            side='top'
-                            align='start'
-                            className='max-w-xs space-y-2 text-left'
-                          >
-                            <p className='text-xs font-semibold tracking-wide uppercase'>
-                              {t('Request flow')}
-                            </p>
-                            <div className='space-y-1 font-mono text-xs'>
-                              {mappingPreviewPairs.map((pair) => (
-                                <div
-                                  key={`${pair.source}-${pair.target}`}
-                                  className='flex items-center gap-1'
-                                >
-                                  <span>{pair.source}</span>
-                                  <ArrowRight className='h-3.5 w-3.5 opacity-70' />
-                                  <span>{pair.target}</span>
-                                </div>
-                              ))}
-                              {remainingMappingCount > 0 && (
-                                <div className='text-[11px] opacity-70'>
-                                  +{remainingMappingCount} {t('more mapping')}
-                                  {remainingMappingCount > 1 ? 's' : ''}
-                                </div>
-                              )}
-                            </div>
-                            <p className='text-[11px] leading-relaxed opacity-80'>
+                {!isLocalChannel && (
+                  <FormField
+                    control={form.control}
+                    name='model_mapping'
+                    render={({ field }) => (
+                      <FormItem>
+                        <div className='flex items-center gap-2'>
+                          <FormLabel className='mb-0'>
+                            {t('Model Mapping')}
+                          </FormLabel>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type='button'
+                                  variant='ghost'
+                                  size='icon-sm'
+                                  className='text-muted-foreground hover:text-foreground size-auto p-0'
+                                  aria-label='How model mapping works'
+                                />
+                              }
+                            >
+                              <HelpCircle className='h-4 w-4' />
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side='top'
+                              align='start'
+                              className='max-w-xs space-y-2 text-left'
+                            >
+                              <p className='text-xs font-semibold tracking-wide uppercase'>
+                                {t('Request flow')}
+                              </p>
+                              <div className='space-y-1 font-mono text-xs'>
+                                {mappingPreviewPairs.map((pair) => (
+                                  <div
+                                    key={`${pair.source}-${pair.target}`}
+                                    className='flex items-center gap-1'
+                                  >
+                                    <span>{pair.source}</span>
+                                    <ArrowRight className='h-3.5 w-3.5 opacity-70' />
+                                    <span>{pair.target}</span>
+                                  </div>
+                                ))}
+                                {remainingMappingCount > 0 && (
+                                  <div className='text-[11px] opacity-70'>
+                                    +{remainingMappingCount} {t('more mapping')}
+                                    {remainingMappingCount > 1 ? 's' : ''}
+                                  </div>
+                                )}
+                              </div>
+                              <p className='text-[11px] leading-relaxed opacity-80'>
+                                {t(
+                                  'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
+                                )}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                        <FormControl>
+                          <ModelMappingEditor
+                            value={field.value || ''}
+                            onChange={field.onChange}
+                            disabled={isSubmitting}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          {t(FIELD_DESCRIPTIONS.MODEL_MAPPING)}
+                        </FormDescription>
+                        {modelMappingGuardrail.invalidJson && (
+                          <Alert variant='destructive' className='mt-3'>
+                            <AlertDescription>
+                              {t('Model Mapping must be a JSON object like')}{' '}
+                              <code className='font-mono'>
+                                {'{"gpt-4":"Azure-GPT4"}'}
+                              </code>
+                              {t('. Please fix the JSON before saving.')}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        {modelMappingGuardrail.missingSourceModels.length >
+                          0 && (
+                          <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
+                            <AlertDescription>
+                              {t('Add')}{' '}
+                              {formatModelNames(
+                                modelMappingGuardrail.missingSourceModels
+                              )}{' '}
                               {t(
-                                'Users call the model on the left. The platform forwards the request to the upstream model on the right.'
+                                'to the Models list so users can use them before the mapping sends traffic upstream.'
                               )}
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                      <FormControl>
-                        <ModelMappingEditor
-                          value={field.value || ''}
-                          onChange={field.onChange}
-                          disabled={isSubmitting}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        {t(FIELD_DESCRIPTIONS.MODEL_MAPPING)}
-                      </FormDescription>
-                      {modelMappingGuardrail.invalidJson && (
-                        <Alert variant='destructive' className='mt-3'>
-                          <AlertDescription>
-                            {t('Model Mapping must be a JSON object like')}{' '}
-                            <code className='font-mono'>
-                              {'{"gpt-4":"Azure-GPT4"}'}
-                            </code>
-                            {t('. Please fix the JSON before saving.')}
-                          </AlertDescription>
-                        </Alert>
-                      )}
-                      {modelMappingGuardrail.missingSourceModels.length > 0 && (
-                        <Alert className='mt-3 border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-50'>
-                          <AlertDescription>
-                            {t('Add')}{' '}
-                            {formatModelNames(
-                              modelMappingGuardrail.missingSourceModels
-                            )}{' '}
-                            {t(
-                              'to the Models list so users can use them before the mapping sends traffic upstream.'
-                            )}
-                          </AlertDescription>
-                        </Alert>
-                      )}
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
 
                 <FormField
                   control={form.control}
@@ -3113,110 +3167,112 @@ export function ChannelMutateDrawer({
                         )}
                       />
 
-                      <FormField
-                        control={form.control}
-                        name='header_override'
-                        render={({ field }) => (
-                          <FormItem className='space-y-3 border-t pt-4'>
-                            <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
-                              <div className='space-y-1'>
-                                <FormLabel>
-                                  {t('Request Header Override')}
-                                </FormLabel>
-                                <FormDescription>
-                                  {t('Override request headers')}
-                                </FormDescription>
-                              </div>
-                              <div className='flex flex-wrap gap-2'>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={() =>
-                                    field.onChange(
-                                      JSON.stringify(
-                                        {
-                                          '*': true,
-                                          're:^X-Trace-.*$': true,
-                                          'X-Foo': '{client_header:X-Foo}',
-                                          Authorization: 'Bearer {api_key}',
-                                        },
-                                        null,
-                                        2
-                                      )
-                                    )
-                                  }
-                                >
-                                  {t('Fill Template')}
-                                </Button>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={() =>
-                                    field.onChange(
-                                      JSON.stringify({ '*': true }, null, 2)
-                                    )
-                                  }
-                                >
-                                  {t('Passthrough Template')}
-                                </Button>
-                                <Button
-                                  type='button'
-                                  variant='outline'
-                                  size='sm'
-                                  onClick={() => {
-                                    try {
-                                      const parsed = JSON.parse(
-                                        field.value || '{}'
-                                      )
+                      {!isLocalChannel && (
+                        <FormField
+                          control={form.control}
+                          name='header_override'
+                          render={({ field }) => (
+                            <FormItem className='space-y-3 border-t pt-4'>
+                              <div className='flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between'>
+                                <div className='space-y-1'>
+                                  <FormLabel>
+                                    {t('Request Header Override')}
+                                  </FormLabel>
+                                  <FormDescription>
+                                    {t('Override request headers')}
+                                  </FormDescription>
+                                </div>
+                                <div className='flex flex-wrap gap-2'>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={() =>
                                       field.onChange(
-                                        JSON.stringify(parsed, null, 2)
+                                        JSON.stringify(
+                                          {
+                                            '*': true,
+                                            're:^X-Trace-.*$': true,
+                                            'X-Foo': '{client_header:X-Foo}',
+                                            Authorization: 'Bearer {api_key}',
+                                          },
+                                          null,
+                                          2
+                                        )
                                       )
-                                    } catch (_e) {
-                                      /* ignore invalid JSON */
                                     }
-                                  }}
-                                >
-                                  {t('Format')}
-                                </Button>
-                                <Button
-                                  type='button'
-                                  variant='ghost'
-                                  size='sm'
-                                  onClick={() => field.onChange('')}
-                                >
-                                  {t('Clear')}
-                                </Button>
+                                  >
+                                    {t('Fill Template')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={() =>
+                                      field.onChange(
+                                        JSON.stringify({ '*': true }, null, 2)
+                                      )
+                                    }
+                                  >
+                                    {t('Passthrough Template')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='outline'
+                                    size='sm'
+                                    onClick={() => {
+                                      try {
+                                        const parsed = JSON.parse(
+                                          field.value || '{}'
+                                        )
+                                        field.onChange(
+                                          JSON.stringify(parsed, null, 2)
+                                        )
+                                      } catch (_e) {
+                                        /* ignore invalid JSON */
+                                      }
+                                    }}
+                                  >
+                                    {t('Format')}
+                                  </Button>
+                                  <Button
+                                    type='button'
+                                    variant='ghost'
+                                    size='sm'
+                                    onClick={() => field.onChange('')}
+                                  >
+                                    {t('Clear')}
+                                  </Button>
+                                </div>
                               </div>
-                            </div>
-                            <FormControl>
-                              <Textarea
-                                className='font-mono text-sm'
-                                rows={6}
-                                value={field.value || ''}
-                                onChange={field.onChange}
-                                disabled={isSubmitting}
-                                placeholder={t(
-                                  'Enter JSON to override request headers'
-                                )}
-                              />
-                            </FormControl>
-                            <FormDescription className='text-xs'>
-                              {t('Supported variables')}:{' '}
-                              <code className='bg-muted rounded px-1 py-0.5'>
-                                {'{api_key}'}
-                              </code>{' '}
-                              — {t('Channel key')},{' '}
-                              <code className='bg-muted rounded px-1 py-0.5'>
-                                {'{client_header:NAME}'}
-                              </code>{' '}
-                              — {t('Client header value')}
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                              <FormControl>
+                                <Textarea
+                                  className='font-mono text-sm'
+                                  rows={6}
+                                  value={field.value || ''}
+                                  onChange={field.onChange}
+                                  disabled={isSubmitting}
+                                  placeholder={t(
+                                    'Enter JSON to override request headers'
+                                  )}
+                                />
+                              </FormControl>
+                              <FormDescription className='text-xs'>
+                                {t('Supported variables')}:{' '}
+                                <code className='bg-muted rounded px-1 py-0.5'>
+                                  {'{api_key}'}
+                                </code>{' '}
+                                — {t('Channel key')},{' '}
+                                <code className='bg-muted rounded px-1 py-0.5'>
+                                  {'{client_header:NAME}'}
+                                </code>{' '}
+                                — {t('Client header value')}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
                     </div>
                   </div>
 
@@ -3329,30 +3385,32 @@ export function ChannelMutateDrawer({
 
                           {currentType === 1 && (
                             <>
-                              <FormField
-                                control={form.control}
-                                name='alpha_search_enabled'
-                                render={({ field }) => (
-                                  <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
-                                    <div className='space-y-0.5'>
-                                      <FormLabel className='text-sm'>
-                                        {t('Enable Alpha Search')}
-                                      </FormLabel>
-                                      <FormDescription>
-                                        {t(
-                                          'Allow this OpenAI-compatible upstream channel to handle /v1/alpha/search. Enable only when the upstream explicitly supports this endpoint.'
-                                        )}
-                                      </FormDescription>
-                                    </div>
-                                    <FormControl>
-                                      <Switch
-                                        checked={field.value}
-                                        onCheckedChange={field.onChange}
-                                      />
-                                    </FormControl>
-                                  </FormItem>
-                                )}
-                              />
+                              {!isLocalChannel && (
+                                <FormField
+                                  control={form.control}
+                                  name='alpha_search_enabled'
+                                  render={({ field }) => (
+                                    <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                      <div className='space-y-0.5'>
+                                        <FormLabel className='text-sm'>
+                                          {t('Enable Alpha Search')}
+                                        </FormLabel>
+                                        <FormDescription>
+                                          {t(
+                                            'Allow this OpenAI-compatible upstream channel to handle /v1/alpha/search. Enable only when the upstream explicitly supports this endpoint.'
+                                          )}
+                                        </FormDescription>
+                                      </div>
+                                      <FormControl>
+                                        <Switch
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                        />
+                                      </FormControl>
+                                    </FormItem>
+                                  )}
+                                />
+                              )}
 
                               <FormField
                                 control={form.control}
@@ -3595,49 +3653,53 @@ export function ChannelMutateDrawer({
                         )}
                       />
 
+                      {!isLocalChannel && (
+                        <FormField
+                          control={form.control}
+                          name='pass_through_body_enabled'
+                          render={({ field }) => (
+                            <FormItem className='flex items-center justify-between px-4 py-3'>
+                              <div className='space-y-0.5'>
+                                <FormLabel>{t('Pass Through Body')}</FormLabel>
+                                <FormDescription>
+                                  {t('Pass request body directly to upstream')}
+                                </FormDescription>
+                              </div>
+                              <FormControl>
+                                <Switch
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                    </div>
+
+                    {!isLocalChannel && (
                       <FormField
                         control={form.control}
-                        name='pass_through_body_enabled'
+                        name='proxy'
                         render={({ field }) => (
-                          <FormItem className='flex items-center justify-between px-4 py-3'>
-                            <div className='space-y-0.5'>
-                              <FormLabel>{t('Pass Through Body')}</FormLabel>
-                              <FormDescription>
-                                {t('Pass request body directly to upstream')}
-                              </FormDescription>
-                            </div>
+                          <FormItem>
+                            <FormLabel>{t('Proxy Address')}</FormLabel>
                             <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
+                              <Input
+                                placeholder={t('socks5://user:pass@host:port')}
+                                {...field}
                               />
                             </FormControl>
+                            <FormDescription>
+                              {t(
+                                'Network proxy for this channel (supports socks5 protocol)'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
                           </FormItem>
                         )}
                       />
-                    </div>
-
-                    <FormField
-                      control={form.control}
-                      name='proxy'
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>{t('Proxy Address')}</FormLabel>
-                          <FormControl>
-                            <Input
-                              placeholder={t('socks5://user:pass@host:port')}
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            {t(
-                              'Network proxy for this channel (supports socks5 protocol)'
-                            )}
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
+                    )}
 
                     <FormField
                       control={form.control}

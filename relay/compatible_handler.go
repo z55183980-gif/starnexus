@@ -77,7 +77,7 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	forceAccountChatCompletions := accountResponsesMode == model.UpstreamOpenAIResponsesModeForceChatCompletions
 	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
 		!passThroughGlobal &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
+		!info.ChannelSetting.ShouldPassThroughBody() &&
 		(info.ChannelType == constant.ChannelTypeCodex || forceAccountResponses ||
 			(!forceAccountChatCompletions && service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName))) {
 		applySystemPromptIfNeeded(c, info, request)
@@ -99,17 +99,15 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 
 	var requestBody io.Reader
 
-	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
-		if err != nil {
-			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	if passThroughGlobal || info.ChannelSetting.ShouldPassThroughBody() {
+		preparedBody, closer, requestErr := preparePassthroughRequestBody(c, info)
+		if requestErr != nil {
+			return requestErr
 		}
-		if common.DebugEnabled {
-			if debugBytes, bErr := storage.Bytes(); bErr == nil {
-				logger.LogDebug(c, "requestBody: %s", debugBytes)
-			}
+		requestBody = preparedBody
+		if closer != nil {
+			defer closer.Close()
 		}
-		requestBody = common.ReaderOnly(storage)
 	} else {
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
 		if err != nil {

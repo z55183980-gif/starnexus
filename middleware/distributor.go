@@ -517,6 +517,10 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
 	setting := channel.GetSetting()
+	// Local accounts own their connection protocol. Ignore legacy channel-level
+	// transport settings so every request follows the selected account.
+	setting.Proxy = ""
+	setting.PassThroughBodyEnabled = false
 	selectionModel := strings.TrimSpace(modelName)
 	compactRequest := strings.HasSuffix(selectionModel, ratio_setting.CompactModelSuffix)
 	if compactRequest {
@@ -530,10 +534,9 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 			channel.Type,
 			c.Request.URL.Path,
 			!model_setting.GetGlobalSettings().PassThroughRequestEnabled && !setting.PassThroughBodyEnabled,
-			channel.GetOtherSettings().AlphaSearchEnabled,
 		), Model: selectionModel, RequestPath: c.Request.URL.Path, CompactRequest: compactRequest,
 		CodexClient: codexClient, CodexAppServer: codexAppServer,
-		ChannelProxy: setting.Proxy, RequestId: c.GetString(common.RequestIdKey), ExcludedIds: excludedIds,
+		ChannelProxy: "", RequestId: c.GetString(common.RequestIdKey), ExcludedIds: excludedIds,
 		ResponsesWebSocket:    common.GetContextKeyBool(c, constant.ContextKeyResponsesWebSocketIngress),
 		PreferredAccountId:    common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountPreferredId),
 		RequirePreferred:      common.GetContextKeyBool(c, constant.ContextKeyUpstreamAccountPreferredRequired),
@@ -559,7 +562,7 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 	}
 	setting.Proxy = selection.ProxyURL
 	if options.OpenAIPassthrough || options.AnthropicPassthrough {
-		setting.PassThroughBodyEnabled = true
+		setting.AccountPassThroughBodyEnabled = true
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelSetting, setting)
 	otherSettings, _ := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
@@ -581,17 +584,22 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		wsMode := options.OpenAIWSMode(selection.Account.Type)
 		otherSettings.ResponsesWebSocketV2Mode = wsMode
 		otherSettings.ResponsesWebSocketV2Enabled = wsMode == model.UpstreamOpenAIWSModeContextPool || wsMode == model.UpstreamOpenAIWSModePassthrough
+		if strings.HasPrefix(strings.TrimSpace(c.Request.URL.Path), "/v1/alpha/search") {
+			otherSettings.AlphaSearchEnabled = true
+		}
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelOtherSetting, otherSettings)
 	accountHeaderOverrides := service.MergeUpstreamAccountHeaderOverrides(
-		common.GetContextKeyStringMap(c, constant.ContextKeyChannelHeaderOverride),
+		nil,
 		&selection.Account,
 		selection.Credentials,
 	)
 	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, accountHeaderOverrides)
+	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, "")
+	common.SetContextKey(c, constant.ContextKeyChannelOrganization, "")
 	common.SetContextKey(c, constant.ContextKeyChannelType, effectiveChannelType)
 	common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, localUpstreamBaseURL(effectiveChannelType, selection.Credentials, channel.GetBaseURL()))
+	common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, localUpstreamBaseURL(effectiveChannelType, selection.Credentials, ""))
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPoolId, selection.Pool.Id)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, selection.Account.Id)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, selection.Account.Name)
@@ -716,7 +724,7 @@ func localUpstreamChannelKey(platform string, accountType string, credentials ma
 	return "", errors.New("channel type does not support local account credentials")
 }
 
-func localUpstreamAllowedAccountTypes(channelType int, requestPath string, allowCompatibilityConversion bool, alphaSearchEnabled bool) []string {
+func localUpstreamAllowedAccountTypes(channelType int, requestPath string, allowCompatibilityConversion bool) []string {
 	if channelType == constant.ChannelTypeAnthropic {
 		return []string{
 			constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeSetupToken,
@@ -726,9 +734,6 @@ func localUpstreamAllowedAccountTypes(channelType int, requestPath string, allow
 	}
 	requestPath = strings.TrimSpace(requestPath)
 	if strings.HasPrefix(requestPath, "/v1/alpha/search") {
-		if !alphaSearchEnabled {
-			return []string{constant.UpstreamAccountTypeOAuth}
-		}
 		return []string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeAPIKey}
 	}
 	if strings.HasPrefix(requestPath, "/v1/responses") {

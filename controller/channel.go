@@ -486,6 +486,20 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	if err := validateChannelCredentialSource(channel); err != nil {
 		return err
 	}
+	if channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
+		var existing int64
+		query := model.DB.Model(&model.Channel{}).
+			Where("credential_source = ? AND upstream_account_pool_id = ?", channel.CredentialSource, *channel.UpstreamAccountPoolId)
+		if channel.Id > 0 {
+			query = query.Where("id <> ?", channel.Id)
+		}
+		if err := query.Count(&existing).Error; err != nil {
+			return fmt.Errorf("failed to check local account pool channel: %w", err)
+		}
+		if existing > 0 {
+			return fmt.Errorf("local account pool is already published as a channel")
+		}
+	}
 
 	// VertexAI 特殊校验
 	if channel.Type == constant.ChannelTypeVertexAi {
@@ -551,6 +565,29 @@ func normalizeChannelCredentialSource(channel *model.Channel) {
 		// whether the request uses the OpenAI API-key or Codex OAuth adaptor.
 		channel.Type = constant.ChannelTypeOpenAI
 	}
+	if channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
+		normalizeLocalAccountPoolChannel(channel)
+	}
+}
+
+func normalizeLocalAccountPoolChannel(channel *model.Channel) {
+	channel.Key = ""
+	channel.BaseURL = nil
+	channel.OpenAIOrganization = nil
+	channel.ModelMapping = nil
+	channel.HeaderOverride = nil
+
+	setting := channel.GetSetting()
+	setting.Proxy = ""
+	setting.PassThroughBodyEnabled = false
+	channel.SetSetting(setting)
+
+	otherSettings := channel.GetOtherSettings()
+	otherSettings.ResponsesWebSocketV2Enabled = false
+	otherSettings.ResponsesWebSocketV2Mode = ""
+	otherSettings.ResponsesWebSocketV2ReplayEnabled = false
+	otherSettings.AlphaSearchEnabled = false
+	channel.SetOtherSettings(otherSettings)
 }
 
 func validateChannelCredentialSource(channel *model.Channel) error {

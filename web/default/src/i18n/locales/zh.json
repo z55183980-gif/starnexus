@@ -498,6 +498,7 @@
     "Assigned by administrators and used to represent a user level, such as default or vip.": "由管理员分配，用于表示用户等级，例如 default 或 vip。",
     "Async notify URL sent to BEpusdt when creating orders. Leave blank to use <ServerAddress>/api/epusdt/notify.": "创建订单时发送给 BEpusdt 的异步通知地址。留空则使用 <ServerAddress>/api/epusdt/notify。",
     "Async task refund": "异步任务退款",
+    "At least one group is required": "至少需要选择一个分组",
     "At least one model regex pattern is required": "至少需要一个模型正则匹配模式",
     "At least one valid key source is required": "至少需要一个有效的密钥来源",
     "Attach": "附加",
