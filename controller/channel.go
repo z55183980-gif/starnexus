@@ -222,7 +222,7 @@ func FetchUpstreamModels(c *gin.Context) {
 
 	channel, err := model.GetChannelById(id, true)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 
@@ -245,7 +245,7 @@ func FetchUpstreamModels(c *gin.Context) {
 func FixChannelsAbilities(c *gin.Context) {
 	success, fails, err := model.FixAbility()
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -388,7 +388,7 @@ func GetChannel(c *gin.Context) {
 	}
 	channel, err := model.GetChannelById(id, false)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	if channel != nil {
@@ -575,7 +575,8 @@ func validateChannelCredentialSource(channel *model.Channel) error {
 		}
 		pool, err := service.GetUpstreamAccountPool(*channel.UpstreamAccountPoolId)
 		if err != nil {
-			return fmt.Errorf("failed to load local account pool: %w", err)
+			common.SysError(fmt.Sprintf("failed to load local account pool: %v", err))
+			return fmt.Errorf("failed to load local account pool")
 		}
 		expectedPlatform := constant.UpstreamPlatformOpenAI
 		if channel.Type == constant.ChannelTypeAnthropic {
@@ -630,6 +631,26 @@ type AddChannelRequest struct {
 	MultiKeyMode              constant.MultiKeyMode `json:"multi_key_mode"`
 	BatchAddSetKeyPrefix2Name bool                  `json:"batch_add_set_key_prefix_2_name"`
 	Channel                   *model.Channel        `json:"channel"`
+}
+
+func buildChannelsForInsert(base model.Channel, keys []string, setKeyPrefixName bool) []model.Channel {
+	channels := make([]model.Channel, 0, len(keys))
+	for _, key := range keys {
+		if key == "" && base.CredentialSource != constant.ChannelCredentialSourceAccountPool {
+			continue
+		}
+		channel := base
+		channel.Key = key
+		if setKeyPrefixName && len(keys) > 1 {
+			keyPrefix := key
+			if len(keyPrefix) > 8 {
+				keyPrefix = keyPrefix[:8]
+			}
+			channel.Name = fmt.Sprintf("%s %s", base.Name, keyPrefix)
+		}
+		channels = append(channels, channel)
+	}
+	return channels
 }
 
 func getVertexArrayKeys(keys string) ([]string, error) {
@@ -743,25 +764,10 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 
-	channels := make([]model.Channel, 0, len(keys))
-	for _, key := range keys {
-		if key == "" && addChannelRequest.Channel.CredentialSource != constant.ChannelCredentialSourceAccountPool {
-			continue
-		}
-		localChannel := addChannelRequest.Channel
-		localChannel.Key = key
-		if addChannelRequest.BatchAddSetKeyPrefix2Name && len(keys) > 1 {
-			keyPrefix := localChannel.Key
-			if len(localChannel.Key) > 8 {
-				keyPrefix = localChannel.Key[:8]
-			}
-			localChannel.Name = fmt.Sprintf("%s %s", localChannel.Name, keyPrefix)
-		}
-		channels = append(channels, *localChannel)
-	}
+	channels := buildChannelsForInsert(*addChannelRequest.Channel, keys, addChannelRequest.BatchAddSetKeyPrefix2Name)
 	err = model.BatchInsertChannels(channels)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -779,7 +785,7 @@ func DeleteChannel(c *gin.Context) {
 	channel := model.Channel{Id: id}
 	err := channel.Delete()
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -793,7 +799,7 @@ func DeleteChannel(c *gin.Context) {
 func DeleteDisabledChannel(c *gin.Context) {
 	rows, err := model.DeleteDisabledChannel()
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -829,7 +835,7 @@ func DisableTagChannels(c *gin.Context) {
 	}
 	err = model.DisableChannelByTag(channelTag.Tag)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -852,7 +858,7 @@ func EnableTagChannels(c *gin.Context) {
 	}
 	err = model.EnableChannelByTag(channelTag.Tag)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -904,7 +910,7 @@ func EditTagChannels(c *gin.Context) {
 	}
 	err = model.EditChannelByTag(channelTag.Tag, channelTag.NewTag, channelTag.ModelMapping, channelTag.Models, channelTag.Groups, channelTag.Priority, channelTag.Weight, channelTag.ParamOverride, channelTag.HeaderOverride)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -932,7 +938,7 @@ func DeleteChannelBatch(c *gin.Context) {
 	}
 	err = model.BatchDeleteChannels(channelBatch.Ids)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -961,10 +967,7 @@ func UpdateChannel(c *gin.Context) {
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorInternal(c, err)
 		return
 	}
 
@@ -1074,7 +1077,7 @@ func UpdateChannel(c *gin.Context) {
 	}
 	err = channel.Update()
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()
@@ -1237,7 +1240,7 @@ func BatchSetChannelTag(c *gin.Context) {
 	}
 	err = model.BatchSetChannelTag(channelBatch.Ids, channelBatch.Tag)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	model.InitChannelCache()

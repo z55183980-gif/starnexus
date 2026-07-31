@@ -81,19 +81,14 @@ type Properties struct {
 }
 
 func (m *Properties) Scan(val interface{}) error {
-	bytesValue, _ := val.([]byte)
-	if len(bytesValue) == 0 {
-		*m = Properties{}
-		return nil
-	}
-	return common.Unmarshal(bytesValue, m)
+	return scanJSONDatabaseValue(val, m)
 }
 
 func (m Properties) Value() (driver.Value, error) {
 	if m == (Properties{}) {
 		return nil, nil
 	}
-	return common.Marshal(m)
+	return marshalJSONDatabaseValue(m)
 }
 
 type TaskPrivateData struct {
@@ -142,18 +137,14 @@ func GenerateTaskID() string {
 }
 
 func (p *TaskPrivateData) Scan(val interface{}) error {
-	bytesValue, _ := val.([]byte)
-	if len(bytesValue) == 0 {
-		return nil
-	}
-	return common.Unmarshal(bytesValue, p)
+	return scanJSONDatabaseValue(val, p)
 }
 
 func (p TaskPrivateData) Value() (driver.Value, error) {
 	if (p == TaskPrivateData{}) {
 		return nil, nil
 	}
-	return common.Marshal(p)
+	return marshalJSONDatabaseValue(p)
 }
 
 // SyncTaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -208,7 +199,7 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	return t
 }
 
-func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQueryParams) []*Task {
+func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQueryParams) ([]*Task, error) {
 	var tasks []*Task
 	var err error
 
@@ -238,13 +229,13 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	// 获取数据
 	err = query.Omit("channel_id").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
-	return tasks
+	return tasks, nil
 }
 
-func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*Task {
+func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) ([]*Task, error) {
 	var tasks []*Task
 	var err error
 
@@ -283,13 +274,13 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	// 获取数据
 	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
-		return nil
+		return nil, err
 	}
 
-	return tasks
+	return tasks, nil
 }
 
-func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
+func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) ([]*Task, error) {
 	var tasks []*Task
 	err := DB.Where("progress != ?", "100%").
 		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
@@ -298,20 +289,20 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 		Limit(limit).
 		Find(&tasks).Error
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return tasks
+	return tasks, nil
 }
 
-func GetAllUnFinishSyncTasks(limit int) []*Task {
+func GetAllUnFinishSyncTasks(limit int) ([]*Task, error) {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
 	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return tasks
+	return tasks, nil
 }
 
 func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
@@ -447,7 +438,7 @@ type TaskQuotaUsage struct {
 }
 
 // TaskCountAllTasks returns total tasks that match the given query params (admin usage)
-func TaskCountAllTasks(queryParams SyncTaskQueryParams) int64 {
+func TaskCountAllTasks(queryParams SyncTaskQueryParams) (int64, error) {
 	var total int64
 	query := DB.Model(&Task{})
 	if queryParams.ChannelID != "" {
@@ -477,12 +468,14 @@ func TaskCountAllTasks(queryParams SyncTaskQueryParams) int64 {
 	if queryParams.EndTimestamp != 0 {
 		query = query.Where("submit_time <= ?", queryParams.EndTimestamp)
 	}
-	_ = query.Count(&total).Error
-	return total
+	if err := query.Count(&total).Error; err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 
 // TaskCountAllUserTask returns total tasks for given user
-func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
+func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) (int64, error) {
 	var total int64
 	query := DB.Model(&Task{}).Where("user_id = ?", userId)
 	if queryParams.TaskID != "" {
@@ -503,8 +496,10 @@ func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
 	if queryParams.EndTimestamp != 0 {
 		query = query.Where("submit_time <= ?", queryParams.EndTimestamp)
 	}
-	_ = query.Count(&total).Error
-	return total
+	if err := query.Count(&total).Error; err != nil {
+		return 0, err
+	}
+	return total, nil
 }
 func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo := dto.NewOpenAIVideo()

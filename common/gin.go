@@ -203,6 +203,18 @@ func ApiError(c *gin.Context, err error) {
 	})
 }
 
+// ApiErrorInternal logs the underlying error while returning a stable public
+// message and an HTTP status that infrastructure monitoring can observe.
+func ApiErrorInternal(c *gin.Context, err error) {
+	if err != nil {
+		SysError(err.Error())
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"success": false,
+		"message": TranslateMessage(c, "common.database_error"),
+	})
+}
+
 func ApiErrorMsg(c *gin.Context, msg string) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": false,

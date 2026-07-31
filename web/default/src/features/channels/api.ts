@@ -42,6 +42,7 @@ import type {
 // Extended API config types
 interface ExtendedApiConfig extends AxiosRequestConfig {
   skipBusinessError?: boolean
+  skipErrorHandler?: boolean
   disableDuplicate?: boolean
 }
 
@@ -125,7 +126,8 @@ export async function getChannel(id: number): Promise<GetChannelResponse> {
 export async function createChannel(
   data: AddChannelRequest
 ): Promise<{ success: boolean; message?: string }> {
-  const res = await api.post('/api/channel', data)
+  const config: ExtendedApiConfig = { skipErrorHandler: true }
+  const res = await api.post('/api/channel', data, config)
   return res.data
 }
 
@@ -136,7 +138,8 @@ export async function updateChannel(
   id: number,
   data: Partial<Channel>
 ): Promise<{ success: boolean; message?: string; data?: Channel }> {
-  const res = await api.put('/api/channel/', { id, ...data })
+  const config: ExtendedApiConfig = { skipErrorHandler: true }
+  const res = await api.put('/api/channel/', { id, ...data }, config)
   return res.data
 }
 

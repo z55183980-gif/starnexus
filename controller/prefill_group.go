@@ -14,7 +14,7 @@ func GetPrefillGroups(c *gin.Context) {
 	groupType := c.Query("type")
 	groups, err := model.GetAllPrefillGroups(groupType)
 	if err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	common.ApiSuccess(c, groups)
@@ -33,7 +33,7 @@ func CreatePrefillGroup(c *gin.Context) {
 	}
 	// 创建前检查名称
 	if dup, err := model.IsPrefillGroupNameDuplicated(0, g.Name); err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	} else if dup {
 		common.ApiErrorMsg(c, "组名称已存在")
@@ -41,7 +41,7 @@ func CreatePrefillGroup(c *gin.Context) {
 	}
 
 	if err := g.Insert(); err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	common.ApiSuccess(c, &g)
@@ -60,7 +60,7 @@ func UpdatePrefillGroup(c *gin.Context) {
 	}
 	// 名称冲突检查
 	if dup, err := model.IsPrefillGroupNameDuplicated(g.Id, g.Name); err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	} else if dup {
 		common.ApiErrorMsg(c, "组名称已存在")
@@ -68,7 +68,7 @@ func UpdatePrefillGroup(c *gin.Context) {
 	}
 
 	if err := g.Update(); err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	common.ApiSuccess(c, &g)
@@ -83,7 +83,7 @@ func DeletePrefillGroup(c *gin.Context) {
 		return
 	}
 	if err := model.DeletePrefillGroupByID(id); err != nil {
-		common.ApiError(c, err)
+		common.ApiErrorInternal(c, err)
 		return
 	}
 	common.ApiSuccess(c, nil)

@@ -35,6 +35,7 @@ func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total 
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -68,6 +69,7 @@ func SearchRedemptions(keyword string, startIdx int, num int) (redemptions []*Re
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 

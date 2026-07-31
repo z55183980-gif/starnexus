@@ -677,6 +677,51 @@ func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.Task
 	return m.adjustReturn
 }
 
+func TestApplyTaskResultFailureRefundsAfterCASWin(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 24, 24, 24
+	const initialQuota, preConsumed, tokenRemain = 10000, 2500, 7000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-apply-failure", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	require.NoError(t, model.DB.Create(task).Error)
+
+	applied, err := ApplyTaskResult(ctx, &mockAdaptor{}, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusFailure,
+		Reason: "upstream failed",
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, initialQuota+preConsumed, getUserQuota(t, userID))
+	require.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+}
+
+func TestApplyTaskResultSuccessSettlesAfterCASWin(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 25, 25, 25
+	const initialQuota, preConsumed, actualQuota, tokenRemain = 10000, 5000, 3000, 8000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-apply-success", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	require.NoError(t, model.DB.Create(task).Error)
+
+	applied, err := ApplyTaskResult(ctx, &mockAdaptor{adjustReturn: actualQuota}, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, initialQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	require.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+}
+
 // ===========================================================================
 // PerCallBilling tests — settleTaskBillingOnComplete
 // ===========================================================================

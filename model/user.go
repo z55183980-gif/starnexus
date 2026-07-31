@@ -227,6 +227,7 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -263,6 +264,7 @@ func GetUsersByInviterId(inviterId int, pageInfo *common.PageInfo) (users []*Use
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 
@@ -337,6 +339,7 @@ func SearchUsers(keyword string, group string, status *int, role *int, startIdx 
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
+			panic(r)
 		}
 	}()
 

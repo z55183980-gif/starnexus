@@ -24,33 +24,12 @@ func (j JSONValue) Value() (driver.Value, error) {
 	if j == nil {
 		return nil, nil
 	}
-	return []byte(j), nil
+	return marshalJSONDatabaseValue(j)
 }
 
 // Scan 实现 sql.Scanner 接口，兼容不同驱动返回的类型
 func (j *JSONValue) Scan(value interface{}) error {
-	switch v := value.(type) {
-	case nil:
-		*j = nil
-		return nil
-	case []byte:
-		// 拷贝底层字节，避免保留底层缓冲区
-		b := make([]byte, len(v))
-		copy(b, v)
-		*j = JSONValue(b)
-		return nil
-	case string:
-		*j = JSONValue([]byte(v))
-		return nil
-	default:
-		// 其他类型尝试序列化为 JSON
-		b, err := json.Marshal(v)
-		if err != nil {
-			return err
-		}
-		*j = JSONValue(b)
-		return nil
-	}
+	return scanJSONDatabaseValue(value, j)
 }
 
 // MarshalJSON 确保在对外编码时与 json.RawMessage 行为一致
