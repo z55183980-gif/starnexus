@@ -166,7 +166,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		P:   float64(billing_setting.ApplyInputTokenPricingForContext(usage.InputTokens, tokenPricingCtx)),
 		C:   float64(billing_setting.ApplyOutputTokenPricingForContext(usage.OutputTokens, tokenPricingCtx)),
 		Len: float64(usage.InputTokens),
-	}, relayInfo.GetAccountRateMultiplier())
+	})
 	if tieredOk {
 		tieredResult = tieredRes
 	}
@@ -192,7 +192,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(modelName))
 
 	modelRatio := relayInfo.PriceData.ModelRatio
-	groupRatio := effectiveAccountGroupRatio(relayInfo)
+	groupRatio := effectiveChannelGroupRatio(relayInfo)
 	modelPrice := relayInfo.PriceData.ModelPrice
 	usePrice := relayInfo.PriceData.UsePrice
 
@@ -300,7 +300,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 	tokenPricingCtx := tokenPricingContextFromRelayInfo(relayInfo)
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, false, tieredUsedVars, tokenPricingCtx), relayInfo.GetAccountRateMultiplier())
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, false, tieredUsedVars, tokenPricingCtx))
 	if tieredOk {
 		tieredResult = tieredRes
 	}
@@ -326,7 +326,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	audioCompletionRatio := decimal.NewFromFloat(ratio_setting.GetAudioCompletionRatio(relayInfo.OriginModelName))
 
 	modelRatio := relayInfo.PriceData.ModelRatio
-	groupRatio := effectiveAccountGroupRatio(relayInfo)
+	groupRatio := effectiveChannelGroupRatio(relayInfo)
 	modelPrice := relayInfo.PriceData.ModelPrice
 	usePrice := relayInfo.PriceData.UsePrice
 

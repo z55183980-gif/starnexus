@@ -8,7 +8,11 @@ License, or (at your option) any later version.
 */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loading03Icon, Rocket01Icon } from '@hugeicons/core-free-icons'
+import {
+  Edit02Icon,
+  Loading03Icon,
+  Rocket01Icon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -91,6 +95,10 @@ export function PublishPoolChannelDrawer({
   })
 
   const capabilities = capabilitiesQuery.data
+  const isPublished = capabilities
+    ? Boolean(capabilities.published_channel_id)
+    : pool.channel_count > 0
+
   useEffect(() => {
     if (!open) {
       initializedPoolId.current = null
@@ -160,7 +168,9 @@ export function PublishPoolChannelDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className='flex h-dvh w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-xl'>
         <SheetHeader className='border-b px-5 py-4'>
-          <SheetTitle>{t('Publish as local channel')}</SheetTitle>
+          <SheetTitle>
+            {t(isPublished ? 'Edit local channel' : 'Publish as local channel')}
+          </SheetTitle>
           <SheetDescription>
             {t('Configure a channel backed by a local account pool.')}
           </SheetDescription>
@@ -272,15 +282,13 @@ export function PublishPoolChannelDrawer({
           </Button>
           <Button type='button' disabled={!canPublish} onClick={handleSave}>
             <HugeiconsIcon
-              icon={saving ? Loading03Icon : Rocket01Icon}
+              icon={
+                saving ? Loading03Icon : isPublished ? Edit02Icon : Rocket01Icon
+              }
               className={saving ? 'animate-spin' : undefined}
               strokeWidth={2}
             />
-            {t(
-              capabilities?.published_channel_id
-                ? 'Save changes'
-                : 'Publish as local channel'
-            )}
+            {t(isPublished ? 'Save changes' : 'Publish as local channel')}
           </Button>
         </SheetFooter>
       </SheetContent>

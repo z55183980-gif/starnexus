@@ -91,11 +91,14 @@ func tokenPricingContextFromRelayInfo(relayInfo *relaycommon.RelayInfo) billing_
 	}
 }
 
-func effectiveAccountGroupRatio(relayInfo *relaycommon.RelayInfo) float64 {
+// effectiveChannelGroupRatio returns the same group ratio used by ordinary
+// channels. Account-pool routing must not change the user's channel price;
+// account rate multipliers remain execution metadata only.
+func effectiveChannelGroupRatio(relayInfo *relaycommon.RelayInfo) float64 {
 	if relayInfo == nil {
 		return 1
 	}
-	return relayInfo.PriceData.GroupRatioInfo.GroupRatio * relayInfo.GetAccountRateMultiplier()
+	return relayInfo.PriceData.GroupRatioInfo.GroupRatio
 }
 
 func cacheWriteTokensTotal(summary textQuotaSummary) int {
@@ -198,7 +201,7 @@ func AddKnownToolCallSurchargeToPreConsumeQuota(ctx *gin.Context, relayInfo *rel
 	}
 	summary := textQuotaSummary{
 		ModelName:  relayInfo.OriginModelName,
-		GroupRatio: effectiveAccountGroupRatio(relayInfo),
+		GroupRatio: effectiveChannelGroupRatio(relayInfo),
 	}
 	surcharge := calculateTextToolCallSurcharge(ctx, relayInfo, &summary)
 	if surcharge.IsZero() {
@@ -247,7 +250,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		CacheRatio:           relayInfo.PriceData.CacheRatio,
 		ImageRatio:           relayInfo.PriceData.ImageRatio,
 		ModelRatio:           relayInfo.PriceData.ModelRatio,
-		GroupRatio:           effectiveAccountGroupRatio(relayInfo),
+		GroupRatio:           effectiveChannelGroupRatio(relayInfo),
 		ModelPrice:           relayInfo.PriceData.ModelPrice,
 		CacheCreationRatio:   relayInfo.PriceData.CacheCreationRatio,
 		CacheCreationRatio5m: relayInfo.PriceData.CacheCreation5mRatio,
@@ -438,7 +441,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 			tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
 		}
-		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, summary.IsClaudeUsageSemantic, tieredUsedVars, tokenPricingContextFromRelayInfo(relayInfo)), relayInfo.GetAccountRateMultiplier())
+		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParamsForContext(usage, summary.IsClaudeUsageSemantic, tieredUsedVars, tokenPricingContextFromRelayInfo(relayInfo)))
 		if tieredOk {
 			tieredBillingApplied = true
 			tieredResult = tieredRes

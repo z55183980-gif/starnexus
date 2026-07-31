@@ -31,8 +31,8 @@ import { useAuthStore } from '@/stores/auth-store'
 import { getStatus } from '@/lib/api'
 import '@/lib/dayjs'
 import { applyFaviconToDom } from '@/lib/dom-utils'
-import { applySystemDocumentTitle } from '@/lib/system-name'
 import { handleServerError } from '@/lib/handle-server-error'
+import { applySystemDocumentTitle } from '@/lib/system-name'
 import { DirectionProvider } from './context/direction-provider'
 import { FontProvider } from './context/font-provider'
 import { ThemeProvider } from './context/theme-provider'
@@ -76,7 +76,7 @@ const queryClient = new QueryClient({
     },
   },
   queryCache: new QueryCache({
-    onError: (error) => {
+    onError: (error, query) => {
       if (error instanceof AxiosError) {
         if (error.response?.status === 401) {
           toast.error(i18next.t('Session expired!'))
@@ -86,7 +86,9 @@ const queryClient = new QueryClient({
         }
         if (error.response?.status === 500) {
           toast.error(i18next.t('Internal Server Error!'))
-          router.navigate({ to: '/500' })
+          if (query.state.data === undefined) {
+            router.navigate({ to: '/500' })
+          }
         }
       }
     },

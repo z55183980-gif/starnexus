@@ -6,10 +6,16 @@ it under the terms of the GNU Affero General Public License as
 published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
+import { z } from 'zod'
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
 import { AccountManagement } from '@/features/upstream-accounts'
+
+const upstreamAccountsSearchSchema = z.object({
+  tab: z.enum(['accounts', 'pools']).optional(),
+  edit_pool: z.coerce.number().int().positive().optional(),
+})
 
 export const Route = createFileRoute('/_authenticated/upstream-accounts/')({
   beforeLoad: () => {
@@ -18,5 +24,12 @@ export const Route = createFileRoute('/_authenticated/upstream-accounts/')({
       throw redirect({ to: '/403' })
     }
   },
-  component: AccountManagement,
+  validateSearch: upstreamAccountsSearchSchema,
+  component: UpstreamAccountsRoute,
 })
+
+function UpstreamAccountsRoute() {
+  const { tab, edit_pool } = Route.useSearch()
+
+  return <AccountManagement initialTab={tab} editPoolId={edit_pool} />
+}

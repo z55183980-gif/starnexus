@@ -593,13 +593,12 @@ func (channel *Channel) UpdateBalance(balance float64) {
 }
 
 func (channel *Channel) Delete() error {
-	var err error
-	err = DB.Delete(channel).Error
-	if err != nil {
-		return err
-	}
-	err = channel.DeleteAbilities()
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Delete(channel).Error; err != nil {
+			return err
+		}
+		return tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
+	})
 }
 
 var channelStatusLock sync.Mutex

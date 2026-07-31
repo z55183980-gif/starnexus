@@ -390,15 +390,18 @@ func upsertPublishedAccountPoolChannel(tx *gorm.DB, pool model.UpstreamAccountPo
 		channelType = constant.ChannelTypeAnthropic
 	}
 
-	var channel model.Channel
+	var channels []model.Channel
 	err := tx.Where("credential_source = ? AND upstream_account_pool_id = ?", constant.ChannelCredentialSourceAccountPool, pool.Id).
-		Order("id ASC").First(&channel).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+		Order("id ASC").Find(&channels).Error
+	if err != nil {
+		return nil, false, err
+	}
+	if len(channels) == 0 {
 		autoBan := 0
 		priority := int64(0)
 		weight := uint(0)
 		emptyJSON := "{}"
-		channel = model.Channel{
+		channel := model.Channel{
 			Type: channelType, Key: "", Status: common.ChannelStatusEnabled, Name: pool.Name,
 			Weight: &weight, CreatedTime: common.GetTimestamp(), Models: modelList, Group: groupList,
 			Priority: &priority, AutoBan: &autoBan, Setting: &emptyJSON, OtherSettings: "{}",
@@ -420,8 +423,15 @@ func upsertPublishedAccountPoolChannel(tx *gorm.DB, pool model.UpstreamAccountPo
 		}
 		return &channel, true, nil
 	}
-	if err != nil {
-		return nil, false, err
+
+	channel := channels[0]
+	for _, duplicate := range channels[1:] {
+		if err := tx.Where("channel_id = ?", duplicate.Id).Delete(&model.Ability{}).Error; err != nil {
+			return nil, false, err
+		}
+		if err := tx.Delete(&duplicate).Error; err != nil {
+			return nil, false, err
+		}
 	}
 
 	updates := publishedAccountPoolChannelUpdates(pool, channelType, modelList)

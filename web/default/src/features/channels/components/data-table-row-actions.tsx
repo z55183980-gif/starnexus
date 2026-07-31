@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { type Row } from '@tanstack/react-table'
 import {
   MoreHorizontal,
@@ -34,6 +35,7 @@ import {
   Trash2,
   RefreshCw,
   Loader2,
+  ExternalLink,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
@@ -73,12 +75,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const channel = row.original
   const { setOpen, setCurrentRow, upstream } = useChannels()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
+  const isAccountPoolProjection =
+    channel.credential_source === 'local_account_pool'
 
   const handleEdit = () => {
     setCurrentRow(channel)
@@ -137,6 +142,72 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     } finally {
       setIsTogglingStatus(false)
     }
+  }
+
+  const handleEditAccountPool = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation()
+    if (!channel.upstream_account_pool_id) return
+
+    void navigate({
+      to: '/upstream-accounts',
+      search: {
+        tab: 'pools',
+        edit_pool: channel.upstream_account_pool_id,
+      },
+    })
+  }
+
+  if (isAccountPoolProjection) {
+    return (
+      <div className='flex items-center justify-end gap-1'>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={handleToggleStatus}
+                disabled={isTogglingStatus}
+                aria-label={isEnabled ? t('Disable') : t('Enable')}
+                className={
+                  isEnabled
+                    ? 'text-destructive hover:text-destructive'
+                    : 'text-emerald-600 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400'
+                }
+              />
+            }
+          >
+            {isTogglingStatus ? (
+              <Loader2 className='size-4 animate-spin' />
+            ) : isEnabled ? (
+              <PowerOff className='size-4' />
+            ) : (
+              <Power className='size-4' />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>
+            {isEnabled ? t('Disable') : t('Enable')}
+          </TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={handleEditAccountPool}
+                disabled={!channel.upstream_account_pool_id}
+                aria-label={t('Edit account pool')}
+              />
+            }
+          >
+            <ExternalLink data-icon='inline-start' />
+          </TooltipTrigger>
+          <TooltipContent>{t('Edit account pool')}</TooltipContent>
+        </Tooltip>
+      </div>
+    )
   }
 
   return (

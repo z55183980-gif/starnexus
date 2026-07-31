@@ -1,7 +1,6 @@
 package service
 
 import (
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -98,27 +97,11 @@ func BuildTieredTokenParamsForContext(usage *dto.Usage, isClaudeUsageSemantic bo
 // computes the actual quota using the frozen BillingSnapshot. Returns:
 //   - ok=true, quota, result  when tiered billing applies
 //   - ok=false, 0, nil        when it doesn't (caller should fall through to existing logic)
-func TryTieredSettle(relayInfo *relaycommon.RelayInfo, params billingexpr.TokenParams, accountMultiplier ...float64) (ok bool, quota int, result *billingexpr.TieredResult) {
+func TryTieredSettle(relayInfo *relaycommon.RelayInfo, params billingexpr.TokenParams) (ok bool, quota int, result *billingexpr.TieredResult) {
 	snap := relayInfo.TieredBillingSnapshot
 	if snap == nil || snap.BillingMode != "tiered_expr" {
 		return false, 0, nil
 	}
-	multiplier := relayInfo.GetAccountRateMultiplier()
-	if len(accountMultiplier) > 0 {
-		multiplier = accountMultiplier[0]
-	}
-	if multiplier < 0 {
-		multiplier = 1
-	}
-	if multiplier != 1 {
-		// Keep the pre-consume snapshot immutable, but settle against the
-		// multiplier of the account that actually produced the response. This
-		// matters when an upstream account failover changes the multiplier.
-		scaled := *snap
-		scaled.GroupRatio *= multiplier
-		snap = &scaled
-	}
-
 	requestInput := billingexpr.RequestInput{}
 	if relayInfo.BillingRequestInput != nil {
 		requestInput = *relayInfo.BillingRequestInput
@@ -126,12 +109,8 @@ func TryTieredSettle(relayInfo *relaycommon.RelayInfo, params billingexpr.TokenP
 
 	tr, err := billingexpr.ComputeTieredQuotaWithRequest(snap, params, requestInput)
 	if err != nil {
-		if multiplier != 1 {
-			quota = common.QuotaRound(float64(relayInfo.TieredBillingSnapshot.EstimatedQuotaAfterGroup) * multiplier)
-		} else {
-			quota = relayInfo.FinalPreConsumedQuota
-		}
-		if quota <= 0 && multiplier == 1 {
+		quota = relayInfo.FinalPreConsumedQuota
+		if quota <= 0 {
 			quota = snap.EstimatedQuotaAfterGroup
 		}
 		return true, quota, nil

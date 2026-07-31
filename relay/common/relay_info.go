@@ -161,10 +161,10 @@ type RelayInfo struct {
 	// *bytes.Reader/Buffer/strings.Reader). 0 means "let net/http decide".
 	UpstreamRequestBodySize int64
 
-	// AccountRateMultiplier is the billing multiplier snapshot for the account
-	// currently serving the request. It is refreshed whenever account failover
-	// selects another upstream account; nil is treated as 1 for compatibility
-	// with RelayInfo values built by older callers and tests.
+	// AccountRateMultiplier is the selected upstream account's multiplier
+	// snapshot. It is retained as execution metadata for account-level cost
+	// reporting and compatibility, but it must not alter the user's channel
+	// billing result.
 	AccountRateMultiplier *float64
 
 	PriceData types.PriceData
@@ -252,9 +252,9 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	}
 }
 
-// SetAccountRateMultiplierFromContext refreshes the account billing multiplier
-// from the selected-account context. A missing or negative value is treated as
-// the legacy/default multiplier 1; zero remains a valid explicit multiplier.
+// SetAccountRateMultiplierFromContext refreshes the selected upstream account
+// multiplier from context. A missing or negative value is treated as the
+// legacy/default multiplier 1; zero remains a valid explicit multiplier.
 func (info *RelayInfo) SetAccountRateMultiplierFromContext(c *gin.Context) {
 	if info == nil {
 		return
@@ -266,7 +266,7 @@ func (info *RelayInfo) SetAccountRateMultiplierFromContext(c *gin.Context) {
 	info.AccountRateMultiplier = &multiplier
 }
 
-// GetAccountRateMultiplier returns the effective account billing multiplier.
+// GetAccountRateMultiplier returns the selected upstream account multiplier.
 func (info *RelayInfo) GetAccountRateMultiplier() float64 {
 	if info == nil || info.AccountRateMultiplier == nil || *info.AccountRateMultiplier < 0 {
 		return 1

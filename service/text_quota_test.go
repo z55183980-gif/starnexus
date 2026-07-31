@@ -86,27 +86,6 @@ func TestCalculateTextQuotaSummaryRecordsMillisecondDuration(t *testing.T) {
 	require.Less(t, summary.UseTimeMilliseconds, int64(2000))
 }
 
-func TestCalculateTextQuotaSummaryAppliesFinalAccountRateMultiplier(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	multiplier := 2.0
-	relayInfo := &relaycommon.RelayInfo{
-		OriginModelName: "gpt-account-rate-test",
-		PriceData: types.PriceData{
-			ModelRatio:      1,
-			CompletionRatio: 1,
-			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
-		},
-		AccountRateMultiplier: &multiplier,
-		StartTime:             time.Now(),
-	}
-
-	summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{PromptTokens: 100})
-
-	require.Equal(t, 200, summary.Quota)
-	require.Equal(t, 2.0, summary.GroupRatio)
-}
-
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

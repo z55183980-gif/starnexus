@@ -6,7 +6,7 @@ it under the terms of the GNU Affero General Public License as
 published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Add01Icon,
@@ -83,6 +83,7 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
+import { channelsQueryKeys } from '@/features/channels/lib'
 import { AccountBatchUpdateDialog } from './account-batch-update-dialog'
 import { AccountDialog } from './account-dialog'
 import {
@@ -709,10 +710,19 @@ function PoolMembersDialog({
   )
 }
 
-export function AccountManagement() {
+interface AccountManagementProps {
+  initialTab?: 'accounts' | 'pools'
+  editPoolId?: number
+}
+
+export function AccountManagement({
+  initialTab = 'accounts',
+  editPoolId,
+}: AccountManagementProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [activeTab, setActiveTab] = useState<'accounts' | 'pools'>('accounts')
+  const openedEditPoolIdRef = useRef<number | null>(null)
+  const [activeTab, setActiveTab] = useState<'accounts' | 'pools'>(initialTab)
   const [search, setSearch] = useState('')
   const [platformFilter, setPlatformFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
@@ -801,11 +811,25 @@ export function AccountManagement() {
     () => new Map(pools.map((pool) => [pool.id, pool.name])),
     [pools]
   )
+
+  useEffect(() => {
+    if (!editPoolId || openedEditPoolIdRef.current === editPoolId) return
+
+    const pool = pools.find((item) => item.id === editPoolId)
+    if (!pool) return
+
+    setActiveTab('pools')
+    setSelectedPool(pool)
+    setPoolDialog(true)
+    openedEditPoolIdRef.current = editPoolId
+  }, [editPoolId, pools])
+
   const refresh = () =>
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.accounts }),
       queryClient.invalidateQueries({ queryKey: queryKeys.pools }),
       queryClient.invalidateQueries({ queryKey: queryKeys.proxies }),
+      queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all }),
     ])
 
   const runAccountAction = async (
@@ -1680,11 +1704,22 @@ export function AccountManagement() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={statusVariant(pool.status)}>
-                            {pool.status === 'active'
-                              ? t('Active')
-                              : t('Inactive')}
-                          </Badge>
+                          <div className='flex flex-col items-start gap-1.5'>
+                            <Badge variant={statusVariant(pool.status)}>
+                              {pool.status === 'active'
+                                ? t('Active')
+                                : t('Inactive')}
+                            </Badge>
+                            <Badge
+                              variant={
+                                pool.channel_count > 0 ? 'secondary' : 'outline'
+                              }
+                            >
+                              {pool.channel_count > 0
+                                ? t('Published')
+                                : t('Unpublished')}
+                            </Badge>
+                          </div>
                         </TableCell>
                         <TableCell className='w-36'>
                           <div className='flex items-center gap-1'>
@@ -1738,10 +1773,18 @@ export function AccountManagement() {
                                     onClick={() => setPublishingPool(pool)}
                                   >
                                     <HugeiconsIcon
-                                      icon={Rocket01Icon}
+                                      icon={
+                                        pool.channel_count > 0
+                                          ? Edit02Icon
+                                          : Rocket01Icon
+                                      }
                                       strokeWidth={2}
                                     />
-                                    {t('Publish as local channel')}
+                                    {t(
+                                      pool.channel_count > 0
+                                        ? 'Edit local channel'
+                                        : 'Publish as local channel'
+                                    )}
                                   </DropdownMenuItem>
                                   <DropdownMenuItem
                                     className='gap-2.5 px-3 py-2.5'
