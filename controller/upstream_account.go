@@ -154,6 +154,19 @@ func PublishUpstreamAccountPoolChannel(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+func UnpublishUpstreamAccountPoolChannel(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	if err := service.UnpublishUpstreamAccountPoolChannel(id); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("unpublished upstream account pool %d local channel", id))
+	common.ApiSuccess(c, nil)
+}
+
 func CreateUpstreamAccountPool(c *gin.Context) {
 	var request upstreamAccountPoolRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {

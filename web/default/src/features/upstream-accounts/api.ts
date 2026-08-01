@@ -80,6 +80,13 @@ export async function publishUpstreamPoolChannel(
   return response.data
 }
 
+export async function unpublishUpstreamPoolChannel(
+  id: number
+): Promise<ApiResponse<null>> {
+  const response = await api.delete(`/api/upstream/account-pools/${id}/publish`)
+  return response.data
+}
+
 export async function createUpstreamPool(
   payload: UpstreamPoolPayload
 ): Promise<ApiResponse<UpstreamAccountPool>> {

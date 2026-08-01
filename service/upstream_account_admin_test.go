@@ -106,6 +106,12 @@ func TestCreateUpstreamAccountWithoutCredentialKeyring(t *testing.T) {
 	view, err := GetUpstreamAccount(input.Account.Id)
 	require.NoError(t, err)
 	require.True(t, view.CredentialConfigured)
+	views, total, err := ListUpstreamAccounts(UpstreamAccountListFilter{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, total)
+	require.Len(t, views, 1)
+	require.NotNil(t, views[0].PoolIds)
+	require.Empty(t, views[0].PoolIds)
 }
 
 func TestUpstreamAccountAdminCredentialLifecycleAndSafeDelete(t *testing.T) {
@@ -272,10 +278,19 @@ func TestUpstreamAccountPoolRuntimeStats(t *testing.T) {
 	view, err := GetUpstreamAccountPool(pool.Id)
 	require.NoError(t, err)
 	require.EqualValues(t, 1, view.ActiveCount)
+	require.EqualValues(t, 1, view.ReadyCount)
 	require.EqualValues(t, 2, view.AttemptCount24h)
 	require.EqualValues(t, 1, view.SuccessCount24h)
 	require.EqualValues(t, 1, view.ErrorCount24h)
 	require.NotNil(t, view.LastEventAt)
+
+	resetAt := common.GetTimestamp() + 60
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).
+		Update("rate_limit_reset_at", resetAt).Error)
+	view, err = GetUpstreamAccountPool(pool.Id)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, view.ActiveCount)
+	require.Zero(t, view.ReadyCount)
 }
 
 func TestGetUpstreamAccountPoolCapabilities(t *testing.T) {
@@ -386,11 +401,21 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 	require.Nil(t, channel.ModelMapping)
 	require.NotNil(t, channel.AutoBan)
 	require.Zero(t, *channel.AutoBan)
+	publishedView, err := GetUpstreamAccountPool(pool.Id)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, publishedView.ChannelCount)
+	require.NotNil(t, publishedView.PublishedChannelId)
+	require.Equal(t, channel.Id, *publishedView.PublishedChannelId)
+	require.NotNil(t, publishedView.PublishedChannelStatus)
+	require.Equal(t, common.ChannelStatusEnabled, *publishedView.PublishedChannelStatus)
+	require.Equal(t, 2, publishedView.PublishedModelCount)
 
 	var abilities []model.Ability
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Order("model ASC").Find(&abilities).Error)
 	require.Len(t, abilities, 4)
 
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).
+		Update("status", common.ChannelStatusManuallyDisabled).Error)
 	updated, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"vip"})
 	require.NoError(t, err)
 	require.False(t, updated.Created)
@@ -402,6 +427,11 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 	require.EqualValues(t, 1, channelCount)
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
 	require.Equal(t, "vip", channel.Group)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, channel.Status)
+	publishedView, err = GetUpstreamAccountPool(pool.Id)
+	require.NoError(t, err)
+	require.NotNil(t, publishedView.PublishedChannelStatus)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, *publishedView.PublishedChannelStatus)
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
 	require.Len(t, abilities, 2)
 
@@ -425,8 +455,14 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 	require.NoError(t, DeleteUpstreamAccount(account.Id))
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
 	require.Empty(t, channel.Models)
+	require.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
 	require.Empty(t, abilities)
+
+	require.NoError(t, UnpublishUpstreamAccountPoolChannel(pool.Id))
+	require.Error(t, model.DB.First(&channel, channel.Id).Error)
+	var storedPool model.UpstreamAccountPool
+	require.NoError(t, model.DB.First(&storedPool, pool.Id).Error)
 }
 
 func TestPublishUpstreamAccountPoolChannelRequiresConcreteModels(t *testing.T) {
@@ -491,6 +527,40 @@ func TestUpdateUpstreamAccountPreservesExistingPoolMemberOverrides(t *testing.T)
 	require.NoError(t, model.DB.Where("pool_id = ? AND account_id = ?", secondPool.Id, account.Id).First(&secondary).Error)
 	require.Equal(t, account.Priority, secondary.Priority)
 	require.Equal(t, account.Weight, secondary.Weight)
+}
+
+func TestReplaceUpstreamAccountPoolMembersPreservesCreatedAt(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "membership-diff", Platform: constant.UpstreamPlatformOpenAI, CredentialType: constant.UpstreamAccountTypeOAuth,
+		Status: constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	account := createRouterTestAccount(t, "membership-account", pool.Id, nil)
+	const originalCreatedAt int64 = 123456789
+	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
+		Where("pool_id = ? AND account_id = ?", pool.Id, account.Id).
+		Update("created_at", originalCreatedAt).Error)
+	var before model.UpstreamAccountPoolMember
+	require.NoError(t, model.DB.Where("pool_id = ? AND account_id = ?", pool.Id, account.Id).First(&before).Error)
+
+	require.NoError(t, ReplaceUpstreamAccountPoolMembers(pool.Id, []UpstreamAccountPoolMemberInput{{
+		AccountId: account.Id,
+		Priority:  7,
+		Weight:    9,
+	}}))
+
+	var after model.UpstreamAccountPoolMember
+	require.NoError(t, model.DB.Where("pool_id = ? AND account_id = ?", pool.Id, account.Id).First(&after).Error)
+	require.Equal(t, before.CreatedAt, after.CreatedAt)
+	require.Equal(t, 7, after.Priority)
+	require.Equal(t, 9, after.Weight)
+
+	views, err := ListUpstreamAccountPoolMembers(pool.Id)
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	require.Equal(t, account.Name, views[0].Name)
+	require.Equal(t, originalCreatedAt, views[0].CreatedAt)
 }
 
 func TestUpstreamAccountAdminRejectsIncompatibleTypeChanges(t *testing.T) {

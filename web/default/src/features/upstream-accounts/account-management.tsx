@@ -8,6 +8,7 @@ License, or (at your option) any later version.
 */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useDebounce } from '@/hooks'
 import {
   Add01Icon,
   ArrowDown01Icon,
@@ -17,17 +18,22 @@ import {
   Edit02Icon,
   FileExportIcon,
   FileImportIcon,
+  InformationCircleIcon,
   Link01Icon,
   Loading03Icon,
   MoreHorizontalIcon,
   PlayIcon,
   RefreshIcon,
   Rocket01Icon,
+  TestTubeIcon,
+  Unlink01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import dayjs from '@/lib/dayjs'
 import { cn } from '@/lib/utils'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -59,6 +65,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import {
   Field,
   FieldDescription,
   FieldGroup,
@@ -73,6 +86,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
   TableBody,
@@ -83,7 +97,8 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
-import { channelsQueryKeys } from '@/features/channels/lib'
+import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { channelsQueryKeys, handleTestChannel } from '@/features/channels/lib'
 import { AccountBatchUpdateDialog } from './account-batch-update-dialog'
 import { AccountDialog } from './account-dialog'
 import {
@@ -118,6 +133,7 @@ import {
   startUpstreamOAuth,
   updateUpstreamAccountsBatch,
   updateUpstreamPool,
+  unpublishUpstreamPoolChannel,
 } from './api'
 import { mergeAccountImportDocuments } from './batch-import'
 import { BatchImportDialog } from './batch-import-dialog'
@@ -141,13 +157,60 @@ const queryKeys = {
 
 function timestamp(value?: number | null) {
   if (!value) return '-'
-  return new Date(value * 1000).toLocaleString()
+  return dayjs(value * 1000).format('YYYY-MM-DD HH:mm:ss')
 }
 
-function statusVariant(status: string) {
-  if (status === 'active') return 'default' as const
-  if (status === 'error') return 'destructive' as const
-  return 'secondary' as const
+function poolRuntimeState(
+  pool: UpstreamAccountPool,
+  translate: (key: string) => string
+) {
+  if (pool.status !== 'active') {
+    return { label: translate('Pool disabled'), variant: 'secondary' as const }
+  }
+  if (
+    pool.channel_count > 1 ||
+    (pool.channel_count > 0 && !pool.published_channel_id)
+  ) {
+    return {
+      label: translate('Channel configuration conflict'),
+      variant: 'destructive' as const,
+    }
+  }
+  if (!pool.published_channel_id) {
+    return { label: translate('Unpublished'), variant: 'outline' as const }
+  }
+  if (pool.published_model_count === 0) {
+    return {
+      label: translate('No published models'),
+      variant: 'destructive' as const,
+    }
+  }
+  if (pool.ready_count === 0) {
+    return {
+      label: translate('No ready accounts'),
+      variant: 'destructive' as const,
+    }
+  }
+  if (pool.published_channel_status !== CHANNEL_STATUS.ENABLED) {
+    return {
+      label: translate('Channel disabled'),
+      variant: 'secondary' as const,
+    }
+  }
+  if (pool.ready_count < pool.active_count) {
+    return { label: translate('Degraded'), variant: 'secondary' as const }
+  }
+  return { label: translate('Ready'), variant: 'default' as const }
+}
+
+function publishedChannelStatusLabel(
+  status: number | null | undefined,
+  translate: (key: string) => string
+) {
+  if (status === CHANNEL_STATUS.ENABLED) return translate('Enabled')
+  if (status === CHANNEL_STATUS.AUTO_DISABLED) return translate('Auto Disabled')
+  if (status === CHANNEL_STATUS.MANUAL_DISABLED) return translate('Disabled')
+  return translate('Unknown')
 }
 
 function credentialTypeLabel(
@@ -174,12 +237,14 @@ function IconButton({
   icon,
   onClick,
   disabled,
+  disabledReason,
   destructive,
 }: {
   label: string
   icon: typeof Edit02Icon
   onClick: () => void
   disabled?: boolean
+  disabledReason?: string
   destructive?: boolean
 }) {
   return (
@@ -188,7 +253,7 @@ function IconButton({
       size='icon-sm'
       variant={destructive ? 'destructive' : 'ghost'}
       aria-label={label}
-      title={label}
+      title={disabled ? disabledReason || label : label}
       disabled={disabled}
       onClick={onClick}
     >
@@ -202,12 +267,14 @@ function RowActionButton({
   icon,
   onClick,
   disabled,
+  disabledReason,
   destructive,
 }: {
   label: string
   icon: typeof Edit02Icon
   onClick: () => void
   disabled?: boolean
+  disabledReason?: string
   destructive?: boolean
 }) {
   return (
@@ -215,7 +282,7 @@ function RowActionButton({
       type='button'
       variant='ghost'
       aria-label={label}
-      title={label}
+      title={disabled ? disabledReason || label : label}
       disabled={disabled}
       onClick={onClick}
       className={cn(
@@ -327,7 +394,7 @@ function PoolDialog({
           </DialogTitle>
           <DialogDescription>
             {t(
-              'Channels reference pools; accounts remain reusable across channels.'
+              'Each pool publishes one local channel; accounts remain reusable across pools.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -508,21 +575,49 @@ function PoolMembersDialog({
   const { t } = useTranslation()
   const [members, setMembers] = useState<UpstreamAccountPoolMember[]>([])
   const [accountId, setAccountId] = useState('')
+  const [accountSearch, setAccountSearch] = useState('')
   const [busy, setBusy] = useState(false)
+  const debouncedAccountSearch = useDebounce(accountSearch.trim(), 300)
   const membersQuery = useQuery({
     queryKey: ['upstream-account-pool-members', pool?.id],
-    queryFn: () => listUpstreamPoolMembers(pool!.id),
+    queryFn: async () => {
+      const response = await listUpstreamPoolMembers(pool!.id)
+      if (!response.success) {
+        throw new Error(response.message)
+      }
+      return response.data ?? []
+    },
     enabled: open && !!pool,
   })
   const accountsQuery = useQuery({
-    queryKey: ['upstream-accounts-for-pool-members', pool?.id],
-    queryFn: () => listUpstreamAccounts({ page: 1, page_size: 100 }),
+    queryKey: [
+      'upstream-accounts-for-pool-members',
+      pool?.id,
+      pool?.platform,
+      pool?.credential_type,
+      debouncedAccountSearch,
+    ],
+    queryFn: async () => {
+      const response = await listUpstreamAccounts({
+        page: 1,
+        page_size: 100,
+        search: debouncedAccountSearch || undefined,
+        platform: pool!.platform,
+        type:
+          pool!.credential_type === 'mixed' ? undefined : pool!.credential_type,
+      })
+      if (!response.success || !response.data) {
+        throw new Error(response.message)
+      }
+      return response.data
+    },
     enabled: open && !!pool,
   })
   useEffect(() => {
-    if (membersQuery.data?.data) setMembers(membersQuery.data.data)
+    if (membersQuery.data) setMembers(membersQuery.data)
   }, [membersQuery.data])
-  const accounts = accountsQuery.data?.data?.items ?? []
+  const accounts = accountsQuery.data?.items ?? []
+  const accountTotal = accountsQuery.data?.total ?? 0
   const availableAccounts = accounts.filter(
     (account) =>
       account.platform === pool?.platform &&
@@ -530,6 +625,14 @@ function PoolMembersDialog({
         account.type === pool?.credential_type) &&
       !members.some((member) => member.account_id === account.id)
   )
+  const loadError = membersQuery.error || accountsQuery.error
+  const loadErrorMessage =
+    loadError instanceof Error && loadError.message
+      ? loadError.message
+      : t('Failed to load')
+  const accountSelectPlaceholder = accountsQuery.isFetching
+    ? t('Loading...')
+    : t('Select an account')
   const addMember = () => {
     const selected = accounts.find(
       (account) => account.id === Number(accountId)
@@ -582,27 +685,72 @@ function PoolMembersDialog({
           <DialogTitle>{t('Manage pool members')}</DialogTitle>
           <DialogDescription>{pool?.name}</DialogDescription>
         </DialogHeader>
-        <div className='flex gap-2'>
-          <Select
-            value={accountId}
-            onValueChange={(value) => setAccountId(value ?? '')}
-          >
-            <SelectTrigger className='flex-1'>
-              <SelectValue placeholder={t('Select an account')} />
-            </SelectTrigger>
-            <SelectContent>
-              {availableAccounts.map((account) => (
-                <SelectItem key={account.id} value={String(account.id)}>
-                  {account.name} · {account.type}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant='outline' disabled={!accountId} onClick={addMember}>
-            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
-            {t('Add')}
-          </Button>
-        </div>
+        {loadError && (
+          <Alert variant='destructive'>
+            <AlertDescription>{loadErrorMessage}</AlertDescription>
+          </Alert>
+        )}
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor='pool-member-account-search'>
+              {t('Search compatible accounts')}
+            </FieldLabel>
+            <Input
+              id='pool-member-account-search'
+              value={accountSearch}
+              placeholder={t('Search accounts')}
+              onChange={(event) => {
+                setAccountSearch(event.target.value)
+                setAccountId('')
+              }}
+            />
+            {accountTotal > accounts.length && (
+              <FieldDescription>
+                {t(
+                  'Showing the first {{count}} matches. Search by name to find more.',
+                  {
+                    count: accounts.length,
+                  }
+                )}
+              </FieldDescription>
+            )}
+          </Field>
+          <Field>
+            <FieldLabel>{t('Account to add')}</FieldLabel>
+            <div className='flex gap-2'>
+              <Select
+                value={accountId}
+                disabled={accountsQuery.isLoading || !!accountsQuery.error}
+                onValueChange={(value) => setAccountId(value ?? '')}
+              >
+                <SelectTrigger className='flex-1'>
+                  <SelectValue placeholder={accountSelectPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {availableAccounts.map((account) => (
+                      <SelectItem key={account.id} value={String(account.id)}>
+                        {account.name} · {account.type}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <Button
+                variant='outline'
+                disabled={!accountId}
+                onClick={addMember}
+              >
+                <HugeiconsIcon
+                  data-icon='inline-start'
+                  icon={Add01Icon}
+                  strokeWidth={2}
+                />
+                {t('Add')}
+              </Button>
+            </div>
+          </Field>
+        </FieldGroup>
         <div className='max-h-[50vh] overflow-auto rounded-lg border'>
           <Table>
             <TableHeader>
@@ -626,6 +774,7 @@ function PoolMembersDialog({
                     <Input
                       className='w-24'
                       type='number'
+                      min={0}
                       value={member.priority}
                       onChange={(event) =>
                         setMembers((current) =>
@@ -633,7 +782,10 @@ function PoolMembersDialog({
                             item.account_id === member.account_id
                               ? {
                                   ...item,
-                                  priority: Number(event.target.value) || 0,
+                                  priority: Math.max(
+                                    0,
+                                    Number(event.target.value) || 0
+                                  ),
                                 }
                               : item
                           )
@@ -677,16 +829,25 @@ function PoolMembersDialog({
                   </TableCell>
                 </TableRow>
               ))}
-              {!membersQuery.isLoading && members.length === 0 && (
+              {membersQuery.isLoading && (
                 <TableRow>
-                  <TableCell
-                    colSpan={4}
-                    className='text-muted-foreground py-8 text-center'
-                  >
-                    {t('No pool members')}
+                  <TableCell colSpan={4} className='py-6'>
+                    <Skeleton className='h-8 w-full' />
                   </TableCell>
                 </TableRow>
               )}
+              {!membersQuery.isLoading &&
+                !membersQuery.error &&
+                members.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={4}
+                      className='text-muted-foreground py-8 text-center'
+                    >
+                      {t('No pool members')}
+                    </TableCell>
+                  </TableRow>
+                )}
             </TableBody>
           </Table>
         </div>
@@ -694,7 +855,10 @@ function PoolMembersDialog({
           <Button variant='outline' onClick={() => onOpenChange(false)}>
             {t('Cancel')}
           </Button>
-          <Button disabled={busy} onClick={save}>
+          <Button
+            disabled={busy || membersQuery.isLoading || !!membersQuery.error}
+            onClick={save}
+          >
             {busy && (
               <HugeiconsIcon
                 icon={Loading03Icon}
@@ -708,6 +872,274 @@ function PoolMembersDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+type PoolTableRowsProps = {
+  pools: UpstreamAccountPool[]
+  isLoading: boolean
+  error: unknown
+  testingPoolId: number | null
+  onRetry: () => void
+  onEdit: (pool: UpstreamAccountPool) => void
+  onDelete: (pool: UpstreamAccountPool) => void
+  onPublish: (pool: UpstreamAccountPool) => void
+  onTest: (pool: UpstreamAccountPool) => void
+  onUnpublish: (pool: UpstreamAccountPool) => void
+  onManageMembers: (pool: UpstreamAccountPool) => void
+}
+
+function PoolTableRows(props: PoolTableRowsProps) {
+  const { t } = useTranslation()
+  if (props.isLoading) {
+    return Array.from({ length: 3 }, (_, index) => (
+      <TableRow key={index}>
+        <TableCell colSpan={7} className='py-5'>
+          <Skeleton className='h-12 w-full' />
+        </TableCell>
+      </TableRow>
+    ))
+  }
+  if (props.error) {
+    const message =
+      props.error instanceof Error && props.error.message
+        ? props.error.message
+        : t('Failed to load')
+    return (
+      <TableRow>
+        <TableCell colSpan={7} className='py-8'>
+          <Alert variant='destructive'>
+            <AlertDescription className='flex items-center justify-between gap-3'>
+              <span>{message}</span>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                onClick={props.onRetry}
+              >
+                <HugeiconsIcon
+                  data-icon='inline-start'
+                  icon={RefreshIcon}
+                  strokeWidth={2}
+                />
+                {t('Retry')}
+              </Button>
+            </AlertDescription>
+          </Alert>
+        </TableCell>
+      </TableRow>
+    )
+  }
+  if (props.pools.length === 0) {
+    return (
+      <TableRow>
+        <TableCell colSpan={7} className='py-10'>
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant='icon'>
+                <HugeiconsIcon icon={InformationCircleIcon} strokeWidth={2} />
+              </EmptyMedia>
+              <EmptyTitle>{t('No account pools')}</EmptyTitle>
+              <EmptyDescription>
+                {t(
+                  'Create an account pool to group compatible upstream accounts.'
+                )}
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </TableCell>
+      </TableRow>
+    )
+  }
+
+  return props.pools.map((pool) => {
+    const runtimeState = poolRuntimeState(pool, t)
+    const completed = pool.success_count_24h + pool.error_count_24h
+    const withoutOutcome = Math.max(0, pool.attempt_count_24h - completed)
+    const published = Boolean(pool.published_channel_id)
+    const deleteBlocked = pool.channel_count > 0 || pool.account_count > 0
+    const deleteBlockedReason = t(
+      'Unpublish the local channel and remove all members before deleting this pool.'
+    )
+    const channelStatusLabel = publishedChannelStatusLabel(
+      pool.published_channel_status,
+      t
+    )
+
+    return (
+      <TableRow key={pool.id} className='h-24 align-middle'>
+        <TableCell>
+          <div className='font-medium'>{pool.name}</div>
+          <div className='text-muted-foreground max-w-64 truncate text-xs'>
+            {pool.description || t('No description')}
+          </div>
+        </TableCell>
+        <TableCell>
+          <div className='flex flex-col items-start gap-1.5'>
+            <span className='text-sm font-medium'>
+              {pool.platform === 'openai' ? 'OpenAI' : 'Anthropic'}
+            </span>
+            <Badge variant='outline'>
+              {credentialTypeLabel(pool.platform, pool.credential_type, t)}
+            </Badge>
+          </div>
+        </TableCell>
+        <TableCell>
+          <div className='text-sm font-medium'>
+            {t('{{ready}} ready / {{total}} total', {
+              ready: pool.ready_count,
+              total: pool.account_count,
+            })}
+          </div>
+          <div className='text-muted-foreground text-xs'>
+            {t('{{active}} enabled by configuration', {
+              active: pool.active_count,
+            })}
+          </div>
+        </TableCell>
+        <TableCell>
+          {published ? (
+            <div className='flex flex-col gap-0.5'>
+              <span className='text-sm font-medium'>
+                #{pool.published_channel_id} · {channelStatusLabel}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {t('{{count}} published models', {
+                  count: pool.published_model_count,
+                })}
+              </span>
+            </div>
+          ) : (
+            <span className='text-muted-foreground text-sm'>
+              {t('Not created')}
+            </span>
+          )}
+        </TableCell>
+        <TableCell>
+          <div className='text-sm'>
+            {t('{{success}} success / {{errors}} errors', {
+              success: pool.success_count_24h,
+              errors: pool.error_count_24h,
+            })}
+          </div>
+          <div className='text-muted-foreground text-xs'>
+            {t('{{attempts}} selections / {{unresolved}} without outcome', {
+              attempts: pool.attempt_count_24h,
+              unresolved: withoutOutcome,
+            })}
+          </div>
+          <div className='text-muted-foreground text-xs'>
+            {t('Last activity')}: {timestamp(pool.last_event_at)}
+          </div>
+        </TableCell>
+        <TableCell>
+          <div className='flex flex-col items-start gap-1.5'>
+            <Badge variant={runtimeState.variant}>{runtimeState.label}</Badge>
+            <span className='text-muted-foreground text-xs'>
+              {published ? t('Local channel published') : t('No local channel')}
+            </span>
+          </div>
+        </TableCell>
+        <TableCell className='w-36'>
+          <div className='flex items-center gap-1'>
+            <RowActionButton
+              label={t('Edit')}
+              icon={Edit02Icon}
+              onClick={() => props.onEdit(pool)}
+            />
+            <RowActionButton
+              label={t('Delete')}
+              icon={Delete02Icon}
+              disabled={deleteBlocked}
+              disabledReason={deleteBlockedReason}
+              destructive
+              onClick={() => props.onDelete(pool)}
+            />
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    aria-label={t('More')}
+                    title={t('More')}
+                    className='text-muted-foreground h-auto min-w-10 flex-col gap-0.5 rounded-lg px-1.5 py-1.5 font-normal'
+                  />
+                }
+              >
+                <HugeiconsIcon icon={MoreHorizontalIcon} strokeWidth={1.5} />
+                <span className='text-xs'>{t('More')}</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align='end'
+                sideOffset={6}
+                className='w-56 rounded-xl p-1.5'
+              >
+                <DropdownMenuGroup>
+                  {published && (
+                    <DropdownMenuItem
+                      className='gap-2.5 px-3 py-2.5'
+                      disabled={props.testingPoolId === pool.id}
+                      onClick={() => props.onTest(pool)}
+                    >
+                      <HugeiconsIcon
+                        icon={
+                          props.testingPoolId === pool.id
+                            ? Loading03Icon
+                            : TestTubeIcon
+                        }
+                        className={cn(
+                          props.testingPoolId === pool.id && 'animate-spin'
+                        )}
+                        strokeWidth={2}
+                      />
+                      {t('Test local channel')}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem
+                    className='gap-2.5 px-3 py-2.5'
+                    disabled={pool.status !== 'active'}
+                    onClick={() => props.onPublish(pool)}
+                  >
+                    <HugeiconsIcon
+                      icon={published ? Edit02Icon : Rocket01Icon}
+                      strokeWidth={2}
+                    />
+                    {t(
+                      published
+                        ? 'Edit local channel'
+                        : 'Publish as local channel'
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className='gap-2.5 px-3 py-2.5'
+                    onClick={() => props.onManageMembers(pool)}
+                  >
+                    <HugeiconsIcon icon={Link01Icon} strokeWidth={2} />
+                    {t('Manage pool members')}
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+                {published && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        variant='destructive'
+                        className='gap-2.5 px-3 py-2.5'
+                        onClick={() => props.onUnpublish(pool)}
+                      >
+                        <HugeiconsIcon icon={Unlink01Icon} strokeWidth={2} />
+                        {t('Unpublish local channel')}
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </TableCell>
+      </TableRow>
+    )
+  })
 }
 
 interface AccountManagementProps {
@@ -754,6 +1186,9 @@ export function AccountManagement({
   )
   const [publishingPool, setPublishingPool] =
     useState<UpstreamAccountPool | null>(null)
+  const [unpublishingPool, setUnpublishingPool] =
+    useState<UpstreamAccountPool | null>(null)
+  const [testingPoolId, setTestingPoolId] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{
     kind: 'account' | 'pool'
     id: number
@@ -793,7 +1228,13 @@ export function AccountManagement({
   })
   const poolsQuery = useQuery({
     queryKey: queryKeys.pools,
-    queryFn: listUpstreamPools,
+    queryFn: async () => {
+      const response = await listUpstreamPools()
+      if (!response.success) {
+        throw new Error(response.message)
+      }
+      return response.data ?? []
+    },
   })
   const proxiesQuery = useQuery({
     queryKey: queryKeys.proxies,
@@ -805,7 +1246,7 @@ export function AccountManagement({
   const allCurrentPageAccountsSelected =
     accounts.length > 0 &&
     accounts.every((account) => selectedAccountIds.includes(account.id))
-  const pools = useMemo(() => poolsQuery.data?.data ?? [], [poolsQuery.data])
+  const pools = useMemo(() => poolsQuery.data ?? [], [poolsQuery.data])
   const proxies = proxiesQuery.data?.data ?? []
   const poolNames = useMemo(
     () => new Map(pools.map((pool) => [pool.id, pool.name])),
@@ -929,6 +1370,35 @@ export function AccountManagement({
       toast.error(error instanceof Error ? error.message : t('Request failed'))
     } finally {
       setRecoveringSelected(false)
+    }
+  }
+
+  const testPoolChannel = async (pool: UpstreamAccountPool) => {
+    if (!pool.published_channel_id) return
+    setTestingPoolId(pool.id)
+    try {
+      await handleTestChannel(pool.published_channel_id, undefined, () => {
+        refresh()
+      })
+    } finally {
+      setTestingPoolId(null)
+    }
+  }
+
+  const confirmUnpublish = async () => {
+    if (!unpublishingPool) return
+    try {
+      const response = await unpublishUpstreamPoolChannel(unpublishingPool.id)
+      if (!response.success) {
+        throw new Error(response.message || t('Unpublish failed'))
+      }
+      toast.success(t('Local channel unpublished'))
+      setUnpublishingPool(null)
+      refresh()
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Unpublish failed')
+      )
     }
   }
 
@@ -1348,7 +1818,7 @@ export function AccountManagement({
               </Button>
             )}
           </div>
-          <TabsContent value='accounts' className='space-y-3 pt-3'>
+          <TabsContent value='accounts' className='flex flex-col gap-3 pt-3'>
             <div className='overflow-x-auto rounded-lg border'>
               <Table className='min-w-[1260px]'>
                 <TableHeader>
@@ -1642,7 +2112,7 @@ export function AccountManagement({
               </Button>
             </div>
           </TabsContent>
-          <TabsContent value='pools' className='space-y-3 pt-3'>
+          <TabsContent value='pools' className='flex flex-col gap-3 pt-3'>
             <div className='overflow-hidden rounded-lg border'>
               <Table>
                 <TableHeader>
@@ -1650,160 +2120,35 @@ export function AccountManagement({
                     <TableHead>{t('Pool')}</TableHead>
                     <TableHead>{t('Credential type')}</TableHead>
                     <TableHead>{t('Accounts')}</TableHead>
-                    <TableHead>{t('Channels')}</TableHead>
+                    <TableHead>{t('Local channel')}</TableHead>
                     <TableHead>{t('Last 24 hours')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>
                     <TableHead className='w-36'>{t('Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pools.length === 0 ? (
-                    <TableRow>
-                      <TableCell
-                        colSpan={7}
-                        className='text-muted-foreground py-10 text-center'
-                      >
-                        {t('No account pools')}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    pools.map((pool) => (
-                      <TableRow key={pool.id} className='h-24 align-middle'>
-                        <TableCell>
-                          <div className='font-medium'>{pool.name}</div>
-                          <div className='text-muted-foreground text-xs'>
-                            {pool.description}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant='outline'>
-                            {credentialTypeLabel(
-                              pool.platform,
-                              pool.credential_type,
-                              t
-                            )}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {pool.active_count} / {pool.account_count}
-                        </TableCell>
-                        <TableCell>{pool.channel_count}</TableCell>
-                        <TableCell>
-                          <div className='text-sm'>
-                            {t('{{success}} success / {{errors}} errors', {
-                              success: pool.success_count_24h,
-                              errors: pool.error_count_24h,
-                            })}
-                          </div>
-                          <div className='text-muted-foreground text-xs'>
-                            {t('{{attempts}} attempts', {
-                              attempts: pool.attempt_count_24h,
-                            })}
-                            {' · '}
-                            {timestamp(pool.last_event_at)}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex flex-col items-start gap-1.5'>
-                            <Badge variant={statusVariant(pool.status)}>
-                              {pool.status === 'active'
-                                ? t('Active')
-                                : t('Inactive')}
-                            </Badge>
-                            <Badge
-                              variant={
-                                pool.channel_count > 0 ? 'secondary' : 'outline'
-                              }
-                            >
-                              {pool.channel_count > 0
-                                ? t('Published')
-                                : t('Unpublished')}
-                            </Badge>
-                          </div>
-                        </TableCell>
-                        <TableCell className='w-36'>
-                          <div className='flex items-center gap-1'>
-                            <RowActionButton
-                              label={t('Edit')}
-                              icon={Edit02Icon}
-                              onClick={() => {
-                                setSelectedPool(pool)
-                                setPoolDialog(true)
-                              }}
-                            />
-                            <RowActionButton
-                              label={t('Delete')}
-                              icon={Delete02Icon}
-                              destructive
-                              onClick={() =>
-                                setDeleteTarget({
-                                  kind: 'pool',
-                                  id: pool.id,
-                                  name: pool.name,
-                                })
-                              }
-                            />
-                            <DropdownMenu modal={false}>
-                              <DropdownMenuTrigger
-                                render={
-                                  <Button
-                                    type='button'
-                                    variant='ghost'
-                                    aria-label={t('More')}
-                                    title={t('More')}
-                                    className='text-muted-foreground h-auto min-w-10 flex-col gap-0.5 rounded-lg px-1.5 py-1.5 font-normal'
-                                  />
-                                }
-                              >
-                                <HugeiconsIcon
-                                  icon={MoreHorizontalIcon}
-                                  strokeWidth={1.5}
-                                />
-                                <span className='text-xs'>{t('More')}</span>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent
-                                align='end'
-                                sideOffset={6}
-                                className='w-52 rounded-xl p-1.5'
-                              >
-                                <DropdownMenuGroup>
-                                  <DropdownMenuItem
-                                    className='gap-2.5 px-3 py-2.5'
-                                    disabled={pool.status !== 'active'}
-                                    onClick={() => setPublishingPool(pool)}
-                                  >
-                                    <HugeiconsIcon
-                                      icon={
-                                        pool.channel_count > 0
-                                          ? Edit02Icon
-                                          : Rocket01Icon
-                                      }
-                                      strokeWidth={2}
-                                    />
-                                    {t(
-                                      pool.channel_count > 0
-                                        ? 'Edit local channel'
-                                        : 'Publish as local channel'
-                                    )}
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    className='gap-2.5 px-3 py-2.5'
-                                    onClick={() => setMemberPool(pool)}
-                                  >
-                                    <HugeiconsIcon
-                                      icon={Link01Icon}
-                                      strokeWidth={2}
-                                    />
-                                    {t('Manage pool members')}
-                                  </DropdownMenuItem>
-                                </DropdownMenuGroup>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
+                  <PoolTableRows
+                    pools={pools}
+                    isLoading={poolsQuery.isLoading}
+                    error={poolsQuery.error}
+                    testingPoolId={testingPoolId}
+                    onRetry={() => void poolsQuery.refetch()}
+                    onEdit={(pool) => {
+                      setSelectedPool(pool)
+                      setPoolDialog(true)
+                    }}
+                    onDelete={(pool) =>
+                      setDeleteTarget({
+                        kind: 'pool',
+                        id: pool.id,
+                        name: pool.name,
+                      })
+                    }
+                    onPublish={setPublishingPool}
+                    onTest={(pool) => void testPoolChannel(pool)}
+                    onUnpublish={setUnpublishingPool}
+                    onManageMembers={setMemberPool}
+                  />
                 </TableBody>
               </Table>
             </div>
@@ -1878,14 +2223,44 @@ export function AccountManagement({
             onSaved={refresh}
           />
         )}
-        <PoolMembersDialog
-          open={!!memberPool}
-          onOpenChange={(open) => {
-            if (!open) setMemberPool(null)
-          }}
-          pool={memberPool}
-          onSaved={refresh}
-        />
+        {memberPool && (
+          <PoolMembersDialog
+            key={memberPool.id}
+            open
+            onOpenChange={(open) => {
+              if (!open) setMemberPool(null)
+            }}
+            pool={memberPool}
+            onSaved={refresh}
+          />
+        )}
+        <AlertDialog
+          open={Boolean(unpublishingPool)}
+          onOpenChange={(open) => !open && setUnpublishingPool(null)}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {t('Unpublish local channel?')}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {t(
+                  'The generated local channel for {{name}} will be deleted. The pool and its accounts will be kept.',
+                  { name: unpublishingPool?.name }
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+              <AlertDialogAction
+                variant='destructive'
+                onClick={confirmUnpublish}
+              >
+                {t('Unpublish')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         <AlertDialog
           open={exportConfirmOpen}
           onOpenChange={setExportConfirmOpen}

@@ -6,6 +6,11 @@ StarNexus keeps channels as the user-facing logical routing unit and adds a loca
 upstream account pool as an optional channel credential source. Accounts are not
 materialized as channels, and account pools are not StarNexus user groups.
 
+Each account pool may publish at most one generated local channel. Accounts may
+belong to multiple pools, so credentials remain reusable across generated
+channels without duplicating account records. Unpublishing deletes only the
+generated channel and its abilities; it preserves the pool and all memberships.
+
 The initial supported platform is OpenAI:
 
 - Codex OAuth accounts using the ChatGPT Codex Responses endpoint.
@@ -55,6 +60,7 @@ Compatibility rules:
   managed by the current channel multi-key implementation.
 - A local-pool channel must reference an active, compatible pool and may have an
   empty `channels.key`.
+- A pool may be referenced by at most one generated local-pool channel.
 - Channel create/update validation rejects a pool reference with a different
   platform or credential capability.
 - Changing away from a local pool clears `upstream_account_pool_id` but never

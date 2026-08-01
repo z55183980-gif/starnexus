@@ -64,13 +64,17 @@ type UpstreamAccountMetadata struct {
 
 type UpstreamAccountPoolView struct {
 	model.UpstreamAccountPool
-	AccountCount    int64  `json:"account_count"`
-	ActiveCount     int64  `json:"active_count"`
-	ChannelCount    int64  `json:"channel_count"`
-	AttemptCount24h int64  `json:"attempt_count_24h"`
-	SuccessCount24h int64  `json:"success_count_24h"`
-	ErrorCount24h   int64  `json:"error_count_24h"`
-	LastEventAt     *int64 `json:"last_event_at"`
+	AccountCount           int64  `json:"account_count"`
+	ActiveCount            int64  `json:"active_count"`
+	ReadyCount             int64  `json:"ready_count"`
+	ChannelCount           int64  `json:"channel_count"`
+	PublishedChannelId     *int   `json:"published_channel_id"`
+	PublishedChannelStatus *int   `json:"published_channel_status"`
+	PublishedModelCount    int    `json:"published_model_count"`
+	AttemptCount24h        int64  `json:"attempt_count_24h"`
+	SuccessCount24h        int64  `json:"success_count_24h"`
+	ErrorCount24h          int64  `json:"error_count_24h"`
+	LastEventAt            *int64 `json:"last_event_at"`
 }
 
 type UpstreamAccountPoolCapabilities struct {
@@ -106,6 +110,22 @@ type UpstreamAccountPoolMemberView struct {
 	Type        string `json:"type"`
 	Status      string `json:"status"`
 	Schedulable bool   `json:"schedulable"`
+}
+
+type upstreamAccountPoolCountRow struct {
+	PoolId int
+	Count  int64
+}
+
+type upstreamAccountPoolEventCountRow struct {
+	PoolId    int
+	EventType string
+	Count     int64
+}
+
+type upstreamAccountPoolLastEventRow struct {
+	PoolId      int
+	LastEventAt int64
 }
 
 type UpstreamProxyView struct {
@@ -161,19 +181,10 @@ func ListUpstreamAccountPools() ([]UpstreamAccountPoolView, error) {
 	}
 	views := make([]UpstreamAccountPoolView, 0, len(pools))
 	for _, pool := range pools {
-		var accountCount int64
-		if err := model.DB.Model(&model.UpstreamAccountPoolMember{}).Where("pool_id = ?", pool.Id).Count(&accountCount).Error; err != nil {
-			return nil, err
-		}
-		var channelCount int64
-		if err := model.DB.Model(&model.Channel{}).Where("upstream_account_pool_id = ?", pool.Id).Count(&channelCount).Error; err != nil {
-			return nil, err
-		}
-		view := UpstreamAccountPoolView{UpstreamAccountPool: pool, AccountCount: accountCount, ChannelCount: channelCount}
-		if err := populateUpstreamAccountPoolRuntimeStats(&view); err != nil {
-			return nil, err
-		}
-		views = append(views, view)
+		views = append(views, UpstreamAccountPoolView{UpstreamAccountPool: pool})
+	}
+	if err := populateUpstreamAccountPoolViews(views); err != nil {
+		return nil, err
 	}
 	return views, nil
 }
@@ -186,19 +197,11 @@ func GetUpstreamAccountPool(id int) (*UpstreamAccountPoolView, error) {
 	if err := model.DB.First(&pool, id).Error; err != nil {
 		return nil, err
 	}
-	var accountCount int64
-	if err := model.DB.Model(&model.UpstreamAccountPoolMember{}).Where("pool_id = ?", id).Count(&accountCount).Error; err != nil {
+	views := []UpstreamAccountPoolView{{UpstreamAccountPool: pool}}
+	if err := populateUpstreamAccountPoolViews(views); err != nil {
 		return nil, err
 	}
-	var channelCount int64
-	if err := model.DB.Model(&model.Channel{}).Where("upstream_account_pool_id = ?", id).Count(&channelCount).Error; err != nil {
-		return nil, err
-	}
-	view := &UpstreamAccountPoolView{UpstreamAccountPool: pool, AccountCount: accountCount, ChannelCount: channelCount}
-	if err := populateUpstreamAccountPoolRuntimeStats(view); err != nil {
-		return nil, err
-	}
-	return view, nil
+	return &views[0], nil
 }
 
 func GetUpstreamAccountPoolCapabilities(id int) (*UpstreamAccountPoolCapabilities, error) {
@@ -227,9 +230,10 @@ func getUpstreamAccountPoolCapabilities(db *gorm.DB, id int) (*UpstreamAccountPo
 		PublishedGroups: []string{},
 	}
 	models := make(map[string]struct{})
+	now := common.GetTimestamp()
 	for i := range accounts {
 		account := &accounts[i]
-		if account.Status != constant.UpstreamStatusActive || !account.Schedulable {
+		if !account.IsSchedulableAt(now) {
 			continue
 		}
 		capabilities.SchedulableAccountCount++
@@ -356,6 +360,43 @@ func PublishUpstreamAccountPoolChannel(id int, groups []string) (*UpstreamAccoun
 	return result, nil
 }
 
+func UnpublishUpstreamAccountPoolChannel(id int) error {
+	if id <= 0 {
+		return errors.New("invalid upstream account pool id")
+	}
+	channelsChanged := false
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var pool model.UpstreamAccountPool
+		if err := tx.First(&pool, id).Error; err != nil {
+			return err
+		}
+		var channels []model.Channel
+		if err := tx.Where("credential_source = ? AND upstream_account_pool_id = ?", constant.ChannelCredentialSourceAccountPool, id).
+			Order("id ASC").Find(&channels).Error; err != nil {
+			return err
+		}
+		if len(channels) == 0 {
+			return nil
+		}
+		channelIds := make([]int, 0, len(channels))
+		for _, channel := range channels {
+			channelIds = append(channelIds, channel.Id)
+		}
+		if err := tx.Where("channel_id IN ?", channelIds).Delete(&model.Ability{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id IN ?", channelIds).Delete(&model.Channel{}).Error; err != nil {
+			return err
+		}
+		channelsChanged = true
+		return nil
+	})
+	if err == nil && channelsChanged {
+		refreshPublishedAccountPoolChannelCaches()
+	}
+	return err
+}
+
 func normalizePublishedChannelGroups(groups []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(groups))
 	normalized := make([]string, 0, len(groups))
@@ -423,19 +464,16 @@ func upsertPublishedAccountPoolChannel(tx *gorm.DB, pool model.UpstreamAccountPo
 		}
 		return &channel, true, nil
 	}
-
-	channel := channels[0]
-	for _, duplicate := range channels[1:] {
-		if err := tx.Where("channel_id = ?", duplicate.Id).Delete(&model.Ability{}).Error; err != nil {
-			return nil, false, err
-		}
-		if err := tx.Delete(&duplicate).Error; err != nil {
-			return nil, false, err
-		}
+	if len(channels) > 1 {
+		return nil, false, fmt.Errorf("account pool is referenced by %d local channels; unpublish it before publishing again", len(channels))
 	}
 
+	channel := channels[0]
 	updates := publishedAccountPoolChannelUpdates(pool, channelType, modelList)
 	updates["group"] = groupList
+	if channel.Status == common.ChannelStatusAutoDisabled {
+		updates["status"] = common.ChannelStatusEnabled
+	}
 	if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
 		return nil, false, err
 	}
@@ -452,9 +490,7 @@ func publishedAccountPoolChannelUpdates(pool model.UpstreamAccountPool, channelT
 	return map[string]any{
 		"type": channelType, "key": "", "name": pool.Name, "models": modelList,
 		"base_url": nil, "open_ai_organization": nil, "model_mapping": nil,
-		"status_code_mapping": nil, "param_override": nil, "header_override": nil,
-		"test_model": nil, "tag": nil, "remark": nil, "other": "", "other_info": "",
-		"setting": "{}", "settings": "{}", "channel_info": model.ChannelInfo{}, "auto_ban": 0,
+		"header_override":   nil,
 		"credential_source": constant.ChannelCredentialSourceAccountPool, "upstream_account_pool_id": pool.Id,
 	}
 }
@@ -484,6 +520,9 @@ func syncPublishedAccountPoolChannelsTx(tx *gorm.DB, poolIds []int) (bool, error
 			channelType = constant.ChannelTypeAnthropic
 		}
 		updates := publishedAccountPoolChannelUpdates(pool, channelType, strings.Join(capabilities.Models, ","))
+		if pool.Status != constant.UpstreamStatusActive || capabilities.SchedulableAccountCount == 0 || len(capabilities.Models) == 0 || len(channels) > 1 {
+			updates["status"] = common.ChannelStatusAutoDisabled
+		}
 		for i := range channels {
 			channel := &channels[i]
 			if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
@@ -507,42 +546,118 @@ func refreshPublishedAccountPoolChannelCaches() {
 	ResetProxyClientCache()
 }
 
-func populateUpstreamAccountPoolRuntimeStats(view *UpstreamAccountPoolView) error {
-	if view == nil || view.Id <= 0 {
-		return errors.New("invalid upstream account pool stats request")
+func populateUpstreamAccountPoolViews(views []UpstreamAccountPoolView) error {
+	if len(views) == 0 {
+		return nil
 	}
-	activeQuery := model.DB.Model(&model.UpstreamAccount{}).
-		Where("status = ? AND schedulable = ?", constant.UpstreamStatusActive, true).
-		Where("id IN (?)", model.DB.Model(&model.UpstreamAccountPoolMember{}).Select("account_id").Where("pool_id = ?", view.Id))
-	if err := activeQuery.Count(&view.ActiveCount).Error; err != nil {
+	poolIds := make([]int, 0, len(views))
+	viewsById := make(map[int]*UpstreamAccountPoolView, len(views))
+	for i := range views {
+		if views[i].Id <= 0 {
+			return errors.New("invalid upstream account pool stats request")
+		}
+		poolIds = append(poolIds, views[i].Id)
+		viewsById[views[i].Id] = &views[i]
+	}
+
+	var memberCounts []upstreamAccountPoolCountRow
+	if err := model.DB.Model(&model.UpstreamAccountPoolMember{}).
+		Select("pool_id, COUNT(*) AS count").
+		Where("pool_id IN ?", poolIds).
+		Group("pool_id").Scan(&memberCounts).Error; err != nil {
 		return err
 	}
-	cutoff := common.GetTimestamp() - int64((24 * time.Hour).Seconds())
-	counts := []struct {
-		eventType string
-		value     *int64
-	}{
-		{"request_selected", &view.AttemptCount24h},
-		{"request_success", &view.SuccessCount24h},
-		{"request_error", &view.ErrorCount24h},
+	for _, row := range memberCounts {
+		viewsById[row.PoolId].AccountCount = row.Count
 	}
-	for _, item := range counts {
-		if err := model.DB.Model(&model.UpstreamAccountEvent{}).
-			Where("pool_id = ? AND event_type = ? AND created_at >= ?", view.Id, item.eventType, cutoff).
-			Count(item.value).Error; err != nil {
-			return err
+
+	baseAccountCountQuery := func() *gorm.DB {
+		return model.DB.Table("upstream_account_pool_members AS pool_members").
+			Select("pool_members.pool_id AS pool_id, COUNT(*) AS count").
+			Joins("JOIN upstream_accounts AS accounts ON accounts.id = pool_members.account_id").
+			Where("pool_members.pool_id IN ?", poolIds).
+			Where("accounts.status = ? AND accounts.schedulable = ?", constant.UpstreamStatusActive, true)
+	}
+	var activeCounts []upstreamAccountPoolCountRow
+	if err := baseAccountCountQuery().Group("pool_members.pool_id").Scan(&activeCounts).Error; err != nil {
+		return err
+	}
+	for _, row := range activeCounts {
+		viewsById[row.PoolId].ActiveCount = row.Count
+	}
+
+	now := common.GetTimestamp()
+	var readyCounts []upstreamAccountPoolCountRow
+	if err := baseAccountCountQuery().
+		Where("(accounts.auto_pause_on_expired = ? OR accounts.expires_at IS NULL OR accounts.expires_at > ?)", false, now).
+		Where("(accounts.rate_limit_reset_at IS NULL OR accounts.rate_limit_reset_at <= ?)", now).
+		Where("(accounts.overload_until IS NULL OR accounts.overload_until <= ?)", now).
+		Where("(accounts.temp_unschedulable_until IS NULL OR accounts.temp_unschedulable_until <= ?)", now).
+		Group("pool_members.pool_id").Scan(&readyCounts).Error; err != nil {
+		return err
+	}
+	for _, row := range readyCounts {
+		viewsById[row.PoolId].ReadyCount = row.Count
+	}
+
+	var channels []model.Channel
+	if err := model.DB.
+		Where("upstream_account_pool_id IN ?", poolIds).
+		Order("id ASC").Find(&channels).Error; err != nil {
+		return err
+	}
+	for i := range channels {
+		channel := &channels[i]
+		if channel.UpstreamAccountPoolId == nil {
+			continue
+		}
+		view := viewsById[*channel.UpstreamAccountPoolId]
+		if view == nil {
+			continue
+		}
+		view.ChannelCount++
+		if channel.CredentialSource == constant.ChannelCredentialSourceAccountPool && view.PublishedChannelId == nil {
+			channelId := channel.Id
+			channelStatus := channel.Status
+			view.PublishedChannelId = &channelId
+			view.PublishedChannelStatus = &channelStatus
+			view.PublishedModelCount = len(channel.GetModels())
 		}
 	}
-	var last model.UpstreamAccountEvent
-	err := model.DB.Where("pool_id = ?", view.Id).Order("created_at DESC").Order("id DESC").First(&last).Error
-	if err == nil {
-		view.LastEventAt = &last.CreatedAt
-		return nil
+
+	cutoff := now - int64((24 * time.Hour).Seconds())
+	eventTypes := []string{"request_selected", "request_success", "request_error"}
+	var eventCounts []upstreamAccountPoolEventCountRow
+	if err := model.DB.Model(&model.UpstreamAccountEvent{}).
+		Select("pool_id, event_type, COUNT(*) AS count").
+		Where("pool_id IN ? AND event_type IN ? AND created_at >= ?", poolIds, eventTypes, cutoff).
+		Group("pool_id, event_type").Scan(&eventCounts).Error; err != nil {
+		return err
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil
+	for _, row := range eventCounts {
+		view := viewsById[row.PoolId]
+		switch row.EventType {
+		case "request_selected":
+			view.AttemptCount24h = row.Count
+		case "request_success":
+			view.SuccessCount24h = row.Count
+		case "request_error":
+			view.ErrorCount24h = row.Count
+		}
 	}
-	return err
+
+	var lastEvents []upstreamAccountPoolLastEventRow
+	if err := model.DB.Model(&model.UpstreamAccountEvent{}).
+		Select("pool_id, MAX(created_at) AS last_event_at").
+		Where("pool_id IN ?", poolIds).
+		Group("pool_id").Scan(&lastEvents).Error; err != nil {
+		return err
+	}
+	for _, row := range lastEvents {
+		lastEventAt := row.LastEventAt
+		viewsById[row.PoolId].LastEventAt = &lastEventAt
+	}
+	return nil
 }
 
 func CreateUpstreamAccountPool(pool *model.UpstreamAccountPool) error {
@@ -651,21 +766,14 @@ func ListUpstreamAccountPoolMembers(poolId int) ([]UpstreamAccountPoolMemberView
 	if poolId <= 0 {
 		return nil, errors.New("invalid upstream account pool id")
 	}
-	var members []model.UpstreamAccountPoolMember
-	if err := model.DB.Where("pool_id = ?", poolId).Order("priority ASC").Order("account_id ASC").Find(&members).Error; err != nil {
+	var views []UpstreamAccountPoolMemberView
+	if err := model.DB.Table("upstream_account_pool_members AS pool_members").
+		Select("pool_members.pool_id, pool_members.account_id, pool_members.priority, pool_members.weight, pool_members.created_at, accounts.name, accounts.platform, accounts.type, accounts.status, accounts.schedulable").
+		Joins("JOIN upstream_accounts AS accounts ON accounts.id = pool_members.account_id").
+		Where("pool_members.pool_id = ?", poolId).
+		Order("pool_members.priority ASC").Order("pool_members.account_id ASC").
+		Scan(&views).Error; err != nil {
 		return nil, err
-	}
-	views := make([]UpstreamAccountPoolMemberView, 0, len(members))
-	for _, member := range members {
-		var account model.UpstreamAccount
-		if err := model.DB.First(&account, member.AccountId).Error; err != nil {
-			return nil, err
-		}
-		views = append(views, UpstreamAccountPoolMemberView{
-			UpstreamAccountPoolMember: member,
-			Name:                      account.Name, Platform: account.Platform, Type: account.Type,
-			Status: account.Status, Schedulable: account.Schedulable,
-		})
 	}
 	return views, nil
 }
@@ -681,8 +789,7 @@ func ReplaceUpstreamAccountPoolMembers(poolId int, inputs []UpstreamAccountPoolM
 			return err
 		}
 		seen := make(map[int]struct{}, len(inputs))
-		members := make([]model.UpstreamAccountPoolMember, 0, len(inputs))
-		now := common.GetTimestamp()
+		accountIds := make([]int, 0, len(inputs))
 		for _, input := range inputs {
 			if input.AccountId <= 0 {
 				return errors.New("account pool member account_id must be positive")
@@ -694,9 +801,25 @@ func ReplaceUpstreamAccountPoolMembers(poolId int, inputs []UpstreamAccountPoolM
 				return fmt.Errorf("account %d is duplicated in the account pool", input.AccountId)
 			}
 			seen[input.AccountId] = struct{}{}
-			var account model.UpstreamAccount
-			if err := tx.First(&account, input.AccountId).Error; err != nil {
-				return fmt.Errorf("account %d is invalid: %w", input.AccountId, err)
+			accountIds = append(accountIds, input.AccountId)
+		}
+
+		var accounts []model.UpstreamAccount
+		if len(accountIds) > 0 {
+			if err := tx.Where("id IN ?", accountIds).Find(&accounts).Error; err != nil {
+				return err
+			}
+		}
+		accountsById := make(map[int]model.UpstreamAccount, len(accounts))
+		for _, account := range accounts {
+			accountsById[account.Id] = account
+		}
+		members := make([]model.UpstreamAccountPoolMember, 0, len(inputs))
+		now := common.GetTimestamp()
+		for _, input := range inputs {
+			account, exists := accountsById[input.AccountId]
+			if !exists {
+				return fmt.Errorf("account %d is invalid", input.AccountId)
 			}
 			if account.Platform != pool.Platform {
 				return fmt.Errorf("account %d platform does not match pool platform", input.AccountId)
@@ -712,13 +835,47 @@ func ReplaceUpstreamAccountPoolMembers(poolId int, inputs []UpstreamAccountPoolM
 				PoolId: poolId, AccountId: input.AccountId, Priority: input.Priority, Weight: weight, CreatedAt: now,
 			})
 		}
-		if err := tx.Where("pool_id = ?", poolId).Delete(&model.UpstreamAccountPoolMember{}).Error; err != nil {
+
+		var existing []model.UpstreamAccountPoolMember
+		if err := tx.Where("pool_id = ?", poolId).Find(&existing).Error; err != nil {
 			return err
 		}
-		if len(members) > 0 {
-			if err := tx.Create(&members).Error; err != nil {
+		existingByAccountId := make(map[int]model.UpstreamAccountPoolMember, len(existing))
+		removeIds := make([]int, 0)
+		for _, member := range existing {
+			existingByAccountId[member.AccountId] = member
+			if _, keep := seen[member.AccountId]; !keep {
+				removeIds = append(removeIds, member.AccountId)
+			}
+		}
+		if len(removeIds) > 0 {
+			if err := tx.Where("pool_id = ? AND account_id IN ?", poolId, removeIds).Delete(&model.UpstreamAccountPoolMember{}).Error; err != nil {
 				return err
 			}
+		}
+		newMembers := make([]model.UpstreamAccountPoolMember, 0)
+		for _, member := range members {
+			current, exists := existingByAccountId[member.AccountId]
+			if !exists {
+				newMembers = append(newMembers, member)
+				continue
+			}
+			if current.Priority == member.Priority && current.Weight == member.Weight {
+				continue
+			}
+			if err := tx.Model(&model.UpstreamAccountPoolMember{}).
+				Where("pool_id = ? AND account_id = ?", poolId, member.AccountId).
+				Updates(map[string]any{"priority": member.Priority, "weight": member.Weight}).Error; err != nil {
+				return err
+			}
+		}
+		if len(newMembers) > 0 {
+			if err := tx.Create(&newMembers).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&model.UpstreamAccountPool{}).Where("id = ?", poolId).Update("updated_at", now).Error; err != nil {
+			return err
 		}
 		changed, err := syncPublishedAccountPoolChannelsTx(tx, []int{poolId})
 		channelsChanged = changed
@@ -775,13 +932,13 @@ func ListUpstreamAccounts(filter UpstreamAccountListFilter) ([]UpstreamAccountVi
 		accountIds = append(accountIds, account.Id)
 	}
 	leaseCounts := currentUpstreamAccountLeaseCounts(accountIds)
+	poolIdsByAccount, err := listUpstreamAccountPoolIdsByAccount(model.DB, accountIds)
+	if err != nil {
+		return nil, 0, err
+	}
 	views := make([]UpstreamAccountView, 0, len(accounts))
 	for _, account := range accounts {
-		poolIds, err := listUpstreamAccountPoolIds(model.DB, account.Id)
-		if err != nil {
-			return nil, 0, err
-		}
-		view := upstreamAccountView(account, poolIds)
+		view := upstreamAccountView(account, poolIdsByAccount[account.Id])
 		view.CurrentConcurrency = leaseCounts[account.Id]
 		views = append(views, view)
 	}
@@ -1461,6 +1618,27 @@ func listUpstreamAccountPoolIds(db *gorm.DB, accountId int) ([]int, error) {
 		poolIds = append(poolIds, member.PoolId)
 	}
 	return poolIds, nil
+}
+
+func listUpstreamAccountPoolIdsByAccount(db *gorm.DB, accountIds []int) (map[int][]int, error) {
+	result := make(map[int][]int, len(accountIds))
+	if len(accountIds) == 0 {
+		return result, nil
+	}
+	for _, accountId := range accountIds {
+		result[accountId] = []int{}
+	}
+	var members []model.UpstreamAccountPoolMember
+	if err := db.Select("account_id", "pool_id").
+		Where("account_id IN ?", accountIds).
+		Order("account_id ASC").Order("pool_id ASC").
+		Find(&members).Error; err != nil {
+		return nil, err
+	}
+	for _, member := range members {
+		result[member.AccountId] = append(result[member.AccountId], member.PoolId)
+	}
+	return result, nil
 }
 
 func normalizePositiveIds(ids []int) []int {

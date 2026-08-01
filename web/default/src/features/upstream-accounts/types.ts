@@ -31,7 +31,11 @@ export interface UpstreamAccountPool {
   scheduler_config: string
   account_count: number
   active_count: number
+  ready_count: number
   channel_count: number
+  published_channel_id?: number | null
+  published_channel_status?: number | null
+  published_model_count: number
   attempt_count_24h: number
   success_count_24h: number
   error_count_24h: number
