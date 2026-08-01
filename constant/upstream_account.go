@@ -32,6 +32,24 @@ const (
 )
 
 const (
+	UpstreamAccountReasonAuthenticationFailed  = "authentication_failed"
+	UpstreamAccountReasonOAuthRefreshPending   = "oauth_refresh_pending"
+	UpstreamAccountReasonOAuthRefreshFailed    = "oauth_refresh_failed"
+	UpstreamAccountReasonOAuthRefreshPermanent = "oauth_refresh_permanent"
+)
+
+func UpstreamAccountOAuthRefreshBlocksScheduling(reason string) bool {
+	switch reason {
+	case UpstreamAccountReasonOAuthRefreshPending,
+		UpstreamAccountReasonOAuthRefreshFailed,
+		UpstreamAccountReasonOAuthRefreshPermanent:
+		return true
+	default:
+		return false
+	}
+}
+
+const (
 	UpstreamProxyProtocolHTTP    = "http"
 	UpstreamProxyProtocolHTTPS   = "https"
 	UpstreamProxyProtocolSOCKS5  = "socks5"

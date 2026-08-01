@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -60,6 +62,47 @@ type User struct {
 	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+}
+
+type UserStatisticsSummary struct {
+	TotalUsers        int64 `json:"total_users"`
+	EnabledUsers      int64 `json:"enabled_users"`
+	DisabledUsers     int64 `json:"disabled_users"`
+	ActiveUsers       int64 `json:"active_users"`
+	NewUsers          int64 `json:"new_users"`
+	NewPreviousPeriod int64 `json:"new_previous_period"`
+	TotalQuota        int64 `json:"total_quota"`
+	TotalUsedQuota    int64 `json:"total_used_quota"`
+	TotalRequestCount int64 `json:"total_request_count"`
+}
+
+type UserStatisticsTrendPoint struct {
+	Date  string `json:"date"`
+	Count int64  `json:"count"`
+}
+
+type UserStatisticsDistribution struct {
+	Name  string `json:"name"`
+	Value int    `json:"value,omitempty"`
+	Count int64  `json:"count"`
+}
+
+type UserStatisticsRecentUser struct {
+	Id          int    `json:"id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	Role        int    `json:"role"`
+	Status      int    `json:"status"`
+	Group       string `json:"group"`
+	CreatedAt   int64  `json:"created_at"`
+	LastLoginAt int64  `json:"last_login_at"`
+}
+
+type UserStatistics struct {
+	Summary           UserStatisticsSummary        `json:"summary"`
+	RegistrationTrend []UserStatisticsTrendPoint   `json:"registration_trend"`
+	GroupDistribution []UserStatisticsDistribution `json:"group_distribution"`
+	RecentUsers       []UserStatisticsRecentUser   `json:"recent_users"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -367,6 +410,124 @@ func SearchUsers(keyword string, group string, status *int, role *int, startIdx 
 	}
 
 	return users, total, nil
+}
+
+func userStatisticsScope(inviterId *int) *gorm.DB {
+	query := DB.Model(&User{})
+	if inviterId != nil {
+		query = query.Where("inviter_id = ? AND role = ?", *inviterId, common.RoleCommonUser)
+	}
+	return query
+}
+
+func GetUserStatistics(inviterId *int, rangeStart time.Time, rangeEndExclusive time.Time) (*UserStatistics, error) {
+	now := time.Now()
+	periodDays := 0
+	for date := rangeStart; date.Before(rangeEndExclusive); date = date.AddDate(0, 0, 1) {
+		periodDays++
+	}
+	if periodDays < 1 {
+		return nil, errors.New("invalid user statistics date range")
+	}
+	previousPeriodStart := rangeStart.AddDate(0, 0, -periodDays)
+	rangeStartUnix := rangeStart.Unix()
+	rangeEndUnix := rangeEndExclusive.Unix()
+
+	statistics := &UserStatistics{
+		RegistrationTrend: make([]UserStatisticsTrendPoint, periodDays),
+		GroupDistribution: make([]UserStatisticsDistribution, 0),
+		RecentUsers:       make([]UserStatisticsRecentUser, 0),
+	}
+
+	summarySelect := `
+		COUNT(*) AS total_users,
+		COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS enabled_users,
+		COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS disabled_users,
+		COALESCE(SUM(CASE WHEN last_login_at >= ? AND last_login_at < ? THEN 1 ELSE 0 END), 0) AS active_users,
+		COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN 1 ELSE 0 END), 0) AS new_users,
+		COALESCE(SUM(CASE WHEN created_at >= ? AND created_at < ? THEN 1 ELSE 0 END), 0) AS new_previous_period,
+		COALESCE(SUM(quota), 0) AS total_quota,
+		COALESCE(SUM(used_quota), 0) AS total_used_quota,
+		COALESCE(SUM(request_count), 0) AS total_request_count`
+
+	if err := userStatisticsScope(inviterId).
+		Select(
+			summarySelect,
+			common.UserStatusEnabled,
+			common.UserStatusDisabled,
+			rangeStartUnix,
+			rangeEndUnix,
+			rangeStartUnix,
+			rangeEndUnix,
+			previousPeriodStart.Unix(),
+			rangeStartUnix,
+		).
+		Scan(&statistics.Summary).Error; err != nil {
+		return nil, err
+	}
+
+	registrationRows, err := userStatisticsScope(inviterId).
+		Select("created_at").
+		Where("created_at >= ? AND created_at < ?", rangeStartUnix, rangeEndUnix).
+		Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer registrationRows.Close()
+
+	registrationCounts := make(map[string]int64, periodDays)
+	for registrationRows.Next() {
+		var createdAt int64
+		if err := registrationRows.Scan(&createdAt); err != nil {
+			return nil, err
+		}
+		date := time.Unix(createdAt, 0).In(now.Location()).Format("2006-01-02")
+		registrationCounts[date]++
+	}
+	if err := registrationRows.Err(); err != nil {
+		return nil, err
+	}
+	for dayOffset := 0; dayOffset < periodDays; dayOffset++ {
+		date := rangeStart.AddDate(0, 0, dayOffset).Format("2006-01-02")
+		statistics.RegistrationTrend[dayOffset] = UserStatisticsTrendPoint{
+			Date:  date,
+			Count: registrationCounts[date],
+		}
+	}
+
+	var groupDistribution []UserStatisticsDistribution
+	if err := userStatisticsScope(inviterId).
+		Select(commonGroupCol + " AS name, COUNT(*) AS count").
+		Group("group").
+		Scan(&groupDistribution).Error; err != nil {
+		return nil, err
+	}
+	sort.Slice(groupDistribution, func(i, j int) bool {
+		return groupDistribution[i].Count > groupDistribution[j].Count
+	})
+	if len(groupDistribution) > 6 {
+		otherCount := int64(0)
+		for _, item := range groupDistribution[5:] {
+			otherCount += item.Count
+		}
+		statistics.GroupDistribution = append(statistics.GroupDistribution, groupDistribution[:5]...)
+		statistics.GroupDistribution = append(statistics.GroupDistribution, UserStatisticsDistribution{
+			Name:  "__other__",
+			Count: otherCount,
+		})
+	} else {
+		statistics.GroupDistribution = groupDistribution
+	}
+
+	if err := userStatisticsScope(inviterId).
+		Select("id, username, display_name, role, status, " + commonGroupCol + ", created_at, last_login_at").
+		Order("id DESC").
+		Limit(6).
+		Scan(&statistics.RecentUsers).Error; err != nil {
+		return nil, err
+	}
+
+	return statistics, nil
 }
 
 func GetUserById(id int, selectAll bool) (*User, error) {

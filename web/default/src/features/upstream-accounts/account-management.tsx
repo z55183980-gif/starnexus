@@ -96,6 +96,12 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { channelsQueryKeys, handleTestChannel } from '@/features/channels/lib'
@@ -139,6 +145,7 @@ import { mergeAccountImportDocuments } from './batch-import'
 import { BatchImportDialog } from './batch-import-dialog'
 import { CRSSyncDialog } from './crs-sync-dialog'
 import { PublishPoolChannelDrawer } from './publish-pool-channel-drawer'
+import { upstreamOAuthRefreshBlocksScheduling } from './types'
 import type {
   UpstreamAccount,
   UpstreamAccountPayload,
@@ -160,10 +167,25 @@ function timestamp(value?: number | null) {
   return dayjs(value * 1000).format('YYYY-MM-DD HH:mm:ss')
 }
 
+function poolCount(value: unknown) {
+  const count = Number(value)
+  return Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0
+}
+
+function poolCountAvailable(value: unknown) {
+  return value !== null && value !== undefined && Number.isFinite(Number(value))
+}
+
 function poolRuntimeState(
   pool: UpstreamAccountPool,
   translate: (key: string) => string
-) {
+): {
+  label: string
+  variant: 'default' | 'secondary' | 'destructive' | 'outline'
+  detail?: string
+} {
+  const readyCount = poolCount(pool.ready_count)
+  const temporarilyLimitedCount = poolCount(pool.temporarily_limited_count)
   if (pool.status !== 'active') {
     return { label: translate('Pool disabled'), variant: 'secondary' as const }
   }
@@ -185,7 +207,22 @@ function poolRuntimeState(
       variant: 'destructive' as const,
     }
   }
-  if (pool.ready_count === 0) {
+  if (pool.scheduler_available === false) {
+    return {
+      label: translate('Scheduler unavailable'),
+      variant: 'destructive' as const,
+      detail: translate(
+        'The account pool scheduler requires Redis, or local leases in a single-instance development environment.'
+      ),
+    }
+  }
+  if (!poolCountAvailable(pool.ready_count)) {
+    return {
+      label: translate('Availability statistics unavailable'),
+      variant: 'secondary' as const,
+    }
+  }
+  if (readyCount === 0) {
     return {
       label: translate('No ready accounts'),
       variant: 'destructive' as const,
@@ -197,7 +234,7 @@ function poolRuntimeState(
       variant: 'secondary' as const,
     }
   }
-  if (pool.ready_count < pool.active_count) {
+  if (temporarilyLimitedCount > 0) {
     return { label: translate('Degraded'), variant: 'secondary' as const }
   }
   return { label: translate('Ready'), variant: 'default' as const }
@@ -964,6 +1001,18 @@ function PoolTableRows(props: PoolTableRowsProps) {
       pool.published_channel_status,
       t
     )
+    const accountCount = poolCount(pool.account_count)
+    const availabilityStatsAvailable =
+      poolCountAvailable(pool.ready_count) &&
+      poolCountAvailable(pool.temporarily_limited_count)
+    const readyCount = poolCount(pool.ready_count)
+    const temporarilyLimitedCount = poolCount(
+      pool.temporarily_limited_count
+    )
+    const unavailableByStatusOrConfiguration = Math.max(
+      0,
+      accountCount - readyCount - temporarilyLimitedCount
+    )
 
     return (
       <TableRow key={pool.id} className='h-24 align-middle'>
@@ -984,17 +1033,47 @@ function PoolTableRows(props: PoolTableRowsProps) {
           </div>
         </TableCell>
         <TableCell>
-          <div className='text-sm font-medium'>
-            {t('{{ready}} ready / {{total}} total', {
-              ready: pool.ready_count,
-              total: pool.account_count,
-            })}
-          </div>
-          <div className='text-muted-foreground text-xs'>
-            {t('{{active}} enabled by configuration', {
-              active: pool.active_count,
-            })}
-          </div>
+          {accountCount === 0 ? (
+            <span className='text-muted-foreground text-sm'>
+              {t('No pool members')}
+            </span>
+          ) : !availabilityStatsAvailable ? (
+            <span className='text-muted-foreground text-sm'>
+              {t('Availability statistics unavailable')}
+            </span>
+          ) : (
+            <div className='flex flex-col items-start gap-1.5'>
+              <div className='text-sm font-medium'>
+                {t('{{ready}} available / {{total}} total', {
+                  ready: readyCount,
+                  total: accountCount,
+                })}
+              </div>
+              {temporarilyLimitedCount === 0 &&
+              unavailableByStatusOrConfiguration === 0 ? (
+                <span className='text-muted-foreground text-xs'>
+                  {t('All members can be scheduled')}
+                </span>
+              ) : (
+                <div className='flex flex-wrap gap-1'>
+                  {temporarilyLimitedCount > 0 && (
+                    <Badge variant='warning' className='rounded-md'>
+                      {t('{{count}} temporarily limited', {
+                        count: temporarilyLimitedCount,
+                      })}
+                    </Badge>
+                  )}
+                  {unavailableByStatusOrConfiguration > 0 && (
+                    <Badge variant='secondary' className='rounded-md'>
+                      {t('{{count}} unavailable by status or configuration', {
+                        count: unavailableByStatusOrConfiguration,
+                      })}
+                    </Badge>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </TableCell>
         <TableCell>
           {published ? (
@@ -1033,7 +1112,24 @@ function PoolTableRows(props: PoolTableRowsProps) {
         </TableCell>
         <TableCell>
           <div className='flex flex-col items-start gap-1.5'>
-            <Badge variant={runtimeState.variant}>{runtimeState.label}</Badge>
+            {runtimeState.detail ? (
+              <TooltipProvider delay={150}>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className='inline-flex cursor-help' />}
+                  >
+                    <Badge variant={runtimeState.variant}>
+                      {runtimeState.label}
+                    </Badge>
+                  </TooltipTrigger>
+                  <TooltipContent className='max-w-72' side='bottom'>
+                    {runtimeState.detail}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <Badge variant={runtimeState.variant}>{runtimeState.label}</Badge>
+            )}
             <span className='text-muted-foreground text-xs'>
               {published ? t('Local channel published') : t('No local channel')}
             </span>
@@ -1294,10 +1390,10 @@ export function AccountManagement({
           throw new Error(response.message || t('Request failed'))
         toast.success(t('Credential refreshed'))
       }
-      refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Request failed'))
     } finally {
+      refresh()
       setBusyId(null)
     }
   }
@@ -2052,10 +2148,13 @@ export function AccountManagement({
                                       </DropdownMenuItem>
                                     </>
                                   )}
-                                  {(account.status === 'error' ||
-                                    account.rate_limit_reset_at != null ||
-                                    account.temp_unschedulable_until !=
-                                      null) && (
+                                  {!upstreamOAuthRefreshBlocksScheduling(
+                                    account.temp_unschedulable_reason
+                                  ) &&
+                                    (account.status === 'error' ||
+                                      account.rate_limit_reset_at != null ||
+                                      account.temp_unschedulable_until !=
+                                        null) && (
                                     <>
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem
@@ -2119,7 +2218,41 @@ export function AccountManagement({
                   <TableRow>
                     <TableHead>{t('Pool')}</TableHead>
                     <TableHead>{t('Credential type')}</TableHead>
-                    <TableHead>{t('Accounts')}</TableHead>
+                    <TableHead>
+                      <div className='flex items-center gap-1.5'>
+                        <span>{t('Account availability')}</span>
+                        <TooltipProvider delay={150}>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <button
+                                  type='button'
+                                  className='text-muted-foreground hover:text-foreground inline-flex cursor-help'
+                                  aria-label={t(
+                                    'Available accounts match the scheduler: active, scheduling enabled, not expired, and not temporarily limited or overloaded.'
+                                  )}
+                                />
+                              }
+                            >
+                              <HugeiconsIcon
+                                icon={InformationCircleIcon}
+                                className='size-3.5'
+                                strokeWidth={2}
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side='bottom'
+                              align='start'
+                              className='max-w-80'
+                            >
+                              {t(
+                                'Available accounts match the scheduler: active, scheduling enabled, not expired, and not temporarily limited or overloaded.'
+                              )}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </TableHead>
                     <TableHead>{t('Local channel')}</TableHead>
                     <TableHead>{t('Last 24 hours')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>

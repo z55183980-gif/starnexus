@@ -155,6 +155,9 @@ func (account *UpstreamAccount) IsSchedulableAt(now int64) bool {
 	if account == nil || account.Status != constant.UpstreamStatusActive || !account.Schedulable {
 		return false
 	}
+	if constant.UpstreamAccountOAuthRefreshBlocksScheduling(account.TempUnschedulableReason) {
+		return false
+	}
 	if account.AutoPauseOnExpired && timestampInFutureOrEqual(now, account.ExpiresAt) {
 		return false
 	}

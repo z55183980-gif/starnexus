@@ -26,6 +26,10 @@ import type {
   ManageUserAction,
   ManageUserQuotaPayload,
   ApiResponse,
+  UserStatistics,
+  UserStatisticsParams,
+  BatchUpdateUserGroupPayload,
+  BatchUpdateUsersResult,
 } from './types'
 
 // ============================================================================
@@ -40,6 +44,22 @@ export async function getUsers(
 ): Promise<GetUsersResponse> {
   const { p = 1, page_size = 10 } = params
   const res = await api.get(`/api/user/?p=${p}&page_size=${page_size}`)
+  return res.data
+}
+
+/**
+ * Get aggregate statistics for users visible to the current manager
+ */
+export async function getUserStatistics(
+  params: UserStatisticsParams
+): Promise<ApiResponse<UserStatistics>> {
+  const searchParams = new URLSearchParams({
+    start_date: params.start_date,
+    end_date: params.end_date,
+  })
+  const res = await api.get(
+    `/api/user/statistics/overview?${searchParams.toString()}`
+  )
   return res.data
 }
 
@@ -131,6 +151,16 @@ export async function adjustUserQuota(
   payload: ManageUserQuotaPayload
 ): Promise<ApiResponse<Partial<User>>> {
   const res = await api.post('/api/user/manage', payload)
+  return res.data
+}
+
+/**
+ * Update the ownership group for multiple users without replacing other fields
+ */
+export async function batchUpdateUserGroup(
+  payload: BatchUpdateUserGroupPayload
+): Promise<ApiResponse<BatchUpdateUsersResult>> {
+  const res = await api.post('/api/user/batch/group', payload)
   return res.data
 }
 

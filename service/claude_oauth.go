@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -123,7 +122,11 @@ func requestClaudeOAuthToken(ctx context.Context, payload map[string]any, proxyU
 		return nil, err
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("Claude OAuth %s failed: status=%d", operation, resp.StatusCode)
+		code, description := parseUpstreamOAuthTokenErrorBody(responseBody)
+		return nil, &upstreamOAuthTokenRefreshError{
+			Provider: "Claude", Operation: operation, StatusCode: resp.StatusCode,
+			Code: code, Description: description,
+		}
 	}
 	var response struct {
 		AccessToken  string `json:"access_token"`

@@ -16,30 +16,68 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useState } from 'react'
+import { Analytics01Icon, UserListIcon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import { UsersDeleteDialog } from './components/users-delete-dialog'
 import { UsersMutateDrawer } from './components/users-mutate-drawer'
 import { UsersPrimaryButtons } from './components/users-primary-buttons'
 import { UsersProvider, useUsers } from './components/users-provider'
+import { UsersStatistics } from './components/users-statistics'
 import { UsersTable } from './components/users-table'
 
 function UsersContent() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow } = useUsers()
+  const [view, setView] = useState<'statistics' | 'list'>('statistics')
 
   return (
     <>
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Users')}</SectionPageLayout.Title>
         <SectionPageLayout.Description>
-          {t('Manage users and their permissions')}
+          {view === 'statistics'
+            ? t('Understand user growth, activity, and account health')
+            : t('Manage users and their permissions')}
         </SectionPageLayout.Description>
-        <SectionPageLayout.Actions>
-          <UsersPrimaryButtons />
-        </SectionPageLayout.Actions>
+        {view === 'list' && (
+          <SectionPageLayout.Actions>
+            <UsersPrimaryButtons />
+          </SectionPageLayout.Actions>
+        )}
         <SectionPageLayout.Content>
-          <UsersTable />
+          <Tabs
+            value={view}
+            onValueChange={(value) => setView(value as 'statistics' | 'list')}
+          >
+            <TabsList variant='line'>
+              <TabsTrigger value='statistics'>
+                <HugeiconsIcon
+                  icon={Analytics01Icon}
+                  data-icon='inline-start'
+                  strokeWidth={2}
+                />
+                {t('User Statistics')}
+              </TabsTrigger>
+              <TabsTrigger value='list'>
+                <HugeiconsIcon
+                  icon={UserListIcon}
+                  data-icon='inline-start'
+                  strokeWidth={2}
+                />
+                {t('User List')}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value='statistics'>
+              <UsersStatistics onViewAll={() => setView('list')} />
+            </TabsContent>
+            <TabsContent value='list'>
+              <UsersTable />
+            </TabsContent>
+          </Tabs>
         </SectionPageLayout.Content>
       </SectionPageLayout>
 

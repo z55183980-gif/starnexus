@@ -143,6 +143,7 @@ func SetApiRouter(router *gin.Engine) {
 			agentRoute.Use(middleware.AgentAuth())
 			{
 				agentRoute.GET("/topup", controller.GetAllTopUps)
+				agentRoute.GET("/statistics/overview", controller.GetUserStatistics)
 				agentRoute.GET("/", controller.GetAllUsers)
 				agentRoute.GET("/search", controller.SearchUsers)
 				agentRoute.GET("/:id", controller.GetUser)
@@ -153,6 +154,7 @@ func SetApiRouter(router *gin.Engine) {
 			adminRoute.Use(middleware.AdminAuth())
 			{
 				adminRoute.POST("/", controller.CreateUser)
+				adminRoute.POST("/batch/group", controller.BatchUpdateUserGroup)
 				adminRoute.PUT("/", controller.UpdateUser)
 				adminRoute.DELETE("/:id", controller.DeleteUser)
 			}

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -265,6 +266,59 @@ func GetAllUsers(c *gin.Context) {
 
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+func GetUserStatistics(c *gin.Context) {
+	myRole := c.GetInt("role")
+	myId := c.GetInt("id")
+	var inviterId *int
+	if myRole == common.RoleAgentUser {
+		inviterId = &myId
+	}
+
+	rangeStart, rangeEndExclusive, ok := parseUserStatisticsRange(c)
+	if !ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	statistics, err := model.GetUserStatistics(inviterId, rangeStart, rangeEndExclusive)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	common.ApiSuccess(c, statistics)
+}
+
+func parseUserStatisticsRange(c *gin.Context) (time.Time, time.Time, bool) {
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	startParam := c.Query("start_date")
+	endParam := c.Query("end_date")
+
+	if startParam == "" && endParam == "" {
+		return today.AddDate(0, 0, -29), today.AddDate(0, 0, 1), true
+	}
+	if startParam == "" || endParam == "" {
+		return time.Time{}, time.Time{}, false
+	}
+
+	start, startErr := time.ParseInLocation("2006-01-02", startParam, now.Location())
+	end, endErr := time.ParseInLocation("2006-01-02", endParam, now.Location())
+	if startErr != nil || endErr != nil || start.After(end) || end.After(today) {
+		return time.Time{}, time.Time{}, false
+	}
+
+	days := 0
+	for date := start; !date.After(end); date = date.AddDate(0, 0, 1) {
+		days++
+		if days > 365 {
+			return time.Time{}, time.Time{}, false
+		}
+	}
+
+	return start, end.AddDate(0, 0, 1), true
 }
 
 func SearchUsers(c *gin.Context) {

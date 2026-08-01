@@ -5,6 +5,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   Alert02Icon,
   InformationCircleIcon,
@@ -42,6 +43,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { getUpstreamAccountQuota, resetUpstreamAccountQuota } from './api'
+import { upstreamOAuthRefreshBlocksScheduling } from './types'
 import type {
   UpstreamAccount,
   UpstreamAccountQuotaUsage,
@@ -252,6 +254,14 @@ function accountStatusDateTime(timestamp: number | null | undefined) {
   return new Date(timestamp * 1000).toLocaleString()
 }
 
+function accountExpiredForScheduling(account: UpstreamAccount, now: number) {
+  return Boolean(
+    account.auto_pause_on_expired &&
+      account.expires_at &&
+      account.expires_at * 1000 <= now
+  )
+}
+
 function StatusDetailTooltip({
   label,
   children,
@@ -294,16 +304,29 @@ export function AccountStatusCell({ account }: { account: UpstreamAccount }) {
   const overloaded = Boolean(
     account.overload_until && account.overload_until * 1000 > now
   )
-  const temporarilyUnavailable = Boolean(
+  const temporaryWindowActive = Boolean(
     account.temp_unschedulable_until &&
     account.temp_unschedulable_until * 1000 > now
   )
+  const refreshBlocked = upstreamOAuthRefreshBlocksScheduling(
+    account.temp_unschedulable_reason
+  )
+  const tracksExpiration = Boolean(
+    account.auto_pause_on_expired && account.expires_at
+  )
+  const expiredForScheduling = accountExpiredForScheduling(account, now)
 
   useEffect(() => {
-    if (!rateLimited && !overloaded && !temporarilyUnavailable) return
+    if (
+      !rateLimited &&
+      !overloaded &&
+      !temporaryWindowActive &&
+      !tracksExpiration
+    )
+      return
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
     return () => window.clearInterval(timer)
-  }, [overloaded, rateLimited, temporarilyUnavailable])
+  }, [overloaded, rateLimited, temporaryWindowActive, tracksExpiration])
 
   if (rateLimited) {
     const countdown = accountStatusCountdown(account.rate_limit_reset_at, now)
@@ -357,6 +380,20 @@ export function AccountStatusCell({ account }: { account: UpstreamAccount }) {
     )
   }
 
+  if (account.temp_unschedulable_reason === 'oauth_refresh_permanent') {
+    return (
+      <StatusDetailTooltip
+        label={t(
+          'OAuth credentials cannot be refreshed automatically. Reauthorize the account to restore scheduling.'
+        )}
+      >
+        <Badge variant='destructive' className='rounded-md'>
+          {t('Reauthorization required')}
+        </Badge>
+      </StatusDetailTooltip>
+    )
+  }
+
   if (account.status === 'error') {
     return (
       <div className='flex items-center gap-1'>
@@ -376,7 +413,40 @@ export function AccountStatusCell({ account }: { account: UpstreamAccount }) {
     )
   }
 
-  if (temporarilyUnavailable) {
+  if (refreshBlocked) {
+    const refreshFailed =
+      account.temp_unschedulable_reason === 'oauth_refresh_failed'
+    const countdown = accountStatusCountdown(
+      account.temp_unschedulable_until,
+      now
+    )
+    const detail = [
+      t('Scheduling stays paused until credential refresh succeeds.'),
+      refreshFailed && countdown
+        ? t('Retry after {{time}}', { time: countdown })
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n')
+    return (
+      <StatusDetailTooltip label={detail}>
+        <div className='flex flex-col items-center gap-1'>
+          <Badge variant='warning' className='rounded-md'>
+            {refreshFailed
+              ? t('Credential refresh failed')
+              : t('Credential refresh pending')}
+          </Badge>
+          {refreshFailed && countdown && (
+            <span className='text-muted-foreground text-[11px]'>
+              {t('Retry after {{time}}', { time: countdown })}
+            </span>
+          )}
+        </div>
+      </StatusDetailTooltip>
+    )
+  }
+
+  if (temporaryWindowActive) {
     const countdown = accountStatusCountdown(
       account.temp_unschedulable_until,
       now
@@ -406,7 +476,7 @@ export function AccountStatusCell({ account }: { account: UpstreamAccount }) {
     )
   }
 
-  if (account.status === 'expired') {
+  if (account.status === 'expired' || expiredForScheduling) {
     return (
       <Badge variant='secondary' className='rounded-md'>
         {t('Expired status')}
@@ -424,7 +494,7 @@ export function AccountStatusCell({ account }: { account: UpstreamAccount }) {
 
   return (
     <Badge variant='success' className='rounded-md'>
-      {t('Normal status')}
+      {t('Available for scheduling')}
     </Badge>
   )
 }
@@ -439,10 +509,19 @@ export function AccountSchedulingCell({
   onChange: (checked: boolean) => void
 }) {
   const { t } = useTranslation()
+  const expiredForScheduling = accountExpiredForScheduling(account, Date.now())
+  const refreshBlocked = upstreamOAuthRefreshBlocksScheduling(
+    account.temp_unschedulable_reason
+  )
   return (
     <Switch
       checked={account.schedulable}
-      disabled={busy || account.status === 'expired'}
+      disabled={
+        busy ||
+        account.status === 'expired' ||
+        expiredForScheduling ||
+        refreshBlocked
+      }
       size='lg'
       variant='success'
       aria-label={t('Toggle scheduling for {{name}}', { name: account.name })}
@@ -557,6 +636,7 @@ function UsageWindow({
 
 export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [usage, setUsage] = useState<UpstreamAccountQuotaUsage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -567,6 +647,12 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   const supported = account.platform === 'openai' && account.type === 'oauth'
   const windows = useMemo(() => classifyWindows(usage), [usage])
   const credits = usage?.rate_limit_reset_credits?.available_count ?? 0
+  const refreshSchedulingState = useCallback(() => {
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['upstream-accounts'] }),
+      queryClient.invalidateQueries({ queryKey: ['upstream-account-pools'] }),
+    ])
+  }, [queryClient])
 
   useEffect(() => {
     if (!usage) return
@@ -592,11 +678,12 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
             ? queryError.message
             : t('Failed to fetch usage')
         setError(message)
+        refreshSchedulingState()
       } finally {
         setLoading(false)
       }
     },
-    [account.id, t]
+    [account.id, refreshSchedulingState, t]
   )
 
   useEffect(() => {
@@ -622,6 +709,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
             ? queryError.message
             : t('Failed to fetch usage')
         )
+        refreshSchedulingState()
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -629,7 +717,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
     return () => {
       active = false
     }
-  }, [account.id, supported, t])
+  }, [account.id, refreshSchedulingState, supported, t])
 
   const reset = async () => {
     setResetting(true)
@@ -644,6 +732,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
       setResetMessage(t('Quota reset successfully'))
     } catch (error) {
       setError(error instanceof Error ? error.message : t('Reset failed'))
+      refreshSchedulingState()
     } finally {
       setResetting(false)
     }
@@ -668,12 +757,22 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
           </>
         )}
         {error && (
-          <span
-            className='text-destructive block max-w-44 truncate text-[10px]'
-            title={error}
+          <StatusDetailTooltip
+            label={`${t(
+              'Usage query errors are shown separately. Credential refresh failures may pause scheduling.'
+            )}\n${error}`}
           >
-            {error}
-          </span>
+            <span className='inline-flex items-center gap-1'>
+              <Badge variant='warning' className='rounded-md'>
+                {t('Usage unavailable')}
+              </Badge>
+              <HugeiconsIcon
+                icon={InformationCircleIcon}
+                className='text-amber-600 size-3.5'
+                strokeWidth={2}
+              />
+            </span>
+          </StatusDetailTooltip>
         )}
         {!error && resetMessage && (
           <span className='text-success block max-w-44 truncate text-[10px]'>

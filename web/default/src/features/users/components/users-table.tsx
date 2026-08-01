@@ -176,7 +176,12 @@ export function UsersTable() {
       globalFilter,
       pagination,
     },
-    enableRowSelection: true,
+    enableRowSelection: (row) =>
+      currentUserRole >= ROLE.ADMIN &&
+      !isUserDeleted(row.original) &&
+      (currentUserRole === ROLE.SUPER_ADMIN ||
+        currentUserRole > row.original.role),
+    getRowId: (row) => String(row.id),
     onRowSelectionChange: setRowSelection,
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,

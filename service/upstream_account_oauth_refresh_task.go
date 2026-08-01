@@ -27,10 +27,13 @@ const (
 )
 
 var (
-	upstreamOAuthRefreshOnce    sync.Once
-	upstreamOAuthRefreshRunning atomic.Bool
-	upstreamOAuthRefreshLocal   sync.Map
-	upstreamOAuthRefreshUnlock  = redis.NewScript(`
+	upstreamOAuthRefreshOnce                 sync.Once
+	upstreamOAuthRefreshRunning              atomic.Bool
+	upstreamOAuthRefreshLocal                sync.Map
+	errUpstreamOAuthRefreshLocked            = errors.New("upstream OAuth account refresh is already running")
+	errUpstreamOAuthRefreshUnsupported       = errors.New("account does not support OAuth refresh")
+	errUpstreamOAuthRefreshExternallyManaged = errors.New("OAuth refresh is owned by an external system")
+	upstreamOAuthRefreshUnlock               = redis.NewScript(`
 if redis.call('GET', KEYS[1]) == ARGV[1] then
   return redis.call('DEL', KEYS[1])
 end
@@ -93,7 +96,8 @@ func runUpstreamAccountOAuthRefreshOnce() {
 			Where("(platform = ? AND type = ?) OR (platform = ? AND type IN ?)",
 				constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth,
 				constant.UpstreamPlatformAnthropic, []string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeSetupToken}).
-			Where("temp_unschedulable_reason <> ? OR temp_unschedulable_until IS NULL OR temp_unschedulable_until <= ?", "oauth_refresh_failed", now).
+			Where("temp_unschedulable_reason <> ?", constant.UpstreamAccountReasonOAuthRefreshPermanent).
+			Where("temp_unschedulable_reason <> ? OR temp_unschedulable_until IS NULL OR temp_unschedulable_until <= ?", constant.UpstreamAccountReasonOAuthRefreshFailed, now).
 			Order("id ASC").
 			Limit(upstreamOAuthRefreshBatchSize).
 			Find(&accounts).Error
@@ -120,7 +124,7 @@ func runUpstreamAccountOAuthRefreshOnce() {
 				continue
 			}
 			if err != nil {
-				recordUpstreamOAuthRefreshFailure(account.Id)
+				recordUpstreamOAuthRefreshFailure(account.Id, err)
 				logger.LogWarn(context.Background(), fmt.Sprintf("upstream account OAuth refresh failed: account_id=%d result=refresh_failed", account.Id))
 				continue
 			}
@@ -138,12 +142,11 @@ func shouldRefreshUpstreamOAuthAccount(account *model.UpstreamAccount, refreshBe
 		account.OAuthRefreshOwner == constant.UpstreamOAuthRefreshOwnerStarNexus &&
 		account.ExpiresAt != nil &&
 		*account.ExpiresAt <= refreshBefore &&
-		!(account.TempUnschedulableReason == "oauth_refresh_failed" && account.TempUnschedulableUntil != nil && *account.TempUnschedulableUntil > common.GetTimestamp()) &&
+		account.TempUnschedulableReason != constant.UpstreamAccountReasonOAuthRefreshPermanent &&
+		!(account.TempUnschedulableReason == constant.UpstreamAccountReasonOAuthRefreshFailed && account.TempUnschedulableUntil != nil && *account.TempUnschedulableUntil > common.GetTimestamp()) &&
 		account.Status != constant.UpstreamStatusInactive &&
 		account.CredentialCiphertext != ""
 }
-
-var errUpstreamOAuthRefreshLocked = errors.New("upstream OAuth account refresh is already running")
 
 func withUpstreamOAuthRefreshLock(ctx context.Context, accountId int, ttl time.Duration, fn func(context.Context) error) error {
 	if accountId <= 0 || ttl <= 0 || fn == nil {
@@ -177,14 +180,33 @@ func withUpstreamOAuthRefreshLock(ctx context.Context, accountId int, ttl time.D
 	return fn(ctx)
 }
 
-func recordUpstreamOAuthRefreshFailure(accountId int) {
+func recordUpstreamOAuthRefreshFailure(accountId int, refreshErr error) {
+	if accountId <= 0 || refreshErr == nil {
+		return
+	}
 	now := common.GetTimestamp()
-	until := now + int64(upstreamOAuthRefreshFailureBackoff.Seconds())
-	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(map[string]any{
-		"error_message": "oauth_refresh_failed", "temp_unschedulable_until": until,
-		"temp_unschedulable_reason": "oauth_refresh_failed", "updated_at": now,
-	}).Error
-	recordUpstreamAccountEvent(accountId, 0, "oauth_refresh", "error", "oauth_refresh_failed", nil)
+	updates := map[string]any{
+		"error_message":             "OAuth credential refresh failed; retry is pending",
+		"temp_unschedulable_until":  now + int64(upstreamOAuthRefreshFailureBackoff.Seconds()),
+		"temp_unschedulable_reason": constant.UpstreamAccountReasonOAuthRefreshFailed,
+		"updated_at":                now,
+	}
+	result := "retry_pending"
+	message := "OAuth credential refresh failed; retry is pending"
+	if isNonRetryableUpstreamOAuthRefreshError(refreshErr) {
+		updates["status"] = constant.UpstreamStatusError
+		updates["schedulable"] = false
+		updates["error_message"] = "OAuth credentials require reauthorization"
+		updates["temp_unschedulable_until"] = nil
+		updates["temp_unschedulable_reason"] = constant.UpstreamAccountReasonOAuthRefreshPermanent
+		result = "reauthorization_required"
+		message = "OAuth credentials require reauthorization"
+	}
+	dbResult := model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates)
+	if dbResult.Error != nil || dbResult.RowsAffected != 1 {
+		return
+	}
+	recordUpstreamAccountEvent(accountId, 0, "oauth_refresh", result, message, nil)
 }
 
 func cleanupUpstreamOAuthSessions(now int64) {

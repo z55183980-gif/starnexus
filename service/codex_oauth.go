@@ -114,16 +114,24 @@ func refreshCodexOAuthToken(
 	defer resp.Body.Close()
 
 	var payload struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int    `json:"expires_in"`
+		AccessToken      string `json:"access_token"`
+		RefreshToken     string `json:"refresh_token"`
+		ExpiresIn        int    `json:"expires_in"`
+		Error            any    `json:"error"`
+		ErrorDescription string `json:"error_description"`
+		Message          string `json:"message"`
 	}
 
 	if err := common.DecodeJson(resp.Body, &payload); err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("codex oauth refresh failed: status=%d", resp.StatusCode)
+		errorPayload, _ := payload.Error.(map[string]any)
+		return nil, &upstreamOAuthTokenRefreshError{
+			Provider: "Codex", Operation: "refresh", StatusCode: resp.StatusCode,
+			Code:        firstUpstreamErrorString(payload.Error, errorPayload["code"], errorPayload["type"]),
+			Description: firstUpstreamErrorString(payload.ErrorDescription, payload.Message, errorPayload["message"]),
+		}
 	}
 
 	if strings.TrimSpace(payload.AccessToken) == "" || strings.TrimSpace(payload.RefreshToken) == "" || payload.ExpiresIn <= 0 {

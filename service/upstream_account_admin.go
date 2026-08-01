@@ -64,17 +64,19 @@ type UpstreamAccountMetadata struct {
 
 type UpstreamAccountPoolView struct {
 	model.UpstreamAccountPool
-	AccountCount           int64  `json:"account_count"`
-	ActiveCount            int64  `json:"active_count"`
-	ReadyCount             int64  `json:"ready_count"`
-	ChannelCount           int64  `json:"channel_count"`
-	PublishedChannelId     *int   `json:"published_channel_id"`
-	PublishedChannelStatus *int   `json:"published_channel_status"`
-	PublishedModelCount    int    `json:"published_model_count"`
-	AttemptCount24h        int64  `json:"attempt_count_24h"`
-	SuccessCount24h        int64  `json:"success_count_24h"`
-	ErrorCount24h          int64  `json:"error_count_24h"`
-	LastEventAt            *int64 `json:"last_event_at"`
+	AccountCount            int64  `json:"account_count"`
+	ActiveCount             int64  `json:"active_count"`
+	ReadyCount              int64  `json:"ready_count"`
+	TemporarilyLimitedCount int64  `json:"temporarily_limited_count"`
+	SchedulerAvailable      bool   `json:"scheduler_available"`
+	ChannelCount            int64  `json:"channel_count"`
+	PublishedChannelId      *int   `json:"published_channel_id"`
+	PublishedChannelStatus  *int   `json:"published_channel_status"`
+	PublishedModelCount     int    `json:"published_model_count"`
+	AttemptCount24h         int64  `json:"attempt_count_24h"`
+	SuccessCount24h         int64  `json:"success_count_24h"`
+	ErrorCount24h           int64  `json:"error_count_24h"`
+	LastEventAt             *int64 `json:"last_event_at"`
 }
 
 type UpstreamAccountPoolCapabilities struct {
@@ -550,12 +552,15 @@ func populateUpstreamAccountPoolViews(views []UpstreamAccountPoolView) error {
 	if len(views) == 0 {
 		return nil
 	}
+	router, routerErr := GetConfiguredUpstreamAccountRouter()
+	schedulerAvailable := routerErr == nil && router != nil && router.leaseManager != nil
 	poolIds := make([]int, 0, len(views))
 	viewsById := make(map[int]*UpstreamAccountPoolView, len(views))
 	for i := range views {
 		if views[i].Id <= 0 {
 			return errors.New("invalid upstream account pool stats request")
 		}
+		views[i].SchedulerAvailable = schedulerAvailable
 		poolIds = append(poolIds, views[i].Id)
 		viewsById[views[i].Id] = &views[i]
 	}
@@ -587,17 +592,40 @@ func populateUpstreamAccountPoolViews(views []UpstreamAccountPoolView) error {
 	}
 
 	now := common.GetTimestamp()
+	eligibleAccountCountQuery := func() *gorm.DB {
+		return baseAccountCountQuery().
+			Where("(accounts.auto_pause_on_expired = ? OR accounts.expires_at IS NULL OR accounts.expires_at > ?)", false, now)
+	}
 	var readyCounts []upstreamAccountPoolCountRow
-	if err := baseAccountCountQuery().
-		Where("(accounts.auto_pause_on_expired = ? OR accounts.expires_at IS NULL OR accounts.expires_at > ?)", false, now).
+	if err := eligibleAccountCountQuery().
 		Where("(accounts.rate_limit_reset_at IS NULL OR accounts.rate_limit_reset_at <= ?)", now).
 		Where("(accounts.overload_until IS NULL OR accounts.overload_until <= ?)", now).
 		Where("(accounts.temp_unschedulable_until IS NULL OR accounts.temp_unschedulable_until <= ?)", now).
+		Where("accounts.temp_unschedulable_reason NOT IN ?", []string{
+			constant.UpstreamAccountReasonOAuthRefreshPending,
+			constant.UpstreamAccountReasonOAuthRefreshFailed,
+			constant.UpstreamAccountReasonOAuthRefreshPermanent,
+		}).
 		Group("pool_members.pool_id").Scan(&readyCounts).Error; err != nil {
 		return err
 	}
 	for _, row := range readyCounts {
 		viewsById[row.PoolId].ReadyCount = row.Count
+	}
+
+	var temporarilyLimitedCounts []upstreamAccountPoolCountRow
+	if err := eligibleAccountCountQuery().
+		Where("(accounts.rate_limit_reset_at > ? OR accounts.overload_until > ? OR accounts.temp_unschedulable_until > ? OR accounts.temp_unschedulable_reason IN ?)",
+			now, now, now, []string{
+				constant.UpstreamAccountReasonOAuthRefreshPending,
+				constant.UpstreamAccountReasonOAuthRefreshFailed,
+				constant.UpstreamAccountReasonOAuthRefreshPermanent,
+			}).
+		Group("pool_members.pool_id").Scan(&temporarilyLimitedCounts).Error; err != nil {
+		return err
+	}
+	for _, row := range temporarilyLimitedCounts {
+		viewsById[row.PoolId].TemporarilyLimitedCount = row.Count
 	}
 
 	var channels []model.Channel
@@ -1220,6 +1248,10 @@ func RecoverUpstreamAccountRuntimeState(id int, scope UpstreamAccountRecoverySco
 		var account model.UpstreamAccount
 		if err := tx.First(&account, id).Error; err != nil {
 			return err
+		}
+		if (scope == UpstreamAccountRecoveryAll || scope == UpstreamAccountRecoveryTemporary) &&
+			constant.UpstreamAccountOAuthRefreshBlocksScheduling(account.TempUnschedulableReason) {
+			return errors.New("OAuth credential refresh must succeed before scheduling can be restored")
 		}
 		updates := map[string]any{"updated_at": common.GetTimestamp()}
 		if scope == UpstreamAccountRecoveryAll || scope == UpstreamAccountRecoveryRateLimit {

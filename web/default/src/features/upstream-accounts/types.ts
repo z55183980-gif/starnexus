@@ -16,6 +16,10 @@ export type UpstreamAccountType =
   | 'bedrock'
   | 'service_account'
 export type UpstreamOAuthRefreshOwner = 'external' | 'starnexus'
+export type UpstreamOAuthRefreshState =
+  | 'oauth_refresh_pending'
+  | 'oauth_refresh_failed'
+  | 'oauth_refresh_permanent'
 export type UpstreamProxyProtocol = 'http' | 'https' | 'socks5' | 'socks5h'
 export type UpstreamProxyFallback = 'none' | 'direct' | 'proxy'
 export type UpstreamProxyStatus = 'active' | 'inactive' | 'expired'
@@ -32,6 +36,8 @@ export interface UpstreamAccountPool {
   account_count: number
   active_count: number
   ready_count: number
+  temporarily_limited_count: number
+  scheduler_available: boolean
   channel_count: number
   published_channel_id?: number | null
   published_channel_status?: number | null
@@ -130,6 +136,16 @@ export interface UpstreamAccount {
   }
   created_at: number
   updated_at: number
+}
+
+export function upstreamOAuthRefreshBlocksScheduling(
+  reason: string | null | undefined
+): reason is UpstreamOAuthRefreshState {
+  return (
+    reason === 'oauth_refresh_pending' ||
+    reason === 'oauth_refresh_failed' ||
+    reason === 'oauth_refresh_permanent'
+  )
 }
 
 export interface UpstreamAccountRateLimitWindow {

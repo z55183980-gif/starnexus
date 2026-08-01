@@ -133,12 +133,17 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 			updates["status"] = constant.UpstreamStatusError
 			updates["schedulable"] = false
 			updates["temp_unschedulable_until"] = nil
-			updates["temp_unschedulable_reason"] = "authentication_failed"
+			if isRefreshableUpstreamOAuthAccount(account.Platform, account.Type) &&
+				account.OAuthRefreshOwner == constant.UpstreamOAuthRefreshOwnerStarNexus {
+				updates["temp_unschedulable_reason"] = constant.UpstreamAccountReasonOAuthRefreshPermanent
+			} else {
+				updates["temp_unschedulable_reason"] = constant.UpstreamAccountReasonAuthenticationFailed
+			}
 		} else {
 			updates["status"] = constant.UpstreamStatusActive
 			updates["schedulable"] = true
 			updates["temp_unschedulable_until"] = now + int64((10 * time.Minute).Seconds())
-			updates["temp_unschedulable_reason"] = "oauth_refresh_pending"
+			updates["temp_unschedulable_reason"] = constant.UpstreamAccountReasonOAuthRefreshPending
 			refreshAfterUpdate = true
 		}
 	case apiErr.StatusCode == 402:
@@ -189,14 +194,7 @@ func refreshUpstreamAccountAfterAuthenticationFailure(accountId int) {
 	gopool.Go(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if _, err := RefreshUpstreamOAuthAccount(ctx, accountId); err != nil {
-			now := common.GetTimestamp()
-			_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(map[string]any{
-				"temp_unschedulable_until":  now + int64((10 * time.Minute).Seconds()),
-				"temp_unschedulable_reason": "oauth_refresh_failed",
-				"updated_at":                now,
-			}).Error
-		}
+		_, _ = RefreshUpstreamOAuthAccount(ctx, accountId)
 	})
 }
 

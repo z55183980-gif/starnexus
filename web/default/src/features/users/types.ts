@@ -100,6 +100,52 @@ export interface SearchUsersParams {
   page_size?: number
 }
 
+export interface UserStatisticsSummary {
+  total_users: number
+  enabled_users: number
+  disabled_users: number
+  active_users: number
+  new_users: number
+  new_previous_period: number
+  total_quota: number
+  total_used_quota: number
+  total_request_count: number
+}
+
+export interface UserStatisticsParams {
+  start_date: string
+  end_date: string
+}
+
+export interface UserStatisticsTrendPoint {
+  date: string
+  count: number
+}
+
+export interface UserStatisticsDistribution {
+  name: string
+  value?: number
+  count: number
+}
+
+export interface UserStatisticsRecentUser {
+  id: number
+  username: string
+  display_name: string
+  role: number
+  status: number
+  group: string
+  created_at: number
+  last_login_at: number
+}
+
+export interface UserStatistics {
+  summary: UserStatisticsSummary
+  registration_trend: UserStatisticsTrendPoint[]
+  group_distribution: UserStatisticsDistribution[]
+  recent_users: UserStatisticsRecentUser[]
+}
+
 export interface UserFormData {
   username: string
   display_name: string
@@ -134,6 +180,15 @@ export interface ManageUserQuotaPayload {
   action: 'add_quota'
   mode: QuotaAdjustMode
   value: number
+}
+
+export interface BatchUpdateUserGroupPayload {
+  ids: number[]
+  group: string
+}
+
+export interface BatchUpdateUsersResult {
+  updated_count: number
 }
 
 // ============================================================================

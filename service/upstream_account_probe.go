@@ -721,15 +721,18 @@ func recordUpstreamAccountTestState(account *model.UpstreamAccount, success bool
 	now := common.GetTimestamp()
 	updates := map[string]any{"updated_at": now}
 	if success {
-		// Match SUB2API recovery semantics: a successful test may recover an
-		// error state, but it must not override an operator's manual pause.
-		if account.Status == constant.UpstreamStatusError {
-			updates["status"] = constant.UpstreamStatusActive
-			updates["schedulable"] = true
-			updates["error_message"] = ""
+		credentialRefreshBlocked := constant.UpstreamAccountOAuthRefreshBlocksScheduling(account.TempUnschedulableReason)
+		if !credentialRefreshBlocked {
+			// A successful test may recover an ordinary runtime error, but it
+			// must not override an operator's manual pause or OAuth repair state.
+			if account.Status == constant.UpstreamStatusError {
+				updates["status"] = constant.UpstreamStatusActive
+				updates["schedulable"] = true
+				updates["error_message"] = ""
+			}
+			updates["temp_unschedulable_until"] = nil
+			updates["temp_unschedulable_reason"] = ""
 		}
-		updates["temp_unschedulable_until"] = nil
-		updates["temp_unschedulable_reason"] = ""
 		updates["rate_limit_reset_at"] = nil
 		updates["rate_limited_at"] = nil
 		updates["overload_until"] = nil

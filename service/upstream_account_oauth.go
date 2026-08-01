@@ -20,6 +20,29 @@ const (
 	upstreamOAuthSessionTTL        = 10 * time.Minute
 )
 
+type upstreamOAuthTokenRefreshError struct {
+	Provider    string
+	Operation   string
+	StatusCode  int
+	Code        string
+	Description string
+}
+
+func (err *upstreamOAuthTokenRefreshError) Error() string {
+	if err == nil {
+		return "OAuth token refresh failed"
+	}
+	operation := strings.TrimSpace(err.Operation)
+	if operation == "" {
+		operation = "refresh"
+	}
+	code := strings.TrimSpace(err.Code)
+	if code != "" {
+		return fmt.Sprintf("%s OAuth %s failed: status=%d code=%s", err.Provider, operation, err.StatusCode, code)
+	}
+	return fmt.Sprintf("%s OAuth %s failed: status=%d", err.Provider, operation, err.StatusCode)
+}
+
 type UpstreamOAuthStartInput struct {
 	AccountId      *int
 	ProxyId        *int
@@ -268,6 +291,9 @@ func RefreshUpstreamOAuthAccount(ctx context.Context, accountId int) (*UpstreamA
 		result, refreshErr = refreshUpstreamOAuthAccountUnlocked(lockCtx, accountId)
 		return refreshErr
 	})
+	if shouldRecordUpstreamOAuthRefreshFailure(accountId, err) {
+		recordUpstreamOAuthRefreshFailure(accountId, err)
+	}
 	return result, err
 }
 
@@ -280,10 +306,10 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 		return nil, err
 	}
 	if !isRefreshableUpstreamOAuthAccount(account.Platform, account.Type) {
-		return nil, errors.New("account does not support OAuth refresh")
+		return nil, errUpstreamOAuthRefreshUnsupported
 	}
 	if account.OAuthRefreshOwner != constant.UpstreamOAuthRefreshOwnerStarNexus {
-		return nil, errors.New("OAuth refresh is owned by an external system")
+		return nil, errUpstreamOAuthRefreshExternallyManaged
 	}
 	credentials, err := DecryptUpstreamAccountCredentials(&account)
 	if err != nil {
@@ -334,7 +360,7 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 		credentials["expired"] = result.ExpiresAt.Format(time.RFC3339)
 		expiresAt = result.ExpiresAt.Unix()
 	default:
-		return nil, errors.New("unsupported OAuth platform")
+		return nil, errUpstreamOAuthRefreshUnsupported
 	}
 	if err := replaceUpstreamOAuthCredential(account.Id, credentials, expiresAt, account.ProxyId); err != nil {
 		return nil, err
@@ -387,6 +413,60 @@ func isRefreshableUpstreamOAuthAccount(platform string, accountType string) bool
 	accountType = strings.ToLower(strings.TrimSpace(accountType))
 	return (platform == constant.UpstreamPlatformOpenAI && accountType == constant.UpstreamAccountTypeOAuth) ||
 		(platform == constant.UpstreamPlatformAnthropic && (accountType == constant.UpstreamAccountTypeOAuth || accountType == constant.UpstreamAccountTypeSetupToken))
+}
+
+func shouldRecordUpstreamOAuthRefreshFailure(accountId int, err error) bool {
+	return accountId > 0 && err != nil &&
+		!errors.Is(err, errUpstreamOAuthRefreshLocked) &&
+		!errors.Is(err, errUpstreamOAuthRefreshUnsupported) &&
+		!errors.Is(err, errUpstreamOAuthRefreshExternallyManaged) &&
+		!errors.Is(err, gorm.ErrRecordNotFound)
+}
+
+func isNonRetryableUpstreamOAuthRefreshError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var tokenErr *upstreamOAuthTokenRefreshError
+	if errors.As(err, &tokenErr) {
+		code := strings.ToLower(strings.TrimSpace(tokenErr.Code))
+		switch code {
+		case "invalid_grant", "invalid_refresh_token", "token_expired", "app_session_terminated",
+			"refresh_token_reused", "refresh_token_invalidated", "invalid_client",
+			"unauthorized_client", "access_denied":
+			return true
+		}
+		return tokenErr.StatusCode == 400 || tokenErr.StatusCode == 401 || tokenErr.StatusCode == 403
+	}
+	message := strings.ToLower(err.Error())
+	for _, fragment := range []string{
+		"no refresh_token", "no refresh token", "empty refresh_token",
+		"invalid_grant", "invalid_refresh_token", "token_expired",
+		"refresh token expired", "refresh token is expired", "refresh token revoked",
+		"refresh token reused", "refresh token invalid", "refresh_token_reused",
+		"refresh_token_invalidated", "invalid_client", "unauthorized_client", "access_denied",
+	} {
+		if strings.Contains(message, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseUpstreamOAuthTokenErrorBody(body []byte) (string, string) {
+	if len(body) == 0 {
+		return "", ""
+	}
+	var payload map[string]any
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return "", ""
+	}
+	errorPayload, _ := payload["error"].(map[string]any)
+	code := firstUpstreamErrorString(payload["error"], errorPayload["code"], errorPayload["type"], payload["code"])
+	description := firstUpstreamErrorString(
+		payload["error_description"], errorPayload["message"], payload["detail"], payload["message"],
+	)
+	return code, description
 }
 
 func resolveOAuthProxyURL(proxyId *int) (string, error) {
