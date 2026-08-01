@@ -10,7 +10,9 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/relay/channel/codex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -69,4 +71,39 @@ func TestPreparePassthroughRequestBodyKeepsExplicitChannelBypass(t *testing.T) {
 	data, err := io.ReadAll(body)
 	require.NoError(t, err)
 	require.JSONEq(t, raw, string(data))
+}
+
+func TestPreparePassthroughRequestBodyNormalizesResponsesLite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
+		"model":"gpt-5.6-sol",
+		"input":"hello",
+		"reasoning":{"effort":"high","context":"current_turn"},
+		"tools":[{"type":"namespace","name":"collaboration","tools":[]}]
+	}`))
+	c.Request.Header.Set(codex.ResponsesLiteHeader, "true")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, constant.UpstreamPlatformOpenAI)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, constant.UpstreamAccountTypeOAuth)
+
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiType:        constant.APITypeCodex,
+			ChannelType:    constant.ChannelTypeCodex,
+			ChannelSetting: dto.ChannelSettings{PassThroughBodyEnabled: true},
+		},
+	}
+	body, closer, apiErr := preparePassthroughRequestBody(c, info)
+	require.Nil(t, apiErr)
+	if closer != nil {
+		defer closer.Close()
+	}
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.Equal(t, "all_turns", gjson.GetBytes(data, "reasoning.context").String())
+	require.Equal(t, "reasoning.encrypted_content", gjson.GetBytes(data, "include.0").String())
+	require.False(t, gjson.GetBytes(data, `tools.#(type=="namespace")`).Exists())
+	require.Equal(t, "collaboration", gjson.GetBytes(data, `input.#(type=="additional_tools").tools.0.name`).String())
 }

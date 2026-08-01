@@ -71,3 +71,19 @@ func TestOpenAIResponsesRequestPreserveExplicitZeroValues(t *testing.T) {
 	require.True(t, gjson.GetBytes(encoded, "stream").Exists())
 	require.True(t, gjson.GetBytes(encoded, "top_p").Exists())
 }
+
+func TestOpenAIResponsesRequestPreservesCodexLiteFields(t *testing.T) {
+	raw := []byte(`{
+		"model":"gpt-5.6-sol",
+		"input":"hello",
+		"reasoning":{"effort":"max","context":"all_turns"},
+		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}
+	}`)
+
+	var req OpenAIResponsesRequest
+	require.NoError(t, common.Unmarshal(raw, &req))
+	encoded, err := common.Marshal(req)
+	require.NoError(t, err)
+	require.Equal(t, "all_turns", gjson.GetBytes(encoded, "reasoning.context").String())
+	require.Equal(t, "true", gjson.GetBytes(encoded, "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite").String())
+}

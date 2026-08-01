@@ -115,12 +115,18 @@ func TestParseResponsesWSClientEvent(t *testing.T) {
 		"model":"gpt-5",
 		"input":"hello",
 		"previous_response_id":"resp_1",
+		"reasoning":{"effort":"high","context":"all_turns"},
+		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"},
 		"generate":false
 	}`))
 	require.Nil(t, apiErr)
 	require.Equal(t, "response.create", event.Type)
 	require.Equal(t, "gpt-5", request.Model)
 	require.Equal(t, "resp_1", request.PreviousResponseID)
+	require.NotNil(t, request.Reasoning)
+	require.NotNil(t, request.Reasoning.Context)
+	require.Equal(t, "all_turns", *request.Reasoning.Context)
+	require.Equal(t, "true", gjson.GetBytes(request.ClientMetadata, "ws_request_header_x_openai_internal_codex_responses_lite").String())
 	require.Contains(t, envelope, "generate")
 }
 
@@ -145,6 +151,24 @@ func TestBuildResponsesWSOutboundEvent(t *testing.T) {
 		"previous_response_id":null,
 		"generate":false
 	}`, string(outbound))
+}
+
+func TestBuildResponsesWSOutboundEventKeepsLiteFieldsFromPreparedRequest(t *testing.T) {
+	t.Parallel()
+	_, request, original, apiErr := parseResponsesWSClientEvent([]byte(`{
+		"type":"response.create",
+		"model":"gpt-5.6-sol",
+		"input":"hello",
+		"reasoning":{"effort":"high","context":"all_turns"},
+		"client_metadata":{"ws_request_header_x_openai_internal_codex_responses_lite":"true"}
+	}`))
+	require.Nil(t, apiErr)
+	prepared, err := common.Marshal(request)
+	require.NoError(t, err)
+	outbound, err := buildResponsesWSOutboundEvent(original, prepared)
+	require.NoError(t, err)
+	require.Equal(t, "all_turns", gjson.GetBytes(outbound, "reasoning.context").String())
+	require.Equal(t, "true", gjson.GetBytes(outbound, "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite").String())
 }
 
 func TestSupportsResponsesWebSocketChannel(t *testing.T) {

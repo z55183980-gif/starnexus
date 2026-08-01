@@ -38,7 +38,8 @@ func preparePassthroughRequestBody(c *gin.Context, info *relaycommon.RelayInfo) 
 	accountMappedModel := strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountMappedModel))
 	needsAccountModelMapping := accountMappedModel != "" &&
 		(accountPassthrough || info.RelayMode == relayconstant.RelayModeResponsesCompact)
-	if !accountPassthrough && !needsAccountModelMapping {
+	needsResponsesLiteNormalization := info.RelayMode == relayconstant.RelayModeResponses && selectedResponsesLiteHTTP(c, info)
+	if !accountPassthrough && !needsAccountModelMapping && !needsResponsesLiteNormalization {
 		return common.ReaderOnly(storage), nil, nil
 	}
 
@@ -69,6 +70,12 @@ func preparePassthroughRequestBody(c *gin.Context, info *relaycommon.RelayInfo) 
 			if err != nil {
 				return nil, nil, newAPIErrorFromParamOverride(err)
 			}
+		}
+	}
+	if needsResponsesLiteNormalization {
+		jsonData, _, err = normalizeSelectedResponsesLitePayload(c, info, jsonData, false)
+		if err != nil {
+			return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
 	}
 	if bytes.Equal(jsonData, rawBody) {

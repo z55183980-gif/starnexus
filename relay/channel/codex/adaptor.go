@@ -109,7 +109,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	// ChatGPT's Codex HTTP endpoint does not accept previous_response_id. SUB2API
 	// only forwards it when the chosen upstream transport is Responses WS v2;
 	// HTTP (including client-WS/http_bridge) must use a full input payload.
-	if !codexResponsesUsesNativeWebSocket(c, info) {
+	if !ResponsesUsesNativeWebSocket(c, info) {
 		request.PreviousResponseID = ""
 	}
 	// codex: store must be false
@@ -120,7 +120,9 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	return request, nil
 }
 
-func codexResponsesUsesNativeWebSocket(c *gin.Context, info *relaycommon.RelayInfo) bool {
+// ResponsesUsesNativeWebSocket reports whether a client Responses WebSocket
+// turn is forwarded over an upstream WebSocket instead of the HTTP bridge.
+func ResponsesUsesNativeWebSocket(c *gin.Context, info *relaycommon.RelayInfo) bool {
 	if c == nil || info == nil || !common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
 		return false
 	}
@@ -184,6 +186,12 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 			}
 			req.Set(name, value)
 		}
+	}
+	// Native Responses WS conveys Lite per turn through client_metadata. HTTP
+	// and the client-WS/SSE bridge need the equivalent real request header.
+	if info != nil && info.RelayMode == relayconstant.RelayModeResponses &&
+		!ResponsesUsesNativeWebSocket(c, info) && IsResponsesLiteHeader(c.GetHeader(ResponsesLiteHeader)) {
+		req.Set(ResponsesLiteHeader, "true")
 	}
 
 	key := strings.TrimSpace(info.ApiKey)

@@ -71,6 +71,16 @@ func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInf
 			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 	}
+	jsonData, isResponsesLite, err := normalizeSelectedResponsesLitePayload(c, info, jsonData, true)
+	if err != nil {
+		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if isResponsesLite && forceStream {
+		// A client WebSocket carries the Lite request header through
+		// client_metadata. The SSE/HTTP bridge must restore it as an actual
+		// upstream HTTP header for the same turn.
+		markResponsesLiteHTTPHeader(c)
+	}
 	logger.LogDebug(c, "responses websocket client request prepared: %d bytes", len(jsonData))
 	return jsonData, adaptor, nil
 }

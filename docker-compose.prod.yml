@@ -1,10 +1,12 @@
 # Production: StarNexus / new-api (Scheme A — PostgreSQL + Redis, pre-built image)
 #
-# PostgreSQL and Redis are external services on Server 3 (45.134.82.172).
+# PostgreSQL and Redis are external services on DB6 (67.230.183.84).
+# The application uses PgBouncer on 6432 and Redis on 6379/1.
 # This compose file runs only the application container.
 #
 # Setup:
-#   cp .env.prod .env
+#   Verify the server-local .env points to DB6; repository .env.prod* files
+#   contain historical topology and are not production sources of truth.
 #   docker compose -f docker-compose.prod.yml pull new-api
 #   docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate new-api
 #

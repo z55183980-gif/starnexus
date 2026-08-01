@@ -850,6 +850,9 @@ type OpenAIResponsesRequest struct {
 	Store                json.RawMessage `json:"store,omitempty"`
 	PromptCacheKey       json.RawMessage `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention json.RawMessage `json:"prompt_cache_retention,omitempty"`
+	// ClientMetadata carries Codex WebSocket turn metadata, including the
+	// Responses Lite request signal used by official clients.
+	ClientMetadata json.RawMessage `json:"client_metadata,omitempty"`
 	// SafetyIdentifier carries client identity for policy abuse detection.
 	// This field is filtered by default and can be enabled via channel setting allow_safety_identifier.
 	SafetyIdentifier json.RawMessage `json:"safety_identifier,omitempty"`
@@ -948,8 +951,9 @@ func (r *OpenAIResponsesRequest) GetToolsMap() []map[string]any {
 }
 
 type Reasoning struct {
-	Effort  string `json:"effort,omitempty"`
-	Summary string `json:"summary,omitempty"`
+	Effort  string  `json:"effort,omitempty"`
+	Summary string  `json:"summary,omitempty"`
+	Context *string `json:"context,omitempty"`
 }
 
 type Input struct {

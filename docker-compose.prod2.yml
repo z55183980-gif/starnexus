@@ -1,9 +1,11 @@
-# Server 2: app only.
+# Production slave application nodes (currently verified on S3 and S4): app only.
 #
-# PostgreSQL and Redis are external services on Server 3 (45.134.82.172).
+# PostgreSQL and Redis are external services on DB6 (67.230.183.84).
+# The application uses PgBouncer on 6432 and Redis on 6379/1.
 #
 # Setup:
-#   cp .env.prod2 .env
+#   Verify the server-local .env points to DB6; repository .env.prod* files
+#   contain historical topology and are not production sources of truth.
 #   docker compose -f docker-compose.prod2.yml pull new-api
 #   docker compose -f docker-compose.prod2.yml up -d --no-deps --force-recreate new-api
 #
