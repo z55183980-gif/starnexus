@@ -11,12 +11,15 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Edit02Icon,
   Loading03Icon,
+  RefreshIcon,
   Rocket01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { localHttpErrorMeta } from '@/lib/query-error-policy'
+import { cn } from '@/lib/utils'
+import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -41,13 +44,16 @@ import {
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
 import { MultiSelect } from '@/components/multi-select'
-import { getGroups } from '@/features/channels/api'
 import {
   FIELD_DESCRIPTIONS,
   FIELD_PLACEHOLDERS,
 } from '@/features/channels/constants'
 import { channelsQueryKeys } from '@/features/channels/lib'
-import { getUpstreamPoolCapabilities, publishUpstreamPoolChannel } from './api'
+import {
+  getUpstreamPoolCapabilities,
+  listAvailableChannelGroups,
+  publishUpstreamPoolChannel,
+} from './api'
 import type { ApiResponse, UpstreamAccountPool } from './types'
 
 type PublishPoolChannelDrawerProps = {
@@ -69,6 +75,34 @@ function errorMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string')
+}
+
+function logLoadFailure(endpoint: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error)
+  const status =
+    typeof error === 'object' &&
+    error !== null &&
+    'response' in error &&
+    typeof error.response === 'object' &&
+    error.response !== null &&
+    'status' in error.response &&
+    typeof error.response.status === 'number'
+      ? error.response.status
+      : undefined
+
+  // eslint-disable-next-line no-console
+  console.error('[PublishPoolChannelDrawer] Failed to load endpoint', {
+    endpoint,
+    status,
+    message,
+  })
+}
+
+const locallyHandledQueryMeta = localHttpErrorMeta([500])
+
 export function PublishPoolChannelDrawer({
   open,
   onOpenChange,
@@ -87,17 +121,45 @@ export function PublishPoolChannelDrawer({
     queryFn: async () =>
       requireResponseData(await getUpstreamPoolCapabilities(pool.id)),
     enabled: open,
+    meta: locallyHandledQueryMeta,
   })
   const groupsQuery = useQuery({
     queryKey: ['groups'],
-    queryFn: async () => requireResponseData(await getGroups()),
+    queryFn: async () =>
+      requireResponseData(await listAvailableChannelGroups()),
     enabled: open,
+    meta: locallyHandledQueryMeta,
   })
 
   const capabilities = capabilitiesQuery.data
+  const capabilityModels = useMemo(
+    () => stringList(capabilities?.models),
+    [capabilities?.models]
+  )
+  const publishedGroups = useMemo(
+    () => stringList(capabilities?.published_groups),
+    [capabilities?.published_groups]
+  )
+  const availableGroups = useMemo(
+    () => stringList(groupsQuery.data),
+    [groupsQuery.data]
+  )
   const isPublished = capabilities
     ? Boolean(capabilities.published_channel_id)
     : pool.channel_count > 0
+
+  useEffect(() => {
+    if (!capabilitiesQuery.error) return
+    logLoadFailure(
+      `/api/upstream/account-pools/${pool.id}/capabilities`,
+      capabilitiesQuery.error
+    )
+  }, [capabilitiesQuery.error, pool.id])
+
+  useEffect(() => {
+    if (!groupsQuery.error) return
+    logLoadFailure('/api/group/', groupsQuery.error)
+  }, [groupsQuery.error])
 
   useEffect(() => {
     if (!open) {
@@ -105,19 +167,15 @@ export function PublishPoolChannelDrawer({
       return
     }
     if (!capabilities || initializedPoolId.current === pool.id) return
-    setGroups(
-      capabilities.published_groups.length > 0
-        ? capabilities.published_groups
-        : ['default']
-    )
+    setGroups(publishedGroups.length > 0 ? publishedGroups : ['default'])
     setSubmitError('')
     initializedPoolId.current = pool.id
-  }, [capabilities, open, pool.id])
+  }, [capabilities, open, pool.id, publishedGroups])
 
   const groupOptions = useMemo(() => {
-    const options = new Set([...(groupsQuery.data || []), ...groups])
+    const options = new Set([...availableGroups, ...groups])
     return Array.from(options).map((group) => ({ label: group, value: group }))
-  }, [groups, groupsQuery.data])
+  }, [availableGroups, groups])
 
   const handleSave = async () => {
     if (groups.length === 0) {
@@ -157,12 +215,16 @@ export function PublishPoolChannelDrawer({
 
   const loading = capabilitiesQuery.isLoading || groupsQuery.isLoading
   const loadError = capabilitiesQuery.error || groupsQuery.error
+  const retrying = capabilitiesQuery.isFetching || groupsQuery.isFetching
   const canPublish =
     !loading &&
     !loadError &&
-    Boolean(capabilities?.models.length) &&
+    capabilityModels.length > 0 &&
     groups.length > 0 &&
     !saving
+  const retryLoading = () => {
+    void Promise.all([capabilitiesQuery.refetch(), groupsQuery.refetch()])
+  }
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -187,6 +249,23 @@ export function PublishPoolChannelDrawer({
               <AlertDescription>
                 {errorMessage(loadError, t('Failed to load'))}
               </AlertDescription>
+              <AlertAction>
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='outline'
+                  disabled={retrying}
+                  onClick={retryLoading}
+                >
+                  <HugeiconsIcon
+                    icon={retrying ? Loading03Icon : RefreshIcon}
+                    data-icon='inline-start'
+                    className={cn(retrying && 'animate-spin')}
+                    strokeWidth={2}
+                  />
+                  {t('Retry')}
+                </Button>
+              </AlertAction>
             </Alert>
           ) : capabilities ? (
             <>
@@ -205,7 +284,7 @@ export function PublishPoolChannelDrawer({
                       {capabilities.schedulable_account_count}
                     </Badge>
                     <Badge variant='secondary'>
-                      {t('Models')}: {capabilities.models.length}
+                      {t('Models')}: {capabilityModels.length}
                     </Badge>
                     {capabilities.passthrough_account_count > 0 && (
                       <Badge variant='outline'>
@@ -226,9 +305,9 @@ export function PublishPoolChannelDrawer({
                       </Badge>
                     )}
                   </div>
-                  {capabilities.models.length > 0 ? (
+                  {capabilityModels.length > 0 ? (
                     <div className='mt-2 flex max-h-40 flex-wrap gap-1 overflow-y-auto'>
-                      {capabilities.models.map((model) => (
+                      {capabilityModels.map((model) => (
                         <Badge key={model} variant='outline'>
                           {model}
                         </Badge>
@@ -285,7 +364,8 @@ export function PublishPoolChannelDrawer({
               icon={
                 saving ? Loading03Icon : isPublished ? Edit02Icon : Rocket01Icon
               }
-              className={saving ? 'animate-spin' : undefined}
+              data-icon='inline-start'
+              className={cn(saving && 'animate-spin')}
               strokeWidth={2}
             />
             {t(isPublished ? 'Save changes' : 'Publish as local channel')}

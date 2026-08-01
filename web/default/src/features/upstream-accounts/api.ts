@@ -61,6 +61,13 @@ export async function getUpstreamPoolCapabilities(
   return response.data
 }
 
+export async function listAvailableChannelGroups(): Promise<
+  ApiResponse<string[]>
+> {
+  const response = await api.get('/api/group/', localFeedbackApiConfig)
+  return response.data
+}
+
 export async function publishUpstreamPoolChannel(
   id: number,
   groups: string[]

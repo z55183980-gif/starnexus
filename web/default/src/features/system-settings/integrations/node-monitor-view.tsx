@@ -148,12 +148,7 @@ function ResourceUsageRing({
 }) {
   const safePercent = Math.min(100, Math.max(0, percent))
   return (
-    <div
-      className={cn(
-        'relative shrink-0',
-        compact ? 'size-12' : 'size-16'
-      )}
-    >
+    <div className={cn('relative shrink-0', compact ? 'size-12' : 'size-16')}>
       <svg
         viewBox='0 0 64 64'
         className='size-full -rotate-90'
@@ -218,16 +213,14 @@ export function RoutingNodeResourceOverview({
     },
     {
       label: t('Memory'),
-      value: status
-        ? `${formatBytes(status.memory_used)} / ${formatBytes(status.memory_total)}`
-        : '-',
+      value: status ? formatBytes(status.memory_used) : '-',
+      total: status ? formatBytes(status.memory_total) : undefined,
       percent: status?.memory_percent ?? 0,
     },
     {
       label: t('Disk'),
-      value: status
-        ? `${formatBytes(status.disk_used)} / ${formatBytes(status.disk_total)}`
-        : '-',
+      value: status ? formatBytes(status.disk_used) : '-',
+      total: status ? formatBytes(status.disk_total) : undefined,
       percent: status?.disk_percent ?? 0,
     },
   ]
@@ -249,10 +242,23 @@ export function RoutingNodeResourceOverview({
             <ItemTitle
               className={cn(
                 'w-full tabular-nums',
+                compact &&
+                  resource.total &&
+                  'line-clamp-none flex-col items-start gap-0',
                 compact ? 'text-sm' : 'text-base'
               )}
             >
-              {resource.value}
+              {compact && resource.total ? (
+                <>
+                  <span className='whitespace-nowrap'>{resource.value}</span>
+                  <span className='whitespace-nowrap'>/ {resource.total}</span>
+                </>
+              ) : (
+                <span className='whitespace-nowrap'>
+                  {resource.value}
+                  {resource.total && ` / ${resource.total}`}
+                </span>
+              )}
             </ItemTitle>
           </ItemContent>
           <ResourceUsageRing
