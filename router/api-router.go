@@ -144,6 +144,7 @@ func SetApiRouter(router *gin.Engine) {
 			{
 				agentRoute.GET("/topup", controller.GetAllTopUps)
 				agentRoute.GET("/statistics/overview", controller.GetUserStatistics)
+				agentRoute.GET("/statistics/ranking", controller.GetUserStatisticsRanking)
 				agentRoute.GET("/", controller.GetAllUsers)
 				agentRoute.GET("/search", controller.SearchUsers)
 				agentRoute.GET("/:id", controller.GetUser)

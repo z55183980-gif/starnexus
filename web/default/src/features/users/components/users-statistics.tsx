@@ -33,13 +33,7 @@ import { type DateRange } from 'react-day-picker'
 import { enUS, fr, ja, ru, vi, zhCN } from 'react-day-picker/locale'
 import { useTranslation } from 'react-i18next'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
-import {
-  formatNumber,
-  formatPercent,
-  formatQuota,
-  formatTimestamp,
-} from '@/lib/format'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { formatNumber, formatPercent, formatQuota } from '@/lib/format'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -58,16 +52,6 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemFooter,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from '@/components/ui/item'
-import {
   Popover,
   PopoverContent,
   PopoverDescription,
@@ -77,21 +61,11 @@ import {
 } from '@/components/ui/popover'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { EmptyState } from '@/components/empty-state'
 import { ErrorState } from '@/components/error-state'
 import { GroupBadge } from '@/components/group-badge'
-import { StatusBadge } from '@/components/status-badge'
 import { getUserStatistics } from '../api'
-import { USER_ROLES, USER_STATUSES } from '../constants'
+import { UsersRankingCard } from './users-ranking-card'
 
 type StatisticsRangePreset = 'today' | '7d' | '30d' | 'custom'
 
@@ -103,10 +77,6 @@ const CALENDAR_LOCALES = {
   ja,
   vi,
 } as const
-
-function getInitials(username: string): string {
-  return username.trim().slice(0, 2).toUpperCase() || 'U'
-}
 
 function getPresetRange(preset: Exclude<StatisticsRangePreset, 'custom'>) {
   const to = startOfDay(new Date())
@@ -194,24 +164,6 @@ function StatisticsSkeleton() {
       <Skeleton className='h-[340px] rounded-xl' />
       <Skeleton className='h-64 rounded-xl' />
       <Skeleton className='h-72 rounded-xl' />
-    </div>
-  )
-}
-
-function RecentUserIdentity(props: { username: string; displayName: string }) {
-  return (
-    <div className='flex min-w-0 items-center gap-2.5'>
-      <Avatar className='size-8'>
-        <AvatarFallback>{getInitials(props.username)}</AvatarFallback>
-      </Avatar>
-      <div className='min-w-0'>
-        <div className='truncate font-medium'>{props.username}</div>
-        {props.displayName && props.displayName !== props.username && (
-          <div className='text-muted-foreground truncate text-xs'>
-            {props.displayName}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -587,137 +539,7 @@ export function UsersStatistics(props: { onViewAll: () => void }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t('Recent Users')}</CardTitle>
-          <CardDescription>
-            {t('Latest registered user accounts')}
-          </CardDescription>
-          <CardAction>
-            <Button variant='outline' size='sm' onClick={props.onViewAll}>
-              {t('View all users')}
-            </Button>
-          </CardAction>
-        </CardHeader>
-        <CardContent>
-          {statistics.recent_users.length === 0 ? (
-            <EmptyState
-              className='min-h-48'
-              title={t('No recent users')}
-              icon={undefined}
-            />
-          ) : (
-            <>
-              <ItemGroup className='md:hidden'>
-                {statistics.recent_users.map((user) => {
-                  const role = USER_ROLES[user.role as keyof typeof USER_ROLES]
-                  const status =
-                    USER_STATUSES[user.status as keyof typeof USER_STATUSES]
-                  return (
-                    <Item key={user.id} variant='outline' size='sm'>
-                      <ItemMedia>
-                        <Avatar className='size-8'>
-                          <AvatarFallback>
-                            {getInitials(user.username)}
-                          </AvatarFallback>
-                        </Avatar>
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{user.username}</ItemTitle>
-                        {user.display_name &&
-                          user.display_name !== user.username && (
-                            <ItemDescription>
-                              {user.display_name}
-                            </ItemDescription>
-                          )}
-                      </ItemContent>
-                      <ItemActions>
-                        {status && (
-                          <StatusBadge
-                            label={t(status.labelKey)}
-                            variant={status.variant}
-                            showDot={status.showDot}
-                            copyable={false}
-                          />
-                        )}
-                      </ItemActions>
-                      <ItemFooter>
-                        <div className='text-muted-foreground flex min-w-0 items-center gap-2 text-xs'>
-                          <span>{role ? t(role.labelKey) : t('Other')}</span>
-                          <span>·</span>
-                          <span className='truncate'>
-                            {formatTimestamp(user.created_at)}
-                          </span>
-                        </div>
-                        <GroupBadge group={user.group} />
-                      </ItemFooter>
-                    </Item>
-                  )
-                })}
-              </ItemGroup>
-
-              <div className='hidden overflow-x-auto rounded-lg border md:block'>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('User')}</TableHead>
-                      <TableHead>{t('Status')}</TableHead>
-                      <TableHead>{t('Role')}</TableHead>
-                      <TableHead>{t('Group')}</TableHead>
-                      <TableHead>{t('Created At')}</TableHead>
-                      <TableHead>{t('Last Login')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {statistics.recent_users.map((user) => {
-                      const role =
-                        USER_ROLES[user.role as keyof typeof USER_ROLES]
-                      const status =
-                        USER_STATUSES[user.status as keyof typeof USER_STATUSES]
-                      return (
-                        <TableRow key={user.id}>
-                          <TableCell>
-                            <div className='min-w-44'>
-                              <RecentUserIdentity
-                                username={user.username}
-                                displayName={user.display_name}
-                              />
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {status ? (
-                              <StatusBadge
-                                label={t(status.labelKey)}
-                                variant={status.variant}
-                                showDot={status.showDot}
-                                copyable={false}
-                              />
-                            ) : (
-                              '-'
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {role ? t(role.labelKey) : t('Other')}
-                          </TableCell>
-                          <TableCell>
-                            <GroupBadge group={user.group} />
-                          </TableCell>
-                          <TableCell className='text-muted-foreground whitespace-nowrap'>
-                            {formatTimestamp(user.created_at)}
-                          </TableCell>
-                          <TableCell className='text-muted-foreground whitespace-nowrap'>
-                            {formatTimestamp(user.last_login_at)}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+      <UsersRankingCard onViewAll={props.onViewAll} />
     </div>
   )
 }

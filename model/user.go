@@ -98,6 +98,33 @@ type UserStatisticsRecentUser struct {
 	LastLoginAt int64  `json:"last_login_at"`
 }
 
+type UserStatisticsRankingType string
+
+const (
+	UserStatisticsRankingRecent  UserStatisticsRankingType = "recent"
+	UserStatisticsRankingUsage   UserStatisticsRankingType = "usage"
+	UserStatisticsRankingBalance UserStatisticsRankingType = "balance"
+)
+
+type UserStatisticsRankingUser struct {
+	Id           int    `json:"id"`
+	Username     string `json:"username"`
+	DisplayName  string `json:"display_name"`
+	Role         int    `json:"role"`
+	Status       int    `json:"status"`
+	Group        string `json:"group"`
+	Quota        int    `json:"quota"`
+	UsedQuota    int    `json:"used_quota"`
+	RequestCount int    `json:"request_count"`
+	CreatedAt    int64  `json:"created_at"`
+	LastLoginAt  int64  `json:"last_login_at"`
+}
+
+type UserStatisticsRankingResult struct {
+	Items   []UserStatisticsRankingUser `json:"items"`
+	HasMore bool                        `json:"has_more"`
+}
+
 type UserStatistics struct {
 	Summary           UserStatisticsSummary        `json:"summary"`
 	RegistrationTrend []UserStatisticsTrendPoint   `json:"registration_trend"`
@@ -519,15 +546,45 @@ func GetUserStatistics(inviterId *int, rangeStart time.Time, rangeEndExclusive t
 		statistics.GroupDistribution = groupDistribution
 	}
 
+	return statistics, nil
+}
+
+func GetUserStatisticsRanking(inviterId *int, rankingType UserStatisticsRankingType, limit int) (*UserStatisticsRankingResult, error) {
+	if limit != 10 && limit != 20 {
+		return nil, errors.New("invalid user statistics ranking limit")
+	}
+
+	var order string
+	switch rankingType {
+	case UserStatisticsRankingRecent:
+		order = "created_at DESC"
+	case UserStatisticsRankingUsage:
+		order = "used_quota DESC"
+	case UserStatisticsRankingBalance:
+		order = "quota DESC"
+	default:
+		return nil, errors.New("invalid user statistics ranking type")
+	}
+
+	users := make([]UserStatisticsRankingUser, 0, limit)
 	if err := userStatisticsScope(inviterId).
-		Select("id, username, display_name, role, status, " + commonGroupCol + ", created_at, last_login_at").
+		Select("id, username, display_name, role, status, " + commonGroupCol + ", quota, used_quota, request_count, created_at, last_login_at").
+		Order(order).
 		Order("id DESC").
-		Limit(6).
-		Scan(&statistics.RecentUsers).Error; err != nil {
+		Limit(limit + 1).
+		Scan(&users).Error; err != nil {
 		return nil, err
 	}
 
-	return statistics, nil
+	hasMore := len(users) > limit
+	if hasMore {
+		users = users[:limit]
+	}
+
+	return &UserStatisticsRankingResult{
+		Items:   users,
+		HasMore: hasMore,
+	}, nil
 }
 
 func GetUserById(id int, selectAll bool) (*User, error) {

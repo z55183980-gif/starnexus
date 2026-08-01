@@ -28,6 +28,8 @@ import type {
   ApiResponse,
   UserStatistics,
   UserStatisticsParams,
+  UserStatisticsRankingParams,
+  UserStatisticsRankingResult,
   BatchUpdateUserGroupPayload,
   BatchUpdateUsersResult,
 } from './types'
@@ -59,6 +61,22 @@ export async function getUserStatistics(
   })
   const res = await api.get(
     `/api/user/statistics/overview?${searchParams.toString()}`
+  )
+  return res.data
+}
+
+/**
+ * Get a user ranking sorted by registration, total usage, or balance
+ */
+export async function getUserStatisticsRanking(
+  params: UserStatisticsRankingParams
+): Promise<ApiResponse<UserStatisticsRankingResult>> {
+  const searchParams = new URLSearchParams({
+    type: params.type,
+    limit: String(params.limit),
+  })
+  const res = await api.get(
+    `/api/user/statistics/ranking?${searchParams.toString()}`
   )
   return res.data
 }

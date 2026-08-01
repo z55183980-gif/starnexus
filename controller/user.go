@@ -291,6 +291,57 @@ func GetUserStatistics(c *gin.Context) {
 	common.ApiSuccess(c, statistics)
 }
 
+func GetUserStatisticsRanking(c *gin.Context) {
+	rankingType, limit, ok := normalizeUserStatisticsRankingQuery(
+		c.Query("type"),
+		c.Query("limit"),
+	)
+	if !ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	myRole := c.GetInt("role")
+	myId := c.GetInt("id")
+	var inviterId *int
+	if myRole == common.RoleAgentUser {
+		inviterId = &myId
+	}
+
+	ranking, err := model.GetUserStatisticsRanking(inviterId, rankingType, limit)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	common.ApiSuccess(c, ranking)
+}
+
+func normalizeUserStatisticsRankingQuery(rankingTypeParam string, limitParam string) (model.UserStatisticsRankingType, int, bool) {
+	rankingType := model.UserStatisticsRankingType(strings.ToLower(strings.TrimSpace(rankingTypeParam)))
+	switch rankingType {
+	case model.UserStatisticsRankingRecent,
+		model.UserStatisticsRankingUsage,
+		model.UserStatisticsRankingBalance:
+	default:
+		return "", 0, false
+	}
+
+	limit := 10
+	if strings.TrimSpace(limitParam) != "" {
+		parsedLimit, err := strconv.Atoi(limitParam)
+		if err != nil {
+			return "", 0, false
+		}
+		limit = parsedLimit
+	}
+	if limit != 10 && limit != 20 {
+		return "", 0, false
+	}
+
+	return rankingType, limit, true
+}
+
 func parseUserStatisticsRange(c *gin.Context) (time.Time, time.Time, bool) {
 	now := time.Now()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())

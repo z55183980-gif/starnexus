@@ -117,6 +117,13 @@ export interface UserStatisticsParams {
   end_date: string
 }
 
+export type UserStatisticsRankingType = 'recent' | 'usage' | 'balance'
+
+export interface UserStatisticsRankingParams {
+  type: UserStatisticsRankingType
+  limit: 10 | 20
+}
+
 export interface UserStatisticsTrendPoint {
   date: string
   count: number
@@ -137,6 +144,17 @@ export interface UserStatisticsRecentUser {
   group: string
   created_at: number
   last_login_at: number
+}
+
+export interface UserStatisticsRankingUser extends UserStatisticsRecentUser {
+  quota: number
+  used_quota: number
+  request_count: number
+}
+
+export interface UserStatisticsRankingResult {
+  items: UserStatisticsRankingUser[]
+  has_more: boolean
 }
 
 export interface UserStatistics {
