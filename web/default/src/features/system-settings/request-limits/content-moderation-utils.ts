@@ -51,6 +51,13 @@ export const DEFAULT_CONTENT_MODERATION_THRESHOLDS: Record<string, number> = {
 
 export type ContentModerationMode = 'pre_block' | 'observe'
 
+export type ContentModerationModelFilterType = 'all' | 'include' | 'exclude'
+
+export type ContentModerationModelFilter = {
+  type: ContentModerationModelFilterType
+  models: string[]
+}
+
 export type ContentModerationConfigView = {
   enabled: boolean
   mode: ContentModerationMode
@@ -60,6 +67,9 @@ export type ContentModerationConfigView = {
   api_key_masks?: string[]
   api_keys: string[]
   timeout_ms: number
+  all_groups: boolean
+  groups: string[]
+  model_filter: ContentModerationModelFilter
   thresholds: Record<string, number>
   keys_configured?: boolean
 }
@@ -71,12 +81,59 @@ export const DEFAULT_CONTENT_MODERATION_CONFIG: ContentModerationConfigView = {
   model: 'omni-moderation-latest',
   api_keys: [],
   timeout_ms: 3000,
+  all_groups: true,
+  groups: [],
+  model_filter: {
+    type: 'all',
+    models: [],
+  },
   thresholds: { ...DEFAULT_CONTENT_MODERATION_THRESHOLDS },
   keys_configured: false,
 }
 
 function normalizeMode(value: unknown): ContentModerationMode {
   return value === 'observe' ? 'observe' : 'pre_block'
+}
+
+function normalizeModelFilterType(
+  value: unknown
+): ContentModerationModelFilterType {
+  if (value === 'include' || value === 'exclude') {
+    return value
+  }
+  return 'all'
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const item of value) {
+    const trimmed = String(item ?? '').trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(trimmed)
+  }
+  return out
+}
+
+function normalizeModelFilter(
+  value: unknown
+): ContentModerationModelFilter {
+  const raw =
+    value && typeof value === 'object'
+      ? (value as Partial<ContentModerationModelFilter>)
+      : {}
+  const type = normalizeModelFilterType(raw.type)
+  const models = normalizeStringList(raw.models)
+  if (type === 'all' || models.length === 0) {
+    return { type: 'all', models: [] }
+  }
+  return { type, models }
 }
 
 export function parseContentModerationConfig(
@@ -86,7 +143,9 @@ export function parseContentModerationConfig(
     return { ...DEFAULT_CONTENT_MODERATION_CONFIG }
   }
   try {
-    const parsed = JSON.parse(value) as Partial<ContentModerationConfigView>
+    const parsed = JSON.parse(value) as Partial<ContentModerationConfigView> & {
+      all_groups?: boolean
+    }
     const thresholds = {
       ...DEFAULT_CONTENT_MODERATION_THRESHOLDS,
       ...(parsed.thresholds ?? {}),
@@ -94,10 +153,18 @@ export function parseContentModerationConfig(
     const apiKeys = Array.isArray(parsed.api_keys)
       ? parsed.api_keys.map((key) => String(key ?? '').trim()).filter(Boolean)
       : []
+    const hasAllGroupsField = Object.prototype.hasOwnProperty.call(
+      parsed,
+      'all_groups'
+    )
+    const allGroups = hasAllGroupsField ? Boolean(parsed.all_groups) : true
+    const groups = allGroups ? [] : normalizeStringList(parsed.groups)
     return {
       enabled: Boolean(parsed.enabled),
       mode: normalizeMode(parsed.mode),
-      base_url: String(parsed.base_url || DEFAULT_CONTENT_MODERATION_CONFIG.base_url),
+      base_url: String(
+        parsed.base_url || DEFAULT_CONTENT_MODERATION_CONFIG.base_url
+      ),
       model: String(parsed.model || DEFAULT_CONTENT_MODERATION_CONFIG.model),
       api_key_count: parsed.api_key_count,
       api_key_masks: parsed.api_key_masks,
@@ -106,6 +173,9 @@ export function parseContentModerationConfig(
         typeof parsed.timeout_ms === 'number' && parsed.timeout_ms > 0
           ? parsed.timeout_ms
           : DEFAULT_CONTENT_MODERATION_CONFIG.timeout_ms,
+      all_groups: allGroups,
+      groups,
+      model_filter: normalizeModelFilter(parsed.model_filter),
       thresholds,
       keys_configured: Boolean(parsed.keys_configured ?? apiKeys.length > 0),
     }
@@ -117,6 +187,7 @@ export function parseContentModerationConfig(
 export function stringifyContentModerationConfig(
   config: ContentModerationConfigView
 ) {
+  const modelFilter = normalizeModelFilter(config.model_filter)
   return JSON.stringify({
     enabled: config.enabled,
     mode: normalizeMode(config.mode),
@@ -124,6 +195,9 @@ export function stringifyContentModerationConfig(
     model: config.model,
     api_keys: config.api_keys,
     timeout_ms: config.timeout_ms,
+    all_groups: Boolean(config.all_groups),
+    groups: config.all_groups ? [] : normalizeStringList(config.groups),
+    model_filter: modelFilter,
     thresholds: config.thresholds,
   })
 }

@@ -237,27 +237,24 @@ export function RoutingNodeResourceOverview({
             compact ? 'min-h-16 px-3 py-2' : 'min-h-24'
           )}
         >
-          <ItemContent className='min-w-0'>
+          <ItemContent className='min-w-0 overflow-hidden pr-1'>
             <ItemDescription>{resource.label}</ItemDescription>
             <ItemTitle
               className={cn(
-                'w-full tabular-nums',
-                compact &&
-                  resource.total &&
-                  'line-clamp-none flex-col items-start gap-0',
+                'w-full min-w-0 tabular-nums',
+                resource.total
+                  ? 'line-clamp-none flex-col items-start gap-0'
+                  : 'line-clamp-none',
                 compact ? 'text-sm' : 'text-base'
               )}
             >
-              {compact && resource.total ? (
+              {resource.total ? (
                 <>
-                  <span className='whitespace-nowrap'>{resource.value}</span>
-                  <span className='whitespace-nowrap'>/ {resource.total}</span>
+                  <span className='max-w-full truncate'>{resource.value}</span>
+                  <span className='max-w-full truncate'>/ {resource.total}</span>
                 </>
               ) : (
-                <span className='whitespace-nowrap'>
-                  {resource.value}
-                  {resource.total && ` / ${resource.total}`}
-                </span>
+                <span className='max-w-full truncate'>{resource.value}</span>
               )}
             </ItemTitle>
           </ItemContent>

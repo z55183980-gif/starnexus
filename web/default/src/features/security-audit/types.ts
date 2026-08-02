@@ -51,6 +51,17 @@ export interface PromptAuditLog {
   delay_ms: number
   truncated: boolean
   created_at: number
+  score: number
+}
+
+export interface ContentModerationLogQuery {
+  p?: number
+  page_size?: number
+  action?: string
+  category?: string
+  keyword?: string
+  start_timestamp?: number
+  end_timestamp?: number
 }
 
 export interface PromptAuditLogPage {

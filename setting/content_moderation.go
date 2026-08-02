@@ -1,6 +1,7 @@
 package setting
 
 import (
+	"encoding/json"
 	"strings"
 	"sync"
 
@@ -13,10 +14,17 @@ const (
 	ContentModerationModePreBlock = "pre_block"
 	ContentModerationModeObserve  = "observe"
 
+	ContentModerationModelFilterAll     = "all"
+	ContentModerationModelFilterInclude = "include"
+	ContentModerationModelFilterExclude = "exclude"
+
 	defaultContentModerationBaseURL   = "https://api.openai.com"
 	defaultContentModerationModel     = "omni-moderation-latest"
 	defaultContentModerationTimeoutMS = 3000
 	maxContentModerationTimeoutMS     = 30000
+	maxContentModerationScopeGroups   = 1000
+	maxContentModerationScopeModels   = 1000
+	maxContentModerationScopeItemLen  = 200
 )
 
 var contentModerationCategoryOrder = []string{
@@ -35,29 +43,45 @@ var contentModerationCategoryOrder = []string{
 	"violence/graphic",
 }
 
+// ContentModerationModelFilter selects which requested models are audited.
+// Type is one of: all | include | exclude.
+type ContentModerationModelFilter struct {
+	Type   string   `json:"type"`
+	Models []string `json:"models"`
+}
+
 // ContentModerationConfig is the global OpenAI Moderations gate configuration.
+// Audit scope (all_groups / groups / model_filter) mirrors sub2api risk-control
+// 「审计范围」: which request groups and models are subject to Moderations.
+// Groups are StarNexus string channel/request groups (not numeric IDs).
 type ContentModerationConfig struct {
-	Enabled    bool               `json:"enabled"`
-	Mode       string             `json:"mode"`
-	BaseURL    string             `json:"base_url"`
-	Model      string             `json:"model"`
-	APIKeys    []string           `json:"api_keys,omitempty"`
-	TimeoutMS  int                `json:"timeout_ms"`
-	Thresholds map[string]float64 `json:"thresholds"`
+	Enabled     bool                         `json:"enabled"`
+	Mode        string                       `json:"mode"`
+	BaseURL     string                       `json:"base_url"`
+	Model       string                       `json:"model"`
+	APIKeys     []string                     `json:"api_keys,omitempty"`
+	TimeoutMS   int                          `json:"timeout_ms"`
+	AllGroups   bool                         `json:"all_groups"`
+	Groups      []string                     `json:"groups"`
+	ModelFilter ContentModerationModelFilter `json:"model_filter"`
+	Thresholds  map[string]float64           `json:"thresholds"`
 }
 
 // ContentModerationConfigView is the admin-facing DTO with masked API keys.
 type ContentModerationConfigView struct {
-	Enabled        bool               `json:"enabled"`
-	Mode           string             `json:"mode"`
-	BaseURL        string             `json:"base_url"`
-	Model          string             `json:"model"`
-	APIKeyCount    int                `json:"api_key_count"`
-	APIKeyMasks    []string           `json:"api_key_masks"`
-	APIKeys        []string           `json:"api_keys"`
-	TimeoutMS      int                `json:"timeout_ms"`
-	Thresholds     map[string]float64 `json:"thresholds"`
-	KeysConfigured bool               `json:"keys_configured"`
+	Enabled        bool                         `json:"enabled"`
+	Mode           string                       `json:"mode"`
+	BaseURL        string                       `json:"base_url"`
+	Model          string                       `json:"model"`
+	APIKeyCount    int                          `json:"api_key_count"`
+	APIKeyMasks    []string                     `json:"api_key_masks"`
+	APIKeys        []string                     `json:"api_keys"`
+	TimeoutMS      int                          `json:"timeout_ms"`
+	AllGroups      bool                         `json:"all_groups"`
+	Groups         []string                     `json:"groups"`
+	ModelFilter    ContentModerationModelFilter `json:"model_filter"`
+	Thresholds     map[string]float64           `json:"thresholds"`
+	KeysConfigured bool                         `json:"keys_configured"`
 }
 
 var (
@@ -91,12 +115,18 @@ func ContentModerationCategories() []string {
 
 func defaultContentModerationConfig() ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:    false,
-		Mode:       ContentModerationModePreBlock,
-		BaseURL:    defaultContentModerationBaseURL,
-		Model:      defaultContentModerationModel,
-		APIKeys:    nil,
-		TimeoutMS:  defaultContentModerationTimeoutMS,
+		Enabled:   false,
+		Mode:      ContentModerationModePreBlock,
+		BaseURL:   defaultContentModerationBaseURL,
+		Model:     defaultContentModerationModel,
+		APIKeys:   nil,
+		TimeoutMS: defaultContentModerationTimeoutMS,
+		AllGroups: true,
+		Groups:    nil,
+		ModelFilter: ContentModerationModelFilter{
+			Type:   ContentModerationModelFilterAll,
+			Models: nil,
+		},
 		Thresholds: ContentModerationDefaultThresholds(),
 	}
 }
@@ -147,6 +177,15 @@ func ParseContentModerationConfigJSON(jsonString string, existingKeys []string) 
 		}
 		incoming = contentModerationConfigFromView(view)
 	}
+
+	// Legacy configs predate audit scope; missing all_groups must stay "all groups".
+	var raw map[string]json.RawMessage
+	if rawErr := common.UnmarshalJsonStr(jsonString, &raw); rawErr == nil {
+		if _, ok := raw["all_groups"]; !ok {
+			incoming.AllGroups = true
+		}
+	}
+
 	incoming.APIKeys = mergeContentModerationAPIKeys(existingKeys, incoming.APIKeys)
 	incoming.normalize()
 	return incoming, nil
@@ -179,6 +218,9 @@ func ContentModerationConfigToView(cfg ContentModerationConfig) ContentModeratio
 		APIKeyMasks:    masks,
 		APIKeys:        placeholders,
 		TimeoutMS:      cfg.TimeoutMS,
+		AllGroups:      cfg.AllGroups,
+		Groups:         append([]string(nil), cfg.Groups...),
+		ModelFilter:    cloneContentModerationModelFilter(cfg.ModelFilter),
 		Thresholds:     cloneFloatMap(cfg.Thresholds),
 		KeysConfigured: len(cfg.APIKeys) > 0,
 	}
@@ -209,18 +251,60 @@ func (cfg *ContentModerationConfig) normalize() {
 		cfg.TimeoutMS = maxContentModerationTimeoutMS
 	}
 	cfg.APIKeys = normalizeContentModerationAPIKeys(cfg.APIKeys)
+	cfg.Groups = normalizeContentModerationScopeList(cfg.Groups, maxContentModerationScopeGroups)
+	if cfg.AllGroups {
+		cfg.Groups = nil
+	}
+	cfg.ModelFilter = normalizeContentModerationModelFilter(cfg.ModelFilter)
 	cfg.Thresholds = mergeContentModerationThresholds(ContentModerationDefaultThresholds(), cfg.Thresholds)
+}
+
+// IncludesGroup reports whether the request channel/using group is in audit scope.
+// Empty group is out of scope when AllGroups is false (same semantics as sub2api nil GroupID).
+func (cfg *ContentModerationConfig) IncludesGroup(group string) bool {
+	if cfg == nil || cfg.AllGroups {
+		return true
+	}
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return false
+	}
+	for _, item := range cfg.Groups {
+		if strings.EqualFold(item, group) {
+			return true
+		}
+	}
+	return false
+}
+
+// IncludesModel reports whether the client-requested model is in audit scope.
+func (cfg *ContentModerationConfig) IncludesModel(modelName string) bool {
+	if cfg == nil {
+		return true
+	}
+	filter := normalizeContentModerationModelFilter(cfg.ModelFilter)
+	switch filter.Type {
+	case ContentModerationModelFilterInclude:
+		return contentModerationModelListContains(filter.Models, modelName)
+	case ContentModerationModelFilterExclude:
+		return !contentModerationModelListContains(filter.Models, modelName)
+	default:
+		return true
+	}
 }
 
 func contentModerationConfigFromView(view ContentModerationConfigView) ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:    view.Enabled,
-		Mode:       view.Mode,
-		BaseURL:    view.BaseURL,
-		Model:      view.Model,
-		APIKeys:    view.APIKeys,
-		TimeoutMS:  view.TimeoutMS,
-		Thresholds: view.Thresholds,
+		Enabled:     view.Enabled,
+		Mode:        view.Mode,
+		BaseURL:     view.BaseURL,
+		Model:       view.Model,
+		APIKeys:     view.APIKeys,
+		TimeoutMS:   view.TimeoutMS,
+		AllGroups:   view.AllGroups,
+		Groups:      view.Groups,
+		ModelFilter: view.ModelFilter,
+		Thresholds:  view.Thresholds,
 	}
 }
 
@@ -289,14 +373,92 @@ func mergeContentModerationThresholds(defaults, overrides map[string]float64) ma
 
 func cloneContentModerationConfig(cfg ContentModerationConfig) ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:    cfg.Enabled,
-		Mode:       cfg.Mode,
-		BaseURL:    cfg.BaseURL,
-		Model:      cfg.Model,
-		APIKeys:    append([]string(nil), cfg.APIKeys...),
-		TimeoutMS:  cfg.TimeoutMS,
-		Thresholds: cloneFloatMap(cfg.Thresholds),
+		Enabled:     cfg.Enabled,
+		Mode:        cfg.Mode,
+		BaseURL:     cfg.BaseURL,
+		Model:       cfg.Model,
+		APIKeys:     append([]string(nil), cfg.APIKeys...),
+		TimeoutMS:   cfg.TimeoutMS,
+		AllGroups:   cfg.AllGroups,
+		Groups:      append([]string(nil), cfg.Groups...),
+		ModelFilter: cloneContentModerationModelFilter(cfg.ModelFilter),
+		Thresholds:  cloneFloatMap(cfg.Thresholds),
 	}
+}
+
+func normalizeContentModerationModelFilter(filter ContentModerationModelFilter) ContentModerationModelFilter {
+	out := ContentModerationModelFilter{
+		Type:   normalizeContentModerationModelFilterType(filter.Type),
+		Models: normalizeContentModerationScopeList(filter.Models, maxContentModerationScopeModels),
+	}
+	if out.Type == ContentModerationModelFilterAll {
+		out.Models = nil
+	} else if len(out.Models) == 0 {
+		// Include/exclude with an empty list is invalid; fall back to all models.
+		out.Type = ContentModerationModelFilterAll
+		out.Models = nil
+	}
+	return out
+}
+
+func cloneContentModerationModelFilter(filter ContentModerationModelFilter) ContentModerationModelFilter {
+	normalized := normalizeContentModerationModelFilter(filter)
+	return ContentModerationModelFilter{
+		Type:   normalized.Type,
+		Models: append([]string(nil), normalized.Models...),
+	}
+}
+
+func normalizeContentModerationModelFilterType(filterType string) string {
+	switch strings.ToLower(strings.TrimSpace(filterType)) {
+	case ContentModerationModelFilterInclude:
+		return ContentModerationModelFilterInclude
+	case ContentModerationModelFilterExclude:
+		return ContentModerationModelFilterExclude
+	default:
+		return ContentModerationModelFilterAll
+	}
+}
+
+func normalizeContentModerationScopeList(values []string, maxItems int) []string {
+	if maxItems <= 0 {
+		maxItems = maxContentModerationScopeGroups
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		item := strings.TrimSpace(raw)
+		if item == "" {
+			continue
+		}
+		runes := []rune(item)
+		if len(runes) > maxContentModerationScopeItemLen {
+			item = string(runes[:maxContentModerationScopeItemLen])
+		}
+		key := strings.ToLower(item)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+		if len(out) >= maxItems {
+			break
+		}
+	}
+	return out
+}
+
+func contentModerationModelListContains(models []string, modelName string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	for _, item := range models {
+		if strings.EqualFold(item, modelName) {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneFloatMap(in map[string]float64) map[string]float64 {
@@ -327,6 +489,11 @@ func maskSecretTail(secret string) string {
 	return "****" + string(runes[len(runes)-4:])
 }
 
+// MaskSecretTail returns a short masked form of a secret for admin UI/API responses.
+func MaskSecretTail(secret string) string {
+	return maskSecretTail(secret)
+}
+
 func maskSecretPlaceholder(secret string) string {
 	masked := maskSecretTail(secret)
 	if masked == "" {
@@ -345,4 +512,10 @@ func isMaskedAPIKeyPlaceholder(value string) bool {
 	}
 	return strings.Contains(value, "***") && !strings.HasPrefix(strings.ToLower(value), "sk-") &&
 		!strings.HasPrefix(strings.ToLower(value), "rk-")
+}
+
+// IsMaskedAPIKeyPlaceholder reports whether value is a masked key placeholder
+// from ContentModerationConfigToView (not a real secret).
+func IsMaskedAPIKeyPlaceholder(value string) bool {
+	return isMaskedAPIKeyPlaceholder(value)
 }

@@ -29,7 +29,12 @@ import type {
 } from './types'
 
 export async function getSystemOptions() {
-  const res = await api.get<SystemOptionsResponse>('/api/option/')
+  // Never join an in-flight GET: after UpdateOption, React Query refetch must
+  // not reuse a pre-mutation /api/option/ response (dedupe would restore stale
+  // ContentModerationConfig and look like audit scope failed to save).
+  const res = await api.get<SystemOptionsResponse>('/api/option/', {
+    disableDuplicate: true,
+  } as Record<string, unknown>)
   return res.data
 }
 

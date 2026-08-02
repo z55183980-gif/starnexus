@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
 import type {
+  ContentModerationLogQuery,
   PromptAuditClearLogsResponse,
   PromptAuditLogCursorResponse,
   PromptAuditLogsResponse,
@@ -121,4 +122,59 @@ export async function clearPromptAuditLogs(
     `/api/security-audit/users/${userId}/prompts`
   )
   return response.data
+}
+
+export async function listContentModerationLogs(
+  query: ContentModerationLogQuery = {}
+): Promise<PromptAuditLogsResponse> {
+  const response = await api.get('/api/security-audit/moderation-logs', {
+    params: {
+      p: query.p ?? 1,
+      page_size: query.page_size ?? 20,
+      action: query.action || undefined,
+      category: query.category || undefined,
+      keyword: query.keyword || undefined,
+      start_timestamp: query.start_timestamp || undefined,
+      end_timestamp: query.end_timestamp || undefined,
+    },
+  })
+  const result = response.data as PromptAuditLogsResponse
+  if (!result.success) throw new Error(result.message || 'Failed to load')
+  return result
+}
+
+export type ContentModerationAPIKeyTestPayload = {
+  api_key?: string
+  base_url?: string
+  model?: string
+  timeout_ms?: number
+}
+
+export type ContentModerationAPIKeyTestResult = {
+  ok: boolean
+  latency_ms: number
+  http_status: number
+  flagged: boolean
+  error?: string
+  key_mask?: string
+  highest_score?: number
+  highest_category?: string
+}
+
+export async function testContentModerationAPIKey(
+  payload: ContentModerationAPIKeyTestPayload
+): Promise<ContentModerationAPIKeyTestResult> {
+  const response = await api.post(
+    '/api/security-audit/moderation-api-key/test',
+    payload
+  )
+  const result = response.data as {
+    success: boolean
+    message?: string
+    data?: ContentModerationAPIKeyTestResult
+  }
+  if (!result.success || !result.data) {
+    throw new Error(result.message || 'Moderation API key test failed')
+  }
+  return result.data
 }

@@ -30,6 +30,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings2,
   ShieldCheck,
   Trash2,
 } from 'lucide-react'
@@ -527,7 +528,9 @@ function PromptLogSheet({
 export function SecurityAudit() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [view, setView] = useState<'policies' | 'moderation'>('policies')
+  const [view, setView] = useState<'policies' | 'moderation'>('moderation')
+  const [moderationSettingsOpen, setModerationSettingsOpen] = useState(false)
+  const [moderationRefreshNonce, setModerationRefreshNonce] = useState(0)
   const [viewingPolicy, setViewingPolicy] = useState<PromptAuditPolicy | null>(
     null
   )
@@ -601,19 +604,37 @@ export function SecurityAudit() {
         <SectionPageLayout.Title>{t('Security Audit')}</SectionPageLayout.Title>
         <SectionPageLayout.Description>
           {view === 'moderation'
-            ? t(
-                'Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.'
-              )
+            ? t('Configure content audit policies and view audit records')
             : t('Monitor and control user prompts with sensitive-word rules.')}
         </SectionPageLayout.Description>
-        {view === 'policies' ? (
-          <SectionPageLayout.Actions>
+        <SectionPageLayout.Actions>
+          {view === 'moderation' ? (
+            <>
+              <Button
+                variant='outline'
+                size='sm'
+                onClick={() =>
+                  setModerationRefreshNonce((value) => value + 1)
+                }
+              >
+                <RefreshCw data-icon='inline-start' />
+                {t('Refresh status')}
+              </Button>
+              <Button
+                size='sm'
+                onClick={() => setModerationSettingsOpen(true)}
+              >
+                <Settings2 data-icon='inline-start' />
+                {t('Content audit settings')}
+              </Button>
+            </>
+          ) : (
             <AddUserPopover
               excludedUserIds={excludedUserIds}
               onCreated={refreshPolicies}
             />
-          </SectionPageLayout.Actions>
-        ) : null}
+          )}
+        </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <Tabs
             value={view}
@@ -810,7 +831,11 @@ export function SecurityAudit() {
               </div>
             </TabsContent>
             <TabsContent value='moderation' className='mt-4'>
-              <ContentModerationTab />
+              <ContentModerationTab
+                settingsOpen={moderationSettingsOpen}
+                onSettingsOpenChange={setModerationSettingsOpen}
+                refreshNonce={moderationRefreshNonce}
+              />
             </TabsContent>
           </Tabs>
         </SectionPageLayout.Content>

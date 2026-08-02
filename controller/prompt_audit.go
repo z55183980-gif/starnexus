@@ -219,3 +219,65 @@ func DeletePromptAuditLogs(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{"deleted": deleted})
 }
+
+type testContentModerationAPIKeyRequest struct {
+	APIKey    string `json:"api_key"`
+	BaseURL   string `json:"base_url"`
+	Model     string `json:"model"`
+	TimeoutMS int    `json:"timeout_ms"`
+}
+
+// TestContentModerationAPIKey probes Moderations with a draft or stored key
+// (same approach as sub2api risk-control api-keys/test: POST /v1/moderations).
+func TestContentModerationAPIKey(c *gin.Context) {
+	var req testContentModerationAPIKeyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := service.TestContentModerationAPIKey(
+		c.Request.Context(),
+		req.BaseURL,
+		req.Model,
+		req.APIKey,
+		req.TimeoutMS,
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+func ListContentModerationLogs(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	filter := model.ContentModerationLogFilter{
+		Action:   c.Query("action"),
+		Category: c.Query("category"),
+		Keyword:  c.Query("keyword"),
+	}
+	if startRaw := c.Query("start_timestamp"); startRaw != "" {
+		start, err := strconv.ParseInt(startRaw, 10, 64)
+		if err != nil || start < 0 {
+			common.ApiError(c, errors.New("invalid start_timestamp"))
+			return
+		}
+		filter.StartTime = start
+	}
+	if endRaw := c.Query("end_timestamp"); endRaw != "" {
+		end, err := strconv.ParseInt(endRaw, 10, 64)
+		if err != nil || end < 0 {
+			common.ApiError(c, errors.New("invalid end_timestamp"))
+			return
+		}
+		filter.EndTime = end
+	}
+	logs, total, err := model.ListContentModerationLogs(filter, pageInfo)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(logs)
+	common.ApiSuccess(c, pageInfo)
+}

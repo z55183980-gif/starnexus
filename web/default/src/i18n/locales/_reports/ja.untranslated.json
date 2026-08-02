@@ -1,6 +1,7 @@
 {
   "[{\"ChatGPT\":\"https://chat.openai.com\"},{\"Lobe Chat\":\"https://chat-preview.lobehub.com/?settings={...}\"}]": "[{\"ChatGPT\":\"https://chat.openai.com\"},{\"Lobe Chat\":\"https://chat-preview.lobehub.com/?settings={...}\"}]",
   "[{\"name\":\"支付宝\",\"type\":\"alipay\",\"color\":\"#1677FF\"}]": "[{\"name\":\"Alipay\",\"type\":\"alipay\",\"color\":\"#1677FF\"}]",
+  "{{hits}} / {{total}}": "{{hits}} / {{total}}",
   "/status/": "/status/",
   "/your/endpoint": "/your/endpoint",
   "acknowledge the related legal risks": "acknowledge the related legal risks",
@@ -258,6 +259,5 @@
   "You have legally obtained authorization for the connected model APIs, accounts, keys, and quotas.": "You have legally obtained authorization for the connected model APIs, accounts, keys, and quotas.",
   "You understand and independently bear legal responsibility arising from deployment, operation, and charging behavior.": "You understand and independently bear legal responsibility arising from deployment, operation, and charging behavior.",
   "You understand this compliance reminder is only for risk notice and does not constitute legal advice, a compliance review conclusion, or a guarantee of the legality of your use of this system; you should consult professional legal or compliance advisors based on your actual business scenario.": "You understand this compliance reminder is only for risk notice and does not constitute legal advice, a compliance review conclusion, or a guarantee of the legality of your use of this system; you should consult professional legal or compliance advisors based on your actual business scenario.",
-  "You will be redirected to complete payment after confirming": "You will be redirected to complete payment after confirming",
-  "OpenAI Base URL": "OpenAI Base URL"
+  "You will be redirected to complete payment after confirming": "You will be redirected to complete payment after confirming"
 }

@@ -283,3 +283,51 @@ func normalizePromptAuditLogLimit(limit int) int {
 	}
 	return limit
 }
+
+// ContentModerationLogFilter filters global OpenAI Moderations audit hits.
+type ContentModerationLogFilter struct {
+	Action    string
+	Category  string
+	Keyword   string
+	StartTime int64
+	EndTime   int64
+}
+
+// ListContentModerationLogs returns moderation-flagged prompt audit logs (global).
+// Rows are identified by matched_words containing the "moderation:" prefix.
+func ListContentModerationLogs(filter ContentModerationLogFilter, pageInfo *common.PageInfo) ([]PromptAuditLog, int64, error) {
+	if pageInfo == nil {
+		pageInfo = &common.PageInfo{Page: 1, PageSize: common.ItemsPerPage}
+	}
+	query := LOG_DB.Model(&PromptAuditLog{}).Where("matched_words LIKE ?", "%moderation:%")
+	if action := strings.TrimSpace(filter.Action); action != "" && action != "all" {
+		query = query.Where("action = ?", action)
+	}
+	if category := strings.TrimSpace(filter.Category); category != "" && category != "all" {
+		query = query.Where("matched_words LIKE ?", "%moderation:"+category+"%")
+	}
+	if keyword := strings.TrimSpace(filter.Keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where(
+			"username LIKE ? OR token_name LIKE ? OR model_name LIKE ? OR endpoint LIKE ? OR prompt LIKE ?",
+			like, like, like, like, like,
+		)
+	}
+	if filter.StartTime > 0 {
+		query = query.Where("created_at >= ?", filter.StartTime)
+	}
+	if filter.EndTime > 0 {
+		query = query.Where("created_at <= ?", filter.EndTime)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var logs []PromptAuditLog
+	err := query.Order("created_at DESC").Order("id DESC").
+		Limit(pageInfo.GetPageSize()).
+		Offset(pageInfo.GetStartIdx()).
+		Find(&logs).Error
+	return logs, total, err
+}

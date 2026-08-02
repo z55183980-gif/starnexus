@@ -25,7 +25,6 @@ import {
   PlayIcon,
   RefreshIcon,
   Rocket01Icon,
-  TestTubeIcon,
   Unlink01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -104,7 +103,7 @@ import {
 } from '@/components/ui/tooltip'
 import { SectionPageLayout } from '@/components/layout/components/section-page-layout'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
-import { channelsQueryKeys, handleTestChannel } from '@/features/channels/lib'
+import { channelsQueryKeys } from '@/features/channels/lib'
 import { AccountBatchUpdateDialog } from './account-batch-update-dialog'
 import { AccountDialog } from './account-dialog'
 import {
@@ -915,12 +914,10 @@ type PoolTableRowsProps = {
   pools: UpstreamAccountPool[]
   isLoading: boolean
   error: unknown
-  testingPoolId: number | null
   onRetry: () => void
   onEdit: (pool: UpstreamAccountPool) => void
   onDelete: (pool: UpstreamAccountPool) => void
   onPublish: (pool: UpstreamAccountPool) => void
-  onTest: (pool: UpstreamAccountPool) => void
   onUnpublish: (pool: UpstreamAccountPool) => void
   onManageMembers: (pool: UpstreamAccountPool) => void
 }
@@ -1171,26 +1168,6 @@ function PoolTableRows(props: PoolTableRowsProps) {
                 className='w-56 rounded-xl p-1.5'
               >
                 <DropdownMenuGroup>
-                  {published && (
-                    <DropdownMenuItem
-                      className='gap-2.5 px-3 py-2.5'
-                      disabled={props.testingPoolId === pool.id}
-                      onClick={() => props.onTest(pool)}
-                    >
-                      <HugeiconsIcon
-                        icon={
-                          props.testingPoolId === pool.id
-                            ? Loading03Icon
-                            : TestTubeIcon
-                        }
-                        className={cn(
-                          props.testingPoolId === pool.id && 'animate-spin'
-                        )}
-                        strokeWidth={2}
-                      />
-                      {t('Test local channel')}
-                    </DropdownMenuItem>
-                  )}
                   <DropdownMenuItem
                     className='gap-2.5 px-3 py-2.5'
                     disabled={pool.status !== 'active'}
@@ -1284,7 +1261,6 @@ export function AccountManagement({
     useState<UpstreamAccountPool | null>(null)
   const [unpublishingPool, setUnpublishingPool] =
     useState<UpstreamAccountPool | null>(null)
-  const [testingPoolId, setTestingPoolId] = useState<number | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{
     kind: 'account' | 'pool'
     id: number
@@ -1466,18 +1442,6 @@ export function AccountManagement({
       toast.error(error instanceof Error ? error.message : t('Request failed'))
     } finally {
       setRecoveringSelected(false)
-    }
-  }
-
-  const testPoolChannel = async (pool: UpstreamAccountPool) => {
-    if (!pool.published_channel_id) return
-    setTestingPoolId(pool.id)
-    try {
-      await handleTestChannel(pool.published_channel_id, undefined, () => {
-        refresh()
-      })
-    } finally {
-      setTestingPoolId(null)
     }
   }
 
@@ -2291,7 +2255,6 @@ export function AccountManagement({
                     pools={pools}
                     isLoading={poolsQuery.isLoading}
                     error={poolsQuery.error}
-                    testingPoolId={testingPoolId}
                     onRetry={() => void poolsQuery.refetch()}
                     onEdit={(pool) => {
                       setSelectedPool(pool)
@@ -2305,7 +2268,6 @@ export function AccountManagement({
                       })
                     }
                     onPublish={setPublishingPool}
-                    onTest={(pool) => void testPoolChannel(pool)}
                     onUnpublish={setUnpublishingPool}
                     onManageMembers={setMemberPool}
                   />

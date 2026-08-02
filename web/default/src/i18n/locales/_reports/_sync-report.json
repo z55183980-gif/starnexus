@@ -23,7 +23,7 @@
       "file": "ru.json",
       "missingCount": 0,
       "extrasCount": 0,
-      "untranslatedCount": 276
+      "untranslatedCount": 277
     },
     "vi": {
       "file": "vi.json",
@@ -35,7 +35,7 @@
       "file": "zh.json",
       "missingCount": 0,
       "extrasCount": 0,
-      "untranslatedCount": 126
+      "untranslatedCount": 125
     }
   }
 }
