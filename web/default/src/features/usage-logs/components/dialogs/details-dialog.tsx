@@ -59,6 +59,7 @@ import {
   getFirstResponseTimeColor,
   getLogUseTimeSeconds,
   getResponseTimeColor,
+  formatModelName,
 } from '../../lib/format'
 import {
   getLogTypeConfig,
@@ -408,7 +409,10 @@ function TokenBreakdown(props: {
       label: t('Output Token Ratio'),
       value: `${other.token_pricing_output_ratio ?? 1}x`,
     })
-    if (Array.isArray(other.token_pricing_rules) && other.token_pricing_rules.length > 0) {
+    if (
+      Array.isArray(other.token_pricing_rules) &&
+      other.token_pricing_rules.length > 0
+    ) {
       rows.push({
         label: t('Matched Token Pricing Rules'),
         value: other.token_pricing_rules.join(', '),
@@ -437,6 +441,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
+  const modelInfo = formatModelName(props.log)
   const useTime = getLogUseTimeSeconds(props.log)
   const typeConfig = getLogTypeConfig(props.log.type)
 
@@ -867,7 +872,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
             )}
 
             {/* Model mapping */}
-            {other?.is_model_mapped && other?.upstream_model_name && (
+            {modelInfo.isMapped && modelInfo.actualModel && (
               <DetailSection label={t('Model Mapping')}>
                 <DetailRow
                   label={t('Request Model')}
@@ -876,7 +881,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
                 />
                 <DetailRow
                   label={t('Actual Model')}
-                  value={other.upstream_model_name}
+                  value={modelInfo.actualModel}
                   mono
                 />
               </DetailSection>

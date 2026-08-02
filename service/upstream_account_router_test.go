@@ -104,6 +104,38 @@ func TestResolveUpstreamAccountModelUsesCompactMappingFirst(t *testing.T) {
 	require.Equal(t, "gpt-5.4-compact", mapped)
 }
 
+func TestResolveUpstreamAccountModelTreatsIdentityMappingsAsWhitelistEntries(t *testing.T) {
+	credentials := map[string]any{
+		"model_mapping": map[string]any{"gpt-5.6-luna": "gpt-5.6-luna"},
+	}
+	mapped, matched, supported := resolveUpstreamAccountModel(
+		nil,
+		credentials,
+		model.UpstreamAccountOptions{},
+		"gpt-5.6-luna",
+		false,
+		"",
+	)
+	require.False(t, matched)
+	require.True(t, supported)
+	require.Equal(t, "gpt-5.6-luna", mapped)
+
+	options := model.UpstreamAccountOptions{
+		CompactModelMapping: map[string]string{"gpt-5.6-luna": "gpt-5.6-luna"},
+	}
+	mapped, matched, supported = resolveUpstreamAccountModel(
+		nil,
+		nil,
+		options,
+		"gpt-5.6-luna",
+		true,
+		"",
+	)
+	require.False(t, matched)
+	require.True(t, supported)
+	require.Equal(t, "gpt-5.6-luna", mapped)
+}
+
 func TestResolveUpstreamAccountModelRejectsForeignModelsForOpenAIOAuthWithoutMapping(t *testing.T) {
 	account := &model.UpstreamAccount{Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth}
 

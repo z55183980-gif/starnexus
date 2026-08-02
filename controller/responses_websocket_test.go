@@ -480,7 +480,7 @@ func TestResponsesWSTerminalEventWaitsForTurnRelease(t *testing.T) {
 	session.close()
 }
 
-func TestResponsesWSClientDisconnectDrainsTerminalUsage(t *testing.T) {
+func TestResponsesWSClientDisconnectDrainsUsageWithoutCommittingContinuation(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Channel{}, &model.Log{}, &model.Token{}))
@@ -512,18 +512,26 @@ func TestResponsesWSClientDisconnectDrainsTerminalUsage(t *testing.T) {
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserId, 7001)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 11001)
 	released := make(chan struct{})
 	upstream := newResponsesWSUpstreamConnection(upstreamServer)
 	info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
 	info.ChannelMeta = &relaycommon.ChannelMeta{}
+	priorInput := json.RawMessage(`{"type":"message","role":"user","content":"prior delivered turn"}`)
 	turn := &responsesWebSocketTurn{
-		ctx:         ctx,
-		info:        info,
-		accumulator: openairelay.NewResponsesEventAccumulator(),
-		releaseUser: func() { close(released) },
+		ctx:               ctx,
+		info:              info,
+		accumulator:       openairelay.NewResponsesEventAccumulator(),
+		channel:           &model.Channel{Id: 707},
+		upstreamMode:      model.UpstreamOpenAIWSModeContextPool,
+		replayInput:       []json.RawMessage{priorInput, json.RawMessage(`{"type":"message","role":"user","content":"aborted turn"}`)},
+		replayInputExists: true,
+		releaseUser:       func() { close(released) },
 	}
 	session := &responsesWebSocketSession{
 		baseCtx: ctx, client: clientServer, upstream: upstream, activeTurn: turn, closed: make(chan struct{}),
+		replayInput: []json.RawMessage{priorInput}, replayInputExists: true,
 	}
 	go session.readUpstream(upstream)
 	session.handleClientLoopExit()
@@ -531,7 +539,11 @@ func TestResponsesWSClientDisconnectDrainsTerminalUsage(t *testing.T) {
 
 	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, []byte(`{
 		"type":"response.completed",
-		"response":{"id":"resp_drained","usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}
+		"response":{
+			"id":"resp_drained_after_client_gone",
+			"output":[{"type":"custom_tool_call","id":"ctc_hidden","call_id":"call_hidden","name":"exec","input":"{}"}],
+			"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}
+		}
 	}`)))
 	select {
 	case <-released:
@@ -544,6 +556,32 @@ func TestResponsesWSClientDisconnectDrainsTerminalUsage(t *testing.T) {
 		t.Fatal("session did not close after draining terminal usage")
 	}
 	require.Equal(t, 12, turn.accumulator.Usage(turn.info).TotalTokens)
+	require.Len(t, session.replayInput, 1)
+	require.JSONEq(t, string(priorInput), string(session.replayInput[0]))
+
+	state, found := defaultResponsesWSContinuationStore.get(ctx, "resp_drained_after_client_gone")
+	require.True(t, found)
+	require.True(t, state.replayInputExists)
+	require.Len(t, state.replayInput, 1)
+	require.JSONEq(t, string(priorInput), string(state.replayInput[0]))
+
+	resumed := &responsesWebSocketSession{baseCtx: ctx}
+	request := &dto.OpenAIResponsesRequest{Model: "gpt-5", PreviousResponseID: "resp_drained_after_client_gone"}
+	require.Nil(t, resumed.restoreContinuation(request))
+	resumedTurn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeContextPool,
+		originalRequest: request,
+	}
+	prepared, apiErr := resumed.prepareReplayPayload(resumedTurn, json.RawMessage(`{
+		"model":"gpt-5",
+		"previous_response_id":"resp_drained_after_client_gone",
+		"input":[{"type":"message","role":"user","content":"revised turn"}]
+	}`))
+	require.Nil(t, apiErr)
+	require.False(t, gjson.GetBytes(prepared, "previous_response_id").Exists())
+	require.Equal(t, "prior delivered turn", gjson.GetBytes(prepared, "input.0.content").String())
+	require.Equal(t, "revised turn", gjson.GetBytes(prepared, "input.1.content").String())
+	require.False(t, gjson.GetBytes(prepared, `input.#(type=="custom_tool_call")`).Exists())
 }
 
 func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {

@@ -448,7 +448,7 @@ func resolveUpstreamAccountModel(account *model.UpstreamAccount, credentials map
 	requestedModel = strings.TrimSpace(requestedModel)
 	if compactRequest {
 		if mappedModel, matched := resolveUpstreamAccountModelMapping(options.CompactModelMapping, requestedModel); matched {
-			return mappedModel, true, mappedModel != ""
+			return mappedModel, mappedModel != requestedModel, mappedModel != ""
 		}
 	}
 	if requestedModel == "" {
@@ -473,7 +473,7 @@ func resolveUpstreamAccountModel(account *model.UpstreamAccount, credentials map
 		return requestedModel, false, true
 	}
 	if mappedModel, matched := resolveUpstreamAccountModelMapping(mapping, requestedModel); matched {
-		return mappedModel, true, mappedModel != ""
+		return mappedModel, mappedModel != requestedModel, mappedModel != ""
 	}
 	if isClaudeMessagesDispatchModel(requestedModel) && strings.TrimSpace(defaultMappedModel) != "" {
 		return strings.TrimSpace(defaultMappedModel), true, true

@@ -174,7 +174,8 @@ export function formatModelName(log: UsageLog): {
   const isMapped = !!(
     other?.is_model_mapped &&
     other?.upstream_model_name &&
-    other.upstream_model_name !== ''
+    other.upstream_model_name !== '' &&
+    other.upstream_model_name !== log.model_name
   )
 
   return {

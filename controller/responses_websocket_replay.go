@@ -330,6 +330,22 @@ func (s *responsesWebSocketSession) commitReplayState(turn *responsesWebSocketTu
 	if s == nil || turn == nil {
 		return
 	}
+	// Callers hold s.mu. A turn drained after the downstream client has gone is
+	// still settled for usage, but its unseen output must never become
+	// continuation context (especially a custom tool call with no client output).
+	// Keep an alias for the response ID the client may already know, pointing it
+	// back to the last delivered context so a rollback can be replayed safely.
+	if s.clientGone {
+		if turn.accumulator == nil {
+			return
+		}
+		responseID := strings.TrimSpace(turn.accumulator.ResponseID())
+		if responseID == "" {
+			return
+		}
+		s.storeContinuationState(turn, responseID, s.replayInput, true)
+		return
+	}
 	if turn.replayInputExists {
 		committed := cloneResponsesWSRawMessages(turn.replayInput)
 		committed = append(committed, cloneResponsesWSRawMessages(turn.replayToolContext)...)
@@ -354,6 +370,10 @@ func (s *responsesWebSocketSession) commitReplayState(turn *responsesWebSocketTu
 		return
 	}
 	s.lastResponseID = responseID
+	s.storeContinuationState(turn, responseID, s.replayInput, s.replayInputExists)
+}
+
+func (s *responsesWebSocketSession) storeContinuationState(turn *responsesWebSocketTurn, responseID string, replayInput []json.RawMessage, replayInputExists bool) {
 	channelID := 0
 	if turn.channel != nil {
 		channelID = turn.channel.Id
@@ -368,7 +388,7 @@ func (s *responsesWebSocketSession) commitReplayState(turn *responsesWebSocketTu
 		upstreamMode:      turn.upstreamMode,
 		model:             modelName,
 		turnState:         s.turnState,
-		replayInput:       s.replayInput,
-		replayInputExists: s.replayInputExists,
+		replayInput:       replayInput,
+		replayInputExists: replayInputExists,
 	})
 }
