@@ -38,22 +38,29 @@ func TestParseUpstreamAccountResetCreditsArray(t *testing.T) {
 
 func TestCachedUpstreamAccountQuotaHonorsCreditRequirementAndTTL(t *testing.T) {
 	const accountId = 987654
+	const credentialVersion int64 = 3
 	t.Cleanup(func() { upstreamAccountQuotaCache.Delete(accountId) })
 	usage := UpstreamAccountQuotaUsage{AccountId: "acct-test", FetchedAt: time.Now().Unix()}
 	upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
-		usage: usage, cachedAt: time.Now(), includeCredits: false,
+		usage: usage, cachedAt: time.Now(), includeCredits: false, credentialVersion: credentialVersion,
 	})
-	if cached := cachedUpstreamAccountQuota(accountId, false); cached == nil || cached.AccountId != usage.AccountId {
+	if cached := cachedUpstreamAccountQuota(accountId, credentialVersion, false); cached == nil || cached.AccountId != usage.AccountId {
 		t.Fatalf("expected cached usage, got %+v", cached)
 	}
-	if cached := cachedUpstreamAccountQuota(accountId, true); cached != nil {
+	if cached := cachedUpstreamAccountQuota(accountId, credentialVersion+1, false); cached != nil {
+		t.Fatalf("expected cache miss after credential rotation, got %+v", cached)
+	}
+	upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
+		usage: usage, cachedAt: time.Now(), includeCredits: false, credentialVersion: credentialVersion,
+	})
+	if cached := cachedUpstreamAccountQuota(accountId, credentialVersion, true); cached != nil {
 		t.Fatalf("expected cache miss when credit details are required, got %+v", cached)
 	}
 
 	upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
-		usage: usage, cachedAt: time.Now().Add(-upstreamAccountQuotaCacheTTL), includeCredits: true,
+		usage: usage, cachedAt: time.Now().Add(-upstreamAccountQuotaCacheTTL), includeCredits: true, credentialVersion: credentialVersion,
 	})
-	if cached := cachedUpstreamAccountQuota(accountId, true); cached != nil {
+	if cached := cachedUpstreamAccountQuota(accountId, credentialVersion, true); cached != nil {
 		t.Fatalf("expected expired cache miss, got %+v", cached)
 	}
 }

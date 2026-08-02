@@ -377,6 +377,23 @@ func GetUpstreamAccountQuota(c *gin.Context) {
 	common.ApiSuccess(c, usage)
 }
 
+func GetUpstreamAccountUsage(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	usage, err := service.QueryUpstreamAccountUsage(
+		c.Request.Context(),
+		id,
+		strings.EqualFold(strings.TrimSpace(c.Query("force")), "true"),
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, usage)
+}
+
 func ResetUpstreamAccountQuota(c *gin.Context) {
 	id, ok := positivePathId(c)
 	if !ok {

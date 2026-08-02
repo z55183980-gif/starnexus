@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -29,6 +30,11 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -42,12 +48,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { getUpstreamAccountQuota, resetUpstreamAccountQuota } from './api'
-import { upstreamOAuthRefreshBlocksScheduling } from './types'
-import type {
-  UpstreamAccount,
-  UpstreamAccountQuotaUsage,
-  UpstreamAccountRateLimitWindow,
+import {
+  getUpstreamAccountQuota,
+  getUpstreamAccountUsage,
+  resetUpstreamAccountQuota,
+} from './api'
+import {
+  upstreamOAuthRefreshBlocksScheduling,
+  type UpstreamAccount,
+  type UpstreamAccountQuotaUsage,
+  type UpstreamAccountRateLimitWindow,
+  type UpstreamAccountUsage,
 } from './types'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
@@ -58,6 +69,7 @@ const accountUsageCache = new Map<
     data: UpstreamAccountQuotaUsage
     timestamp: number
     includesCredits: boolean
+    credentialVersion: number
   }
 >()
 const accountUsageInflight = new Map<
@@ -95,19 +107,21 @@ function enqueueAccountUsageRequest<T>(request: () => Promise<T>) {
 
 async function loadAccountUsage(
   accountId: number,
+  credentialVersion: number,
   options: { force: boolean; includeCredits: boolean }
 ) {
   const cached = accountUsageCache.get(accountId)
   if (
     !options.force &&
     cached &&
+    cached.credentialVersion === credentialVersion &&
     Date.now() - cached.timestamp < accountUsageCacheTTL &&
     (!options.includeCredits || cached.includesCredits)
   ) {
     return cached.data
   }
 
-  const requestKey = `${accountId}:${options.includeCredits}`
+  const requestKey = `${accountId}:${credentialVersion}:${options.includeCredits}`
   const pending = accountUsageInflight.get(requestKey)
   if (pending && !options.force) return pending
 
@@ -120,6 +134,7 @@ async function loadAccountUsage(
         data: response.data,
         timestamp: Date.now(),
         includesCredits: options.includeCredits,
+        credentialVersion,
       })
       return response.data
     })
@@ -132,6 +147,38 @@ async function loadAccountUsage(
       accountUsageInflight.delete(requestKey)
     }
   }
+}
+
+const anthropicUsageCache = new Map<
+  number,
+  { data: UpstreamAccountUsage; timestamp: number; credentialVersion: number }
+>()
+
+async function loadAnthropicUsage(
+  accountId: number,
+  credentialVersion: number,
+  force: boolean
+) {
+  const cached = anthropicUsageCache.get(accountId)
+  if (
+    !force &&
+    cached?.credentialVersion === credentialVersion &&
+    Date.now() - cached.timestamp < accountUsageCacheTTL
+  ) {
+    return cached.data
+  }
+  const response = await enqueueAccountUsageRequest(() =>
+    getUpstreamAccountUsage(accountId, { force })
+  )
+  if (!response.success || !response.data) {
+    throw new Error(response.message || 'Failed to fetch usage')
+  }
+  anthropicUsageCache.set(accountId, {
+    data: response.data,
+    timestamp: Date.now(),
+    credentialVersion,
+  })
+  return response.data
 }
 
 function compactModeLabel(account: UpstreamAccount, t: Translate) {
@@ -257,8 +304,8 @@ function accountStatusDateTime(timestamp: number | null | undefined) {
 function accountExpiredForScheduling(account: UpstreamAccount, now: number) {
   return Boolean(
     account.auto_pause_on_expired &&
-      account.expires_at &&
-      account.expires_at * 1000 <= now
+    account.expires_at &&
+    account.expires_at * 1000 <= now
   )
 }
 
@@ -509,7 +556,19 @@ export function AccountSchedulingCell({
   onChange: (checked: boolean) => void
 }) {
   const { t } = useTranslation()
-  const expiredForScheduling = accountExpiredForScheduling(account, Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  const tracksExpiration = Boolean(
+    account.expires_at ||
+    account.rate_limit_reset_at ||
+    account.overload_until ||
+    account.temp_unschedulable_until
+  )
+  useEffect(() => {
+    if (!tracksExpiration) return
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [tracksExpiration])
+  const expiredForScheduling = accountExpiredForScheduling(account, now)
   const refreshBlocked = upstreamOAuthRefreshBlocksScheduling(
     account.temp_unschedulable_reason
   )
@@ -591,7 +650,8 @@ function classifyWindows(usage: UpstreamAccountQuotaUsage | null) {
 
 function resetCountdown(
   window: UpstreamAccountRateLimitWindow | null,
-  now: number
+  now: number,
+  t: Translate
 ) {
   if (!window) return '-'
   const seconds = Math.max(
@@ -600,7 +660,8 @@ function resetCountdown(
       ? window.reset_at - Math.floor(now / 1000)
       : window.reset_after_seconds
   )
-  if (seconds <= 0) return '0m'
+  if (seconds <= 0)
+    return window.used_percent > 0 ? t('Pending refresh') : t('Now')
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h`
@@ -617,6 +678,7 @@ function UsageWindow({
   window: UpstreamAccountRateLimitWindow | null
   now: number
 }) {
+  const { t } = useTranslation()
   const percent = Math.max(0, Math.min(100, Number(window?.used_percent) || 0))
   return (
     <div className='flex items-center gap-1.5'>
@@ -628,25 +690,81 @@ function UsageWindow({
         {window ? `${Math.round(percent)}%` : '-'}
       </span>
       <span className='text-muted-foreground min-w-12 text-[10px]'>
-        {resetCountdown(window, now)}
+        {resetCountdown(window, now, t)}
       </span>
     </div>
   )
 }
 
+function resetCreditExpiryTimestamp(value: string) {
+  const timestamp = new Date(value).getTime()
+  return Number.isNaN(timestamp) ? Number.POSITIVE_INFINITY : timestamp
+}
+
+function formatResetCreditExpiry(value: string, includeYear = false) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat(undefined, {
+    ...(includeYear ? { year: 'numeric' } : {}),
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const rootRef = useRef<HTMLDivElement>(null)
   const [usage, setUsage] = useState<UpstreamAccountQuotaUsage | null>(null)
+  const [anthropicUsage, setAnthropicUsage] =
+    useState<UpstreamAccountUsage | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [resetMessage, setResetMessage] = useState('')
   const [resetting, setResetting] = useState(false)
   const [resetConfirmOpen, setResetConfirmOpen] = useState(false)
+  const [showCreditDetails, setShowCreditDetails] = useState(false)
   const [now, setNow] = useState(() => Date.now())
-  const supported = account.platform === 'openai' && account.type === 'oauth'
+  const [visible, setVisible] = useState(
+    () =>
+      typeof window === 'undefined' ||
+      !window.matchMedia('(max-width: 767px)').matches
+  )
+  const isOpenAI = account.platform === 'openai' && account.type === 'oauth'
+  const isAnthropic =
+    account.platform === 'anthropic' &&
+    (account.type === 'oauth' || account.type === 'setup_token')
+  const supported = isOpenAI || isAnthropic
   const windows = useMemo(() => classifyWindows(usage), [usage])
+  const displayedWindows = isAnthropic
+    ? ([
+        ['5h', anthropicUsage?.five_hour ?? null],
+        ['7d', anthropicUsage?.seven_day ?? null],
+        ['7d S', anthropicUsage?.seven_day_sonnet ?? null],
+        ['7d F', anthropicUsage?.seven_day_fable ?? null],
+      ] as const)
+    : ([
+        ['5h', windows.fiveHour],
+        ['7d', windows.weekly],
+      ] as const)
+  const creditsLoaded = usage?.rate_limit_reset_credits != null
   const credits = usage?.rate_limit_reset_credits?.available_count ?? 0
+  const creditExpirations = useMemo(
+    () =>
+      (usage?.rate_limit_reset_credits?.credits ?? [])
+        .map((credit) => credit.expires_at?.trim() ?? '')
+        .filter(Boolean)
+        .sort((left, right) => {
+          const difference =
+            resetCreditExpiryTimestamp(left) - resetCreditExpiryTimestamp(right)
+          return difference || left.localeCompare(right)
+        }),
+    [usage]
+  )
+  const primaryCreditExpiration = creditExpirations[0] ?? ''
+  const hiddenCreditExpirationCount = Math.max(creditExpirations.length - 1, 0)
   const refreshSchedulingState = useCallback(() => {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ['upstream-accounts'] }),
@@ -655,22 +773,52 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   }, [queryClient])
 
   useEffect(() => {
-    if (!usage) return
+    if (visible || !supported || !rootRef.current) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '160px' }
+    )
+    observer.observe(rootRef.current)
+    return () => observer.disconnect()
+  }, [supported, visible])
+
+  useEffect(() => {
+    if (!usage && !anthropicUsage) return
     const timer = window.setInterval(() => setNow(Date.now()), 60_000)
     return () => window.clearInterval(timer)
-  }, [usage])
+  }, [anthropicUsage, usage])
 
   const query = useCallback(
     async (force = true) => {
       setLoading(true)
       setError('')
       setResetMessage('')
+      setShowCreditDetails(false)
       try {
-        const data = await loadAccountUsage(account.id, {
-          force,
-          includeCredits: force,
-        })
-        setUsage(data)
+        if (isOpenAI) {
+          const data = await loadAccountUsage(
+            account.id,
+            account.credential_version,
+            { force, includeCredits: force }
+          )
+          setUsage(data)
+        } else {
+          const data = await loadAnthropicUsage(
+            account.id,
+            account.credential_version,
+            force
+          )
+          setAnthropicUsage(data)
+        }
         setNow(Date.now())
       } catch (queryError) {
         const message =
@@ -683,23 +831,35 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
         setLoading(false)
       }
     },
-    [account.id, refreshSchedulingState, t]
+    [
+      account.credential_version,
+      account.id,
+      isOpenAI,
+      refreshSchedulingState,
+      t,
+    ]
   )
 
   useEffect(() => {
-    if (!supported) return
+    if (!supported || !visible) return
     let active = true
     setUsage(null)
+    setAnthropicUsage(null)
     setLoading(true)
     setError('')
     setResetMessage('')
-    void loadAccountUsage(account.id, {
-      force: false,
-      includeCredits: false,
-    })
+    setShowCreditDetails(false)
+    const request = isOpenAI
+      ? loadAccountUsage(account.id, account.credential_version, {
+          force: false,
+          includeCredits: false,
+        })
+      : loadAnthropicUsage(account.id, account.credential_version, false)
+    void request
       .then((data) => {
         if (!active) return
-        setUsage(data)
+        if (isOpenAI) setUsage(data as UpstreamAccountQuotaUsage)
+        else setAnthropicUsage(data as UpstreamAccountUsage)
         setNow(Date.now())
       })
       .catch((queryError) => {
@@ -717,7 +877,15 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
     return () => {
       active = false
     }
-  }, [account.id, refreshSchedulingState, supported, t])
+  }, [
+    account.credential_version,
+    account.id,
+    isOpenAI,
+    refreshSchedulingState,
+    supported,
+    t,
+    visible,
+  ])
 
   const reset = async () => {
     setResetting(true)
@@ -729,7 +897,11 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
         throw new Error(response.message || t('Reset failed'))
       setResetConfirmOpen(false)
       await query(true)
-      setResetMessage(t('Quota reset successfully'))
+      setResetMessage(
+        t('Reset {{count}} usage windows successfully', {
+          count: response.data?.windows_reset ?? 0,
+        })
+      )
     } catch (error) {
       setError(error instanceof Error ? error.message : t('Reset failed'))
       refreshSchedulingState()
@@ -744,17 +916,23 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
 
   return (
     <>
-      <div className='min-w-48 space-y-1.5'>
-        {loading && !usage ? (
+      <div ref={rootRef} className='flex min-w-48 flex-col gap-1.5'>
+        {loading && !usage && !anthropicUsage ? (
           <div className='flex flex-col gap-1.5' aria-label={t('Loading...')}>
             <Skeleton className='h-4 w-36' />
             <Skeleton className='h-4 w-36' />
           </div>
         ) : (
-          <>
-            <UsageWindow label='5h' window={windows.fiveHour} now={now} />
-            <UsageWindow label='7d' window={windows.weekly} now={now} />
-          </>
+          displayedWindows.map(([label, value]) =>
+            value || label === '5h' || label === '7d' ? (
+              <UsageWindow key={label} label={label} window={value} now={now} />
+            ) : null
+          )
+        )}
+        {anthropicUsage?.source === 'estimated' && (
+          <span className='text-muted-foreground text-[10px]'>
+            {t('Estimated from the setup-token session window')}
+          </span>
         )}
         {error && (
           <StatusDetailTooltip
@@ -768,7 +946,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
               </Badge>
               <HugeiconsIcon
                 icon={InformationCircleIcon}
-                className='text-amber-600 size-3.5'
+                className='size-3.5 text-amber-600'
                 strokeWidth={2}
               />
             </span>
@@ -779,39 +957,114 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
             {resetMessage}
           </span>
         )}
-        <div className='flex items-center gap-2 text-[11px]'>
-          <button
-            type='button'
-            className='text-blue-600 hover:underline disabled:opacity-50'
-            disabled={loading || resetting}
-            onClick={() => void query()}
-          >
-            {loading && (
-              <HugeiconsIcon
-                icon={Loading03Icon}
-                className='mr-0.5 inline size-3 animate-spin'
-              />
+        <div className='flex flex-wrap items-center gap-1 text-[11px]'>
+          <ActionTooltip
+            label={t(
+              usage || anthropicUsage
+                ? 'Query upstream usage again'
+                : isOpenAI
+                  ? 'Query upstream usage and reset credits'
+                  : 'Query upstream usage'
             )}
-            {!loading && (
-              <HugeiconsIcon
-                icon={RefreshIcon}
-                className='mr-0.5 inline size-3'
-              />
-            )}
-            {t('Query')}
-          </button>
-          <span className='text-blue-600'>
-            {t('{{count}} credits', { count: credits })}
-          </span>
-          <button
-            type='button'
-            className='text-amber-600 hover:underline disabled:cursor-not-allowed disabled:opacity-40'
-            disabled={!usage || credits <= 0 || loading || resetting}
-            onClick={() => setResetConfirmOpen(true)}
           >
-            {resetting ? t('Resetting...') : t('Reset')}
-          </button>
+            <Button
+              variant='link'
+              size='xs'
+              disabled={loading || resetting}
+              onClick={() => void query()}
+            >
+              {loading ? (
+                <HugeiconsIcon
+                  icon={Loading03Icon}
+                  data-icon='inline-start'
+                  className='animate-spin'
+                />
+              ) : (
+                <HugeiconsIcon icon={RefreshIcon} data-icon='inline-start' />
+              )}
+              {t('Query')}
+            </Button>
+          </ActionTooltip>
+          {isOpenAI && (
+            <>
+              <span className='text-muted-foreground'>
+                {creditsLoaded
+                  ? t('{{count}} credits', { count: credits })
+                  : t('Credits')}
+              </span>
+              <ActionTooltip
+                label={t(
+                  !creditsLoaded
+                    ? 'Query reset credits before resetting quota'
+                    : credits <= 0
+                      ? 'No reset credits are available'
+                      : 'Consume one reset credit'
+                )}
+              >
+                <Button
+                  variant='destructive'
+                  size='xs'
+                  disabled={
+                    !creditsLoaded || credits <= 0 || loading || resetting
+                  }
+                  onClick={() => setResetConfirmOpen(true)}
+                >
+                  {resetting ? t('Resetting...') : t('Reset')}
+                </Button>
+              </ActionTooltip>
+            </>
+          )}
         </div>
+        {primaryCreditExpiration && (
+          <div className='flex flex-col gap-1'>
+            <div className='flex flex-wrap items-center gap-1'>
+              <Badge
+                variant='secondary'
+                className='rounded-md text-[10px] tabular-nums'
+                title={t('Reset credit expires at {{time}}', {
+                  time: formatResetCreditExpiry(primaryCreditExpiration, true),
+                })}
+              >
+                {t('Expires {{time}}', {
+                  time: formatResetCreditExpiry(primaryCreditExpiration),
+                })}
+              </Badge>
+              {hiddenCreditExpirationCount > 0 && (
+                <Collapsible
+                  open={showCreditDetails}
+                  onOpenChange={setShowCreditDetails}
+                >
+                  <CollapsibleTrigger
+                    render={
+                      <Button
+                        variant='ghost'
+                        size='xs'
+                        aria-label={t(
+                          showCreditDetails
+                            ? 'Collapse reset credit expirations'
+                            : 'Expand {{count}} more reset credit expirations',
+                          { count: hiddenCreditExpirationCount }
+                        )}
+                      />
+                    }
+                  >
+                    +{hiddenCreditExpirationCount}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className='border-border bg-muted/40 mt-1 flex flex-col gap-0.5 rounded-md border px-2 py-1'>
+                    {creditExpirations.slice(1).map((expiresAt, index) => (
+                      <span
+                        key={`${expiresAt}-${index}`}
+                        className='text-muted-foreground text-[10px] tabular-nums'
+                      >
+                        {formatResetCreditExpiry(expiresAt, true)}
+                      </span>
+                    ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <AlertDialog open={resetConfirmOpen} onOpenChange={setResetConfirmOpen}>
         <AlertDialogContent>
@@ -819,8 +1072,8 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
             <AlertDialogTitle>{t('Reset quota?')}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(
-                'This consumes one reset credit and resets the available usage windows for {{name}}.',
-                { name: account.name }
+                'This consumes one of {{count}} available reset credits and resets the usage windows for {{name}}.',
+                { count: credits, name: account.name }
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -841,5 +1094,24 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
         </AlertDialogContent>
       </AlertDialog>
     </>
+  )
+}
+
+function ActionTooltip({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <TooltipProvider delay={150}>
+      <Tooltip>
+        <TooltipTrigger render={<span className='inline-flex' />}>
+          {children}
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }

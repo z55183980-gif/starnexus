@@ -23,6 +23,7 @@ import type {
   UpstreamAccountQuotaResetResult,
   UpstreamAccountPoolPublishResult,
   UpstreamAccountQuotaUsage,
+  UpstreamAccountUsage,
   UpstreamAccountScheduledTestPlan,
   UpstreamAccountScheduledTestPlanPayload,
   UpstreamAccountScheduledTestResult,
@@ -266,6 +267,17 @@ export async function resetUpstreamAccountQuota(
     undefined,
     localFeedbackApiConfig
   )
+  return response.data
+}
+
+export async function getUpstreamAccountUsage(
+  id: number,
+  options?: { force?: boolean }
+): Promise<ApiResponse<UpstreamAccountUsage>> {
+  const response = await api.get(`/api/upstream/accounts/${id}/usage`, {
+    ...localFeedbackApiConfig,
+    params: { force: options?.force || undefined },
+  })
   return response.data
 }
 

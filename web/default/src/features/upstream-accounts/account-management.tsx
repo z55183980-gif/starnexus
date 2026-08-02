@@ -145,15 +145,15 @@ import { mergeAccountImportDocuments } from './batch-import'
 import { BatchImportDialog } from './batch-import-dialog'
 import { CRSSyncDialog } from './crs-sync-dialog'
 import { PublishPoolChannelDrawer } from './publish-pool-channel-drawer'
-import { upstreamOAuthRefreshBlocksScheduling } from './types'
-import type {
-  UpstreamAccount,
-  UpstreamAccountPayload,
-  UpstreamAccountPool,
-  UpstreamAccountPoolMember,
-  UpstreamAccountType,
-  UpstreamPlatform,
-  UpstreamPoolPayload,
+import {
+  upstreamOAuthRefreshBlocksScheduling,
+  type UpstreamAccount,
+  type UpstreamAccountPayload,
+  type UpstreamAccountPool,
+  type UpstreamAccountPoolMember,
+  type UpstreamAccountType,
+  type UpstreamPlatform,
+  type UpstreamPoolPayload,
 } from './types'
 
 const queryKeys = {
@@ -1946,7 +1946,34 @@ export function AccountManagement({
                     <TableHead>{t('Status')}</TableHead>
                     <TableHead>{t('Scheduling')}</TableHead>
                     <TableHead>{t('Groups')}</TableHead>
-                    <TableHead>{t('Usage window')}</TableHead>
+                    <TableHead>
+                      <span className='inline-flex items-center gap-1'>
+                        {t('Usage window')}
+                        <TooltipProvider delay={150}>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  variant='ghost'
+                                  size='icon-xs'
+                                  aria-label={t('About usage windows')}
+                                />
+                              }
+                            >
+                              <HugeiconsIcon
+                                icon={InformationCircleIcon}
+                                strokeWidth={2}
+                              />
+                            </TooltipTrigger>
+                            <TooltipContent side='bottom' className='max-w-72'>
+                              {t(
+                                'The 5h and 7d windows are rolling limits imposed by the upstream provider. They reset automatically; querying only refreshes the displayed data.'
+                              )}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </span>
+                    </TableHead>
                     <TableHead className='w-36'>{t('Actions')}</TableHead>
                   </TableRow>
                 </TableHeader>

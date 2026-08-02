@@ -186,6 +186,15 @@ export interface UpstreamAccountQuotaResetResult {
   windows_reset: number
 }
 
+export interface UpstreamAccountUsage {
+  source: 'active' | 'estimated'
+  five_hour?: UpstreamAccountRateLimitWindow | null
+  seven_day?: UpstreamAccountRateLimitWindow | null
+  seven_day_sonnet?: UpstreamAccountRateLimitWindow | null
+  seven_day_fable?: UpstreamAccountRateLimitWindow | null
+  fetched_at: number
+}
+
 export interface UpstreamAccountTestHistory {
   success: boolean
   status_code: number

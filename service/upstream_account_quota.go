@@ -34,9 +34,10 @@ type UpstreamAccountQuotaQueryOptions struct {
 }
 
 type upstreamAccountQuotaCacheEntry struct {
-	usage          UpstreamAccountQuotaUsage
-	cachedAt       time.Time
-	includeCredits bool
+	usage             UpstreamAccountQuotaUsage
+	cachedAt          time.Time
+	includeCredits    bool
+	credentialVersion int64
 }
 
 var (
@@ -118,19 +119,26 @@ func (err *upstreamAccountQuotaHTTPError) Error() string {
 }
 
 func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions ...UpstreamAccountQuotaQueryOptions) (*UpstreamAccountQuotaUsage, error) {
+	if accountId <= 0 {
+		return nil, errors.New("invalid upstream account id")
+	}
+	var account model.UpstreamAccount
+	if err := model.DB.Select("id", "credential_version").First(&account, accountId).Error; err != nil {
+		return nil, err
+	}
 	options := UpstreamAccountQuotaQueryOptions{IncludeCredits: true}
 	if len(queryOptions) > 0 {
 		options = queryOptions[0]
 	}
 	if !options.Force {
-		if cached := cachedUpstreamAccountQuota(accountId, options.IncludeCredits); cached != nil {
+		if cached := cachedUpstreamAccountQuota(accountId, account.CredentialVersion, options.IncludeCredits); cached != nil {
 			return cached, nil
 		}
 	}
-	flightKey := strconv.Itoa(accountId) + ":" + strconv.FormatBool(options.IncludeCredits)
+	flightKey := strconv.Itoa(accountId) + ":" + strconv.FormatInt(account.CredentialVersion, 10) + ":" + strconv.FormatBool(options.IncludeCredits)
 	result, err, _ := upstreamAccountQuotaFlight.Do(flightKey, func() (any, error) {
 		if !options.Force {
-			if cached := cachedUpstreamAccountQuota(accountId, options.IncludeCredits); cached != nil {
+			if cached := cachedUpstreamAccountQuota(accountId, account.CredentialVersion, options.IncludeCredits); cached != nil {
 				return cached, nil
 			}
 		}
@@ -139,7 +147,7 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 			return nil, queryErr
 		}
 		upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
-			usage: *usage, cachedAt: time.Now(), includeCredits: options.IncludeCredits,
+			usage: *usage, cachedAt: time.Now(), includeCredits: options.IncludeCredits, credentialVersion: account.CredentialVersion,
 		})
 		return usage, nil
 	})
@@ -150,7 +158,7 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 	return usage, nil
 }
 
-func cachedUpstreamAccountQuota(accountId int, includeCredits bool) *UpstreamAccountQuotaUsage {
+func cachedUpstreamAccountQuota(accountId int, credentialVersion int64, includeCredits bool) *UpstreamAccountQuotaUsage {
 	if accountId <= 0 {
 		return nil
 	}
@@ -159,7 +167,7 @@ func cachedUpstreamAccountQuota(accountId int, includeCredits bool) *UpstreamAcc
 		return nil
 	}
 	entry, ok := value.(upstreamAccountQuotaCacheEntry)
-	if !ok || time.Since(entry.cachedAt) >= upstreamAccountQuotaCacheTTL || (includeCredits && !entry.includeCredits) {
+	if !ok || entry.credentialVersion != credentialVersion || time.Since(entry.cachedAt) >= upstreamAccountQuotaCacheTTL || (includeCredits && !entry.includeCredits) {
 		upstreamAccountQuotaCache.Delete(accountId)
 		return nil
 	}
