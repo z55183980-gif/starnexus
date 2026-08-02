@@ -122,6 +122,24 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	// Restore a lossless, gateway-owned Responses continuation before token
+	// estimation. Keep the client request unchanged so upstreams that support
+	// previous_response_id can continue to consume it natively; Codex HTTP opts
+	// into the expanded copy in its adaptor.
+	var responsesContinuationMeta *types.TokenCountMeta
+	if relayFormat == types.RelayFormatOpenAIResponses {
+		if responsesRequest, ok := request.(*dto.OpenAIResponsesRequest); ok {
+			service.PrepareResponsesHTTPContinuation(c, responsesRequest)
+			if preferredAccountID := service.ResponsesHTTPContinuationPreferredAccountID(c); preferredAccountID > 0 {
+				common.SetContextKey(c, constant.ContextKeyUpstreamAccountPreferredId, preferredAccountID)
+				common.SetContextKey(c, constant.ContextKeyUpstreamAccountPreferredRequired, false)
+			}
+			if expandedMeta, expanded := service.ResponsesHTTPContinuationTokenCountMeta(c, responsesRequest); expanded {
+				responsesContinuationMeta = expandedMeta
+			}
+		}
+	}
+
 	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
@@ -157,7 +175,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 
-	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
+	pricingMeta := meta
+	if responsesContinuationMeta != nil {
+		pricingMeta = responsesContinuationMeta
+	}
+	tokens, err := service.EstimateRequestToken(c, pricingMeta, relayInfo)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
 		return
@@ -182,7 +204,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	relayInfo.SetEstimatePromptTokens(tokens)
 
-	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
+	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, pricingMeta)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		return

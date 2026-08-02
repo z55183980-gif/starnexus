@@ -136,6 +136,19 @@ func TestResolveUpstreamAccountModelTreatsIdentityMappingsAsWhitelistEntries(t *
 	require.Equal(t, "gpt-5.6-luna", mapped)
 }
 
+func TestPreferUpstreamAccountCandidateIsSoftAndStable(t *testing.T) {
+	candidates := []upstreamAccountCandidate{
+		{account: model.UpstreamAccount{Id: 1}},
+		{account: model.UpstreamAccount{Id: 2}},
+		{account: model.UpstreamAccount{Id: 3}},
+	}
+	ordered := preferUpstreamAccountCandidate(candidates, 2)
+	require.Equal(t, []int{2, 1, 3}, []int{ordered[0].account.Id, ordered[1].account.Id, ordered[2].account.Id})
+
+	missing := preferUpstreamAccountCandidate(ordered, 99)
+	require.Equal(t, []int{2, 1, 3}, []int{missing[0].account.Id, missing[1].account.Id, missing[2].account.Id})
+}
+
 func TestResolveUpstreamAccountModelRejectsForeignModelsForOpenAIOAuthWithoutMapping(t *testing.T) {
 	account := &model.UpstreamAccount{Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth}
 

@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -107,6 +108,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 
 	if isCompact {
 		return request, nil
+	}
+	// Ordinary Responses HTTP cannot forward previous_response_id to the Codex
+	// backend. Restore the gateway-owned full input first when it is available;
+	// orphan tool outputs fail closed instead of being sent without their call.
+	if !common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
+		if apiErr := service.ApplyResponsesHTTPContinuationForCodex(c, &request); apiErr != nil {
+			return nil, apiErr
+		}
 	}
 	if err := normalizeCodexResponsesRequest(&request); err != nil {
 		return nil, err

@@ -273,7 +273,7 @@ func (t *responsesWebSocketTurn) addReplayToolContext(item json.RawMessage) {
 
 func isResponsesWSToolCallContextType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "tool_call", "function_call", "local_shell_call", "tool_search_call", "custom_tool_call", "mcp_tool_call":
+	case "tool_call", "function_call", "local_shell_call", "tool_search_call", "custom_tool_call", "mcp_tool_call", "computer_call":
 		return true
 	default:
 		return false
@@ -282,7 +282,7 @@ func isResponsesWSToolCallContextType(itemType string) bool {
 
 func isResponsesWSToolCallOutputType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
-	case "function_call_output", "tool_search_output", "custom_tool_call_output", "mcp_tool_call_output":
+	case "function_call_output", "local_shell_call_output", "tool_search_output", "custom_tool_call_output", "mcp_tool_call_output", "computer_call_output":
 		return true
 	default:
 		return false

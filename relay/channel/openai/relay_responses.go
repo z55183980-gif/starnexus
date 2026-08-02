@@ -40,8 +40,15 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		c.Set("image_generation_call_size", responsesResponse.GetSize())
 	}
 
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	// Commit continuation state only after the response body was successfully
+	// written downstream. This prevents hidden tool calls from poisoning the
+	// next turn when the client has already disconnected.
+	writeErr := service.IOCopyBytesGracefully(c, resp, responseBody)
+	if writeErr == nil {
+		responseID, output := service.ResponsesHTTPResponseEnvelope(responseBody)
+		output = service.PreferStagedResponsesHTTPOutput(c, responseID, output)
+		service.CommitResponsesHTTPContinuation(c, responseID, output)
+	}
 
 	// compute usage
 	usage := dto.Usage{}
@@ -91,7 +98,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		sendResponsesStreamData(c, streamResponse, data)
+		if writeErr := sendResponsesStreamData(c, streamResponse, data); writeErr != nil {
+			sr.Stop(writeErr)
+			return
+		}
+		service.RecordDeliveredResponsesHTTPEvent(c, []byte(data))
 		switch streamResponse.Type {
 		case "response.completed":
 			if streamResponse.Response != nil {

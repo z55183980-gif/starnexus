@@ -357,6 +357,51 @@ func TestResponsesWSHTTPBridgeAllowsToolOutputWithCallContext(t *testing.T) {
 	require.Equal(t, int64(3), gjson.GetBytes(prepared, "input.#").Int())
 }
 
+func TestResponsesWSNativeContinuationRollsBackUnansweredToolCall(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{
+		upstream: &responsesWSUpstreamConnection{},
+		replayInput: []json.RawMessage{
+			json.RawMessage(`{"type":"message","role":"user","content":"lookup"}`),
+			json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{}"}`),
+		},
+		replayInputExists: true,
+	}
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeContextPool,
+		originalRequest: &dto.OpenAIResponsesRequest{PreviousResponseID: "resp_tool"},
+	}
+	prepared, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{
+		"input":[{"type":"message","role":"user","content":"skip the tool"}],
+		"previous_response_id":"resp_tool"
+	}`))
+	require.Nil(t, apiErr)
+	require.False(t, gjson.GetBytes(prepared, "previous_response_id").Exists())
+	require.False(t, gjson.GetBytes(prepared, `input.#(type=="function_call")`).Exists())
+	require.Equal(t, "skip the tool", gjson.GetBytes(prepared, "input.1.content").String())
+}
+
+func TestResponsesWSHTTPBridgeSupportsLocalShellOutput(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{
+		replayInput: []json.RawMessage{
+			json.RawMessage(`{"type":"message","role":"user","content":"run"}`),
+			json.RawMessage(`{"type":"local_shell_call","id":"sh_1","call_id":"shell_1"}`),
+		},
+		replayInputExists: true,
+	}
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeHTTPBridge,
+		originalRequest: &dto.OpenAIResponsesRequest{PreviousResponseID: "resp_shell"},
+	}
+	prepared, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{
+		"input":[{"type":"local_shell_call_output","call_id":"shell_1","output":"ok"}],
+		"previous_response_id":"resp_shell"
+	}`))
+	require.Nil(t, apiErr)
+	require.Equal(t, int64(3), gjson.GetBytes(prepared, "input.#").Int())
+}
+
 func TestResponsesWSContinuationStoreIsScopedAndRestored(t *testing.T) {
 	t.Parallel()
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

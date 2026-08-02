@@ -155,7 +155,11 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 	}()
 	for {
 		concurrencyFull := false
-		for _, candidate := range weightedUpstreamCandidateOrder(candidates) {
+		orderedCandidates := weightedUpstreamCandidateOrder(candidates)
+		if !request.RequirePreferred {
+			orderedCandidates = preferUpstreamAccountCandidate(orderedCandidates, request.PreferredAccountId)
+		}
+		for _, candidate := range orderedCandidates {
 			lease, acquireErr := router.leaseManager.Acquire(ctx, candidate.account.Id, candidate.account.Concurrency, router.leaseTTL)
 			if errors.Is(acquireErr, ErrUpstreamAccountConcurrencyFull) {
 				concurrencyFull = true
@@ -365,16 +369,14 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 	}
 	// A continued native WebSocket must stay on the same account, but the
 	// preferred account must still be eligible for the configured model route.
-	if request.PreferredAccountId > 0 {
+	if request.PreferredAccountId > 0 && request.RequirePreferred {
 		for _, candidate := range candidates {
 			if candidate.account.Id == request.PreferredAccountId {
 				return []upstreamAccountCandidate{candidate}, exclusions, nil
 			}
 		}
-		if request.RequirePreferred {
-			exclusions["preferred_account_unavailable"]++
-			return nil, exclusions, nil
-		}
+		exclusions["preferred_account_unavailable"]++
+		return nil, exclusions, nil
 	}
 	bestPriority := candidates[0].membershipPriority
 	for _, candidate := range candidates[1:] {
@@ -672,6 +674,22 @@ func weightedUpstreamCandidateOrder(candidates []upstreamAccountCandidate) []ups
 		pool = append(pool[:selected], pool[selected+1:]...)
 	}
 	return order
+}
+
+func preferUpstreamAccountCandidate(candidates []upstreamAccountCandidate, accountID int) []upstreamAccountCandidate {
+	if accountID <= 0 || len(candidates) < 2 {
+		return candidates
+	}
+	for index, candidate := range candidates {
+		if candidate.account.Id != accountID || index == 0 {
+			continue
+		}
+		preferred := candidate
+		copy(candidates[1:index+1], candidates[0:index])
+		candidates[0] = preferred
+		break
+	}
+	return candidates
 }
 
 func resolveUpstreamProxy(_ context.Context, account *model.UpstreamAccount, pool *model.UpstreamAccountPool, channelProxy string) (*model.UpstreamProxy, string, error) {

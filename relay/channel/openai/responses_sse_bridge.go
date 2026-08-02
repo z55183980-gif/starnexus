@@ -2,6 +2,7 @@ package openai
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -30,6 +31,9 @@ func collectResponsesSSE(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	accumulator := NewResponsesEventAccumulator()
 	var finalResponse *dto.OpenAIResponsesResponse
 	idleTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
 	_, err := helper.ScanSSEDataWithIdleTimeout(c.Request.Context(), resp.Body, idleTimeout, func(data []byte) (bool, error) {
 		event, consumeErr := accumulator.Consume(c, nil, data)
 		if consumeErr != nil {
@@ -37,6 +41,11 @@ func collectResponsesSSE(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 		if event.Response != nil && accumulator.Terminal() {
 			finalResponse = event.Response
+			var rawEvent map[string]json.RawMessage
+			if common.Unmarshal(data, &rawEvent) == nil {
+				responseID, output := service.ResponsesHTTPResponseEnvelope(rawEvent["response"])
+				service.StageResponsesHTTPResponseOutput(c, responseID, output)
+			}
 		}
 		return accumulator.Terminal(), nil
 	})

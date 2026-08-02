@@ -61,6 +61,9 @@ func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *
 	}()
 
 	streamingTimeout := time.Duration(constant.StreamingTimeout) * time.Second
+	if streamingTimeout <= 0 {
+		streamingTimeout = 60 * time.Second
+	}
 
 	var (
 		stopChan   = make(chan bool, 3) // 增加缓冲区避免阻塞

@@ -115,6 +115,7 @@ import {
   AccountIdentityCell,
   AccountPlatformCell,
   AccountPoolsCell,
+  AccountPriorityCell,
   AccountSchedulingCell,
   AccountStatusCell,
   AccountUsageCell,
@@ -1278,6 +1279,7 @@ export function AccountManagement({
   } | null>(null)
   const [busyId, setBusyId] = useState<number | null>(null)
   const [schedulingBusyId, setSchedulingBusyId] = useState<number | null>(null)
+  const [priorityBusyId, setPriorityBusyId] = useState<number | null>(null)
   const [recoveringSelected, setRecoveringSelected] = useState(false)
 
   const accountsQuery = useQuery({
@@ -1462,6 +1464,26 @@ export function AccountManagement({
       await queryClient.invalidateQueries({ queryKey: queryKeys.accounts })
     } finally {
       setSchedulingBusyId(null)
+    }
+  }
+
+  const updateAccountPriorityFields = async (
+    account: UpstreamAccount,
+    patch: Partial<Pick<UpstreamAccountPayload, 'priority'>>
+  ) => {
+    setPriorityBusyId(account.id)
+    try {
+      const response = await updateUpstreamAccountsBatch([account.id], patch)
+      if (!response.success || response.data?.failures.length) {
+        throw new Error(
+          response.data?.failures[0]?.message ||
+            response.message ||
+            t('Update failed')
+        )
+      }
+      await queryClient.invalidateQueries({ queryKey: queryKeys.accounts })
+    } finally {
+      setPriorityBusyId(null)
     }
   }
 
@@ -1922,7 +1944,7 @@ export function AccountManagement({
           </div>
           <TabsContent value='accounts' className='flex flex-col gap-3 pt-3'>
             <div className='overflow-x-auto rounded-lg border'>
-              <Table className='min-w-[1380px]'>
+              <Table className='min-w-[1480px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead className='w-10'>
@@ -1949,6 +1971,7 @@ export function AccountManagement({
                     <TableHead>{t('Account ID')}</TableHead>
                     <TableHead>{t('Platform / Type')}</TableHead>
                     <TableHead>{t('Capacity')}</TableHead>
+                    <TableHead className='w-20'>{t('Priority')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>
                     <TableHead>{t('Scheduling')}</TableHead>
                     <TableHead>{t('Today Stats')}</TableHead>
@@ -1987,12 +2010,12 @@ export function AccountManagement({
                 <TableBody>
                   {accountsQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={10}>{t('Loading...')}</TableCell>
+                      <TableCell colSpan={11}>{t('Loading...')}</TableCell>
                     </TableRow>
                   ) : accounts.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={10}
+                        colSpan={11}
                         className='text-muted-foreground py-10 text-center'
                       >
                         {t('No accounts')}
@@ -2026,6 +2049,15 @@ export function AccountManagement({
                         </TableCell>
                         <TableCell>
                           <AccountCapacityCell account={account} />
+                        </TableCell>
+                        <TableCell>
+                          <AccountPriorityCell
+                            account={account}
+                            busy={priorityBusyId === account.id}
+                            onSave={(patch) =>
+                              updateAccountPriorityFields(account, patch)
+                            }
+                          />
                         </TableCell>
                         <TableCell>
                           <AccountStatusCell account={account} />

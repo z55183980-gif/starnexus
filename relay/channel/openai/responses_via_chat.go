@@ -50,7 +50,10 @@ func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
-	service.IOCopyBytesGracefully(c, resp, responseBody)
+	if writeErr := service.IOCopyBytesGracefully(c, resp, responseBody); writeErr == nil {
+		continuationResponseID, output := service.ResponsesHTTPResponseEnvelope(responseBody)
+		service.CommitResponsesHTTPContinuation(c, continuationResponseID, output)
+	}
 	return usage, nil
 }
 
@@ -74,6 +77,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			return false
 		}
+		service.RecordDeliveredResponsesHTTPEvent(c, data)
 		return true
 	}
 

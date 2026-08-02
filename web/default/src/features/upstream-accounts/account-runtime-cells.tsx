@@ -32,12 +32,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
+import { toast } from 'sonner'
 import { Switch } from '@/components/ui/switch'
 import {
   Tooltip,
@@ -53,11 +55,14 @@ import {
 import {
   upstreamOAuthRefreshBlocksScheduling,
   type UpstreamAccount,
+  type UpstreamAccountPayload,
   type UpstreamAccountQuotaUsage,
   type UpstreamAccountRateLimitWindow,
   type UpstreamAccountUsage,
   type UpstreamAccountWindowStats,
 } from './types'
+
+type AccountPriorityPatch = Partial<Pick<UpstreamAccountPayload, 'priority'>>
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
@@ -276,6 +281,66 @@ export function AccountCapacityCell({ account }: { account: UpstreamAccount }) {
     >
       {account.current_concurrency} / {account.concurrency}
     </Badge>
+  )
+}
+
+export function AccountPriorityCell({
+  account,
+  busy,
+  onSave,
+}: {
+  account: UpstreamAccount
+  busy: boolean
+  onSave: (patch: AccountPriorityPatch) => Promise<void>
+}) {
+  const { t } = useTranslation()
+  const [priority, setPriority] = useState(String(account.priority))
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    setPriority(String(account.priority))
+  }, [account.id, account.priority])
+
+  const commitPriority = async () => {
+    const trimmed = priority.trim()
+    const next = Number(trimmed)
+    if (!trimmed || !Number.isInteger(next) || next < 0) {
+      setPriority(String(account.priority))
+      toast.error(t('Priority must be a non-negative whole number'))
+      return
+    }
+    if (next === account.priority) {
+      setPriority(String(account.priority))
+      return
+    }
+    setSaving(true)
+    try {
+      await onSave({ priority: next })
+    } catch (error) {
+      setPriority(String(account.priority))
+      toast.error(error instanceof Error ? error.message : t('Update failed'))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Input
+      type='number'
+      min={0}
+      step={1}
+      disabled={busy || saving}
+      value={priority}
+      onChange={(event) => setPriority(event.target.value)}
+      onBlur={() => void commitPriority()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.currentTarget.blur()
+        }
+      }}
+      aria-label={t('Priority')}
+      className='h-7 w-16 px-1.5 text-xs tabular-nums'
+    />
   )
 }
 
