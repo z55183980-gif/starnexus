@@ -38,11 +38,21 @@ func (s *responsesWebSocketSession) prepareReplayPayload(turn *responsesWebSocke
 		previousResponseID = strings.TrimSpace(turn.originalRequest.PreviousResponseID)
 	}
 	fullInput, fullInputExists := mergeResponsesWSReplayInput(previousInput, previousInputExists, currentInput, currentInputExists, previousResponseID != "")
+	rolledBackToolCalls := false
+	if previousResponseID != "" {
+		// A Codex turn can be interrupted after response.created while the
+		// downstream WebSocket remains open. The upstream may then finish with a
+		// tool call that the client discarded. Keep tool-call context only when the
+		// continuation actually carries its output; otherwise replay from the last
+		// safe input instead of poisoning the next turn with an unanswered call.
+		fullInput, rolledBackToolCalls = responsesWSPruneUnansweredToolCalls(fullInput)
+	}
 	turn.replayInput = cloneResponsesWSRawMessages(fullInput)
 	turn.replayInputExists = fullInputExists
 
 	statelessReplay := turn.upstreamMode == model.UpstreamOpenAIWSModeHTTPBridge ||
-		(responsesWSModeUsesUpstreamWebSocket(turn.upstreamMode) && previousResponseID != "" && !hasUpstream && previousInputExists)
+		(responsesWSModeUsesUpstreamWebSocket(turn.upstreamMode) && previousResponseID != "" && !hasUpstream && previousInputExists) ||
+		rolledBackToolCalls
 	if !statelessReplay {
 		return prepared, nil
 	}
@@ -324,6 +334,40 @@ func responsesWSRawItemsHaveToolCallContextForOutputs(items []json.RawMessage) b
 		}
 	}
 	return true
+}
+
+func responsesWSPruneUnansweredToolCalls(items []json.RawMessage) ([]json.RawMessage, bool) {
+	outputCallIDs := make(map[string]struct{})
+	for _, item := range items {
+		var envelope struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+		}
+		if common.Unmarshal(item, &envelope) != nil || !isResponsesWSToolCallOutputType(envelope.Type) {
+			continue
+		}
+		if callID := strings.TrimSpace(envelope.CallID); callID != "" {
+			outputCallIDs[callID] = struct{}{}
+		}
+	}
+
+	filtered := make([]json.RawMessage, 0, len(items))
+	pruned := false
+	for _, item := range items {
+		var envelope struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+		}
+		if common.Unmarshal(item, &envelope) == nil && isResponsesWSToolCallContextType(envelope.Type) {
+			callID := strings.TrimSpace(envelope.CallID)
+			if _, answered := outputCallIDs[callID]; callID == "" || !answered {
+				pruned = true
+				continue
+			}
+		}
+		filtered = append(filtered, append(json.RawMessage(nil), item...))
+	}
+	return filtered, pruned
 }
 
 func (s *responsesWebSocketSession) commitReplayState(turn *responsesWebSocketTurn) {
