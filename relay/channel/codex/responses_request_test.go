@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -40,6 +41,30 @@ func TestNormalizeCodexResponsesRequestMatchesOAuthSchema(t *testing.T) {
 	var include []string
 	require.NoError(t, common.Unmarshal(request.Include, &include))
 	require.Contains(t, include, "reasoning.encrypted_content")
+}
+
+func TestCodexResponsesForcesOnlyOrdinaryRequestsToStream(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	falseValue := false
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, dto.OpenAIResponsesRequest{Model: "gpt-5", Input: []byte(`[]`), Stream: &falseValue})
+	require.NoError(t, err)
+	request := converted.(dto.OpenAIResponsesRequest)
+	require.NotNil(t, request.Stream)
+	require.True(t, *request.Stream)
+
+	converted, err = (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponsesCompact,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, dto.OpenAIResponsesRequest{Model: "gpt-5", Input: []byte(`[]`), Stream: &falseValue})
+	require.NoError(t, err)
+	compactRequest := converted.(dto.OpenAIResponsesRequest)
+	require.NotNil(t, compactRequest.Stream)
+	require.False(t, *compactRequest.Stream)
 }
 
 func TestIsolateCodexSessionHeaderByUserAndToken(t *testing.T) {

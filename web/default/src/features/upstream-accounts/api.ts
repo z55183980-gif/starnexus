@@ -28,6 +28,7 @@ import type {
   UpstreamAccountScheduledTestPlanPayload,
   UpstreamAccountScheduledTestResult,
   UpstreamAccountStats,
+  UpstreamAccountWindowStats,
   UpstreamBatchResult,
   UpstreamPoolPayload,
   UpstreamProxy,
@@ -288,6 +289,28 @@ export async function getUpstreamAccountStats(
   const response = await api.get(`/api/upstream/accounts/${id}/stats`, {
     params: { days },
   })
+  return response.data
+}
+
+export async function getUpstreamAccountTodayStats(
+  id: number
+): Promise<ApiResponse<UpstreamAccountWindowStats>> {
+  const response = await api.get(`/api/upstream/accounts/${id}/today-stats`, {
+    ...localFeedbackApiConfig,
+  })
+  return response.data
+}
+
+export async function getUpstreamAccountTodayStatsBatch(
+  accountIds: number[]
+): Promise<
+  ApiResponse<{ stats: Record<string, UpstreamAccountWindowStats> }>
+> {
+  const response = await api.post(
+    '/api/upstream/accounts/today-stats/batch',
+    { account_ids: accountIds },
+    localFeedbackApiConfig
+  )
   return response.data
 }
 

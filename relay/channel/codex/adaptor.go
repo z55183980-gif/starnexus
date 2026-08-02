@@ -111,6 +111,11 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if err := normalizeCodexResponsesRequest(&request); err != nil {
 		return nil, err
 	}
+	// ChatGPT's Codex Responses endpoint only accepts streaming requests. Keep
+	// the downstream stream preference in RelayInfo and force only the outbound
+	// request here; non-stream clients are bridged back to JSON in DoResponse.
+	stream := true
+	request.Stream = &stream
 	// ChatGPT's Codex HTTP endpoint does not accept previous_response_id. SUB2API
 	// only forwards it when the chosen upstream transport is Responses WS v2;
 	// HTTP (including client-WS/http_bridge) must use a full input payload.
@@ -150,7 +155,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		if info.IsStream {
 			return openai.OaiResponsesStreamHandler(c, info, resp)
 		}
-		return openai.OaiResponsesHandler(c, info, resp)
+		return openai.OaiResponsesSSEToNonStreamHandler(c, info, resp)
 	default:
 		return nil, types.NewError(errors.New("codex channel: endpoint not supported"), types.ErrorCodeInvalidRequest)
 	}
@@ -234,7 +239,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	// Clients may omit it or include parameters like `application/json; charset=utf-8`,
 	// which can be rejected by the upstream. Force the exact media type.
 	req.Set("Content-Type", "application/json")
-	if info.IsStream {
+	if info.RelayMode == relayconstant.RelayModeResponses {
 		req.Set("Accept", "text/event-stream")
 	} else if req.Get("Accept") == "" {
 		req.Set("Accept", "application/json")

@@ -64,6 +64,9 @@ func TestSetupRequestHeaderForwardsResponsesLiteOnlyForHTTP(t *testing.T) {
 			}
 			headers := make(http.Header)
 			require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+			if testCase.relayMode == relayconstant.RelayModeResponses {
+				require.Equal(t, "text/event-stream", headers.Get("Accept"))
+			}
 			if testCase.wantHeader {
 				require.Equal(t, "true", headers.Get(ResponsesLiteHeader))
 			} else {

@@ -421,6 +421,42 @@ func GetUpstreamAccountStats(c *gin.Context) {
 	common.ApiSuccess(c, stats)
 }
 
+func GetUpstreamAccountTodayStats(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	stats, err := service.GetUpstreamAccountTodayStats(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, stats)
+}
+
+type upstreamAccountTodayStatsBatchRequest struct {
+	AccountIds []int `json:"account_ids"`
+}
+
+func GetUpstreamAccountTodayStatsBatch(c *gin.Context) {
+	var request upstreamAccountTodayStatsBatchRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	stats, err := service.GetUpstreamAccountTodayStatsBatch(request.AccountIds)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	// JSON object keys must be strings for the admin table lookup.
+	payload := make(map[string]*service.UpstreamAccountWindowStats, len(stats))
+	for accountId, item := range stats {
+		payload[strconv.Itoa(accountId)] = item
+	}
+	common.ApiSuccess(c, gin.H{"stats": payload})
+}
+
 func ListUpstreamAccountScheduledTestPlans(c *gin.Context) {
 	id, ok := positivePathId(c)
 	if !ok {

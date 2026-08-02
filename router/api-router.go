@@ -214,6 +214,8 @@ func SetApiRouter(router *gin.Engine) {
 			upstreamRoute.GET("/accounts/:id/usage", controller.GetUpstreamAccountUsage)
 			upstreamRoute.POST("/accounts/:id/reset-quota", controller.ResetUpstreamAccountQuota)
 			upstreamRoute.GET("/accounts/:id/stats", controller.GetUpstreamAccountStats)
+			upstreamRoute.GET("/accounts/:id/today-stats", controller.GetUpstreamAccountTodayStats)
+			upstreamRoute.POST("/accounts/today-stats/batch", controller.GetUpstreamAccountTodayStatsBatch)
 			upstreamRoute.GET("/accounts/:id/scheduled-tests", controller.ListUpstreamAccountScheduledTestPlans)
 			upstreamRoute.POST("/accounts/:id/scheduled-tests", controller.CreateUpstreamAccountScheduledTestPlan)
 			upstreamRoute.PUT("/accounts/:id/scheduled-tests/:planId", controller.UpdateUpstreamAccountScheduledTestPlan)

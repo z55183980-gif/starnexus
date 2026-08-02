@@ -119,6 +119,7 @@ import {
   AccountStatusCell,
   AccountUsageCell,
 } from './account-runtime-cells'
+import { AccountTodayStatsCell } from './account-today-stats-cell'
 import { AccountTestDialog } from './account-test-dialog'
 import {
   createUpstreamPool,
@@ -126,6 +127,7 @@ import {
   deleteUpstreamAccountsBatch,
   deleteUpstreamPool,
   exportUpstreamAccounts,
+  getUpstreamAccountTodayStatsBatch,
   importUpstreamData,
   listUpstreamAccounts,
   listUpstreamPoolMembers,
@@ -151,9 +153,17 @@ import {
   type UpstreamAccountPool,
   type UpstreamAccountPoolMember,
   type UpstreamAccountType,
+  type UpstreamAccountWindowStats,
   type UpstreamPlatform,
   type UpstreamPoolPayload,
 } from './types'
+
+const emptyTodayStats = (): UpstreamAccountWindowStats => ({
+  requests: 0,
+  tokens: 0,
+  cost: 0,
+  user_cost: 0,
+})
 
 const queryKeys = {
   accounts: ['upstream-accounts'] as const,
@@ -1313,6 +1323,38 @@ export function AccountManagement({
     queryFn: listUpstreamProxies,
   })
   const accounts = accountsQuery.data?.data?.items ?? []
+  const accountIds = useMemo(
+    () => accounts.map((account) => account.id),
+    [accounts]
+  )
+  const accountIdsKey = accountIds.join(',')
+  const todayStatsQuery = useQuery({
+    queryKey: [...queryKeys.accounts, 'today-stats', accountIdsKey],
+    queryFn: async () => {
+      if (accountIds.length === 0) {
+        return {} as Record<string, UpstreamAccountWindowStats>
+      }
+      const response = await getUpstreamAccountTodayStatsBatch(accountIds)
+      if (!response.success) {
+        throw new Error(response.message || 'Failed')
+      }
+      const serverStats = response.data?.stats ?? {}
+      const nextStats: Record<string, UpstreamAccountWindowStats> = {}
+      for (const accountId of accountIds) {
+        const key = String(accountId)
+        nextStats[key] = serverStats[key] ?? emptyTodayStats()
+      }
+      return nextStats
+    },
+    enabled: !accountsQuery.isLoading,
+  })
+  const todayStatsByAccountId = todayStatsQuery.data ?? {}
+  const todayStatsLoading = todayStatsQuery.isFetching
+  const todayStatsError = todayStatsQuery.isError
+    ? todayStatsQuery.error instanceof Error
+      ? todayStatsQuery.error.message || 'Failed'
+      : 'Failed'
+    : null
   const accountTotal = accountsQuery.data?.data?.total ?? 0
   const accountTotalPages = Math.max(1, Math.ceil(accountTotal / 50))
   const allCurrentPageAccountsSelected =
@@ -1880,7 +1922,7 @@ export function AccountManagement({
           </div>
           <TabsContent value='accounts' className='flex flex-col gap-3 pt-3'>
             <div className='overflow-x-auto rounded-lg border'>
-              <Table className='min-w-[1260px]'>
+              <Table className='min-w-[1380px]'>
                 <TableHeader>
                   <TableRow>
                     <TableHead className='w-10'>
@@ -1909,6 +1951,7 @@ export function AccountManagement({
                     <TableHead>{t('Capacity')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>
                     <TableHead>{t('Scheduling')}</TableHead>
+                    <TableHead>{t('Today Stats')}</TableHead>
                     <TableHead>{t('Groups')}</TableHead>
                     <TableHead>
                       <span className='inline-flex items-center gap-1'>
@@ -1944,12 +1987,12 @@ export function AccountManagement({
                 <TableBody>
                   {accountsQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={9}>{t('Loading...')}</TableCell>
+                      <TableCell colSpan={10}>{t('Loading...')}</TableCell>
                     </TableRow>
                   ) : accounts.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={9}
+                        colSpan={10}
                         className='text-muted-foreground py-10 text-center'
                       >
                         {t('No accounts')}
@@ -1997,6 +2040,15 @@ export function AccountManagement({
                           />
                         </TableCell>
                         <TableCell>
+                          <AccountTodayStatsCell
+                            stats={
+                              todayStatsByAccountId[String(account.id)] ?? null
+                            }
+                            loading={todayStatsLoading}
+                            error={todayStatsError}
+                          />
+                        </TableCell>
+                        <TableCell>
                           <AccountPoolsCell
                             poolNames={account.pool_ids.map(
                               (id) => poolNames.get(id) || `#${id}`
@@ -2004,7 +2056,13 @@ export function AccountManagement({
                           />
                         </TableCell>
                         <TableCell>
-                          <AccountUsageCell account={account} />
+                          <AccountUsageCell
+                            account={account}
+                            todayStats={
+                              todayStatsByAccountId[String(account.id)] ?? null
+                            }
+                            todayStatsLoading={todayStatsLoading}
+                          />
                         </TableCell>
                         <TableCell className='w-36'>
                           <div className='flex items-center gap-1'>

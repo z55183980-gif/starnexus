@@ -56,6 +56,7 @@ import {
   type UpstreamAccountQuotaUsage,
   type UpstreamAccountRateLimitWindow,
   type UpstreamAccountUsage,
+  type UpstreamAccountWindowStats,
 } from './types'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
@@ -824,7 +825,15 @@ function formatResetCreditExpiry(value: string, includeYear = false) {
   }).format(date)
 }
 
-export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
+export function AccountUsageCell({
+  account,
+  todayStats = null,
+  todayStatsLoading = false,
+}: {
+  account: UpstreamAccount
+  todayStats?: UpstreamAccountWindowStats | null
+  todayStatsLoading?: boolean
+}) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const rootRef = useRef<HTMLDivElement>(null)
@@ -1025,6 +1034,46 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   }
 
   if (!supported) {
+    if (todayStats) {
+      return (
+        <div className='space-y-1'>
+          <div className='mb-0.5 flex items-center'>
+            <div className='flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400'>
+              <span className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'>
+                {formatUsageCompactNumber(todayStats.requests, {
+                  allowBillions: false,
+                })}{' '}
+                req
+              </span>
+              <span className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'>
+                {formatUsageCompactNumber(todayStats.tokens)}
+              </span>
+              <span
+                className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'
+                title={t('Account billed')}
+              >
+                A ${todayStats.cost.toFixed(2)}
+              </span>
+              <span
+                className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'
+                title={t('User billed')}
+              >
+                U ${todayStats.user_cost.toFixed(2)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )
+    }
+    if (todayStatsLoading) {
+      return (
+        <div className='mb-0.5 flex items-center gap-1'>
+          <div className='h-3 w-10 animate-pulse rounded bg-gray-200 dark:bg-gray-700' />
+          <div className='h-3 w-8 animate-pulse rounded bg-gray-200 dark:bg-gray-700' />
+          <div className='h-3 w-12 animate-pulse rounded bg-gray-200 dark:bg-gray-700' />
+        </div>
+      )
+    }
     return <span className='text-muted-foreground text-xs'>-</span>
   }
 

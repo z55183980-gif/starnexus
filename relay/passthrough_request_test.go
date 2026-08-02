@@ -73,6 +73,29 @@ func TestPreparePassthroughRequestBodyKeepsExplicitChannelBypass(t *testing.T) {
 	require.JSONEq(t, raw, string(data))
 }
 
+func TestPreparePassthroughRequestBodyForcesCodexResponsesStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false}`))
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    constant.ChannelTypeCodex,
+			ChannelSetting: dto.ChannelSettings{PassThroughBodyEnabled: true},
+		},
+	}
+	body, closer, apiErr := preparePassthroughRequestBody(c, info)
+	require.Nil(t, apiErr)
+	if closer != nil {
+		defer closer.Close()
+	}
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(data, "stream").Bool())
+}
+
 func TestPreparePassthroughRequestBodyNormalizesResponsesLite(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -103,6 +126,7 @@ func TestPreparePassthroughRequestBodyNormalizesResponsesLite(t *testing.T) {
 	data, err := io.ReadAll(body)
 	require.NoError(t, err)
 	require.Equal(t, "all_turns", gjson.GetBytes(data, "reasoning.context").String())
+	require.True(t, gjson.GetBytes(data, "stream").Bool())
 	require.Equal(t, "reasoning.encrypted_content", gjson.GetBytes(data, "include.0").String())
 	require.False(t, gjson.GetBytes(data, `tools.#(type=="namespace")`).Exists())
 	require.Equal(t, "collaboration", gjson.GetBytes(data, `input.#(type=="additional_tools").tools.0.name`).String())

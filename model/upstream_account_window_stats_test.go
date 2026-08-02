@@ -32,4 +32,16 @@ func TestGetUpstreamAccountWindowStats(t *testing.T) {
 	require.Equal(t, int64(42), stats.Tokens)
 	require.InDelta(t, 4.75, stats.Cost, 0.000001)
 	require.InDelta(t, 7.25, stats.UserCost, 0.000001)
+
+	batch, err := GetUpstreamAccountWindowStatsBatch([]int{7, 8, 9}, 100)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), batch[7].Requests)
+	require.Equal(t, int64(42), batch[7].Tokens)
+	require.InDelta(t, 4.75, batch[7].Cost, 0.000001)
+	require.InDelta(t, 7.25, batch[7].UserCost, 0.000001)
+	require.Equal(t, int64(1), batch[8].Requests)
+	require.Equal(t, int64(200), batch[8].Tokens)
+	require.InDelta(t, 10.0, batch[8].Cost, 0.000001)
+	require.Equal(t, int64(0), batch[9].Requests)
+	require.Equal(t, int64(0), batch[9].Tokens)
 }
