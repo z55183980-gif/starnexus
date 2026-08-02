@@ -102,3 +102,45 @@ func TestValidateChannelWithLocalAccountPool(t *testing.T) {
 	channel.Key = "sk-test"
 	require.NoError(t, validateChannel(channel, false))
 }
+
+func TestApplyChannelUpdateDefaultsAllowsLocalPriorityPatch(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{},
+		&model.UpstreamAccountPool{},
+		&model.UpstreamAccountPoolMember{},
+		&model.UpstreamAccount{},
+		&model.UpstreamAccountEvent{},
+	))
+	originalDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = originalDB })
+
+	pool := model.UpstreamAccountPool{
+		Name: "codex", Platform: constant.UpstreamPlatformOpenAI, CredentialType: constant.UpstreamAccountTypeOAuth,
+		Status: constant.UpstreamStatusActive, SchedulerConfig: "{}", CreatedAt: 1, UpdatedAt: 1,
+	}
+	require.NoError(t, db.Create(&pool).Error)
+
+	priority := int64(0)
+	origin := &model.Channel{
+		Type: constant.ChannelTypeOpenAI, Name: "local-openai", Models: "gpt-4o", Group: "default",
+		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
+		Priority: &priority, OtherSettings: `{"allow_service_tier":true}`,
+	}
+	origin.SetSetting(dto.ChannelSettings{SystemPrompt: "keep-channel-policy"})
+	require.NoError(t, db.Create(origin).Error)
+
+	// List inline edit only sends id + priority, leaving type/credential fields zeroed.
+	nextPriority := int64(10)
+	patch := &model.Channel{Id: origin.Id, Priority: &nextPriority}
+	applyChannelUpdateDefaults(patch, origin)
+	require.Equal(t, constant.ChannelTypeOpenAI, patch.Type)
+	require.Equal(t, constant.ChannelCredentialSourceAccountPool, patch.CredentialSource)
+	require.Equal(t, pool.Id, *patch.UpstreamAccountPoolId)
+	require.NoError(t, validateChannel(patch, false))
+	require.Equal(t, "keep-channel-policy", patch.GetSetting().SystemPrompt)
+	require.True(t, patch.GetOtherSettings().AllowServiceTier)
+	require.Equal(t, int64(10), *patch.Priority)
+}

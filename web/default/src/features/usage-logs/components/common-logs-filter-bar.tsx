@@ -44,6 +44,7 @@ import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
 import { CommonLogsStats } from './common-logs-stats'
 import type { LogAccessScope } from '../types'
+import { ChannelCombobox } from './channel-combobox'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 import { ExcludeFiltersEditor } from './exclude-filters-editor'
 import { useUsageLogsContext } from './usage-logs-provider'
@@ -302,11 +303,10 @@ export function CommonLogsFilterBar<TData>(
             />
           )}
           {isAdmin && (
-            <Input
-              placeholder={t('Channel ID')}
+            <ChannelCombobox
               value={filters.channel || ''}
-              onChange={(e) => handleChange('channel', e.target.value)}
-              onKeyDown={handleKeyDown}
+              onValueChange={(value) => handleChange('channel', value)}
+              placeholder={t('Channel')}
               className={inputClass}
             />
           )}

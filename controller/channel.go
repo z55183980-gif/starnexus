@@ -590,6 +590,33 @@ func normalizeLocalAccountPoolChannel(channel *model.Channel) {
 	channel.SetOtherSettings(otherSettings)
 }
 
+// applyChannelUpdateDefaults fills fields omitted by partial PUT payloads
+// (priority/weight/status) so validation and local-pool normalization still see
+// the persisted channel type and settings.
+func applyChannelUpdateDefaults(channel *model.Channel, origin *model.Channel) {
+	if channel == nil || origin == nil {
+		return
+	}
+	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
+	channel.ChannelInfo = origin.ChannelInfo
+	if strings.TrimSpace(channel.CredentialSource) == "" {
+		channel.CredentialSource = origin.CredentialSource
+		channel.UpstreamAccountPoolId = origin.UpstreamAccountPoolId
+	}
+	if channel.Type == 0 {
+		channel.Type = origin.Type
+	}
+	if channel.Setting == nil {
+		channel.Setting = origin.Setting
+	}
+	if strings.TrimSpace(channel.OtherSettings) == "" {
+		channel.OtherSettings = origin.OtherSettings
+	}
+	if channel.CredentialSource != constant.ChannelCredentialSourceAccountPool && strings.TrimSpace(channel.Key) == "" {
+		channel.Key = origin.Key
+	}
+}
+
 func validateChannelCredentialSource(channel *model.Channel) error {
 	switch channel.CredentialSource {
 	case constant.ChannelCredentialSourceKey:
@@ -1008,15 +1035,7 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
-	channel.ChannelInfo = originChannel.ChannelInfo
-	if strings.TrimSpace(channel.CredentialSource) == "" {
-		channel.CredentialSource = originChannel.CredentialSource
-		channel.UpstreamAccountPoolId = originChannel.UpstreamAccountPoolId
-	}
-	if channel.CredentialSource != constant.ChannelCredentialSourceAccountPool && strings.TrimSpace(channel.Key) == "" {
-		channel.Key = originChannel.Key
-	}
+	applyChannelUpdateDefaults(&channel.Channel, originChannel)
 
 	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
 	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {

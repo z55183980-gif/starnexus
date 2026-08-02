@@ -31,6 +31,7 @@ import type {
   LogCategory,
   TaskLogFilters,
 } from '../types'
+import { ChannelCombobox } from './channel-combobox'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
@@ -193,11 +194,10 @@ export function TaskLogsFilterBar<TData>(props: TaskLogsFilterBarProps<TData>) {
             className={inputClass}
           />
           {isAdmin && (
-            <Input
-              placeholder={t('Channel ID')}
+            <ChannelCombobox
               value={filters.channel || ''}
-              onChange={(e) => handleChange('channel', e.target.value)}
-              onKeyDown={handleKeyDown}
+              onValueChange={(value) => handleChange('channel', value)}
+              placeholder={t('Channel')}
               className={inputClass}
             />
           )}
