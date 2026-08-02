@@ -226,12 +226,28 @@ export async function handleTestChannel(
 
   try {
     const response = await testChannel(id, payload)
+    const accountName = response.upstream_account_name?.trim()
+    const responseTime = response.time ?? response.data?.response_time
     if (response.success) {
-      toast.success(i18next.t(SUCCESS_MESSAGES.TESTED))
-      onTestComplete?.(true, response.data?.response_time)
+      toast.success(
+        accountName
+          ? i18next.t('Channel test completed via account {{name}}', {
+              name: accountName,
+            })
+          : i18next.t(SUCCESS_MESSAGES.TESTED)
+      )
+      onTestComplete?.(true, responseTime)
     } else {
-      toast.error(response.message || i18next.t(ERROR_MESSAGES.TEST_FAILED))
-      onTestComplete?.(false, undefined, response.message, response.error_code)
+      const baseMessage =
+        response.message || i18next.t(ERROR_MESSAGES.TEST_FAILED)
+      const errorMsg = accountName
+        ? i18next.t('Channel test failed via account {{name}}: {{message}}', {
+            name: accountName,
+            message: baseMessage,
+          })
+        : baseMessage
+      toast.error(errorMsg)
+      onTestComplete?.(false, responseTime, errorMsg, response.error_code)
     }
   } catch (_error: unknown) {
     const err = _error as { response?: { data?: { message?: string } } }

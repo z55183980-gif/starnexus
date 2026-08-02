@@ -195,6 +195,7 @@ func InitOptionMap() {
 	common.OptionMap["CheckSensitiveOnPromptEnabled"] = strconv.FormatBool(setting.CheckSensitiveOnPromptEnabled)
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
+	common.OptionMap[setting.ContentModerationOptionKey] = setting.ContentModerationConfig2JsonString()
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
@@ -251,6 +252,10 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	value, err := normalizeOptionValueForPersist(key, value)
+	if err != nil {
+		return err
+	}
 	// Save to database first
 	option := Option{
 		Key: key,
@@ -275,8 +280,16 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	normalized := make(map[string]string, len(values))
+	for k, v := range values {
+		nv, err := normalizeOptionValueForPersist(k, v)
+		if err != nil {
+			return err
+		}
+		normalized[k] = nv
+	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
-		for k, v := range values {
+		for k, v := range normalized {
 			option := Option{Key: k}
 			if err := tx.FirstOrCreate(&option, Option{Key: k}).Error; err != nil {
 				return err
@@ -291,12 +304,23 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if err != nil {
 		return err
 	}
-	for k, v := range values {
+	for k, v := range normalized {
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func normalizeOptionValueForPersist(key, value string) (string, error) {
+	if key != setting.ContentModerationOptionKey {
+		return value, nil
+	}
+	cfg, err := setting.ParseContentModerationConfigJSON(value, setting.GetContentModerationConfig().APIKeys)
+	if err != nil {
+		return "", err
+	}
+	return setting.ContentModerationConfigJSON(cfg), nil
 }
 
 func updateOptionMap(key string, value string) (err error) {
@@ -637,6 +661,12 @@ func updateOptionMap(key string, value string) (err error) {
 		common.QuotaPerUnit, _ = strconv.ParseFloat(value, 64)
 	case "SensitiveWords":
 		setting.SensitiveWordsFromString(value)
+	case setting.ContentModerationOptionKey:
+		err = setting.UpdateContentModerationConfigByJsonString(value)
+		if err == nil {
+			// Persist normalized config (merged keys) back into OptionMap.
+			common.OptionMap[setting.ContentModerationOptionKey] = setting.ContentModerationConfig2JsonString()
+		}
 	case "AutomaticDisableKeywords":
 		operation_setting.AutomaticDisableKeywordsFromString(value)
 	case "AutomaticDisableStatusCodes":

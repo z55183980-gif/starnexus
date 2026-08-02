@@ -837,6 +837,8 @@
     "Channel models": "Модели каналов",
     "Channel name is required": "Имя канала обязательно",
     "Channel test completed": "Тест канала завершён",
+    "Channel test completed via account {{name}}": "Тест канала завершён через аккаунт {{name}}",
+    "Channel test failed via account {{name}}: {{message}}": "Тест канала не удался через аккаунт {{name}}: {{message}}",
     "Channel type": "Channel type",
     "Channel type is required": "Тип канала обязателен",
     "Channel updated successfully": "Канал успешно обновлён",
@@ -5530,6 +5532,23 @@
     "User billed": "Списано с пользователя",
     "Count": "Количество",
     "Query reset credit count": "Запросить число сбросов",
-    "Refresh reset credit count": "Обновить число сбросов"
+    "Refresh reset credit count": "Обновить число сбросов",
+    "Content Moderation (API)": "Модерация контента (API)",
+    "Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.": "Вызывает OpenAI Moderations до upstream. По умолчанию выключено. Сбой API — fail-open.",
+    "Enable content moderation": "Включить модерацию контента",
+    "When enabled, the latest user prompt is checked via Moderations API before billing.": "При включении последний пользовательский prompt проверяется через Moderations API до биллинга.",
+    "OpenAI Base URL": "OpenAI Base URL",
+    "HTTP Timeout (ms)": "HTTP таймаут (мс)",
+    "Maximum wait time for the Moderations API response.": "Максимальное время ожидания ответа Moderations API.",
+    "OpenAI API Keys": "OpenAI API ключи",
+    "One API key per line": "Один API ключ на строку",
+    "Masked keys are kept on save unless you replace the line with a new key. Clear all lines to remove keys.": "Маскированные ключи сохраняются, пока строку не заменить новым ключом. Очистите все строки, чтобы удалить ключи.",
+    "Category thresholds": "Пороги категорий",
+    "Flag when any category score is greater than or equal to its threshold.": "Помечать, если любой score категории ≥ порога.",
+    "Prompt audit users": "Пользователи аудита промптов",
+    "Global Mode": "Глобальный режим",
+    "Front interception (pre_block)": "Преждевременная блокировка (pre_block)",
+    "Observe only (observe)": "Только наблюдение (observe)",
+    "Pre-block stops flagged requests. Observe audits in the background and never blocks.": "pre_block блокирует помеченные запросы. observe только аудирует в фоне и не блокирует."
   }
 }

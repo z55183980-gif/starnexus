@@ -95,12 +95,22 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		newApiErr.SetUpstreamResponse(responseHeader, responseBody)
 	}()
 	CloseResponseBodyGracefully(resp)
+	if common.IsCloudflareChallengeResponse(resp.StatusCode, responseHeader, responseBody) {
+		message := common.FormatCloudflareChallengeMessage(resp.StatusCode, responseHeader, responseBody)
+		logger.LogError(ctx, message)
+		newApiErr.Err = errors.New(message)
+		return
+	}
 	var errResponse dto.GeneralErrorResponse
 	buildErrWithBody := func(message string) error {
-		if message == "" {
-			return fmt.Errorf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody))
+		bodyPreview := string(responseBody)
+		if looksLikeHTMLBody(bodyPreview) {
+			bodyPreview = truncateErrorBody(bodyPreview, 240)
 		}
-		return fmt.Errorf("bad response status code %d, message: %s, body: %s", resp.StatusCode, message, string(responseBody))
+		if message == "" {
+			return fmt.Errorf("bad response status code %d, body: %s", resp.StatusCode, bodyPreview)
+		}
+		return fmt.Errorf("bad response status code %d, message: %s, body: %s", resp.StatusCode, message, bodyPreview)
 	}
 
 	err = common.Unmarshal(responseBody, &errResponse)
@@ -108,7 +118,7 @@ func RelayErrorHandler(ctx context.Context, resp *http.Response, showBodyWhenFai
 		if showBodyWhenFail {
 			newApiErr.Err = buildErrWithBody("")
 		} else {
-			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, string(responseBody)))
+			logger.LogError(ctx, fmt.Sprintf("bad response status code %d, body: %s", resp.StatusCode, truncateErrorBody(string(responseBody), 512)))
 			newApiErr.Err = fmt.Errorf("bad response status code %d", resp.StatusCode)
 		}
 		return
@@ -222,4 +232,20 @@ func TaskErrorFromAPIError(apiErr *types.NewAPIError) *dto.TaskError {
 		StatusCode: apiErr.StatusCode,
 		Error:      apiErr.Err,
 	}
+}
+
+func looksLikeHTMLBody(body string) bool {
+	lower := strings.ToLower(strings.TrimSpace(body))
+	return strings.HasPrefix(lower, "<!doctype html") ||
+		strings.HasPrefix(lower, "<html") ||
+		strings.Contains(lower, "<script") ||
+		strings.Contains(lower, "window._cf_chl_opt")
+}
+
+func truncateErrorBody(body string, max int) string {
+	body = strings.TrimSpace(body)
+	if max <= 0 || len(body) <= max {
+		return body
+	}
+	return body[:max] + "...(truncated)"
 }

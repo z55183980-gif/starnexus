@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ const (
 	promptAuditMaxPromptRunes = 12000
 	promptAuditPolicyCacheTTL = 5 * time.Second
 )
+
+var promptAuditSystemReminderBlock = regexp.MustCompile(`(?is)<system-reminder>.*?</system-reminder>`)
 
 var promptAuditPolicyCache = struct {
 	sync.RWMutex
@@ -205,21 +208,27 @@ func buildPromptAuditLog(c *gin.Context, userId int, modelName string, relayForm
 }
 
 func shouldSkipPromptAuditText(c *gin.Context, prompt string) bool {
+	text := strings.ToLower(strings.TrimSpace(prompt))
+	if text == "" {
+		return true
+	}
+	// System-injected noise can appear for any client (Claude Code, Cursor, etc.),
+	// not only Codex. Strip/skip these regardless of request headers.
+	switch {
+	case isPromptAuditSystemReminderText(text):
+		return true
+	case strings.HasPrefix(text, "[background task completed]") || strings.HasPrefix(text, "[all background tasks complete]"):
+		return true
+	}
 	if !isCodexPromptAuditRequest(c) {
 		return false
 	}
-
-	text := strings.ToLower(strings.TrimSpace(prompt))
 	switch {
 	case strings.HasPrefix(text, "calculate and respond with only the number, nothing else."):
 		return true
 	case strings.HasPrefix(text, "# overview") && strings.Contains(text, "hyperpersonalized suggestions"):
 		return true
 	case strings.HasPrefix(text, "you are a helpful assistant.") && strings.Contains(text, "short title for a task"):
-		return true
-	case strings.HasPrefix(text, "<system-reminder>"):
-		return true
-	case strings.HasPrefix(text, "[background task completed]") || strings.HasPrefix(text, "[all background tasks complete]"):
 		return true
 	case strings.HasPrefix(text, "task:"):
 		return true
@@ -233,6 +242,38 @@ func shouldSkipPromptAuditText(c *gin.Context, prompt string) bool {
 	default:
 		return false
 	}
+}
+
+// isPromptAuditSystemReminderText reports Claude/Cursor style system reminder
+// blocks that are often embedded inside role=user content.
+func isPromptAuditSystemReminderText(text string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(text)), "<system-reminder>")
+}
+
+// sanitizePromptAuditTextPart removes embedded system-reminder blocks from a
+// single content part while keeping any remaining user text.
+func sanitizePromptAuditTextPart(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = promptAuditSystemReminderBlock.ReplaceAllString(text, "")
+	if idx := strings.Index(strings.ToLower(text), "<system-reminder>"); idx >= 0 {
+		text = text[:idx]
+	}
+	return strings.TrimSpace(text)
+}
+
+func appendPromptAuditTextPart(parts *[]string, text string) {
+	text = sanitizePromptAuditTextPart(text)
+	if text == "" {
+		return
+	}
+	*parts = append(*parts, text)
+}
+
+func joinPromptAuditTextParts(parts []string) string {
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func isCodexPromptAuditRequest(c *gin.Context) bool {
@@ -320,26 +361,34 @@ func extractOpenAIUserText(req *dto.GeneralOpenAIRequest) string {
 		}
 		var parts []string
 		for _, content := range message.ParseContent() {
-			if content.Type == dto.ContentTypeText && content.Text != "" {
-				parts = append(parts, content.Text)
+			if content.Type == dto.ContentTypeText {
+				appendPromptAuditTextPart(&parts, content.Text)
 			}
 		}
-		return strings.Join(parts, "\n")
+		return joinPromptAuditTextParts(parts)
 	}
 	if prompt := stringValue(req.Prompt); prompt != "" {
-		return prompt
+		var parts []string
+		appendPromptAuditTextPart(&parts, prompt)
+		return joinPromptAuditTextParts(parts)
 	}
 	if input := stringValue(req.Input); input != "" {
-		return input
+		var parts []string
+		appendPromptAuditTextPart(&parts, input)
+		return joinPromptAuditTextParts(parts)
 	}
-	return req.Instruction
+	// Instruction is typically a system/developer-style field, not current-turn
+	// user input, so it is intentionally excluded from prompt audit text.
+	return ""
 }
 
 func extractResponsesUserText(req *dto.OpenAIResponsesRequest) string {
 	if common.GetJsonType(req.Input) == "string" {
 		var value string
 		_ = common.Unmarshal(req.Input, &value)
-		return value
+		var parts []string
+		appendPromptAuditTextPart(&parts, value)
+		return joinPromptAuditTextParts(parts)
 	}
 	if common.GetJsonType(req.Input) != "array" {
 		return ""
@@ -360,7 +409,9 @@ func extractResponsesUserText(req *dto.OpenAIResponsesRequest) string {
 	}
 	input := inputs[len(inputs)-1]
 	if input.Type == "input_text" && input.Text != "" {
-		return input.Text
+		var parts []string
+		appendPromptAuditTextPart(&parts, input.Text)
+		return joinPromptAuditTextParts(parts)
 	}
 	if input.Role != "user" {
 		return ""
@@ -368,7 +419,9 @@ func extractResponsesUserText(req *dto.OpenAIResponsesRequest) string {
 	if common.GetJsonType(input.Content) == "string" {
 		var value string
 		_ = common.Unmarshal(input.Content, &value)
-		return value
+		var parts []string
+		appendPromptAuditTextPart(&parts, value)
+		return joinPromptAuditTextParts(parts)
 	}
 	if common.GetJsonType(input.Content) == "array" {
 		var content []dto.MediaInput
@@ -377,11 +430,11 @@ func extractResponsesUserText(req *dto.OpenAIResponsesRequest) string {
 		}
 		var parts []string
 		for _, item := range content {
-			if item.Type == "input_text" && item.Text != "" {
-				parts = append(parts, item.Text)
+			if item.Type == "input_text" {
+				appendPromptAuditTextPart(&parts, item.Text)
 			}
 		}
-		return strings.Join(parts, "\n")
+		return joinPromptAuditTextParts(parts)
 	}
 	return ""
 }
@@ -393,7 +446,9 @@ func extractClaudeUserText(req *dto.ClaudeRequest) string {
 			return ""
 		}
 		if message.IsStringContent() {
-			return message.GetStringContent()
+			var parts []string
+			appendPromptAuditTextPart(&parts, message.GetStringContent())
+			return joinPromptAuditTextParts(parts)
 		}
 		content, err := message.ParseContent()
 		if err != nil {
@@ -401,13 +456,15 @@ func extractClaudeUserText(req *dto.ClaudeRequest) string {
 		}
 		var parts []string
 		for _, item := range content {
-			if item.Type == "text" && item.GetText() != "" {
-				parts = append(parts, item.GetText())
+			if item.Type == "text" {
+				appendPromptAuditTextPart(&parts, item.GetText())
 			}
 		}
-		return strings.Join(parts, "\n")
+		return joinPromptAuditTextParts(parts)
 	}
-	return req.Prompt
+	var parts []string
+	appendPromptAuditTextPart(&parts, req.Prompt)
+	return joinPromptAuditTextParts(parts)
 }
 
 func extractGeminiUserText(req *dto.GeminiChatRequest) string {
@@ -421,10 +478,10 @@ func extractGeminiUserText(req *dto.GeminiChatRequest) string {
 	var parts []string
 	for _, part := range content.Parts {
 		if part.Text != "" && !part.Thought {
-			parts = append(parts, part.Text)
+			appendPromptAuditTextPart(&parts, part.Text)
 		}
 	}
-	return strings.Join(parts, "\n")
+	return joinPromptAuditTextParts(parts)
 }
 
 func stringValue(value any) string {

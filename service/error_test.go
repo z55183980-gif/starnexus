@@ -30,6 +30,28 @@ func TestRelayErrorHandlerPreservesContextLengthExceededCode(t *testing.T) {
 	require.JSONEq(t, responseBody, string(body))
 }
 
+func TestRelayErrorHandlerCloudflareChallengeDoesNotDumpHTML(t *testing.T) {
+	t.Parallel()
+
+	responseBody := `<!DOCTYPE html><html><body><script>window._cf_chl_opt={cRay:'a24e033d8c125025'};</script></body></html>`
+	headers := make(http.Header)
+	headers.Set("Content-Type", "text/html; charset=UTF-8")
+	headers.Set("cf-mitigated", "challenge")
+	headers.Set("cf-ray", "a24e033d8c125025-SIN")
+	resp := &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     headers,
+		Body:       io.NopCloser(strings.NewReader(responseBody)),
+	}
+
+	apiErr := RelayErrorHandler(context.Background(), resp, true)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusForbidden, apiErr.StatusCode)
+	require.Contains(t, apiErr.Error(), "upstream Cloudflare challenge")
+	require.Contains(t, apiErr.Error(), "cf-ray: a24e033d8c125025-SIN")
+	require.NotContains(t, apiErr.Error(), "window._cf_chl_opt")
+}
+
 func TestResetStatusCode(t *testing.T) {
 	t.Parallel()
 

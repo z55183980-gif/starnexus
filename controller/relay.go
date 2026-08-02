@@ -133,6 +133,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	if moderationError := service.ApplyContentModeration(c, request, relayFormat, relayInfo.OriginModelName); moderationError != nil {
+		newAPIError = moderationError
+		return
+	}
+
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.

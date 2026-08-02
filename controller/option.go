@@ -89,6 +89,9 @@ func GetOptions(c *gin.Context) {
 		if isSensitiveKey {
 			continue
 		}
+		if k == setting.ContentModerationOptionKey {
+			value = setting.ContentModerationConfigViewJsonString()
+		}
 		options = append(options, &model.Option{
 			Key:   k,
 			Value: value,

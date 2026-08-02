@@ -43,6 +43,20 @@ type testResult struct {
 	newAPIError *types.NewAPIError
 }
 
+func channelTestResponseExtras(result testResult) gin.H {
+	extras := gin.H{}
+	if result.context == nil {
+		return extras
+	}
+	if accountId := common.GetContextKeyInt(result.context, constant.ContextKeyUpstreamAccountId); accountId > 0 {
+		extras["upstream_account_id"] = accountId
+	}
+	if accountName := strings.TrimSpace(common.GetContextKeyString(result.context, constant.ContextKeyUpstreamAccountName)); accountName != "" {
+		extras["upstream_account_name"] = accountName
+	}
+	return extras
+}
+
 func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
 	if normalized != "" {
@@ -52,6 +66,14 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 		return string(constant.EndpointTypeOpenAIResponseCompact)
 	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+		return string(constant.EndpointTypeOpenAIResponse)
+	}
+	// Published account-pool OpenAI channels schedule OAuth/API-key members
+	// with the same router as live traffic. Prefer /v1/responses so the test
+	// follows the Codex-compatible path used by real pool traffic.
+	if channel != nil &&
+		channel.Type == constant.ChannelTypeOpenAI &&
+		channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
 		return string(constant.EndpointTypeOpenAIResponse)
 	}
 	return normalized
@@ -843,6 +865,9 @@ func TestChannel(c *gin.Context) {
 			"message": result.localErr.Error(),
 			"time":    0.0,
 		}
+		for key, value := range channelTestResponseExtras(result) {
+			resp[key] = value
+		}
 		if result.newAPIError != nil {
 			resp["error_code"] = result.newAPIError.GetErrorCode()
 		}
@@ -854,19 +879,27 @@ func TestChannel(c *gin.Context) {
 	go channel.UpdateResponseTime(milliseconds)
 	consumedTime := float64(milliseconds) / 1000.0
 	if result.newAPIError != nil {
-		c.JSON(http.StatusOK, gin.H{
+		resp := gin.H{
 			"success":    false,
 			"message":    result.newAPIError.Error(),
 			"time":       consumedTime,
 			"error_code": result.newAPIError.GetErrorCode(),
-		})
+		}
+		for key, value := range channelTestResponseExtras(result) {
+			resp[key] = value
+		}
+		c.JSON(http.StatusOK, resp)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"success": true,
 		"message": "",
 		"time":    consumedTime,
-	})
+	}
+	for key, value := range channelTestResponseExtras(result) {
+		resp[key] = value
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 var testAllChannelsLock sync.Mutex

@@ -837,6 +837,8 @@
     "Channel models": "Channel model",
     "Channel name is required": "Tên kênh là bắt buộc",
     "Channel test completed": "Kiểm tra kênh hoàn tất",
+    "Channel test completed via account {{name}}": "Kiểm tra kênh hoàn tất qua tài khoản {{name}}",
+    "Channel test failed via account {{name}}: {{message}}": "Kiểm tra kênh thất bại qua tài khoản {{name}}: {{message}}",
     "Channel type": "Channel type",
     "Channel type is required": "Loại kênh là bắt buộc",
     "Channel updated successfully": "Kênh đã được cập nhật thành công",
@@ -5530,6 +5532,23 @@
     "User billed": "Chi phí người dùng",
     "Count": "Số lần",
     "Query reset credit count": "Truy vấn số lần đặt lại",
-    "Refresh reset credit count": "Làm mới số lần đặt lại"
+    "Refresh reset credit count": "Làm mới số lần đặt lại",
+    "Content Moderation (API)": "Kiểm duyệt nội dung (API)",
+    "Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.": "Gọi OpenAI Moderations trước khi chuyển upstream. Mặc định tắt. Lỗi API thì cho qua (fail-open).",
+    "Enable content moderation": "Bật kiểm duyệt nội dung",
+    "When enabled, the latest user prompt is checked via Moderations API before billing.": "Khi bật, prompt người dùng mới nhất được kiểm qua Moderations API trước khi tính phí.",
+    "OpenAI Base URL": "OpenAI Base URL",
+    "HTTP Timeout (ms)": "HTTP timeout (ms)",
+    "Maximum wait time for the Moderations API response.": "Thời gian chờ tối đa phản hồi Moderations API.",
+    "OpenAI API Keys": "OpenAI API Keys",
+    "One API key per line": "Mỗi dòng một API key",
+    "Masked keys are kept on save unless you replace the line with a new key. Clear all lines to remove keys.": "Key đã che sẽ được giữ khi lưu trừ khi bạn thay bằng key mới. Xóa hết dòng để gỡ key.",
+    "Category thresholds": "Ngưỡng theo danh mục",
+    "Flag when any category score is greater than or equal to its threshold.": "Đánh dấu khi bất kỳ điểm danh mục nào ≥ ngưỡng.",
+    "Prompt audit users": "Người dùng kiểm toán prompt",
+    "Global Mode": "Chế độ toàn cục",
+    "Front interception (pre_block)": "Chặn trước (pre_block)",
+    "Observe only (observe)": "Chỉ quan sát (observe)",
+    "Pre-block stops flagged requests. Observe audits in the background and never blocks.": "pre_block chặn request bị gắn cờ. observe chỉ kiểm tra nền và không chặn."
   }
 }

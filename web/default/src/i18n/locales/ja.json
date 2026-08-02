@@ -837,6 +837,8 @@
     "Channel models": "チャネルモデル",
     "Channel name is required": "チャンネル名が必要です",
     "Channel test completed": "チャンネルテストが完了しました",
+    "Channel test completed via account {{name}}": "チャンネルテスト完了（スケジュールされたアカウント：{{name}}）",
+    "Channel test failed via account {{name}}: {{message}}": "チャンネルテスト失敗（スケジュールされたアカウント：{{name}}）：{{message}}",
     "Channel type": "Channel type",
     "Channel type is required": "チャンネルタイプが必要です",
     "Channel updated successfully": "チャンネルが正常に更新されました",
@@ -5530,6 +5532,23 @@
     "User billed": "ユーザー請求額",
     "Count": "回数",
     "Query reset credit count": "リセット回数を照会",
-    "Refresh reset credit count": "リセット回数を更新"
+    "Refresh reset credit count": "リセット回数を更新",
+    "Content Moderation (API)": "コンテンツモデレーション（API）",
+    "Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.": "上流転送前に OpenAI Moderations を呼び出します。デフォルトは無効。API 失敗時は通過（fail-open）。",
+    "Enable content moderation": "コンテンツモデレーションを有効化",
+    "When enabled, the latest user prompt is checked via Moderations API before billing.": "有効にすると、課金前に最新のユーザープロンプトを Moderations API で検査します。",
+    "OpenAI Base URL": "OpenAI Base URL",
+    "HTTP Timeout (ms)": "HTTP タイムアウト（ms）",
+    "Maximum wait time for the Moderations API response.": "Moderations API 応答の最大待機時間。",
+    "OpenAI API Keys": "OpenAI API キー",
+    "One API key per line": "1行に1つの API キー",
+    "Masked keys are kept on save unless you replace the line with a new key. Clear all lines to remove keys.": "マスク済みキーは保存時に維持されます。行を新しいキーに置き換えた場合を除きます。すべて空にすると削除されます。",
+    "Category thresholds": "カテゴリ閾値",
+    "Flag when any category score is greater than or equal to its threshold.": "いずれかのカテゴリスコアが閾値以上ならフラグします。",
+    "Prompt audit users": "プロンプト監査ユーザー",
+    "Global Mode": "グローバルモード",
+    "Front interception (pre_block)": "前置ブロック (pre_block)",
+    "Observe only (observe)": "観察のみ (observe)",
+    "Pre-block stops flagged requests. Observe audits in the background and never blocks.": "pre_block は検出リクエストを遮断します。observe はバックグラウンド監査のみで遮断しません。"
   }
 }

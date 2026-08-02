@@ -25,6 +25,11 @@ import (
 type Adaptor struct {
 }
 
+// Default Codex CLI identity used when the inbound request has no User-Agent
+// (for example channel / account-pool tests) or only a browser UA that would
+// trigger Cloudflare challenges on chatgpt.com.
+const defaultCodexUserAgent = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
+
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
 	return nil, errors.New("codex channel: endpoint not supported")
 }
@@ -223,6 +228,7 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	if req.Get("originator") == "" {
 		req.Set("originator", "codex_cli_rs")
 	}
+	applyCodexUserAgent(req)
 
 	// chatgpt.com/backend-api/codex/responses is strict about Content-Type.
 	// Clients may omit it or include parameters like `application/json; charset=utf-8`,
@@ -235,6 +241,28 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	}
 
 	return nil
+}
+
+func applyCodexUserAgent(req *http.Header) {
+	if req == nil {
+		return
+	}
+	currentUA := strings.TrimSpace(req.Get("User-Agent"))
+	if currentUA == "" || isBrowserUserAgent(currentUA) {
+		req.Set("User-Agent", defaultCodexUserAgent)
+	}
+}
+
+func isBrowserUserAgent(userAgent string) bool {
+	lower := strings.ToLower(strings.TrimSpace(userAgent))
+	if !strings.HasPrefix(lower, "mozilla/") {
+		return false
+	}
+	return strings.Contains(lower, "chrome/") ||
+		strings.Contains(lower, "firefox/") ||
+		strings.Contains(lower, "safari/") ||
+		strings.Contains(lower, "edg/") ||
+		strings.Contains(lower, "opr/")
 }
 
 func isolateCodexSessionHeader(c *gin.Context, value string) string {

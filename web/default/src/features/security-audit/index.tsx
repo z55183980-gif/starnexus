@@ -94,6 +94,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import { searchUsers } from '@/features/users/api'
 import {
@@ -105,6 +106,7 @@ import {
   listPromptAuditPolicies,
   updatePromptAuditPolicy,
 } from './api'
+import { ContentModerationTab } from './content-moderation-tab'
 import type {
   PromptAuditLog,
   PromptAuditLogCursorResponse,
@@ -525,6 +527,7 @@ function PromptLogSheet({
 export function SecurityAudit() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const [view, setView] = useState<'policies' | 'moderation'>('policies')
   const [viewingPolicy, setViewingPolicy] = useState<PromptAuditPolicy | null>(
     null
   )
@@ -597,16 +600,37 @@ export function SecurityAudit() {
       <SectionPageLayout>
         <SectionPageLayout.Title>{t('Security Audit')}</SectionPageLayout.Title>
         <SectionPageLayout.Description>
-          {t('Monitor and control user prompts with sensitive-word rules.')}
+          {view === 'moderation'
+            ? t(
+                'Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.'
+              )
+            : t('Monitor and control user prompts with sensitive-word rules.')}
         </SectionPageLayout.Description>
-        <SectionPageLayout.Actions>
-          <AddUserPopover
-            excludedUserIds={excludedUserIds}
-            onCreated={refreshPolicies}
-          />
-        </SectionPageLayout.Actions>
+        {view === 'policies' ? (
+          <SectionPageLayout.Actions>
+            <AddUserPopover
+              excludedUserIds={excludedUserIds}
+              onCreated={refreshPolicies}
+            />
+          </SectionPageLayout.Actions>
+        ) : null}
         <SectionPageLayout.Content>
-          <div className='overflow-hidden rounded-lg border'>
+          <Tabs
+            value={view}
+            onValueChange={(value) =>
+              setView(value as 'policies' | 'moderation')
+            }
+          >
+            <TabsList variant='line'>
+              <TabsTrigger value='policies'>
+                {t('Prompt audit users')}
+              </TabsTrigger>
+              <TabsTrigger value='moderation'>
+                {t('Content Moderation (API)')}
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value='policies' className='mt-4'>
+              <div className='overflow-hidden rounded-lg border'>
             {policiesQuery.isLoading ? (
               <div className='space-y-3 p-4'>
                 {Array.from({ length: 5 }).map((_, index) => (
@@ -783,7 +807,12 @@ export function SecurityAudit() {
                 </TableBody>
               </Table>
             )}
-          </div>
+              </div>
+            </TabsContent>
+            <TabsContent value='moderation' className='mt-4'>
+              <ContentModerationTab />
+            </TabsContent>
+          </Tabs>
         </SectionPageLayout.Content>
       </SectionPageLayout>
 

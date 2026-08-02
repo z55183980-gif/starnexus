@@ -108,6 +108,8 @@ type upstreamAccountQuotaCall struct {
 	baseURL     string
 	accessToken string
 	accountId   string
+	account     model.UpstreamAccount
+	credentials map[string]any
 }
 
 type upstreamAccountQuotaHTTPError struct {
@@ -124,7 +126,7 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 		return nil, errors.New("invalid upstream account id")
 	}
 	var account model.UpstreamAccount
-	if err := model.DB.Select("id", "credential_version").First(&account, accountId).Error; err != nil {
+	if err := model.DB.Select("id", "credential_version", "extra").First(&account, accountId).Error; err != nil {
 		return nil, err
 	}
 	options := UpstreamAccountQuotaQueryOptions{IncludeCredits: true}
@@ -144,7 +146,7 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 				return cached, nil
 			}
 		}
-		usage, queryErr := queryUpstreamAccountQuota(ctx, accountId, options.IncludeCredits)
+		usage, queryErr := queryUpstreamAccountQuota(ctx, &account, options.IncludeCredits, options.Force)
 		if queryErr != nil {
 			return nil, queryErr
 		}
@@ -170,7 +172,6 @@ func attachOpenAIWindowStats(account *model.UpstreamAccount, usage *UpstreamAcco
 	if fiveErr == nil {
 		if fiveHour == nil {
 			fiveHour = &UpstreamAccountRateLimitWindow{LimitWindowSeconds: int64((5 * time.Hour).Seconds())}
-			setQuotaUsageWindow(usage, fiveHour, false)
 		}
 		fiveHour.WindowStats = fiveStats
 	}
@@ -178,25 +179,17 @@ func attachOpenAIWindowStats(account *model.UpstreamAccount, usage *UpstreamAcco
 	if sevenErr == nil {
 		if sevenDay == nil {
 			sevenDay = &UpstreamAccountRateLimitWindow{LimitWindowSeconds: int64((7 * 24 * time.Hour).Seconds())}
-			setQuotaUsageWindow(usage, sevenDay, true)
 		}
 		sevenDay.WindowStats = sevenStats
 	}
+	setCanonicalQuotaUsageWindows(usage, fiveHour, sevenDay)
 }
 
 func quotaUsageWindows(usage *UpstreamAccountQuotaUsage) (*UpstreamAccountRateLimitWindow, *UpstreamAccountRateLimitWindow) {
 	if usage == nil || usage.RateLimit == nil {
 		return nil, nil
 	}
-	primary := usage.RateLimit.PrimaryWindow
-	secondary := usage.RateLimit.SecondaryWindow
-	if primary != nil && primary.LimitWindowSeconds >= 24*60*60 {
-		return secondary, primary
-	}
-	if secondary != nil && secondary.LimitWindowSeconds < 24*60*60 {
-		return secondary, primary
-	}
-	return primary, secondary
+	return canonicalCodexWindows(usage.RateLimit.PrimaryWindow, usage.RateLimit.SecondaryWindow)
 }
 
 func windowResetAt(window *UpstreamAccountRateLimitWindow) int64 {
@@ -206,15 +199,15 @@ func windowResetAt(window *UpstreamAccountRateLimitWindow) int64 {
 	return window.ResetAt
 }
 
-func setQuotaUsageWindow(usage *UpstreamAccountQuotaUsage, window *UpstreamAccountRateLimitWindow, weekly bool) {
+func setCanonicalQuotaUsageWindows(usage *UpstreamAccountQuotaUsage, fiveHour *UpstreamAccountRateLimitWindow, sevenDay *UpstreamAccountRateLimitWindow) {
+	if usage == nil {
+		return
+	}
 	if usage.RateLimit == nil {
 		usage.RateLimit = &UpstreamAccountRateLimit{Allowed: true}
 	}
-	if weekly {
-		usage.RateLimit.SecondaryWindow = window
-	} else {
-		usage.RateLimit.PrimaryWindow = window
-	}
+	usage.RateLimit.PrimaryWindow = fiveHour
+	usage.RateLimit.SecondaryWindow = sevenDay
 }
 
 func cachedUpstreamAccountQuota(accountId int, credentialVersion int64, includeCredits bool) *UpstreamAccountQuotaUsage {
@@ -234,14 +227,17 @@ func cachedUpstreamAccountQuota(accountId int, credentialVersion int64, includeC
 	return &usage
 }
 
-func queryUpstreamAccountQuota(ctx context.Context, accountId int, includeCredits bool) (*UpstreamAccountQuotaUsage, error) {
-	call, err := prepareUpstreamAccountQuotaCall(ctx, accountId)
+func queryUpstreamAccountQuota(ctx context.Context, account *model.UpstreamAccount, includeCredits bool, force bool) (*UpstreamAccountQuotaUsage, error) {
+	if account == nil || account.Id <= 0 {
+		return nil, errors.New("invalid upstream account id")
+	}
+	call, err := prepareUpstreamAccountQuotaCall(ctx, account.Id)
 	if err != nil {
 		return nil, err
 	}
 	var usage UpstreamAccountQuotaUsage
 	if err := call.request(ctx, http.MethodGet, upstreamAccountUsagePath, nil, &usage); err != nil {
-		refreshed, retryErr := refreshUpstreamAccountQuotaCall(ctx, accountId, err)
+		refreshed, retryErr := refreshUpstreamAccountQuotaCall(ctx, account.Id, err)
 		if retryErr != nil {
 			return nil, retryErr
 		}
@@ -253,6 +249,7 @@ func queryUpstreamAccountQuota(ctx context.Context, accountId int, includeCredit
 			return nil, err
 		}
 	}
+	refreshOpenAICodexUsageWindows(ctx, account, call, &usage, force, time.Now())
 	if includeCredits {
 		var creditPayload any
 		if err := call.request(ctx, http.MethodGet, upstreamAccountCreditsPath, nil, &creditPayload); err == nil {
@@ -415,7 +412,10 @@ func prepareUpstreamAccountQuotaCall(ctx context.Context, accountId int) (*upstr
 	if baseURL == "" {
 		baseURL = "https://chatgpt.com"
 	}
-	return &upstreamAccountQuotaCall{client: client, baseURL: baseURL, accessToken: accessToken, accountId: chatGPTAccountId}, nil
+	return &upstreamAccountQuotaCall{
+		client: client, baseURL: baseURL, accessToken: accessToken, accountId: chatGPTAccountId,
+		account: account, credentials: credentials,
+	}, nil
 }
 
 func (call *upstreamAccountQuotaCall) request(ctx context.Context, method string, path string, payload any, target any) error {

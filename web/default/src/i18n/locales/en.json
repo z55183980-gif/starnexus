@@ -837,6 +837,8 @@
     "Channel models": "Channel models",
     "Channel name is required": "Channel name is required",
     "Channel test completed": "Channel test completed",
+    "Channel test completed via account {{name}}": "Channel test completed via account {{name}}",
+    "Channel test failed via account {{name}}: {{message}}": "Channel test failed via account {{name}}: {{message}}",
     "Channel type": "Channel type",
     "Channel type is required": "Channel type is required",
     "Channel updated successfully": "Channel updated successfully",
@@ -5530,6 +5532,23 @@
     "User billed": "User billed",
     "Count": "Count",
     "Query reset credit count": "Query reset credit count",
-    "Refresh reset credit count": "Refresh reset credit count"
+    "Refresh reset credit count": "Refresh reset credit count",
+    "Content Moderation (API)": "Content Moderation (API)",
+    "Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.": "Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.",
+    "Enable content moderation": "Enable content moderation",
+    "When enabled, the latest user prompt is checked via Moderations API before billing.": "When enabled, the latest user prompt is checked via Moderations API before billing.",
+    "OpenAI Base URL": "OpenAI Base URL",
+    "HTTP Timeout (ms)": "HTTP Timeout (ms)",
+    "Maximum wait time for the Moderations API response.": "Maximum wait time for the Moderations API response.",
+    "OpenAI API Keys": "OpenAI API Keys",
+    "One API key per line": "One API key per line",
+    "Masked keys are kept on save unless you replace the line with a new key. Clear all lines to remove keys.": "Masked keys are kept on save unless you replace the line with a new key. Clear all lines to remove keys.",
+    "Category thresholds": "Category thresholds",
+    "Flag when any category score is greater than or equal to its threshold.": "Flag when any category score is greater than or equal to its threshold.",
+    "Prompt audit users": "Prompt audit users",
+    "Global Mode": "Global Mode",
+    "Front interception (pre_block)": "Front interception (pre_block)",
+    "Observe only (observe)": "Observe only (observe)",
+    "Pre-block stops flagged requests. Observe audits in the background and never blocks.": "Pre-block stops flagged requests. Observe audits in the background and never blocks."
   }
 }

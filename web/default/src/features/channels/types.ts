@@ -150,6 +150,9 @@ export interface ChannelTestResponse {
   success: boolean
   message?: string
   error_code?: string
+  time?: number
+  upstream_account_id?: number
+  upstream_account_name?: string
   data?: {
     response_time?: number
     error?: string

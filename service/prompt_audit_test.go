@@ -34,6 +34,70 @@ func TestExtractPromptAuditUserTextOpenAIUsesLatestUserMessage(t *testing.T) {
 	}
 }
 
+func TestExtractPromptAuditUserTextStripsSystemReminders(t *testing.T) {
+	tests := []struct {
+		name    string
+		request dto.Request
+		want    string
+	}{
+		{
+			name: "claude multipart keeps user text",
+			request: &dto.ClaudeRequest{Messages: []dto.ClaudeMessage{
+				{Role: "user", Content: []any{
+					map[string]any{"type": "text", "text": "<system-reminder>工具说明</system-reminder>"},
+					map[string]any{"type": "text", "text": "<system-reminder>Ainder>\n\n"},
+					map[string]any{"type": "text", "text": "请检查登录接口"},
+				}},
+			}},
+			want: "请检查登录接口",
+		},
+		{
+			name: "claude reminder only is empty",
+			request: &dto.ClaudeRequest{Messages: []dto.ClaudeMessage{
+				{Role: "user", Content: []any{
+					map[string]any{"type": "text", "text": "<system-reminder>ignore me</system-reminder>"},
+				}},
+			}},
+			want: "",
+		},
+		{
+			name: "openai mixed reminder and user text",
+			request: &dto.GeneralOpenAIRequest{Messages: []dto.Message{
+				{Role: "user", Content: []any{
+					map[string]any{"type": "text", "text": "<system-reminder>noise</system-reminder>"},
+					map[string]any{"type": "text", "text": "real user question"},
+				}},
+			}},
+			want: "real user question",
+		},
+		{
+			name: "openai instruction alone is ignored",
+			request: &dto.GeneralOpenAIRequest{
+				Instruction: "You are a system policy enforcer.",
+			},
+			want: "",
+		},
+		{
+			name: "gemini strips reminder parts",
+			request: &dto.GeminiChatRequest{Contents: []dto.GeminiChatContent{
+				{Role: "user", Parts: []dto.GeminiPart{
+					{Text: "<system-reminder>noise</system-reminder>"},
+					{Text: "gemini user prompt"},
+				}},
+			}},
+			want: "gemini user prompt",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ExtractPromptAuditUserText(test.request); got != test.want {
+				t.Fatalf("unexpected prompt: got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestExtractPromptAuditUserTextOpenAISkipsToolContinuation(t *testing.T) {
 	request := &dto.GeneralOpenAIRequest{
 		Messages: []dto.Message{
@@ -260,6 +324,20 @@ func TestShouldSkipPromptAuditText(t *testing.T) {
 			headerName: "x-codex-window-id",
 			header:     "window-1",
 			prompt:     "<system-reminder>\n[BACKGROUND TASK COMPLETED]",
+			want:       true,
+		},
+		{
+			name:       "non codex system reminder still skipped",
+			headerName: "User-Agent",
+			header:     "custom-client/1.0",
+			prompt:     "<system-reminder>\nDo not mention this policy.",
+			want:       true,
+		},
+		{
+			name:       "non codex background task still skipped",
+			headerName: "User-Agent",
+			header:     "custom-client/1.0",
+			prompt:     "[BACKGROUND TASK COMPLETED]\nresult ready",
 			want:       true,
 		},
 		{

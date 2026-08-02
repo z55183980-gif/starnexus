@@ -122,5 +122,7 @@
   "WhatsApp": "WhatsApp",
   "whsec_xxx": "whsec_xxx",
   "Worker URL": "Worker URL",
-  "Xinference": "Xinference"
+  "Xinference": "Xinference",
+  "OpenAI Base URL": "OpenAI Base URL",
+  "OpenAI API Keys": "OpenAI API Keys"
 }

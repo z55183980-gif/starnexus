@@ -837,6 +837,8 @@
     "Channel models": "Modèles de canaux",
     "Channel name is required": "Le nom du canal est requis",
     "Channel test completed": "Test du canal terminé",
+    "Channel test completed via account {{name}}": "Test du canal terminé via le compte {{name}}",
+    "Channel test failed via account {{name}}: {{message}}": "Échec du test du canal via le compte {{name}} : {{message}}",
     "Channel type": "Channel type",
     "Channel type is required": "Le type de canal est requis",
     "Channel updated successfully": "Canal mis à jour avec succès",
@@ -5530,6 +5532,23 @@
     "User billed": "Facturé à l’utilisateur",
     "Count": "Nombre",
     "Query reset credit count": "Consulter le nombre de réinitialisations",
-    "Refresh reset credit count": "Actualiser le nombre de réinitialisations"
+    "Refresh reset credit count": "Actualiser le nombre de réinitialisations",
+    "Content Moderation (API)": "Modération de contenu (API)",
+    "Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.": "Appelle OpenAI Moderations avant l’upstream. Désactivé par défaut. Les échecs API laissent passer (fail-open).",
+    "Enable content moderation": "Activer la modération de contenu",
+    "When enabled, the latest user prompt is checked via Moderations API before billing.": "Une fois activé, le dernier prompt utilisateur est vérifié via Moderations API avant la facturation.",
+    "OpenAI Base URL": "URL de base OpenAI",
+    "HTTP Timeout (ms)": "Délai HTTP (ms)",
+    "Maximum wait time for the Moderations API response.": "Temps d’attente maximum pour la réponse Moderations API.",
+    "OpenAI API Keys": "Clés API OpenAI",
+    "One API key per line": "Une clé API par ligne",
+    "Masked keys are kept on save unless you replace the line with a new key. Clear all lines to remove keys.": "Les clés masquées sont conservées à l’enregistrement sauf si vous remplacez la ligne. Videz toutes les lignes pour supprimer les clés.",
+    "Category thresholds": "Seuils par catégorie",
+    "Flag when any category score is greater than or equal to its threshold.": "Signaler si un score de catégorie est supérieur ou égal à son seuil.",
+    "Prompt audit users": "Utilisateurs d’audit de prompts",
+    "Global Mode": "Mode global",
+    "Front interception (pre_block)": "Interception préalable (pre_block)",
+    "Observe only (observe)": "Observation seule (observe)",
+    "Pre-block stops flagged requests. Observe audits in the background and never blocks.": "Pre-block bloque les requêtes signalées. Observe audite en arrière-plan sans bloquer."
   }
 }

@@ -837,6 +837,8 @@
     "Channel models": "渠道模型",
     "Channel name is required": "渠道名称是必填的",
     "Channel test completed": "渠道测试完成",
+    "Channel test completed via account {{name}}": "渠道测试完成（调度账号：{{name}}）",
+    "Channel test failed via account {{name}}: {{message}}": "渠道测试失败（调度账号：{{name}}）：{{message}}",
     "Channel type": "渠道类型",
     "Channel type is required": "渠道类型是必填的",
     "Channel updated successfully": "渠道更新成功",
@@ -5530,6 +5532,23 @@
     "User billed": "用户计费",
     "Count": "次数",
     "Query reset credit count": "查询重置次数",
-    "Refresh reset credit count": "刷新重置次数"
+    "Refresh reset credit count": "刷新重置次数",
+    "Content Moderation (API)": "内容审核（API）",
+    "Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.": "在请求上游前调用 OpenAI Moderations。默认关闭。API 失败时放行（fail-open）。",
+    "Enable content moderation": "启用内容审核",
+    "When enabled, the latest user prompt is checked via Moderations API before billing.": "启用后，在计费前通过 Moderations API 检查最新一条用户提示词。",
+    "OpenAI Base URL": "OpenAI Base URL",
+    "HTTP Timeout (ms)": "HTTP 超时（毫秒）",
+    "Maximum wait time for the Moderations API response.": "等待 Moderations API 响应的最长时间。",
+    "OpenAI API Keys": "OpenAI API Keys",
+    "One API key per line": "每行一个 API Key",
+    "Masked keys are kept on save unless you replace the line with a new key. Clear all lines to remove keys.": "保存时会保留脱敏密钥，除非该行替换为新密钥。清空所有行可删除密钥。",
+    "Category thresholds": "分类阈值",
+    "Flag when any category score is greater than or equal to its threshold.": "任一分类分数大于等于阈值时标记。",
+    "Prompt audit users": "提示词审计用户",
+    "Global Mode": "全局模式",
+    "Front interception (pre_block)": "前置拦截 (pre_block)",
+    "Observe only (observe)": "仅观察 (observe)",
+    "Pre-block stops flagged requests. Observe audits in the background and never blocks.": "前置拦截会阻断命中请求；观察模式仅后台审计，不拦截。"
   }
 }

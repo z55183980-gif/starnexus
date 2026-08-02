@@ -69,6 +69,43 @@ func TestSetupRequestHeaderForwardsResponsesLiteOnlyForHTTP(t *testing.T) {
 			} else {
 				require.Empty(t, headers.Get(ResponsesLiteHeader))
 			}
+			require.Equal(t, defaultCodexUserAgent, headers.Get("User-Agent"))
 		})
 	}
+}
+
+func TestSetupRequestHeaderAppliesCodexUserAgent(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiKey: `{"access_token":"token","account_id":"account"}`,
+		},
+	}
+
+	t.Run("empty ua uses default", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		headers := make(http.Header)
+		require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+		require.Equal(t, defaultCodexUserAgent, headers.Get("User-Agent"))
+	})
+
+	t.Run("browser ua is replaced", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		c.Request.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36")
+		headers := make(http.Header)
+		require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+		require.Equal(t, defaultCodexUserAgent, headers.Get("User-Agent"))
+	})
+
+	t.Run("cli ua is preserved", func(t *testing.T) {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+		c.Request.Header.Set("User-Agent", "codex_cli_rs/0.100.0 (Ubuntu 22.4.0; x86_64) xterm-256color")
+		headers := make(http.Header)
+		require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+		require.Equal(t, "codex_cli_rs/0.100.0 (Ubuntu 22.4.0; x86_64) xterm-256color", headers.Get("User-Agent"))
+	})
 }
