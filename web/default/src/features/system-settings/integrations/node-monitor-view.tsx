@@ -227,44 +227,45 @@ export function RoutingNodeResourceOverview({
 
   return (
     <div className='grid grid-cols-2 gap-2'>
-      {resources.map((resource) => (
-        <Item
-          key={resource.label}
-          variant='muted'
-          size={compact ? 'xs' : 'sm'}
-          className={cn(
-            'bg-background/55 flex-nowrap justify-between',
-            compact ? 'min-h-16 px-3 py-2' : 'min-h-24'
-          )}
-        >
-          <ItemContent className='min-w-0 overflow-hidden pr-1'>
-            <ItemDescription>{resource.label}</ItemDescription>
-            <ItemTitle
-              className={cn(
-                'w-full min-w-0 tabular-nums',
-                resource.total
-                  ? 'line-clamp-none flex-col items-start gap-0'
-                  : 'line-clamp-none',
-                compact ? 'text-sm' : 'text-base'
-              )}
-            >
-              {resource.total ? (
-                <>
-                  <span className='max-w-full truncate'>{resource.value}</span>
-                  <span className='max-w-full truncate'>/ {resource.total}</span>
-                </>
-              ) : (
-                <span className='max-w-full truncate'>{resource.value}</span>
-              )}
-            </ItemTitle>
-          </ItemContent>
-          <ResourceUsageRing
-            percent={resource.percent}
-            available={Boolean(status)}
-            compact={compact}
-          />
-        </Item>
-      ))}
+      {resources.map((resource) => {
+        const displayValue = resource.total
+          ? `${resource.value} / ${resource.total}`
+          : resource.value
+        let valueTextClass = compact ? 'text-sm' : 'text-base'
+        if (resource.total) {
+          valueTextClass = compact ? 'text-xs' : 'text-sm'
+        }
+
+        return (
+          <Item
+            key={resource.label}
+            variant='muted'
+            size={compact ? 'xs' : 'sm'}
+            className={cn(
+              'bg-background/55 flex-nowrap justify-between',
+              compact ? 'min-h-16 px-3 py-2' : 'min-h-24'
+            )}
+          >
+            <ItemContent className='min-w-0 overflow-hidden pr-1'>
+              <ItemDescription>{resource.label}</ItemDescription>
+              <ItemTitle
+                className={cn(
+                  'line-clamp-none w-full min-w-0 tabular-nums',
+                  valueTextClass
+                )}
+                title={displayValue}
+              >
+                <span className='max-w-full truncate'>{displayValue}</span>
+              </ItemTitle>
+            </ItemContent>
+            <ResourceUsageRing
+              percent={resource.percent}
+              available={Boolean(status)}
+              compact={compact}
+            />
+          </Item>
+        )
+      })}
     </div>
   )
 }

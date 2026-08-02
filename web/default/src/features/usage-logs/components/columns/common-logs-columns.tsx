@@ -434,6 +434,7 @@ export function useCommonLogsColumns(
       columns.push(
         {
           id: 'channel',
+          accessorKey: 'channel',
         header: ({ column }) => (
           <DataTableColumnHeader column={column} title={t('Channel')} />
         ),

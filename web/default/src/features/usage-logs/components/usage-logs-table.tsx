@@ -151,6 +151,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       pagination,
     },
     enableRowSelection: false,
+    manualFiltering: true,
     onPaginationChange,
     onColumnFiltersChange,
     getCoreRowModel: getCoreRowModel(),

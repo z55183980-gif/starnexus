@@ -18,10 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useDeferredValue, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Check, ChevronsUpDown } from 'lucide-react'
+import { ArrowDown01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { Check } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
 import {
   Command,
   CommandEmpty,
@@ -141,22 +142,32 @@ export function ChannelCombobox(props: ChannelComboboxProps) {
     >
       <PopoverTrigger
         render={
-          <Button
+          <button
             type='button'
-            variant='outline'
             role='combobox'
             aria-expanded={open}
             disabled={props.disabled}
+            data-size='default'
+            data-placeholder={!props.value ? '' : undefined}
             className={cn(
-              'border-input bg-background hover:bg-background h-8 justify-between gap-1 px-2.5 font-normal shadow-none',
+              'group/select-trigger border-input focus-visible:border-ring focus-visible:ring-ring/50 data-placeholder:text-muted-foreground dark:bg-input/30 dark:hover:bg-input/50 flex h-8 w-fit items-center justify-between gap-1.5 rounded-lg border bg-transparent py-2 pr-2 pl-2.5 text-sm whitespace-nowrap transition-colors outline-none select-none focus-visible:ring-3 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
               !props.value && 'text-muted-foreground',
               props.className
             )}
           />
         }
       >
-        <span className='truncate'>{displayLabel}</span>
-        <ChevronsUpDown className='size-3.5 shrink-0 opacity-50' />
+        <span className='line-clamp-1 flex-1 truncate text-left'>
+          {displayLabel}
+        </span>
+        <HugeiconsIcon
+          icon={ArrowDown01Icon}
+          strokeWidth={2}
+          className={cn(
+            'text-muted-foreground pointer-events-none size-4 transition-transform duration-200',
+            open && 'rotate-180'
+          )}
+        />
       </PopoverTrigger>
       <PopoverContent
         align='start'
