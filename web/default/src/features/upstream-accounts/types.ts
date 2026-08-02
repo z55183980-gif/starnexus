@@ -153,6 +153,14 @@ export interface UpstreamAccountRateLimitWindow {
   limit_window_seconds: number
   reset_after_seconds: number
   reset_at: number
+  window_stats?: UpstreamAccountWindowStats | null
+}
+
+export interface UpstreamAccountWindowStats {
+  requests: number
+  tokens: number
+  cost: number
+  user_cost: number
 }
 
 export interface UpstreamAccountRateLimit {

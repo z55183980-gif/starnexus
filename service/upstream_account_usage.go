@@ -20,13 +20,17 @@ const (
 	upstreamAnthropicUsageURL      = "https://api.anthropic.com/api/oauth/usage"
 	upstreamAnthropicUsageCacheTTL = 3 * time.Minute
 	upstreamAnthropicUsageTimeout  = 30 * time.Second
+	upstreamWindowStatsCacheTTL    = time.Minute
 )
 
+type UpstreamAccountWindowStats = model.UpstreamAccountWindowStats
+
 type UpstreamAccountUsageWindow struct {
-	UsedPercent        float64 `json:"used_percent"`
-	LimitWindowSeconds int64   `json:"limit_window_seconds"`
-	ResetAfterSeconds  int64   `json:"reset_after_seconds"`
-	ResetAt            int64   `json:"reset_at"`
+	UsedPercent        float64                     `json:"used_percent"`
+	LimitWindowSeconds int64                       `json:"limit_window_seconds"`
+	ResetAfterSeconds  int64                       `json:"reset_after_seconds"`
+	ResetAt            int64                       `json:"reset_at"`
+	WindowStats        *UpstreamAccountWindowStats `json:"window_stats,omitempty"`
 }
 
 type UpstreamAccountUsage struct {
@@ -56,9 +60,15 @@ type upstreamAccountUsageCacheEntry struct {
 	cachedAt          time.Time
 }
 
+type upstreamWindowStatsCacheEntry struct {
+	stats    UpstreamAccountWindowStats
+	cachedAt time.Time
+}
+
 var (
 	upstreamAccountUsageCache  sync.Map
 	upstreamAccountUsageFlight singleflight.Group
+	upstreamWindowStatsCache   sync.Map
 )
 
 func QueryUpstreamAccountUsage(ctx context.Context, accountId int, force bool) (*UpstreamAccountUsage, error) {
@@ -75,11 +85,13 @@ func QueryUpstreamAccountUsage(ctx context.Context, accountId int, force bool) (
 	}
 	if account.Type == constant.UpstreamAccountTypeSetupToken {
 		usage := buildAnthropicSetupTokenUsage(&account, time.Now())
+		attachAnthropicWindowStats(&account, &usage, time.Now())
 		return &usage, nil
 	}
 
 	if !force {
 		if cached := cachedUpstreamAccountUsage(accountId, account.CredentialVersion); cached != nil {
+			attachAnthropicWindowStats(&account, cached, time.Now())
 			return cached, nil
 		}
 	}
@@ -103,6 +115,7 @@ func QueryUpstreamAccountUsage(ctx context.Context, accountId int, force bool) (
 		return nil, err
 	}
 	usage, _ := result.(*UpstreamAccountUsage)
+	attachAnthropicWindowStats(&account, usage, time.Now())
 	return usage, nil
 }
 
@@ -228,4 +241,38 @@ func buildAnthropicSetupTokenUsage(account *model.UpstreamAccount, now time.Time
 	}
 	result.FiveHour = window
 	return result
+}
+
+func attachAnthropicWindowStats(account *model.UpstreamAccount, usage *UpstreamAccountUsage, now time.Time) {
+	if account == nil || usage == nil || usage.FiveHour == nil {
+		return
+	}
+	stats, err := queryUpstreamWindowStats(account.Id, upstreamWindowStatsStart(usage.FiveHour.ResetAt, 5*time.Hour, now))
+	if err == nil {
+		usage.FiveHour.WindowStats = stats
+	}
+}
+
+func upstreamWindowStatsStart(resetAt int64, duration time.Duration, now time.Time) time.Time {
+	if resetAt > now.Unix() {
+		return time.Unix(resetAt, 0).Add(-duration)
+	}
+	return now.Add(-duration)
+}
+
+func queryUpstreamWindowStats(accountId int, start time.Time) (*UpstreamAccountWindowStats, error) {
+	key := fmt.Sprintf("%d:%d", accountId, start.Unix())
+	if value, ok := upstreamWindowStatsCache.Load(key); ok {
+		if entry, ok := value.(upstreamWindowStatsCacheEntry); ok && time.Since(entry.cachedAt) < upstreamWindowStatsCacheTTL {
+			stats := entry.stats
+			return &stats, nil
+		}
+		upstreamWindowStatsCache.Delete(key)
+	}
+	stats, err := model.GetUpstreamAccountWindowStats(accountId, start.Unix())
+	if err != nil {
+		return nil, err
+	}
+	upstreamWindowStatsCache.Store(key, upstreamWindowStatsCacheEntry{stats: *stats, cachedAt: time.Now()})
+	return stats, nil
 }

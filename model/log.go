@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -34,28 +35,31 @@ func sanitizeUserLogContent(content string) string {
 }
 
 type Log struct {
-	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
-	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
-	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
-	Content           string `json:"content"`
-	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
-	TokenName         string `json:"token_name" gorm:"index;default:''"`
-	ModelName         string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
-	Quota             int    `json:"quota" gorm:"default:0"`
-	PromptTokens      int    `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens  int    `json:"completion_tokens" gorm:"default:0"`
-	UseTime           int    `json:"use_time" gorm:"default:0"`
-	UseTimeMs         *int64 `json:"use_time_ms,omitempty" gorm:"bigint"`
-	IsStream          bool   `json:"is_stream"`
-	ChannelId         int    `json:"channel" gorm:"index"`
-	ChannelName       string `json:"channel_name" gorm:"->"`
-	TokenId           int    `json:"token_id" gorm:"default:0;index"`
-	Group             string `json:"group" gorm:"index"`
-	Ip                string `json:"ip" gorm:"index;default:''"`
-	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
-	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
-	Other             string `json:"other"`
+	Id                int     `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
+	UserId            int     `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	CreatedAt         int64   `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
+	Type              int     `json:"type" gorm:"index:idx_created_at_type"`
+	Content           string  `json:"content"`
+	Username          string  `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	TokenName         string  `json:"token_name" gorm:"index;default:''"`
+	ModelName         string  `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota             int     `json:"quota" gorm:"default:0"`
+	PromptTokens      int     `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens  int     `json:"completion_tokens" gorm:"default:0"`
+	UseTime           int     `json:"use_time" gorm:"default:0"`
+	UseTimeMs         *int64  `json:"use_time_ms,omitempty" gorm:"bigint"`
+	IsStream          bool    `json:"is_stream"`
+	ChannelId         int     `json:"channel" gorm:"index"`
+	ChannelName       string  `json:"channel_name" gorm:"->"`
+	TokenId           int     `json:"token_id" gorm:"default:0;index"`
+	Group             string  `json:"group" gorm:"index"`
+	Ip                string  `json:"ip" gorm:"index;default:''"`
+	RequestId         string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
+	UpstreamRequestId string  `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
+	UpstreamAccountId int     `json:"upstream_account_id,omitempty" gorm:"index;default:0"`
+	AccountCost       float64 `json:"account_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
+	UserCost          float64 `json:"user_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
+	Other             string  `json:"other"`
 }
 
 func publishBusinessMonitorLog(log *Log) {
@@ -311,6 +315,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	upstreamAccountId, accountCost, userCost := consumeLogAccountCosts(c, params)
 	otherStr := common.MapToJsonStr(attachNodeNameToLogOther(params.Other))
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -344,6 +349,9 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		}(),
 		RequestId:         requestId,
 		UpstreamRequestId: upstreamRequestId,
+		UpstreamAccountId: upstreamAccountId,
+		AccountCost:       accountCost,
+		UserCost:          userCost,
 		Other:             otherStr,
 	}
 	err := LOG_DB.Create(log).Error
@@ -357,6 +365,23 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
 	}
+}
+
+func consumeLogAccountCosts(c *gin.Context, params RecordConsumeLogParams) (int, float64, float64) {
+	accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
+	if accountId <= 0 || common.QuotaPerUnit <= 0 {
+		return 0, 0, 0
+	}
+	userCost := float64(params.Quota) / common.QuotaPerUnit
+	groupRatio := 1.0
+	if value, ok := params.Other["group_ratio"].(float64); ok && value > 0 {
+		groupRatio = value
+	}
+	accountRateMultiplier := 1.0
+	if value, ok := common.GetContextKeyType[float64](c, constant.ContextKeyUpstreamAccountRateMultiplier); ok && value >= 0 {
+		accountRateMultiplier = value
+	}
+	return accountId, userCost / groupRatio * accountRateMultiplier, userCost
 }
 
 type RecordTaskBillingLogParams struct {

@@ -5525,6 +5525,11 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Account billed": "账号计费",
+    "User billed": "用户计费",
+    "Count": "次数",
+    "Query reset credit count": "查询重置次数",
+    "Refresh reset credit count": "刷新重置次数"
   }
 }

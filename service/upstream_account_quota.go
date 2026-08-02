@@ -46,10 +46,11 @@ var (
 )
 
 type UpstreamAccountRateLimitWindow struct {
-	UsedPercent        float64 `json:"used_percent"`
-	LimitWindowSeconds int64   `json:"limit_window_seconds"`
-	ResetAfterSeconds  int64   `json:"reset_after_seconds"`
-	ResetAt            int64   `json:"reset_at"`
+	UsedPercent        float64                     `json:"used_percent"`
+	LimitWindowSeconds int64                       `json:"limit_window_seconds"`
+	ResetAfterSeconds  int64                       `json:"reset_after_seconds"`
+	ResetAt            int64                       `json:"reset_at"`
+	WindowStats        *UpstreamAccountWindowStats `json:"window_stats,omitempty"`
 }
 
 type UpstreamAccountRateLimit struct {
@@ -132,6 +133,7 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 	}
 	if !options.Force {
 		if cached := cachedUpstreamAccountQuota(accountId, account.CredentialVersion, options.IncludeCredits); cached != nil {
+			attachOpenAIWindowStats(&account, cached, time.Now())
 			return cached, nil
 		}
 	}
@@ -155,7 +157,64 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 		return nil, err
 	}
 	usage, _ := result.(*UpstreamAccountQuotaUsage)
+	attachOpenAIWindowStats(&account, usage, time.Now())
 	return usage, nil
+}
+
+func attachOpenAIWindowStats(account *model.UpstreamAccount, usage *UpstreamAccountQuotaUsage, now time.Time) {
+	if account == nil || usage == nil {
+		return
+	}
+	fiveHour, sevenDay := quotaUsageWindows(usage)
+	fiveStats, fiveErr := queryUpstreamWindowStats(account.Id, upstreamWindowStatsStart(windowResetAt(fiveHour), 5*time.Hour, now))
+	if fiveErr == nil {
+		if fiveHour == nil {
+			fiveHour = &UpstreamAccountRateLimitWindow{LimitWindowSeconds: int64((5 * time.Hour).Seconds())}
+			setQuotaUsageWindow(usage, fiveHour, false)
+		}
+		fiveHour.WindowStats = fiveStats
+	}
+	sevenStats, sevenErr := queryUpstreamWindowStats(account.Id, upstreamWindowStatsStart(windowResetAt(sevenDay), 7*24*time.Hour, now))
+	if sevenErr == nil {
+		if sevenDay == nil {
+			sevenDay = &UpstreamAccountRateLimitWindow{LimitWindowSeconds: int64((7 * 24 * time.Hour).Seconds())}
+			setQuotaUsageWindow(usage, sevenDay, true)
+		}
+		sevenDay.WindowStats = sevenStats
+	}
+}
+
+func quotaUsageWindows(usage *UpstreamAccountQuotaUsage) (*UpstreamAccountRateLimitWindow, *UpstreamAccountRateLimitWindow) {
+	if usage == nil || usage.RateLimit == nil {
+		return nil, nil
+	}
+	primary := usage.RateLimit.PrimaryWindow
+	secondary := usage.RateLimit.SecondaryWindow
+	if primary != nil && primary.LimitWindowSeconds >= 24*60*60 {
+		return secondary, primary
+	}
+	if secondary != nil && secondary.LimitWindowSeconds < 24*60*60 {
+		return secondary, primary
+	}
+	return primary, secondary
+}
+
+func windowResetAt(window *UpstreamAccountRateLimitWindow) int64 {
+	if window == nil {
+		return 0
+	}
+	return window.ResetAt
+}
+
+func setQuotaUsageWindow(usage *UpstreamAccountQuotaUsage, window *UpstreamAccountRateLimitWindow, weekly bool) {
+	if usage.RateLimit == nil {
+		usage.RateLimit = &UpstreamAccountRateLimit{Allowed: true}
+	}
+	if weekly {
+		usage.RateLimit.SecondaryWindow = window
+	} else {
+		usage.RateLimit.PrimaryWindow = window
+	}
 }
 
 func cachedUpstreamAccountQuota(accountId int, credentialVersion int64, includeCredits bool) *UpstreamAccountQuotaUsage {

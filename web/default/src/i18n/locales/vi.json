@@ -5525,6 +5525,11 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Account billed": "Chi phí tài khoản",
+    "User billed": "Chi phí người dùng",
+    "Count": "Số lần",
+    "Query reset credit count": "Truy vấn số lần đặt lại",
+    "Refresh reset credit count": "Làm mới số lần đặt lại"
   }
 }

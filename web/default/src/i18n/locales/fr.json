@@ -5525,6 +5525,11 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Account billed": "Facturé au compte",
+    "User billed": "Facturé à l’utilisateur",
+    "Count": "Nombre",
+    "Query reset credit count": "Consulter le nombre de réinitialisations",
+    "Refresh reset credit count": "Actualiser le nombre de réinitialisations"
   }
 }

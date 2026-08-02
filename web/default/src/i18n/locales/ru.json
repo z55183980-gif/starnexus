@@ -5525,6 +5525,11 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Account billed": "Списано с аккаунта",
+    "User billed": "Списано с пользователя",
+    "Count": "Количество",
+    "Query reset credit count": "Запросить число сбросов",
+    "Refresh reset credit count": "Обновить число сбросов"
   }
 }

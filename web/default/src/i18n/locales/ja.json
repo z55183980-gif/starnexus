@@ -5525,6 +5525,11 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Account billed": "アカウント請求額",
+    "User billed": "ユーザー請求額",
+    "Count": "回数",
+    "Query reset credit count": "リセット回数を照会",
+    "Refresh reset credit count": "リセット回数を更新"
   }
 }

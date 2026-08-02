@@ -12,8 +12,6 @@ import {
   InformationCircleIcon,
   Key01Icon,
   Link01Icon,
-  Loading03Icon,
-  RefreshIcon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
@@ -39,7 +37,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -669,30 +666,144 @@ function resetCountdown(
   return `${Math.max(1, minutes)}m`
 }
 
+function formatUsageCompactNumber(
+  value: number,
+  options?: { allowBillions?: boolean }
+) {
+  const absolute = Math.abs(value)
+  if (options?.allowBillions !== false && absolute >= 1_000_000_000)
+    return `${(value / 1_000_000_000).toFixed(1)}B`
+  if (absolute >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (absolute >= 1_000) return `${(value / 1_000).toFixed(1)}K`
+  return value.toString()
+}
+
 function UsageWindow({
   label,
   window,
   now,
+  color,
+  showNowWhenIdle = false,
 }: {
   label: string
   window: UpstreamAccountRateLimitWindow | null
   now: number
+  color: 'indigo' | 'emerald' | 'purple' | 'amber'
+  showNowWhenIdle?: boolean
 }) {
   const { t } = useTranslation()
-  const percent = Math.max(0, Math.min(100, Number(window?.used_percent) || 0))
+  const utilization = Number(window?.used_percent) || 0
+  const percent = Math.max(0, Math.min(100, utilization))
+  const stats = window?.window_stats
+  const labelClasses = {
+    indigo:
+      'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300',
+    emerald:
+      'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
+    purple:
+      'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300',
+    amber:
+      'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  }
+  const barClass =
+    utilization >= 100
+      ? 'bg-red-500'
+      : utilization >= 80
+        ? 'bg-amber-500'
+        : 'bg-green-500'
+  const textClass =
+    utilization >= 100
+      ? 'text-red-600 dark:text-red-400'
+      : utilization >= 80
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-gray-600 dark:text-gray-400'
+  const roundedPercent = Math.round(utilization)
+  const displayPercent = roundedPercent > 999 ? '>999%' : `${roundedPercent}%`
+  const shouldShowResetTime =
+    Boolean(
+      window && (window.reset_at > 0 || window.reset_after_seconds > 0)
+    ) ||
+    (showNowWhenIdle && utilization <= 0)
   return (
-    <div className='flex items-center gap-1.5'>
-      <span className='w-7 rounded-sm bg-indigo-100 px-1 py-0.5 text-center text-[10px] font-medium text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300'>
-        {label}
-      </span>
-      <Progress value={percent} className='w-9 gap-0' />
-      <span className='w-8 text-right text-[10px] tabular-nums'>
-        {window ? `${Math.round(percent)}%` : '-'}
-      </span>
-      <span className='text-muted-foreground min-w-12 text-[10px]'>
-        {resetCountdown(window, now, t)}
-      </span>
+    <div>
+      {stats && (stats.requests > 0 || stats.tokens > 0) && (
+        <div className='mb-0.5 flex items-center'>
+          <div className='flex items-center gap-1.5 text-[9px] text-gray-500 dark:text-gray-400'>
+            <span className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'>
+              {formatUsageCompactNumber(stats.requests, {
+                allowBillions: false,
+              })}{' '}
+              req
+            </span>
+            <span className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'>
+              {formatUsageCompactNumber(stats.tokens)}
+            </span>
+            <span
+              className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'
+              title={t('Account billed')}
+            >
+              A ${stats.cost.toFixed(2)}
+            </span>
+            {stats.user_cost != null && (
+              <span
+                className='rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800'
+                title={t('User billed')}
+              >
+                U ${stats.user_cost.toFixed(2)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      <div className='flex items-center gap-1'>
+        <span
+          className={`w-[32px] shrink-0 rounded px-1 text-center text-[10px] font-medium ${labelClasses[color]}`}
+        >
+          {label}
+        </span>
+        <div className='h-1.5 w-8 shrink-0 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700'>
+          <div
+            className={`h-full transition-all duration-300 ${barClass}`}
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+        <span
+          className={`w-[32px] shrink-0 text-right text-[10px] font-medium ${textClass}`}
+        >
+          {window ? displayPercent : '-'}
+        </span>
+        {shouldShowResetTime && (
+          <span className='shrink-0 text-[10px] text-gray-400'>
+            {showNowWhenIdle && utilization <= 0
+              ? t('Now')
+              : resetCountdown(window, now, t)}
+          </span>
+        )}
+      </div>
     </div>
+  )
+}
+
+function RefreshGlyph({ reset = false }: { reset?: boolean }) {
+  return (
+    <svg
+      className='h-2.5 w-2.5'
+      fill='none'
+      stroke='currentColor'
+      viewBox='0 0 24 24'
+      aria-hidden='true'
+    >
+      <path
+        strokeLinecap='round'
+        strokeLinejoin='round'
+        strokeWidth='2'
+        d={
+          reset
+            ? 'M20 12a8 8 0 11-2.343-5.657L20 8m0 0V4m0 4h-4'
+            : 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15'
+        }
+      />
+    </svg>
   )
 }
 
@@ -721,6 +832,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   const [anthropicUsage, setAnthropicUsage] =
     useState<UpstreamAccountUsage | null>(null)
   const [loading, setLoading] = useState(false)
+  const [creditsLoading, setCreditsLoading] = useState(false)
   const [error, setError] = useState('')
   const [resetMessage, setResetMessage] = useState('')
   const [resetting, setResetting] = useState(false)
@@ -740,14 +852,14 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   const windows = useMemo(() => classifyWindows(usage), [usage])
   const displayedWindows = isAnthropic
     ? ([
-        ['5h', anthropicUsage?.five_hour ?? null],
-        ['7d', anthropicUsage?.seven_day ?? null],
-        ['7d S', anthropicUsage?.seven_day_sonnet ?? null],
-        ['7d F', anthropicUsage?.seven_day_fable ?? null],
+        ['5h', anthropicUsage?.five_hour ?? null, 'indigo'],
+        ['7d', anthropicUsage?.seven_day ?? null, 'emerald'],
+        ['7d S', anthropicUsage?.seven_day_sonnet ?? null, 'purple'],
+        ['7d F', anthropicUsage?.seven_day_fable ?? null, 'amber'],
       ] as const)
     : ([
-        ['5h', windows.fiveHour],
-        ['7d', windows.weekly],
+        ['5h', windows.fiveHour, 'indigo'],
+        ['7d', windows.weekly, 'emerald'],
       ] as const)
   const creditsLoaded = usage?.rate_limit_reset_credits != null
   const credits = usage?.rate_limit_reset_credits?.available_count ?? 0
@@ -798,8 +910,9 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
   }, [anthropicUsage, usage])
 
   const query = useCallback(
-    async (force = true) => {
-      setLoading(true)
+    async (force = true, includeCredits = false) => {
+      if (includeCredits) setCreditsLoading(true)
+      else setLoading(true)
       setError('')
       setResetMessage('')
       setShowCreditDetails(false)
@@ -808,7 +921,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
           const data = await loadAccountUsage(
             account.id,
             account.credential_version,
-            { force, includeCredits: force }
+            { force, includeCredits }
           )
           setUsage(data)
         } else {
@@ -828,7 +941,8 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
         setError(message)
         refreshSchedulingState()
       } finally {
-        setLoading(false)
+        if (includeCredits) setCreditsLoading(false)
+        else setLoading(false)
       }
     },
     [
@@ -896,7 +1010,7 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
       if (!response.success)
         throw new Error(response.message || t('Reset failed'))
       setResetConfirmOpen(false)
-      await query(true)
+      await query(true, true)
       setResetMessage(
         t('Reset {{count}} usage windows successfully', {
           count: response.data?.windows_reset ?? 0,
@@ -916,16 +1030,23 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
 
   return (
     <>
-      <div ref={rootRef} className='flex min-w-48 flex-col gap-1.5'>
+      <div ref={rootRef} className='flex min-w-[228px] flex-col gap-1.5'>
         {loading && !usage && !anthropicUsage ? (
           <div className='flex flex-col gap-1.5' aria-label={t('Loading...')}>
             <Skeleton className='h-4 w-36' />
             <Skeleton className='h-4 w-36' />
           </div>
         ) : (
-          displayedWindows.map(([label, value]) =>
+          displayedWindows.map(([label, value, color]) =>
             value || label === '5h' || label === '7d' ? (
-              <UsageWindow key={label} label={label} window={value} now={now} />
+              <UsageWindow
+                key={label}
+                label={label}
+                window={value}
+                now={now}
+                color={color}
+                showNowWhenIdle={isOpenAI}
+              />
             ) : null
           )
         )}
@@ -957,61 +1078,66 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
             {resetMessage}
           </span>
         )}
-        <div className='flex flex-wrap items-center gap-1 text-[11px]'>
-          <ActionTooltip
-            label={t(
+        <div className='flex flex-wrap items-center gap-1.5'>
+          <button
+            type='button'
+            className='inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30'
+            disabled={loading || creditsLoading || resetting}
+            title={t(
               usage || anthropicUsage
                 ? 'Query upstream usage again'
-                : isOpenAI
-                  ? 'Query upstream usage and reset credits'
-                  : 'Query upstream usage'
+                : 'Query upstream usage'
             )}
+            onClick={() => void query(true, false)}
           >
-            <Button
-              variant='link'
-              size='xs'
-              disabled={loading || resetting}
-              onClick={() => void query()}
-            >
-              {loading ? (
-                <HugeiconsIcon
-                  icon={Loading03Icon}
-                  data-icon='inline-start'
-                  className='animate-spin'
-                />
-              ) : (
-                <HugeiconsIcon icon={RefreshIcon} data-icon='inline-start' />
-              )}
-              {t('Query')}
-            </Button>
-          </ActionTooltip>
+            <span className={loading ? 'animate-spin' : undefined}>
+              <RefreshGlyph />
+            </span>
+            {t('Query')}
+          </button>
           {isOpenAI && (
             <>
-              <span className='text-muted-foreground'>
-                {creditsLoaded
-                  ? t('{{count}} credits', { count: credits })
-                  : t('Credits')}
-              </span>
-              <ActionTooltip
-                label={t(
+              <button
+                type='button'
+                className='inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-blue-600 transition-colors hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-blue-400 dark:hover:bg-blue-900/30'
+                disabled={loading || creditsLoading || resetting}
+                title={t(
+                  creditsLoaded
+                    ? 'Refresh reset credit count'
+                    : 'Query reset credit count'
+                )}
+                onClick={() => void query(true, true)}
+              >
+                <span className={creditsLoading ? 'animate-spin' : undefined}>
+                  <RefreshGlyph />
+                </span>
+                {t('Count')}
+                {creditsLoaded && <span> {credits}</span>}
+              </button>
+              <button
+                type='button'
+                className='inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-orange-600 transition-colors hover:bg-orange-50 disabled:cursor-not-allowed disabled:opacity-50 dark:text-orange-400 dark:hover:bg-orange-900/30'
+                disabled={
+                  !creditsLoaded ||
+                  credits <= 0 ||
+                  loading ||
+                  creditsLoading ||
+                  resetting
+                }
+                title={t(
                   !creditsLoaded
                     ? 'Query reset credits before resetting quota'
                     : credits <= 0
                       ? 'No reset credits are available'
                       : 'Consume one reset credit'
                 )}
+                onClick={() => setResetConfirmOpen(true)}
               >
-                <Button
-                  variant='destructive'
-                  size='xs'
-                  disabled={
-                    !creditsLoaded || credits <= 0 || loading || resetting
-                  }
-                  onClick={() => setResetConfirmOpen(true)}
-                >
-                  {resetting ? t('Resetting...') : t('Reset')}
-                </Button>
-              </ActionTooltip>
+                <span className={resetting ? 'animate-spin' : undefined}>
+                  <RefreshGlyph reset />
+                </span>
+                {t('Reset')}
+              </button>
             </>
           )}
         </div>
@@ -1094,24 +1220,5 @@ export function AccountUsageCell({ account }: { account: UpstreamAccount }) {
         </AlertDialogContent>
       </AlertDialog>
     </>
-  )
-}
-
-function ActionTooltip({
-  label,
-  children,
-}: {
-  label: string
-  children: ReactNode
-}) {
-  return (
-    <TooltipProvider delay={150}>
-      <Tooltip>
-        <TooltipTrigger render={<span className='inline-flex' />}>
-          {children}
-        </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   )
 }
