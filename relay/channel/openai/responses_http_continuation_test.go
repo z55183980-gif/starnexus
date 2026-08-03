@@ -92,6 +92,53 @@ data: [DONE]
 	require.Equal(t, "ciphertext", gjson.GetBytes(second.Input, `#(type=="reasoning").encrypted_content`).String())
 }
 
+func TestResponsesSSERebuildStageOmitsEmptyQualityInContinuation(t *testing.T) {
+	firstCtx, _ := newResponsesHTTPIntegrationContext(8104, 9104)
+	enableResponsesHTTPPersist(firstCtx)
+	service.PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: json.RawMessage(`"first"`)})
+
+	// Codex-style stream: completed output is empty, so the bridge rebuilds from
+	// item/delta events and stages the rebuilt DTO output for continuation.
+	body := `data: {"type":"response.created","response":{"id":"resp_rebuild_quality"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","status":"in_progress","role":"assistant","content":[]}}
+
+data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"done"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"","annotations":[]}]}}
+
+data: {"type":"response.completed","response":{"id":"resp_rebuild_quality","object":"response","model":"gpt-5","output":[],"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}}
+
+data: [DONE]
+
+`
+	_, apiErr := OaiResponsesSSEToNonStreamHandler(firstCtx, &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5"},
+	}, &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	})
+	require.Nil(t, apiErr)
+
+	secondCtx, _ := newResponsesHTTPIntegrationContext(8104, 9104)
+	second := &dto.OpenAIResponsesRequest{
+		Model:              "gpt-5",
+		PreviousResponseID: "resp_rebuild_quality",
+		Input:              json.RawMessage(`"second"`),
+	}
+	service.PrepareResponsesHTTPContinuation(secondCtx, second)
+	require.Nil(t, service.ApplyResponsesHTTPContinuationForCodex(secondCtx, second))
+	require.NotEmpty(t, string(second.Input), "expanded continuation input should not be empty")
+
+	assistant := gjson.GetBytes(second.Input, `#(role=="assistant")`)
+	require.True(t, assistant.Exists(), "continuation input=%s", string(second.Input))
+	require.Equal(t, "message", assistant.Get("type").String())
+	require.Equal(t, "done", assistant.Get("content.0.text").String())
+	require.False(t, assistant.Get("quality").Exists())
+	require.False(t, assistant.Get("size").Exists())
+}
+
 func TestResponsesStreamHandlerCommitsDeliveredFunctionCall(t *testing.T) {
 	oldTimeout := constant.StreamingTimeout
 	constant.StreamingTimeout = 30

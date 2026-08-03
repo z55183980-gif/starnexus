@@ -26,6 +26,7 @@ func TestNormalizeCodexResponsesRequestMatchesOAuthSchema(t *testing.T) {
 		Input:                []byte(`"hello"`),
 		Metadata:             []byte(`{"trace":"client"}`),
 		PromptCacheRetention: []byte(`"24h"`),
+		PromptCacheOptions:   []byte(`{"mode":"explicit"}`),
 		SafetyIdentifier:     []byte(`"user-1"`),
 		StreamOptions:        &dto.StreamOptions{},
 		TopP:                 &topP,
@@ -35,6 +36,7 @@ func TestNormalizeCodexResponsesRequestMatchesOAuthSchema(t *testing.T) {
 	require.NoError(t, normalizeCodexResponsesRequest(&request))
 	require.Nil(t, request.Metadata)
 	require.Nil(t, request.PromptCacheRetention)
+	require.Nil(t, request.PromptCacheOptions)
 	require.Nil(t, request.SafetyIdentifier)
 	require.Nil(t, request.StreamOptions)
 	require.Nil(t, request.TopP)
@@ -45,6 +47,55 @@ func TestNormalizeCodexResponsesRequestMatchesOAuthSchema(t *testing.T) {
 	var include []string
 	require.NoError(t, common.Unmarshal(request.Include, &include))
 	require.Contains(t, include, "reasoning.encrypted_content")
+}
+
+func TestNormalizeCodexResponsesInputStripsCacheBreakpointAndEmptyQuality(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[
+		{
+			"type":"message",
+			"role":"user",
+			"content":[
+				{"type":"input_text","text":"stable prefix","prompt_cache_breakpoint":{"mode":"explicit"}},
+				{"type":"input_image","image_url":"https://example.com/a.png","prompt_cache_breakpoint":{"mode":"explicit"}}
+			]
+		},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi"}],"quality":"","size":""},
+		{"type":"function_call_output","call_id":"call_1","output":{"quality":"keep-me","prompt_cache_breakpoint":{"mode":"explicit"}}},
+		{"type":"image_generation_call","id":"img_1","quality":"high","size":"1024x1024"}
+	]`)
+	request := dto.OpenAIResponsesRequest{Input: input, PromptCacheOptions: []byte(`{"mode":"explicit"}`)}
+	require.NoError(t, normalizeCodexResponsesRequest(&request))
+	require.Nil(t, request.PromptCacheOptions)
+
+	require.False(t, gjson.GetBytes(request.Input, "0.content.0.prompt_cache_breakpoint").Exists())
+	require.False(t, gjson.GetBytes(request.Input, "0.content.1.prompt_cache_breakpoint").Exists())
+	require.Equal(t, "stable prefix", gjson.GetBytes(request.Input, "0.content.0.text").String())
+
+	require.False(t, gjson.GetBytes(request.Input, "1.quality").Exists())
+	require.False(t, gjson.GetBytes(request.Input, "1.size").Exists())
+
+	// Nested business JSON must not be scrubbed recursively.
+	require.Equal(t, "keep-me", gjson.GetBytes(request.Input, "2.output.quality").String())
+	require.True(t, gjson.GetBytes(request.Input, "2.output.prompt_cache_breakpoint").Exists())
+
+	require.Equal(t, "high", gjson.GetBytes(request.Input, "3.quality").String())
+	require.Equal(t, "1024x1024", gjson.GetBytes(request.Input, "3.size").String())
+}
+
+func TestNormalizeCodexResponsesInputPreservesLargeIntegers(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[
+		{"type":"function_call_output","call_id":"call_1","output":{"id":9007199254740993}},
+		{"type":"message","role":"assistant","quality":"","content":[{"type":"output_text","text":"hi","metadata":{"id":9007199254740995}}],"metadata":{"id":9007199254740997}}
+	]`)
+
+	normalized, err := normalizeCodexResponsesInput(input)
+	require.NoError(t, err)
+	require.Contains(t, string(normalized), `"id":9007199254740993`)
+	require.Contains(t, string(normalized), `"id":9007199254740995`)
+	require.Contains(t, string(normalized), `"id":9007199254740997`)
+	require.False(t, gjson.GetBytes(normalized, "1.quality").Exists())
 }
 
 func TestCodexResponsesForcesOnlyOrdinaryRequestsToStream(t *testing.T) {

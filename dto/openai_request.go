@@ -850,6 +850,9 @@ type OpenAIResponsesRequest struct {
 	Store                json.RawMessage `json:"store,omitempty"`
 	PromptCacheKey       json.RawMessage `json:"prompt_cache_key,omitempty"`
 	PromptCacheRetention json.RawMessage `json:"prompt_cache_retention,omitempty"`
+	// PromptCacheOptions controls explicit/implicit prompt caching for GPT-5.6+.
+	// Codex ChatGPT HTTP rejects these options; normalize clears them on that path.
+	PromptCacheOptions json.RawMessage `json:"prompt_cache_options,omitempty"`
 	// ClientMetadata carries Codex WebSocket turn metadata, including the
 	// Responses Lite request signal used by official clients.
 	ClientMetadata json.RawMessage `json:"client_metadata,omitempty"`
