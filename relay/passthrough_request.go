@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relay/channel/codex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -40,7 +41,9 @@ func preparePassthroughRequestBody(c *gin.Context, info *relaycommon.RelayInfo) 
 		(accountPassthrough || info.RelayMode == relayconstant.RelayModeResponsesCompact)
 	needsResponsesLiteNormalization := info.RelayMode == relayconstant.RelayModeResponses && selectedResponsesLiteHTTP(c, info)
 	needsCodexStream := info.ChannelType == constant.ChannelTypeCodex && info.RelayMode == relayconstant.RelayModeResponses
-	if !accountPassthrough && !needsAccountModelMapping && !needsResponsesLiteNormalization && !needsCodexStream {
+	needsCodexInputRepair := accountPassthrough && !info.ChannelSetting.PassThroughBodyEnabled &&
+		!model_setting.GetGlobalSettings().PassThroughRequestEnabled && needsCodexStream
+	if !accountPassthrough && !needsAccountModelMapping && !needsResponsesLiteNormalization && !needsCodexStream && !needsCodexInputRepair {
 		return common.ReaderOnly(storage), nil, nil
 	}
 
@@ -53,6 +56,12 @@ func preparePassthroughRequestBody(c *gin.Context, info *relaycommon.RelayInfo) 
 	}
 
 	jsonData := rawBody
+	if needsCodexInputRepair {
+		jsonData, err = codex.RepairAccountPassthroughResponsesBody(c, jsonData)
+		if err != nil {
+			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+	}
 	if needsAccountModelMapping {
 		if modelField := gjson.GetBytes(jsonData, "model"); modelField.Exists() && modelField.String() != accountMappedModel {
 			jsonData, err = sjson.SetBytes(jsonData, "model", accountMappedModel)

@@ -10,9 +10,143 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 )
 
+type codexInputRepairResult struct {
+	DroppedReasoningItems int
+	DroppedItemReferences int
+	FirstDroppedIndex     int
+	RemainingItems        int
+	HasOrphanToolOutput   bool
+}
+
+func (r codexInputRepairResult) DroppedItems() int {
+	return r.DroppedReasoningItems + r.DroppedItemReferences
+}
+
+// repairCodexInvalidLocalItemIDs removes only top-level Responses items that
+// carry the known client-local item_ prefix where ChatGPT's Codex backend
+// requires a provider-issued reasoning ID. It intentionally does not rewrite
+// IDs, inspect nested tool payloads, or touch other item types.
+func repairCodexInvalidLocalItemIDs(raw json.RawMessage) (json.RawMessage, codexInputRepairResult, error) {
+	result := codexInputRepairResult{FirstDroppedIndex: -1}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return raw, result, nil
+	}
+
+	var items []json.RawMessage
+	switch trimmed[0] {
+	case '[':
+		if err := common.Unmarshal(trimmed, &items); err != nil {
+			return nil, result, fmt.Errorf("repair Codex Responses input: %w", err)
+		}
+	case '{':
+		items = []json.RawMessage{append(json.RawMessage(nil), trimmed...)}
+	default:
+		return raw, result, nil
+	}
+
+	filtered := make([]json.RawMessage, 0, len(items))
+	for index, item := range items {
+		itemType, itemID, err := codexResponsesItemTypeAndID(item)
+		if err != nil {
+			return nil, result, fmt.Errorf("repair Codex Responses input item %d: %w", index, err)
+		}
+		if !strings.HasPrefix(itemID, "item_") || (itemType != "reasoning" && itemType != "item_reference") {
+			filtered = append(filtered, item)
+			continue
+		}
+		if result.FirstDroppedIndex < 0 {
+			result.FirstDroppedIndex = index
+		}
+		if itemType == "reasoning" {
+			result.DroppedReasoningItems++
+		} else {
+			result.DroppedItemReferences++
+		}
+	}
+
+	result.RemainingItems = len(filtered)
+	if result.DroppedItems() == 0 {
+		return raw, result, nil
+	}
+	if result.DroppedItemReferences > 0 {
+		result.HasOrphanToolOutput = codexResponsesItemsHaveOrphanToolOutput(filtered)
+	}
+	repaired, err := common.Marshal(filtered)
+	if err != nil {
+		return nil, result, fmt.Errorf("repair Codex Responses input: %w", err)
+	}
+	return repaired, result, nil
+}
+
+func codexResponsesItemTypeAndID(item json.RawMessage) (string, string, error) {
+	trimmed := bytes.TrimSpace(item)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return "", "", nil
+	}
+	var obj map[string]json.RawMessage
+	if err := common.Unmarshal(trimmed, &obj); err != nil {
+		return "", "", err
+	}
+	return codexJSONRawString(obj["type"]), codexJSONRawString(obj["id"]), nil
+}
+
+func codexResponsesItemsHaveOrphanToolOutput(items []json.RawMessage) bool {
+	callIDs := make(map[string]struct{})
+	outputCallIDs := make(map[string]struct{})
+	for _, item := range items {
+		var envelope struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+		}
+		if common.Unmarshal(item, &envelope) != nil {
+			continue
+		}
+		callID := strings.TrimSpace(envelope.CallID)
+		switch {
+		case isCodexToolCallItemType(envelope.Type):
+			if callID != "" {
+				callIDs[callID] = struct{}{}
+			}
+		case isCodexToolOutputItemType(envelope.Type):
+			if callID == "" {
+				return true
+			}
+			outputCallIDs[callID] = struct{}{}
+		}
+	}
+	for callID := range outputCallIDs {
+		if _, exists := callIDs[callID]; !exists {
+			return true
+		}
+	}
+	return false
+}
+
+func isCodexToolCallItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "tool_call", "function_call", "local_shell_call", "tool_search_call", "custom_tool_call", "mcp_tool_call", "computer_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCodexToolOutputItemType(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "function_call_output", "local_shell_call_output", "tool_search_output", "custom_tool_call_output", "mcp_tool_call_output", "computer_call_output":
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizeCodexResponsesRequest(request *dto.OpenAIResponsesRequest) error {
 	if request == nil {
 		return nil
+	}
+	if err := promoteCodexSystemMessages(request); err != nil {
+		return err
 	}
 	normalizedInput, err := normalizeCodexResponsesInput(request.Input)
 	if err != nil {
@@ -38,6 +172,153 @@ func normalizeCodexResponsesRequest(request *dto.OpenAIResponsesRequest) error {
 		request.Include = include
 	}
 	return nil
+}
+
+// promoteCodexSystemMessages adapts Responses clients that still send
+// role:"system" items. ChatGPT's internal Codex endpoint rejects that role,
+// while accepting the same guidance through top-level instructions and a
+// developer message. Only top-level input items are inspected so role-shaped
+// data inside tool outputs or arbitrary user JSON is never rewritten.
+func promoteCodexSystemMessages(request *dto.OpenAIResponsesRequest) error {
+	if request == nil {
+		return nil
+	}
+	trimmed := bytes.TrimSpace(request.Input)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil
+	}
+
+	var items []json.RawMessage
+	preserveObjectShape := false
+	switch trimmed[0] {
+	case '[':
+		if err := common.Unmarshal(trimmed, &items); err != nil {
+			return fmt.Errorf("promote Codex Responses system messages: %w", err)
+		}
+	case '{':
+		items = []json.RawMessage{append(json.RawMessage(nil), trimmed...)}
+		preserveObjectShape = true
+	default:
+		return nil
+	}
+
+	modified := false
+	systemTexts := make([]string, 0)
+	for index, item := range items {
+		normalized, text, changed, err := promoteCodexSystemMessageItem(item)
+		if err != nil {
+			return fmt.Errorf("promote Codex Responses system message %d: %w", index, err)
+		}
+		if !changed {
+			continue
+		}
+		items[index] = normalized
+		modified = true
+		if text != "" {
+			systemTexts = append(systemTexts, text)
+		}
+	}
+	if !modified {
+		return nil
+	}
+
+	var encoded json.RawMessage
+	var err error
+	if preserveObjectShape {
+		encoded = items[0]
+	} else {
+		encoded, err = common.Marshal(items)
+		if err != nil {
+			return err
+		}
+	}
+	request.Input = encoded
+
+	if len(systemTexts) == 0 {
+		return nil
+	}
+	extracted := strings.Join(systemTexts, "\n\n")
+	var existing string
+	if len(request.Instructions) > 0 && common.Unmarshal(request.Instructions, &existing) == nil {
+		existing = strings.TrimSpace(existing)
+		if existing != "" {
+			extracted += "\n\n" + existing
+		}
+	}
+	instructions, err := common.Marshal(extracted)
+	if err != nil {
+		return err
+	}
+	request.Instructions = instructions
+	return nil
+}
+
+func promoteCodexSystemMessageItem(item json.RawMessage) (json.RawMessage, string, bool, error) {
+	trimmed := bytes.TrimSpace(item)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return item, "", false, nil
+	}
+	var obj map[string]json.RawMessage
+	if err := common.Unmarshal(trimmed, &obj); err != nil {
+		return nil, "", false, err
+	}
+	if codexJSONRawString(obj["role"]) != "system" {
+		return item, "", false, nil
+	}
+	developerRole, err := common.Marshal("developer")
+	if err != nil {
+		return nil, "", false, err
+	}
+	obj["role"] = developerRole
+	normalized, err := common.Marshal(obj)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return normalized, extractCodexSystemMessageText(obj["content"]), true, nil
+}
+
+func extractCodexSystemMessageText(content json.RawMessage) string {
+	trimmed := bytes.TrimSpace(content)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return ""
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if common.Unmarshal(trimmed, &text) == nil {
+			return text
+		}
+		return ""
+	}
+	if trimmed[0] == '{' {
+		return extractCodexSystemTextBlock(trimmed)
+	}
+	if trimmed[0] != '[' {
+		return ""
+	}
+	var blocks []json.RawMessage
+	if common.Unmarshal(trimmed, &blocks) != nil {
+		return ""
+	}
+	var builder strings.Builder
+	for _, block := range blocks {
+		builder.WriteString(extractCodexSystemTextBlock(block))
+	}
+	return builder.String()
+}
+
+func extractCodexSystemTextBlock(block json.RawMessage) string {
+	var obj map[string]json.RawMessage
+	if common.Unmarshal(bytes.TrimSpace(block), &obj) != nil {
+		return ""
+	}
+	switch codexJSONRawString(obj["type"]) {
+	case "text", "input_text", "output_text":
+		var text string
+		if common.Unmarshal(obj["text"], &text) == nil {
+			return text
+		}
+	}
+	return ""
 }
 
 func normalizeCodexResponsesInput(raw json.RawMessage) (json.RawMessage, error) {

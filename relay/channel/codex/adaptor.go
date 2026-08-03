@@ -64,49 +64,18 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	isCompact := info != nil && info.RelayMode == relayconstant.RelayModeResponsesCompact
-
-	if info != nil && info.ChannelSetting.SystemPrompt != "" {
-		systemPrompt := info.ChannelSetting.SystemPrompt
-
-		if len(request.Instructions) == 0 {
-			if b, err := common.Marshal(systemPrompt); err == nil {
-				request.Instructions = b
-			} else {
-				return nil, err
-			}
-		} else if info.ChannelSetting.SystemPromptOverride {
-			var existing string
-			if err := common.Unmarshal(request.Instructions, &existing); err == nil {
-				existing = strings.TrimSpace(existing)
-				if existing == "" {
-					if b, err := common.Marshal(systemPrompt); err == nil {
-						request.Instructions = b
-					} else {
-						return nil, err
-					}
-				} else {
-					if b, err := common.Marshal(systemPrompt + "\n" + existing); err == nil {
-						request.Instructions = b
-					} else {
-						return nil, err
-					}
-				}
-			} else {
-				if b, err := common.Marshal(systemPrompt); err == nil {
-					request.Instructions = b
-				} else {
-					return nil, err
-				}
-			}
-		}
-	}
-	// Codex backend requires the `instructions` field to be present.
-	// Keep it consistent with Codex CLI behavior by defaulting to an empty string.
-	if len(request.Instructions) == 0 {
-		request.Instructions = json.RawMessage(`""`)
-	}
+	hadClientInstructions := len(request.Instructions) > 0
 
 	if isCompact {
+		// Compact has a deliberately narrower normalization path, but the same
+		// ChatGPT Codex backend restriction on role:"system" still applies.
+		if err := promoteCodexSystemMessages(&request); err != nil {
+			return nil, err
+		}
+		if err := applyCodexChannelSystemPrompt(info, &request, hadClientInstructions); err != nil {
+			return nil, err
+		}
+		ensureCodexInstructionsField(&request)
 		return request, nil
 	}
 	// Ordinary Responses HTTP cannot forward previous_response_id to the Codex
@@ -118,9 +87,18 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		}
 		service.MarkResponsesHTTPContinuationPersistTarget(c)
 	}
+	repairedInput, err := applyCodexInputRepair(c, request.Input)
+	if err != nil {
+		return nil, err
+	}
+	request.Input = repairedInput
 	if err := normalizeCodexResponsesRequest(&request); err != nil {
 		return nil, err
 	}
+	if err := applyCodexChannelSystemPrompt(info, &request, hadClientInstructions); err != nil {
+		return nil, err
+	}
+	ensureCodexInstructionsField(&request)
 	// ChatGPT's Codex Responses endpoint only accepts streaming requests. Keep
 	// the downstream stream preference in RelayInfo and force only the outbound
 	// request here; non-stream clients are bridged back to JSON in DoResponse.
@@ -138,6 +116,85 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	request.MaxOutputTokens = nil
 	request.Temperature = nil
 	return request, nil
+}
+
+func applyCodexInputRepair(c *gin.Context, input json.RawMessage) (json.RawMessage, error) {
+	repairedInput, repairResult, err := repairCodexInvalidLocalItemIDs(input)
+	if err != nil || repairResult.DroppedItems() == 0 {
+		return repairedInput, err
+	}
+	if c != nil {
+		c.Set("codex_input_repair_admin_info", map[string]interface{}{
+			"dropped_reasoning_items": repairResult.DroppedReasoningItems,
+			"dropped_item_references": repairResult.DroppedItemReferences,
+			"first_dropped_index":     repairResult.FirstDroppedIndex,
+		})
+	}
+	if repairResult.RemainingItems == 0 {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("Codex input contains only invalid client-local reasoning items; start a new session"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	if repairResult.HasOrphanToolOutput {
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("Codex input repair would leave a tool output without its matching tool call; resend full history or start a new session"),
+			types.ErrorCodeInvalidRequest,
+			http.StatusConflict,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	return repairedInput, nil
+}
+
+func applyCodexChannelSystemPrompt(info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest, hadClientInstructions bool) error {
+	if info == nil || request == nil || info.ChannelSetting.SystemPrompt == "" {
+		return nil
+	}
+
+	systemPrompt := info.ChannelSetting.SystemPrompt
+	var existing string
+	existingValid := len(request.Instructions) > 0 && common.Unmarshal(request.Instructions, &existing) == nil
+	existing = strings.TrimSpace(existing)
+
+	// Preserve the previous non-override behavior: a channel prompt is injected
+	// when the client omitted the top-level instructions field. A promoted
+	// system message is retained after that channel-owned prefix.
+	if !hadClientInstructions {
+		combined := systemPrompt
+		if existingValid && existing != "" {
+			combined += "\n" + existing
+		}
+		encoded, err := common.Marshal(combined)
+		if err != nil {
+			return err
+		}
+		request.Instructions = encoded
+		return nil
+	}
+
+	if !info.ChannelSetting.SystemPromptOverride {
+		return nil
+	}
+	combined := systemPrompt
+	if existingValid && existing != "" {
+		combined += "\n" + existing
+	}
+	encoded, err := common.Marshal(combined)
+	if err != nil {
+		return err
+	}
+	request.Instructions = encoded
+	return nil
+}
+
+func ensureCodexInstructionsField(request *dto.OpenAIResponsesRequest) {
+	if request != nil && len(request.Instructions) == 0 {
+		// Codex backend requires the field even when there is no guidance.
+		request.Instructions = json.RawMessage(`""`)
+	}
 }
 
 // ResponsesUsesNativeWebSocket reports whether a client Responses WebSocket

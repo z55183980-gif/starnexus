@@ -132,6 +132,11 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 			adminInfo["context_compaction"] = info
 		}
 	}
+	if v, ok := ctx.Get("codex_input_repair_admin_info"); ok {
+		if info, ok := v.(map[string]interface{}); ok && len(info) > 0 {
+			adminInfo["codex_input_repair"] = info
+		}
+	}
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)

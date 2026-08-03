@@ -55,7 +55,7 @@ func TestPreparePassthroughRequestBodyAppliesAccountMappingAndChannelPolicy(t *t
 
 func TestPreparePassthroughRequestBodyKeepsExplicitChannelBypass(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	raw := `{"model":"public-model","service_tier":"priority"}`
+	raw := `{"model":"public-model","service_tier":"priority","input":[{"type":"reasoning","id":"item_explicit_bypass"},{"role":"system","content":"preserve exactly"}]}`
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(raw))
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
@@ -73,10 +73,85 @@ func TestPreparePassthroughRequestBodyKeepsExplicitChannelBypass(t *testing.T) {
 	require.JSONEq(t, raw, string(data))
 }
 
+func TestPrepareAccountPassthroughRepairsCodexInvalidLocalItems(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	raw := `{
+		"model":"gpt-5.6-sol",
+		"stream":false,
+		"custom_zero":0,
+		"custom_false":false,
+		"input":[
+			{"type":"reasoning","id":"item_local_reasoning"},
+			{"type":"item_reference","id":"item_local_reference"},
+			{"type":"reasoning","id":"rs_valid","encrypted_content":"valid"},
+			{"type":"message","role":"user","content":{"id":"item_nested"}},
+			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":"ok"}
+		]
+	}`
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(raw))
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    constant.ChannelTypeCodex,
+			ChannelSetting: dto.ChannelSettings{AccountPassThroughBodyEnabled: true},
+		},
+	}
+	body, closer, apiErr := preparePassthroughRequestBody(c, info)
+	require.Nil(t, apiErr)
+	if closer != nil {
+		defer closer.Close()
+	}
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	require.True(t, gjson.GetBytes(data, "stream").Bool())
+	require.Equal(t, int64(4), gjson.GetBytes(data, "input.#").Int())
+	require.False(t, gjson.GetBytes(data, `input.#(id=="item_local_reasoning")`).Exists())
+	require.False(t, gjson.GetBytes(data, `input.#(id=="item_local_reference")`).Exists())
+	require.Equal(t, "rs_valid", gjson.GetBytes(data, "input.0.id").String())
+	require.Equal(t, "item_nested", gjson.GetBytes(data, "input.1.content.id").String())
+	require.True(t, gjson.GetBytes(data, "custom_zero").Exists())
+	require.Zero(t, gjson.GetBytes(data, "custom_zero").Int())
+	require.True(t, gjson.GetBytes(data, "custom_false").Exists())
+	require.False(t, gjson.GetBytes(data, "custom_false").Bool())
+	repairInfo, exists := c.Get("codex_input_repair_admin_info")
+	require.True(t, exists)
+	require.Equal(t, 1, repairInfo.(map[string]interface{})["dropped_reasoning_items"])
+	require.Equal(t, 1, repairInfo.(map[string]interface{})["dropped_item_references"])
+}
+
+func TestPrepareAccountPassthroughRejectsCodexRepairWithOrphanToolOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
+		"model":"gpt-5.6-sol",
+		"input":[
+			{"type":"message","role":"user","content":"continue"},
+			{"type":"item_reference","id":"item_local_call"},
+			{"type":"function_call_output","call_id":"call_1","output":"ok"}
+		]
+	}`))
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    constant.ChannelTypeCodex,
+			ChannelSetting: dto.ChannelSettings{AccountPassThroughBodyEnabled: true},
+		},
+	}
+
+	_, _, apiErr := preparePassthroughRequestBody(c, info)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusConflict, apiErr.StatusCode)
+}
+
 func TestPreparePassthroughRequestBodyForcesCodexResponsesStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false,"input":[{"role":"system","content":"preserve exactly"}]}`))
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
 	info := &relaycommon.RelayInfo{
@@ -94,6 +169,8 @@ func TestPreparePassthroughRequestBodyForcesCodexResponsesStream(t *testing.T) {
 	data, err := io.ReadAll(body)
 	require.NoError(t, err)
 	require.True(t, gjson.GetBytes(data, "stream").Bool())
+	require.Equal(t, "system", gjson.GetBytes(data, "input.0.role").String())
+	require.Equal(t, "preserve exactly", gjson.GetBytes(data, "input.0.content").String())
 }
 
 func TestPreparePassthroughRequestBodyNormalizesResponsesLite(t *testing.T) {
