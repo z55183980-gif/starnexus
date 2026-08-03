@@ -171,6 +171,13 @@ export type CredentialBackedSettings = {
   bedrockRegion: string
   vertexLocation: string
   interceptWarmupRequests: boolean
+  tempUnschedEnabled: boolean
+  tempUnschedRules: Array<{
+    error_code: string
+    keywords: string
+    duration_minutes: string
+    description: string
+  }>
   compactModelMappings: ModelMappingRow[]
   openaiEndpointCapabilities: string[]
   allowedModels: string[]

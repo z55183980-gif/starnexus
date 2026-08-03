@@ -128,6 +128,8 @@ test('credentialBackedSettingsChanged detects a hidden-setting edit', () => {
     bedrockRegion: 'us-east-1',
     vertexLocation: 'global',
     interceptWarmupRequests: false,
+    tempUnschedEnabled: false,
+    tempUnschedRules: [],
     compactModelMappings: [],
     openaiEndpointCapabilities: ['chat_completions', 'embeddings'],
     allowedModels: [],

@@ -120,6 +120,86 @@ func TestApplyUpstreamAccountErrorUsesOverloadCooldown(t *testing.T) {
 	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
 }
 
+func TestApplyUpstreamAccountErrorMatchesTempUnschedulableRules(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "temp-unsched-rule-account")
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update(
+		"extra",
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":503,"keywords":["unavailable","maintenance"],"duration_minutes":30,"description":"Service unavailable - pause 30 minutes"}]}`,
+	).Error)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("unavailable"), types.ErrorCodeBadResponseStatusCode, http.StatusServiceUnavailable)
+	apiErr.SetUpstreamResponse(nil, []byte(`{"error":{"message":"service unavailable for maintenance"}}`))
+
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.TempUnschedulableUntil)
+	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+30*60)
+	require.Equal(t, "Service unavailable - pause 30 minutes", updated.TempUnschedulableReason)
+	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
+	require.True(t, updated.Schedulable)
+	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
+}
+
+func TestApplyUpstreamAccountErrorTempUnschedulableRulesPreferCredentials(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "temp-unsched-cred-account", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+			Extra: `{"temp_unschedulable_enabled":false}`, Concurrency: 1, Priority: 1, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{
+			"access_token":               "secret",
+			"account_id":                 "acct-temp",
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       429,
+					"keywords":         []any{"rate limit", "too many requests"},
+					"duration_minutes": 10,
+					"description":      "Rate limited - pause 10 minutes",
+				},
+			},
+		},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	apiErr.SetUpstreamResponse(nil, []byte(`{"error":{"message":"too many requests"}}`))
+
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(input.Account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, input.Account.Id).Error)
+	require.NotNil(t, updated.TempUnschedulableUntil)
+	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+10*60)
+	require.Nil(t, updated.RateLimitResetAt)
+	require.Equal(t, "Rate limited - pause 10 minutes", updated.TempUnschedulableReason)
+}
+
+func TestApplyUpstreamAccountErrorTempUnschedulableMatchesErrorTextWithoutBody(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "temp-unsched-error-text")
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update(
+		"extra",
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate limit"],"duration_minutes":15,"description":"rate limit rule"}]}`,
+	).Error)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited by upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.TempUnschedulableUntil)
+	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+15*60)
+	require.Nil(t, updated.RateLimitResetAt)
+	require.Equal(t, "rate limit rule", updated.TempUnschedulableReason)
+}
+
 func TestShouldRetryUpstreamAccountHonorsCountAndBudget(t *testing.T) {
 	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "2")
 	t.Setenv("UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS", "100")

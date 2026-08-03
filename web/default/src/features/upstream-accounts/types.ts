@@ -125,6 +125,13 @@ export interface UpstreamAccount {
     compact_model_mapping?: Record<string, string>
     openai_capabilities?: string[]
     intercept_warmup_requests: boolean
+    temp_unschedulable_enabled?: boolean
+    temp_unschedulable_rules?: Array<{
+      error_code: number
+      keywords: string[]
+      duration_minutes: number
+      description: string
+    }>
     header_override_enabled: boolean
     header_overrides?: Record<string, string>
     bedrock_auth_mode?: string

@@ -11,8 +11,10 @@ import {
   Add01Icon,
   AiCloud01Icon,
   AmazonIcon,
+  ArrowDown01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  ArrowUp01Icon,
   ClaudeIcon,
   ComputerTerminal01Icon,
   Delete02Icon,
@@ -94,6 +96,12 @@ type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
 type OpenAIEndpointCapability = 'chat_completions' | 'embeddings'
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 type ModelMapping = { from: string; to: string }
+type TempUnschedRuleDraft = {
+  error_code: string
+  keywords: string
+  duration_minutes: string
+  description: string
+}
 
 type AccountExtra = {
   intercept_warmup_requests?: boolean
@@ -109,6 +117,13 @@ type AccountExtra = {
   openai_capabilities?: OpenAIEndpointCapability[]
   anthropic_passthrough?: boolean
   anthropic_apikey_auth_scheme?: AnthropicAPIKeyAuthScheme
+  temp_unschedulable_enabled?: boolean
+  temp_unschedulable_rules?: Array<{
+    error_code?: number
+    keywords?: string[] | string
+    duration_minutes?: number
+    description?: string
+  }>
   [key: string]: unknown
 }
 
@@ -157,6 +172,8 @@ type AccountDraft = {
   modelRestrictionMode: AccountModelRestrictionMode
   allowedModels: string[]
   modelMappings: AccountModelMapping[]
+  tempUnschedEnabled: boolean
+  tempUnschedRules: TempUnschedRuleDraft[]
 }
 
 const defaultOpenAIEndpointCapabilities: OpenAIEndpointCapability[] = [
@@ -193,6 +210,81 @@ function compactMappingsFromMap(
   }))
 }
 
+function formatTempUnschedKeywords(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join(', ')
+  }
+  if (typeof value === 'string') return value
+  return ''
+}
+
+function loadTempUnschedRules(
+  rules?: Array<{
+    error_code?: number
+    keywords?: string[] | string
+    duration_minutes?: number
+    description?: string
+  }> | null
+): TempUnschedRuleDraft[] {
+  if (!Array.isArray(rules)) return []
+  return rules.map((rule) => ({
+    error_code:
+      typeof rule.error_code === 'number' && Number.isFinite(rule.error_code)
+        ? String(rule.error_code)
+        : '',
+    keywords: formatTempUnschedKeywords(rule.keywords),
+    duration_minutes:
+      typeof rule.duration_minutes === 'number' &&
+      Number.isFinite(rule.duration_minutes)
+        ? String(rule.duration_minutes)
+        : '',
+    description:
+      typeof rule.description === 'string' ? rule.description : '',
+  }))
+}
+
+function buildTempUnschedRules(rules: TempUnschedRuleDraft[]) {
+  const out: Array<{
+    error_code: number
+    keywords: string[]
+    duration_minutes: number
+    description: string
+  }> = []
+  for (const rule of rules) {
+    const errorCode = Number(rule.error_code)
+    const duration = Number(rule.duration_minutes)
+    const keywords = rule.keywords
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (!Number.isFinite(errorCode) || errorCode < 100 || errorCode > 599) {
+      continue
+    }
+    if (!Number.isFinite(duration) || duration <= 0) continue
+    if (keywords.length === 0) continue
+    out.push({
+      error_code: Math.trunc(errorCode),
+      keywords,
+      duration_minutes: Math.trunc(duration),
+      description: rule.description.trim(),
+    })
+  }
+  return out
+}
+
+function emptyTempUnschedRule(): TempUnschedRuleDraft {
+  return {
+    error_code: '',
+    keywords: '',
+    duration_minutes: '',
+    description: '',
+  }
+}
+
 function accountDraft(account?: UpstreamAccount | null): AccountDraft {
   const extra = parseAccountExtra(account?.extra)
   const metadata = account?.metadata
@@ -201,6 +293,17 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
     account?.type === 'apikey'
       ? extra.openai_apikey_responses_websockets_v2_mode
       : extra.openai_oauth_responses_websockets_v2_mode
+  // metadata.temp_unschedulable_enabled is a non-omitempty bool (always present).
+  // OR with extra so Extra-only config still shows when credentials option
+  // parsing failed and metadata stayed at the false zero-value.
+  const tempUnschedEnabled =
+    metadata?.temp_unschedulable_enabled === true ||
+    extra.temp_unschedulable_enabled === true
+  const tempUnschedRules = loadTempUnschedRules(
+    metadata?.temp_unschedulable_rules?.length
+      ? metadata.temp_unschedulable_rules
+      : extra.temp_unschedulable_rules
+  )
   return {
     name: account?.name ?? '',
     notes: account?.notes ?? '',
@@ -271,6 +374,8 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
         : 'whitelist',
     allowedModels: modelRestriction.allowedModels,
     modelMappings: modelRestriction.modelMappings,
+    tempUnschedEnabled,
+    tempUnschedRules,
   }
 }
 
@@ -296,6 +401,8 @@ function credentialBackedSettings(
     bedrockRegion: draft.bedrockRegion,
     vertexLocation: draft.vertexLocation,
     interceptWarmupRequests: draft.interceptWarmupRequests,
+    tempUnschedEnabled: draft.tempUnschedEnabled,
+    tempUnschedRules: draft.tempUnschedRules,
     compactModelMappings: draft.compactModelMappings,
     openaiEndpointCapabilities: draft.openaiEndpointCapabilities,
     allowedModels: draft.allowedModels,
@@ -612,6 +719,15 @@ export function AccountDialog({
     } else {
       delete credentials.intercept_warmup_requests
     }
+    if (draft.tempUnschedEnabled) {
+      credentials.temp_unschedulable_enabled = true
+      credentials.temp_unschedulable_rules = buildTempUnschedRules(
+        draft.tempUnschedRules
+      )
+    } else {
+      delete credentials.temp_unschedulable_enabled
+      delete credentials.temp_unschedulable_rules
+    }
     if (isHeaderOverrideCapable(draft.platform, draft.type)) {
       if (draft.headerOverrideEnabled) {
         credentials.header_override_enabled = true
@@ -660,6 +776,15 @@ export function AccountDialog({
     patch.intercept_warmup_requests = draft.interceptWarmupRequests
       ? true
       : null
+    if (draft.tempUnschedEnabled) {
+      patch.temp_unschedulable_enabled = true
+      patch.temp_unschedulable_rules = buildTempUnschedRules(
+        draft.tempUnschedRules
+      )
+    } else {
+      patch.temp_unschedulable_enabled = null
+      patch.temp_unschedulable_rules = null
+    }
     if (isHeaderOverrideCapable(draft.platform, draft.type)) {
       patch.header_override_enabled = draft.headerOverrideEnabled ? true : null
       patch.header_overrides = draft.headerOverrideEnabled
@@ -742,6 +867,8 @@ export function AccountDialog({
       'openai_responses_mode',
       'anthropic_passthrough',
       'anthropic_apikey_auth_scheme',
+      'temp_unschedulable_enabled',
+      'temp_unschedulable_rules',
     ]
     managedKeys.forEach((key) => delete extra[key])
     if (!account || account.metadata.credential_readable !== false) {
@@ -749,9 +876,17 @@ export function AccountDialog({
         'intercept_warmup_requests',
         'compact_model_mapping',
         'openai_capabilities',
+        'temp_unschedulable_enabled',
+        'temp_unschedulable_rules',
       ]) {
         delete extra[key]
       }
+    }
+
+    if (draft.tempUnschedEnabled) {
+      const rules = buildTempUnschedRules(draft.tempUnschedRules)
+      extra.temp_unschedulable_enabled = true
+      extra.temp_unschedulable_rules = rules
     }
 
     if (draft.platform === 'openai') {
@@ -907,6 +1042,16 @@ export function AccountDialog({
         : null
       if (draft.expiresAt && !Number.isFinite(expiresAt)) {
         throw new Error(t('Expiration time is invalid'))
+      }
+      if (draft.tempUnschedEnabled) {
+        const rules = buildTempUnschedRules(draft.tempUnschedRules)
+        if (rules.length === 0) {
+          throw new Error(
+            t(
+              'Add at least one rule with an error code, keywords, and duration.'
+            )
+          )
+        }
       }
       const payload: UpstreamAccountPayload = {
         name: draft.name.trim(),
@@ -2246,6 +2391,265 @@ export function AccountDialog({
                       </SelectContent>
                     </Select>
                   </Field>
+                </div>
+              )}
+
+              <Field
+                orientation='horizontal'
+                className='items-center justify-between gap-4 rounded-lg border p-3'
+              >
+                <div className='flex flex-col gap-1'>
+                  <FieldLabel htmlFor='account-temp-unsched'>
+                    {t('Temporarily unschedulable')}
+                  </FieldLabel>
+                  <FieldDescription>
+                    {t(
+                      'When the error code and keywords match, the account is temporarily disabled for the configured duration. Rules for 401 take precedence over OAuth refresh handling.'
+                    )}
+                  </FieldDescription>
+                </div>
+                <Switch
+                  id='account-temp-unsched'
+                  checked={draft.tempUnschedEnabled}
+                  onCheckedChange={(checked) =>
+                    set('tempUnschedEnabled', checked === true)
+                  }
+                />
+              </Field>
+
+              {draft.tempUnschedEnabled && (
+                <div className='space-y-3 rounded-lg border p-3'>
+                  <Alert>
+                    <AlertDescription>
+                      {t(
+                        'Rules are matched in order. Both the error code and at least one keyword must match.'
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                  <div className='flex flex-wrap gap-2'>
+                    {(
+                      [
+                        {
+                          label: t('529 overload'),
+                          rule: {
+                            error_code: '529',
+                            keywords: 'overloaded, too many',
+                            duration_minutes: '60',
+                            description: t(
+                              'Service overload - pause 60 minutes'
+                            ),
+                          },
+                        },
+                        {
+                          label: t('429 rate limit'),
+                          rule: {
+                            error_code: '429',
+                            keywords: 'rate limit, too many requests',
+                            duration_minutes: '10',
+                            description: t(
+                              'Rate limited - pause 10 minutes'
+                            ),
+                          },
+                        },
+                        {
+                          label: t('503 unavailable'),
+                          rule: {
+                            error_code: '503',
+                            keywords: 'unavailable, maintenance',
+                            duration_minutes: '30',
+                            description: t(
+                              'Service unavailable - pause 30 minutes'
+                            ),
+                          },
+                        },
+                      ] as Array<{
+                        label: string
+                        rule: TempUnschedRuleDraft
+                      }>
+                    ).map((preset) => (
+                      <Button
+                        key={preset.label}
+                        type='button'
+                        variant='outline'
+                        size='sm'
+                        onClick={() =>
+                          set('tempUnschedRules', [
+                            ...draft.tempUnschedRules,
+                            { ...preset.rule },
+                          ])
+                        }
+                      >
+                        + {preset.label}
+                      </Button>
+                    ))}
+                  </div>
+                  {draft.tempUnschedRules.map((rule, index) => (
+                    <div
+                      key={`temp-unsched-rule-${index}`}
+                      className='space-y-3 rounded-lg border p-3'
+                    >
+                      <div className='flex items-center justify-between gap-2'>
+                        <span className='text-muted-foreground text-xs font-medium'>
+                          {t('Rule #{{index}}', { index: index + 1 })}
+                        </span>
+                        <div className='flex items-center gap-1'>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='icon'
+                            className='size-7'
+                            disabled={index === 0}
+                            onClick={() => {
+                              const next = [...draft.tempUnschedRules]
+                              ;[next[index - 1], next[index]] = [
+                                next[index],
+                                next[index - 1],
+                              ]
+                              set('tempUnschedRules', next)
+                            }}
+                          >
+                            <HugeiconsIcon
+                              icon={ArrowUp01Icon}
+                              strokeWidth={2}
+                            />
+                          </Button>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='icon'
+                            className='size-7'
+                            disabled={
+                              index === draft.tempUnschedRules.length - 1
+                            }
+                            onClick={() => {
+                              const next = [...draft.tempUnschedRules]
+                              ;[next[index + 1], next[index]] = [
+                                next[index],
+                                next[index + 1],
+                              ]
+                              set('tempUnschedRules', next)
+                            }}
+                          >
+                            <HugeiconsIcon
+                              icon={ArrowDown01Icon}
+                              strokeWidth={2}
+                            />
+                          </Button>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='icon'
+                            className='text-destructive size-7'
+                            onClick={() =>
+                              set(
+                                'tempUnschedRules',
+                                draft.tempUnschedRules.filter(
+                                  (_, ruleIndex) => ruleIndex !== index
+                                )
+                              )
+                            }
+                          >
+                            <HugeiconsIcon
+                              icon={Delete02Icon}
+                              strokeWidth={2}
+                            />
+                          </Button>
+                        </div>
+                      </div>
+                      <div className='grid gap-3 sm:grid-cols-2'>
+                        <Field>
+                          <FieldLabel>{t('Error code')}</FieldLabel>
+                          <Input
+                            type='number'
+                            min={100}
+                            max={599}
+                            value={rule.error_code}
+                            placeholder={t('e.g. 429')}
+                            onChange={(event) => {
+                              const next = [...draft.tempUnschedRules]
+                              next[index] = {
+                                ...rule,
+                                error_code: event.target.value,
+                              }
+                              set('tempUnschedRules', next)
+                            }}
+                          />
+                        </Field>
+                        <Field>
+                          <FieldLabel>
+                            {t('Duration (minutes)')}
+                          </FieldLabel>
+                          <Input
+                            type='number'
+                            min={1}
+                            value={rule.duration_minutes}
+                            placeholder={t('e.g. 30')}
+                            onChange={(event) => {
+                              const next = [...draft.tempUnschedRules]
+                              next[index] = {
+                                ...rule,
+                                duration_minutes: event.target.value,
+                              }
+                              set('tempUnschedRules', next)
+                            }}
+                          />
+                        </Field>
+                        <Field className='sm:col-span-2'>
+                          <FieldLabel>{t('Keywords')}</FieldLabel>
+                          <Input
+                            value={rule.keywords}
+                            placeholder={t(
+                              'e.g. overloaded, too many requests'
+                            )}
+                            onChange={(event) => {
+                              const next = [...draft.tempUnschedRules]
+                              next[index] = {
+                                ...rule,
+                                keywords: event.target.value,
+                              }
+                              set('tempUnschedRules', next)
+                            }}
+                          />
+                          <FieldDescription>
+                            {t(
+                              'Separate multiple keywords with commas. Matching requires at least one hit.'
+                            )}
+                          </FieldDescription>
+                        </Field>
+                        <Field className='sm:col-span-2'>
+                          <FieldLabel>{t('Description')}</FieldLabel>
+                          <Input
+                            value={rule.description}
+                            placeholder={t(
+                              'Optional note to remember what this rule is for'
+                            )}
+                            onChange={(event) => {
+                              const next = [...draft.tempUnschedRules]
+                              next[index] = {
+                                ...rule,
+                                description: event.target.value,
+                              }
+                              set('tempUnschedRules', next)
+                            }}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+                  ))}
+                  <Button
+                    type='button'
+                    variant='outline'
+                    className='w-full border-dashed'
+                    onClick={() =>
+                      set('tempUnschedRules', [
+                        ...draft.tempUnschedRules,
+                        emptyTempUnschedRule(),
+                      ])
+                    }
+                  >
+                    <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+                    {t('Add rule')}
+                  </Button>
                 </div>
               )}
 

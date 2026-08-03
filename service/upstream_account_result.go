@@ -123,10 +123,30 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 	}
 	refreshAfterUpdate := false
 	disposition := UpstreamAccountErrorRetryAccount
+
+	var account model.UpstreamAccount
+	accountLoaded := false
+	loadAccount := func() bool {
+		if accountLoaded {
+			return true
+		}
+		if err := model.DB.First(&account, accountId).Error; err != nil {
+			return false
+		}
+		accountLoaded = true
+		return true
+	}
+
+	if matched, until, reason := matchUpstreamTempUnschedulableRule(apiErr, loadAccount, &account); matched {
+		updates["temp_unschedulable_until"] = until
+		updates["temp_unschedulable_reason"] = reason
+		_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
+		return UpstreamAccountErrorRetryAccount
+	}
+
 	switch {
 	case apiErr.StatusCode == 401:
-		var account model.UpstreamAccount
-		if err := model.DB.First(&account, accountId).Error; err != nil {
+		if !loadAccount() {
 			return UpstreamAccountErrorNotHandled
 		}
 		if isPermanentUpstreamAuthenticationError(apiErr) || !canRefreshUpstreamAuthentication(&account) {
@@ -188,6 +208,76 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		}).Error
 	}
 	return disposition
+}
+
+const upstreamTempUnschedReasonLimit = 128
+
+func matchUpstreamTempUnschedulableRule(
+	apiErr *types.NewAPIError,
+	loadAccount func() bool,
+	account *model.UpstreamAccount,
+) (bool, int64, string) {
+	if apiErr == nil || apiErr.StatusCode <= 0 || account == nil || !loadAccount() {
+		return false, 0, ""
+	}
+	credentials, _ := DecryptUpstreamAccountCredentials(account)
+	options, err := model.ParseUpstreamAccountOptionsWithCredentials(account.Extra, credentials)
+	if err != nil {
+		options, err = model.ParseUpstreamAccountOptions(account.Extra)
+		if err != nil {
+			return false, 0, ""
+		}
+	}
+	if !options.TempUnschedulableEnabled || len(options.TempUnschedulableRules) == 0 {
+		return false, 0, ""
+	}
+	_, body := apiErr.UpstreamResponse()
+	var searchParts []string
+	if len(body) > 0 {
+		searchParts = append(searchParts, string(body))
+	}
+	if msg := strings.TrimSpace(apiErr.Error()); msg != "" {
+		searchParts = append(searchParts, msg)
+	}
+	if summary := UpstreamAccountErrorSummary(apiErr); summary != "" {
+		searchParts = append(searchParts, summary)
+	}
+	searchText := strings.ToLower(strings.Join(searchParts, "\n"))
+	if strings.TrimSpace(searchText) == "" {
+		return false, 0, ""
+	}
+	for _, rule := range options.TempUnschedulableRules {
+		if rule.ErrorCode != apiErr.StatusCode {
+			continue
+		}
+		matchedKeyword := matchUpstreamTempUnschedKeyword(searchText, rule.Keywords)
+		if matchedKeyword == "" {
+			continue
+		}
+		until := common.GetTimestamp() + int64(rule.DurationMinutes)*60
+		reason := strings.TrimSpace(rule.Description)
+		if reason == "" {
+			reason = matchedKeyword
+		}
+		return true, until, truncateUpstreamEventText(reason, upstreamTempUnschedReasonLimit)
+	}
+	return false, 0, ""
+}
+
+func matchUpstreamTempUnschedKeyword(bodyLower string, keywords []string) string {
+	if bodyLower == "" {
+		return ""
+	}
+	for _, keyword := range keywords {
+		k := strings.TrimSpace(keyword)
+		if k == "" {
+			continue
+		}
+		if strings.Contains(bodyLower, strings.ToLower(k)) {
+			return k
+		}
+	}
+	return ""
 }
 
 func refreshUpstreamAccountAfterAuthenticationFailure(accountId int) {

@@ -90,17 +90,51 @@ func TestParseUpstreamAccountOptionsWithCredentialsRejectsInvalidCompactWildcard
 
 func TestParseUpstreamAccountOptionsWithCredentialsTreatsNullAsUnset(t *testing.T) {
 	options, err := ParseUpstreamAccountOptionsWithCredentials(
-		`{"intercept_warmup_requests":true,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"]}`,
+		`{"intercept_warmup_requests":true,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"],"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate"],"duration_minutes":10,"description":"x"}]}`,
 		map[string]any{
-			"intercept_warmup_requests": nil,
-			"compact_model_mapping":     nil,
-			"openai_capabilities":       nil,
+			"intercept_warmup_requests":  nil,
+			"compact_model_mapping":      nil,
+			"openai_capabilities":        nil,
+			"temp_unschedulable_enabled": nil,
+			"temp_unschedulable_rules":   nil,
 		},
 	)
 	require.NoError(t, err)
 	require.False(t, options.InterceptWarmupRequests)
 	require.Nil(t, options.CompactModelMapping)
 	require.Nil(t, options.OpenAIEndpointCapabilities)
+	require.False(t, options.TempUnschedulableEnabled)
+	require.Nil(t, options.TempUnschedulableRules)
+}
+
+func TestParseUpstreamAccountOptionsTempUnschedulableRules(t *testing.T) {
+	options, err := ParseUpstreamAccountOptionsWithCredentials(
+		`{}`,
+		map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules": []any{
+				map[string]any{
+					"error_code":       float64(529),
+					"keywords":         []any{"overloaded", " too many "},
+					"duration_minutes": float64(60),
+					"description":      " Service overload ",
+				},
+				map[string]any{
+					"error_code":       100,
+					"keywords":         []any{},
+					"duration_minutes": 5,
+				},
+			},
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, options.TempUnschedulableEnabled)
+	require.Equal(t, []TempUnschedulableRule{{
+		ErrorCode:       529,
+		Keywords:        []string{"overloaded", "too many"},
+		DurationMinutes: 60,
+		Description:     "Service overload",
+	}}, options.TempUnschedulableRules)
 }
 
 func TestValidateUpstreamAccountOptionsRejectsInvalidCombinations(t *testing.T) {

@@ -40,26 +40,28 @@ type UpstreamAccountView struct {
 }
 
 type UpstreamAccountMetadata struct {
-	Email                      string            `json:"email,omitempty"`
-	PlanType                   string            `json:"plan_type,omitempty"`
-	PrivacyMode                string            `json:"privacy_mode,omitempty"`
-	CompactMode                string            `json:"compact_mode,omitempty"`
-	CompactSupported           bool              `json:"compact_supported"`
-	CredentialReadable         bool              `json:"credential_readable"`
-	CredentialReadError        string            `json:"credential_read_error,omitempty"`
-	BaseURL                    string            `json:"base_url,omitempty"`
-	ModelMapping               map[string]string `json:"model_mapping,omitempty"`
-	CompactModelMapping        map[string]string `json:"compact_model_mapping,omitempty"`
-	OpenAIEndpointCapabilities []string          `json:"openai_capabilities,omitempty"`
-	InterceptWarmupRequests    bool              `json:"intercept_warmup_requests"`
-	HeaderOverrideEnabled      bool              `json:"header_override_enabled"`
-	HeaderOverrides            map[string]string `json:"header_overrides,omitempty"`
-	BedrockAuthMode            string            `json:"bedrock_auth_mode,omitempty"`
-	AWSRegion                  string            `json:"aws_region,omitempty"`
-	AWSAccessKeyID             string            `json:"aws_access_key_id,omitempty"`
-	VertexProjectID            string            `json:"vertex_project_id,omitempty"`
-	VertexClientEmail          string            `json:"vertex_client_email,omitempty"`
-	VertexLocation             string            `json:"vertex_location,omitempty"`
+	Email                      string                        `json:"email,omitempty"`
+	PlanType                   string                        `json:"plan_type,omitempty"`
+	PrivacyMode                string                        `json:"privacy_mode,omitempty"`
+	CompactMode                string                        `json:"compact_mode,omitempty"`
+	CompactSupported           bool                          `json:"compact_supported"`
+	CredentialReadable         bool                          `json:"credential_readable"`
+	CredentialReadError        string                        `json:"credential_read_error,omitempty"`
+	BaseURL                    string                        `json:"base_url,omitempty"`
+	ModelMapping               map[string]string             `json:"model_mapping,omitempty"`
+	CompactModelMapping        map[string]string             `json:"compact_model_mapping,omitempty"`
+	OpenAIEndpointCapabilities []string                      `json:"openai_capabilities,omitempty"`
+	InterceptWarmupRequests    bool                          `json:"intercept_warmup_requests"`
+	TempUnschedulableEnabled   bool                          `json:"temp_unschedulable_enabled"`
+	TempUnschedulableRules     []model.TempUnschedulableRule `json:"temp_unschedulable_rules,omitempty"`
+	HeaderOverrideEnabled      bool                          `json:"header_override_enabled"`
+	HeaderOverrides            map[string]string             `json:"header_overrides,omitempty"`
+	BedrockAuthMode            string                        `json:"bedrock_auth_mode,omitempty"`
+	AWSRegion                  string                        `json:"aws_region,omitempty"`
+	AWSAccessKeyID             string                        `json:"aws_access_key_id,omitempty"`
+	VertexProjectID            string                        `json:"vertex_project_id,omitempty"`
+	VertexClientEmail          string                        `json:"vertex_client_email,omitempty"`
+	VertexLocation             string                        `json:"vertex_location,omitempty"`
 }
 
 type UpstreamAccountPoolView struct {
@@ -1761,6 +1763,8 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 		metadata.CompactModelMapping = options.CompactModelMapping
 		metadata.OpenAIEndpointCapabilities = options.OpenAIEndpointCapabilities
 		metadata.InterceptWarmupRequests = options.InterceptWarmupRequests
+		metadata.TempUnschedulableEnabled = options.TempUnschedulableEnabled
+		metadata.TempUnschedulableRules = options.TempUnschedulableRules
 	}
 	if account.Platform == constant.UpstreamPlatformOpenAI {
 		options, err := model.ParseUpstreamAccountOptions(account.Extra)
