@@ -264,6 +264,7 @@ distributor.affinity_channel_disabled: "The channel selected by channel affinity
 distributor.token_no_model_access: "This token has no access to any models"
 distributor.token_model_forbidden: "This token has no access to model {{.Model}}"
 distributor.model_name_required: "Model name not specified, model name cannot be empty"
+distributor.compact_model_endpoint_mismatch: "Model '{{.Model}}-openai-compact' can only be used with /v1/responses/compact. Use '{{.Model}}' for this endpoint"
 distributor.invalid_playground_request: "Invalid playground request: {{.Error}}"
 distributor.group_access_denied: "No permission to access this group"
 distributor.get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (distributor): {{.Error}}"

@@ -40,6 +40,17 @@ func Distribute() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
+		if compactModelEndpointMismatch(c.Request.URL.Path, modelRequest.Model) {
+			abortWithOpenAiMessage(
+				c,
+				http.StatusBadRequest,
+				i18n.T(c, i18n.MsgDistributorCompactModelEndpointMismatch, map[string]any{
+					"Model": ratio_setting.BaseModelFromCompactVirtualModel(modelRequest.Model),
+				}),
+				types.ErrorCodeCompactModelEndpointMismatch,
+			)
+			return
+		}
 		if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
@@ -180,6 +191,11 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func compactModelEndpointMismatch(requestPath string, modelName string) bool {
+	return ratio_setting.IsCompactVirtualModel(modelName) &&
+		requestPath != "/v1/responses/compact"
 }
 
 // getModelFromRequest 从请求中读取模型信息

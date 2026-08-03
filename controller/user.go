@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/QuantumNous/new-api/constant"
 
@@ -684,6 +685,9 @@ func GetUserModels(c *gin.Context) {
 	var models []string
 	for group := range groups {
 		for _, g := range model.GetGroupEnabledModels(group) {
+			if ratio_setting.IsCompactVirtualModel(g) {
+				continue
+			}
 			if !common.StringsContains(models, g) {
 				models = append(models, g)
 			}

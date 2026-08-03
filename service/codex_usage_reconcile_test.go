@@ -47,6 +47,7 @@ func TestReconcileCodexResponsesUsageRaisesObviousUndercount(t *testing.T) {
 	ReconcileCodexResponsesUsage(ctx, info, usage)
 
 	require.Equal(t, 4436, usage.PromptTokens)
+	require.Equal(t, 4436, usage.InputTokens)
 	require.Equal(t, 18, usage.CompletionTokens)
 	require.Equal(t, 4454, usage.TotalTokens)
 	// Upstream total is garbage (< estimate/10); impute ~13.4% uncached.
@@ -80,6 +81,7 @@ func TestReconcileCodexResponsesUsagePreservesUpstreamUncachedRemainder(t *testi
 	ReconcileCodexResponsesUsage(ctx, info, usage)
 
 	require.Equal(t, 5000, usage.PromptTokens)
+	require.Equal(t, 5000, usage.InputTokens)
 	// Upstream total is still plausible (>= estimate/10); keep uncached=200.
 	require.Equal(t, 4800, usage.PromptTokensDetails.CachedTokens)
 	reconcile := getCodexUsageReconcileInfo(ctx)

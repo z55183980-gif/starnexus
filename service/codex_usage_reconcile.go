@@ -49,6 +49,10 @@ func ShouldRaiseCodexResponsesPromptTokens(channelType int, estimate int, prompt
 // ReconcileCodexResponsesUsage raises Codex Responses prompt tokens to the
 // request estimate when upstream usage is obviously under-reported.
 //
+// This is billing-only: callers should invoke it after writing the client
+// response (or rely on PostTextConsumeQuota) so transport and user-visible
+// payloads stay unchanged.
+//
 // When the upstream total is still plausible (>= estimate/10), the upstream
 // uncached remainder stays at full price and only the raised delta is
 // attributed to cached tokens. When the upstream total itself is garbage
@@ -85,7 +89,11 @@ func ReconcileCodexResponsesUsage(c *gin.Context, info *relaycommon.RelayInfo, u
 	}
 
 	usage.PromptTokens = estimate
+	usage.InputTokens = estimate
 	usage.PromptTokensDetails.CachedTokens = estimate - uncached
+	if usage.InputTokensDetails != nil {
+		usage.InputTokensDetails.CachedTokens = estimate - uncached
+	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	if c != nil {
 		c.Set(codexUsageReconcileContextKey, &codexUsageReconcileInfo{

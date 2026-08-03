@@ -118,6 +118,9 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
+	// Reconcile after writing chat JSON so the client still sees upstream usage;
+	// settlement uses the returned usage (and PostTextConsumeQuota also reconciles).
+	service.ReconcileCodexResponsesUsage(c, info, usage)
 	return usage, nil
 }
 
@@ -584,5 +587,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if info.RelayFormat == types.RelayFormatOpenAI {
 		helper.Done(c)
 	}
+	// Reconcile after streaming so client-visible usage chunks stay upstream-native.
+	service.ReconcileCodexResponsesUsage(c, info, usage)
 	return usage, nil
 }
