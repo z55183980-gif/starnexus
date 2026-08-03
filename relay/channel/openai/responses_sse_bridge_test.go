@@ -45,6 +45,80 @@ func newResponsesSSEResponse(body string) *http.Response {
 	}
 }
 
+func TestResponsesSSEToNonStreamHandlerRebuildsEmptyCompletedOutput(t *testing.T) {
+	t.Parallel()
+	ctx, recorder, info := newResponsesSSEBridgeContext()
+
+	// Codex-style stream: text only appears in deltas; completed has usage but empty output.
+	body := `data: {"type":"response.created","response":{"id":"resp_empty_out"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1","status":"in_progress","role":"assistant","content":[]}}
+
+data: {"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"PONG"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"","annotations":[]}]}}
+
+data: {"type":"response.completed","response":{"id":"resp_empty_out","object":"response","created_at":123,"status":"completed","model":"gpt-5","output":[],"usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}}
+
+data: [DONE]
+
+`
+	usage, apiErr := OaiResponsesSSEToNonStreamHandler(ctx, info, newResponsesSSEResponse(body))
+	require.Nil(t, apiErr)
+	require.Equal(t, 6, usage.TotalTokens)
+	require.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "resp_empty_out", gjson.Get(recorder.Body.String(), "id").String())
+	require.Equal(t, "PONG", gjson.Get(recorder.Body.String(), "output.0.content.0.text").String())
+	require.Equal(t, "message", gjson.Get(recorder.Body.String(), "output.0.type").String())
+}
+
+func TestResponsesSSEToChatHandlerRebuildsToolCallsFromDeltas(t *testing.T) {
+	t.Parallel()
+	ctx, recorder, info := newResponsesSSEBridgeContext()
+
+	body := `data: {"type":"response.created","response":{"id":"resp_tool_rebuild"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"","status":"in_progress"}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"city\":\"London\"}"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"","status":"completed"}}
+
+data: {"type":"response.completed","response":{"id":"resp_tool_rebuild","object":"response","created_at":123,"status":"completed","model":"gpt-5","output":[],"usage":{"input_tokens":8,"output_tokens":5,"total_tokens":13}}}
+
+data: [DONE]
+
+`
+	usage, apiErr := OaiResponsesSSEToChatHandler(ctx, info, newResponsesSSEResponse(body))
+	require.Nil(t, apiErr)
+	require.Equal(t, 13, usage.TotalTokens)
+	require.Equal(t, "chat.completion", gjson.Get(recorder.Body.String(), "object").String())
+	require.Equal(t, "get_weather", gjson.Get(recorder.Body.String(), "choices.0.message.tool_calls.0.function.name").String())
+	require.Equal(t, `{"city":"London"}`, gjson.Get(recorder.Body.String(), "choices.0.message.tool_calls.0.function.arguments").String())
+	require.Equal(t, "tool_calls", gjson.Get(recorder.Body.String(), "choices.0.finish_reason").String())
+}
+
+func TestResponsesSSEToNonStreamHandlerRebuildsFromTextDeltasWithoutItems(t *testing.T) {
+	t.Parallel()
+	ctx, recorder, info := newResponsesSSEBridgeContext()
+
+	body := `data: {"type":"response.created","response":{"id":"resp_delta_only"}}
+
+data: {"type":"response.output_text.delta","delta":"Hel"}
+
+data: {"type":"response.output_text.delta","delta":"lo"}
+
+data: {"type":"response.completed","response":{"id":"resp_delta_only","object":"response","status":"completed","model":"gpt-5","output":[],"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}
+
+data: [DONE]
+
+`
+	usage, apiErr := OaiResponsesSSEToNonStreamHandler(ctx, info, newResponsesSSEResponse(body))
+	require.Nil(t, apiErr)
+	require.Equal(t, 3, usage.TotalTokens)
+	require.Equal(t, "Hello", gjson.Get(recorder.Body.String(), "output.0.content.0.text").String())
+}
+
 func TestResponsesSSEToNonStreamHandlerReturnsJSON(t *testing.T) {
 	t.Parallel()
 	ctx, recorder, info := newResponsesSSEBridgeContext()

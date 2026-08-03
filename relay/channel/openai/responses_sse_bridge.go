@@ -75,6 +75,32 @@ func collectResponsesSSE(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if !accumulator.Terminal() || finalResponse == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("responses stream ended without a terminal response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
+	originalHadContent := responsesOutputHasClientContent(finalResponse.Output)
+	finalResponse = accumulator.FinalizeResponse(finalResponse)
+	rebuiltOutput := !originalHadContent && responsesOutputHasClientContent(finalResponse.Output)
+	if rebuiltOutput {
+		rawOutputs := make([]json.RawMessage, 0, len(finalResponse.Output))
+		for _, item := range finalResponse.Output {
+			raw, marshalErr := common.Marshal(item)
+			if marshalErr != nil {
+				continue
+			}
+			rawOutputs = append(rawOutputs, raw)
+		}
+		if len(rawOutputs) > 0 {
+			service.StageResponsesHTTPResponseOutput(c, finalResponse.ID, rawOutputs)
+		}
+	}
+	if finalResponse != nil && !responsesOutputHasClientContent(finalResponse.Output) {
+		usage := accumulator.Usage(info)
+		if usage != nil && usage.CompletionTokens > 0 {
+			logger.LogWarn(c, fmt.Sprintf(
+				"responses SSE bridge produced empty output with completion_tokens=%d response_id=%s",
+				usage.CompletionTokens,
+				finalResponse.ID,
+			))
+		}
+	}
 	return finalResponse, nil
 }
 

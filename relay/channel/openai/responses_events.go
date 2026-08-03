@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,10 +23,24 @@ type ResponsesEventAccumulator struct {
 	responseID   string
 	failure      *types.OpenAIError
 	terminalType string
+
+	// Streamed output reconstruction for non-stream bridges. Codex often emits
+	// text/tool payloads only in delta/item events while response.completed
+	// carries usage with an empty output array.
+	itemsByIndex     map[int]*dto.ResponsesOutput
+	itemIndexByID    map[string]int
+	functionArgsByID map[string]*strings.Builder
+	reasoningSummary strings.Builder
+	maxOutputIndex   int
 }
 
 func NewResponsesEventAccumulator() *ResponsesEventAccumulator {
-	return &ResponsesEventAccumulator{}
+	return &ResponsesEventAccumulator{
+		itemsByIndex:     make(map[int]*dto.ResponsesOutput),
+		itemIndexByID:    make(map[string]int),
+		functionArgsByID: make(map[string]*strings.Builder),
+		maxOutputIndex:   -1,
+	}
 }
 
 // IsResponsesFirstOutputEvent reports whether an event starts client output
@@ -94,7 +110,13 @@ func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.Re
 		}
 	case "response.output_text.delta":
 		a.outputText.WriteString(event.Delta)
-	case dto.ResponsesOutputTypeItemDone:
+		a.appendMessageTextDelta(event)
+	case "response.reasoning_summary_text.delta":
+		a.reasoningSummary.WriteString(event.Delta)
+	case "response.function_call_arguments.delta":
+		a.appendFunctionArgumentsDelta(event)
+	case dto.ResponsesOutputTypeItemAdded, dto.ResponsesOutputTypeItemDone:
+		a.upsertOutputItem(event)
 		if event.Item != nil && event.Item.Type == dto.BuildInCallWebSearchCall && info != nil && info.ResponsesUsageInfo != nil {
 			if tool := info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; tool != nil {
 				tool.CallCount++
@@ -154,4 +176,356 @@ func (a *ResponsesEventAccumulator) FailureError() *types.OpenAIError {
 
 func (a *ResponsesEventAccumulator) TerminalEventType() string {
 	return a.terminalType
+}
+
+// FinalizeResponse returns the terminal Responses object, rebuilding output from
+// streamed item/delta events when the completed payload has empty output.
+func (a *ResponsesEventAccumulator) FinalizeResponse(response *dto.OpenAIResponsesResponse) *dto.OpenAIResponsesResponse {
+	if response == nil {
+		return nil
+	}
+	if responsesOutputHasClientContent(response.Output) {
+		return response
+	}
+	rebuilt := a.rebuiltOutputs()
+	if len(rebuilt) == 0 {
+		return response
+	}
+	cloned := *response
+	cloned.Output = rebuilt
+	return &cloned
+}
+
+func (a *ResponsesEventAccumulator) upsertOutputItem(event dto.ResponsesStreamResponse) {
+	if event.Item == nil {
+		return
+	}
+	index := a.resolveOutputIndex(event)
+	item := cloneResponsesOutput(event.Item)
+	if existing := a.itemsByIndex[index]; existing != nil {
+		item = mergeResponsesOutput(existing, item)
+	}
+	a.itemsByIndex[index] = item
+	if item.ID != "" {
+		a.itemIndexByID[item.ID] = index
+	}
+	if item.CallId != "" {
+		a.itemIndexByID[item.CallId] = index
+	}
+	if args := item.ArgumentsString(); args != "" {
+		a.ensureFunctionArgsBuilder(item.ID, item.CallId).Reset()
+		a.ensureFunctionArgsBuilder(item.ID, item.CallId).WriteString(args)
+	}
+}
+
+func (a *ResponsesEventAccumulator) appendMessageTextDelta(event dto.ResponsesStreamResponse) {
+	if event.Delta == "" {
+		return
+	}
+	index := a.resolveOutputIndex(event)
+	item := a.itemsByIndex[index]
+	if item == nil {
+		item = &dto.ResponsesOutput{
+			Type:   "message",
+			ID:     strings.TrimSpace(event.ItemID),
+			Status: "completed",
+			Role:   "assistant",
+			Content: []dto.ResponsesOutputContent{{
+				Type:        "output_text",
+				Annotations: []any{},
+			}},
+		}
+		a.itemsByIndex[index] = item
+		if item.ID != "" {
+			a.itemIndexByID[item.ID] = index
+		}
+	}
+	if item.Type == "" {
+		item.Type = "message"
+	}
+	if item.Role == "" {
+		item.Role = "assistant"
+	}
+	if item.Status == "" {
+		item.Status = "completed"
+	}
+	contentIndex := 0
+	if event.ContentIndex != nil && *event.ContentIndex >= 0 {
+		contentIndex = *event.ContentIndex
+	}
+	for len(item.Content) <= contentIndex {
+		item.Content = append(item.Content, dto.ResponsesOutputContent{
+			Type:        "output_text",
+			Annotations: []any{},
+		})
+	}
+	if item.Content[contentIndex].Type == "" {
+		item.Content[contentIndex].Type = "output_text"
+	}
+	if item.Content[contentIndex].Annotations == nil {
+		item.Content[contentIndex].Annotations = []any{}
+	}
+	item.Content[contentIndex].Text += event.Delta
+}
+
+func (a *ResponsesEventAccumulator) appendFunctionArgumentsDelta(event dto.ResponsesStreamResponse) {
+	if event.Delta == "" {
+		return
+	}
+	itemID := strings.TrimSpace(event.ItemID)
+	builder := a.ensureFunctionArgsBuilder(itemID, "")
+	builder.WriteString(event.Delta)
+
+	index, ok := a.itemIndexByID[itemID]
+	if !ok {
+		index = a.resolveOutputIndex(event)
+	}
+	item := a.itemsByIndex[index]
+	if item == nil {
+		item = &dto.ResponsesOutput{
+			Type:   "function_call",
+			ID:     itemID,
+			Status: "completed",
+		}
+		a.itemsByIndex[index] = item
+		if itemID != "" {
+			a.itemIndexByID[itemID] = index
+		}
+	}
+	if item.Type == "" {
+		item.Type = "function_call"
+	}
+	item.Arguments = responsesArgumentsRawMessage(builder.String())
+}
+
+func (a *ResponsesEventAccumulator) ensureFunctionArgsBuilder(itemID, callID string) *strings.Builder {
+	key := strings.TrimSpace(itemID)
+	if key == "" {
+		key = strings.TrimSpace(callID)
+	}
+	if key == "" {
+		key = "_default"
+	}
+	if a.functionArgsByID[key] == nil {
+		a.functionArgsByID[key] = &strings.Builder{}
+	}
+	if callID = strings.TrimSpace(callID); callID != "" && callID != key {
+		a.functionArgsByID[callID] = a.functionArgsByID[key]
+	}
+	return a.functionArgsByID[key]
+}
+
+func (a *ResponsesEventAccumulator) resolveOutputIndex(event dto.ResponsesStreamResponse) int {
+	if event.OutputIndex != nil && *event.OutputIndex >= 0 {
+		if *event.OutputIndex > a.maxOutputIndex {
+			a.maxOutputIndex = *event.OutputIndex
+		}
+		return *event.OutputIndex
+	}
+	itemID := strings.TrimSpace(event.ItemID)
+	if itemID == "" && event.Item != nil {
+		itemID = strings.TrimSpace(event.Item.ID)
+		if itemID == "" {
+			itemID = strings.TrimSpace(event.Item.CallId)
+		}
+	}
+	if itemID != "" {
+		if index, ok := a.itemIndexByID[itemID]; ok {
+			return index
+		}
+	}
+	// Anonymous text deltas without item metadata should keep appending to the
+	// current open slot instead of allocating a new output index each event.
+	if event.Type == "response.output_text.delta" && a.maxOutputIndex >= 0 {
+		return a.maxOutputIndex
+	}
+	a.maxOutputIndex++
+	index := a.maxOutputIndex
+	if itemID != "" {
+		a.itemIndexByID[itemID] = index
+	}
+	return index
+}
+
+func (a *ResponsesEventAccumulator) rebuiltOutputs() []dto.ResponsesOutput {
+	outputs := make([]dto.ResponsesOutput, 0, len(a.itemsByIndex)+1)
+	if len(a.itemsByIndex) > 0 {
+		indexes := make([]int, 0, len(a.itemsByIndex))
+		for index := range a.itemsByIndex {
+			indexes = append(indexes, index)
+		}
+		sort.Ints(indexes)
+		for _, index := range indexes {
+			item := cloneResponsesOutput(a.itemsByIndex[index])
+			a.applyBufferedFunctionArgs(item)
+			outputs = append(outputs, *item)
+		}
+	}
+
+	if !responsesOutputHasClientContent(outputs) && a.outputText.Len() > 0 {
+		outputs = append(outputs, dto.ResponsesOutput{
+			Type:   "message",
+			ID:     "msg_sse_rebuild",
+			Status: "completed",
+			Role:   "assistant",
+			Content: []dto.ResponsesOutputContent{{
+				Type:        "output_text",
+				Text:        a.outputText.String(),
+				Annotations: []any{},
+			}},
+		})
+	}
+
+	if a.reasoningSummary.Len() > 0 && !responsesOutputHasReasoningText(outputs) {
+		outputs = append([]dto.ResponsesOutput{{
+			Type:   "reasoning",
+			ID:     "rs_sse_rebuild",
+			Status: "completed",
+			Content: []dto.ResponsesOutputContent{{
+				Type:        "summary_text",
+				Text:        a.reasoningSummary.String(),
+				Annotations: []any{},
+			}},
+		}}, outputs...)
+	}
+
+	return outputs
+}
+
+func (a *ResponsesEventAccumulator) applyBufferedFunctionArgs(item *dto.ResponsesOutput) {
+	if item == nil || (item.Type != "function_call" && item.Type != "custom_tool_call") {
+		return
+	}
+	for _, key := range []string{item.ID, item.CallId} {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if builder := a.functionArgsByID[key]; builder != nil && builder.Len() > 0 {
+			item.Arguments = responsesArgumentsRawMessage(builder.String())
+			return
+		}
+	}
+}
+
+func responsesOutputHasClientContent(outputs []dto.ResponsesOutput) bool {
+	for _, out := range outputs {
+		switch strings.TrimSpace(out.Type) {
+		case "message":
+			for _, content := range out.Content {
+				if strings.TrimSpace(content.Text) != "" {
+					return true
+				}
+			}
+		case "function_call", "custom_tool_call":
+			if strings.TrimSpace(out.Name) != "" || strings.TrimSpace(out.ArgumentsString()) != "" {
+				return true
+			}
+		case "reasoning":
+			for _, content := range out.Content {
+				if strings.TrimSpace(content.Text) != "" {
+					return true
+				}
+			}
+		case dto.ResponsesOutputTypeImageGenerationCall:
+			return true
+		}
+	}
+	return false
+}
+
+func responsesOutputHasReasoningText(outputs []dto.ResponsesOutput) bool {
+	for _, out := range outputs {
+		if out.Type != "reasoning" {
+			continue
+		}
+		for _, content := range out.Content {
+			if strings.TrimSpace(content.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func cloneResponsesOutput(item *dto.ResponsesOutput) *dto.ResponsesOutput {
+	if item == nil {
+		return &dto.ResponsesOutput{}
+	}
+	cloned := *item
+	if item.Content != nil {
+		cloned.Content = append([]dto.ResponsesOutputContent(nil), item.Content...)
+	}
+	if item.Arguments != nil {
+		cloned.Arguments = append(json.RawMessage(nil), item.Arguments...)
+	}
+	return &cloned
+}
+
+func mergeResponsesOutput(existing, incoming *dto.ResponsesOutput) *dto.ResponsesOutput {
+	if existing == nil {
+		return cloneResponsesOutput(incoming)
+	}
+	if incoming == nil {
+		return cloneResponsesOutput(existing)
+	}
+	merged := cloneResponsesOutput(existing)
+	if incoming.Type != "" {
+		merged.Type = incoming.Type
+	}
+	if incoming.ID != "" {
+		merged.ID = incoming.ID
+	}
+	if incoming.Status != "" {
+		merged.Status = incoming.Status
+	}
+	if incoming.Role != "" {
+		merged.Role = incoming.Role
+	}
+	if incoming.CallId != "" {
+		merged.CallId = incoming.CallId
+	}
+	if incoming.Name != "" {
+		merged.Name = incoming.Name
+	}
+	if incoming.Quality != "" {
+		merged.Quality = incoming.Quality
+	}
+	if incoming.Size != "" {
+		merged.Size = incoming.Size
+	}
+	if len(incoming.Content) > 0 {
+		if responsesOutputContentHasText(incoming.Content) || !responsesOutputContentHasText(merged.Content) {
+			merged.Content = append([]dto.ResponsesOutputContent(nil), incoming.Content...)
+		}
+	}
+	if args := incoming.ArgumentsString(); args != "" {
+		merged.Arguments = append(json.RawMessage(nil), incoming.Arguments...)
+	}
+	return merged
+}
+
+func responsesOutputContentHasText(content []dto.ResponsesOutputContent) bool {
+	for _, item := range content {
+		if strings.TrimSpace(item.Text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func responsesArgumentsRawMessage(args string) json.RawMessage {
+	args = strings.TrimSpace(args)
+	if args == "" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(args)
+	if json.Valid([]byte(trimmed)) && (trimmed[0] == '{' || trimmed[0] == '[') {
+		return json.RawMessage(trimmed)
+	}
+	encoded, err := common.Marshal(args)
+	if err != nil {
+		return json.RawMessage(trimmed)
+	}
+	return encoded
 }
