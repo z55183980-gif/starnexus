@@ -75,6 +75,8 @@ import {
   FieldDescription,
   FieldGroup,
   FieldLabel,
+  FieldLegend,
+  FieldSet,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import {
@@ -86,6 +88,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -120,8 +123,8 @@ import {
   AccountStatusCell,
   AccountUsageCell,
 } from './account-runtime-cells'
-import { AccountTodayStatsCell } from './account-today-stats-cell'
 import { AccountTestDialog } from './account-test-dialog'
+import { AccountTodayStatsCell } from './account-today-stats-cell'
 import {
   createUpstreamPool,
   deleteUpstreamAccount,
@@ -351,16 +354,50 @@ type PoolDraft = {
   status: 'active' | 'inactive'
   defaultProxyId: string
   topK: string
+  sessionAffinityEnabled: boolean
+  sessionAffinityTTLSeconds: string
+  sessionAffinityWaitMs: string
+  sessionAffinityMaxWaiters: string
 }
 
-function poolSchedulerTopK(pool?: UpstreamAccountPool | null) {
+const SESSION_AFFINITY_DEFAULTS = {
+  ttlSeconds: 3600,
+  waitMs: 1500,
+  maxWaiters: 3,
+} as const
+
+function poolSchedulerDraft(pool?: UpstreamAccountPool | null) {
   try {
     const parsed = JSON.parse(pool?.scheduler_config || '{}') as {
       top_k?: number
+      session_affinity_enabled?: boolean
+      session_affinity_ttl_seconds?: number
+      session_affinity_wait_ms?: number
+      session_affinity_max_waiters?: number
     }
-    return String(Math.max(0, parsed.top_k || 0))
+    return {
+      topK: String(Math.max(0, parsed.top_k ?? 0)),
+      sessionAffinityEnabled: parsed.session_affinity_enabled === true,
+      sessionAffinityTTLSeconds: String(
+        parsed.session_affinity_ttl_seconds ??
+          SESSION_AFFINITY_DEFAULTS.ttlSeconds
+      ),
+      sessionAffinityWaitMs: String(
+        parsed.session_affinity_wait_ms ?? SESSION_AFFINITY_DEFAULTS.waitMs
+      ),
+      sessionAffinityMaxWaiters: String(
+        parsed.session_affinity_max_waiters ??
+          SESSION_AFFINITY_DEFAULTS.maxWaiters
+      ),
+    }
   } catch {
-    return '0'
+    return {
+      topK: '0',
+      sessionAffinityEnabled: false,
+      sessionAffinityTTLSeconds: String(SESSION_AFFINITY_DEFAULTS.ttlSeconds),
+      sessionAffinityWaitMs: String(SESSION_AFFINITY_DEFAULTS.waitMs),
+      sessionAffinityMaxWaiters: String(SESSION_AFFINITY_DEFAULTS.maxWaiters),
+    }
   }
 }
 
@@ -386,12 +423,83 @@ function PoolDialog({
     credentialType: pool?.credential_type ?? 'mixed',
     status: pool?.status ?? 'active',
     defaultProxyId: pool?.default_proxy_id ? String(pool.default_proxy_id) : '',
-    topK: poolSchedulerTopK(pool),
+    ...poolSchedulerDraft(pool),
   })
+  const platformItems = [
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'anthropic', label: 'Anthropic' },
+  ]
+  const credentialTypeItems = [
+    { value: 'mixed', label: t('Mixed') },
+    {
+      value: 'oauth',
+      label: draft.platform === 'openai' ? t('Codex OAuth') : t('Claude OAuth'),
+    },
+    ...(draft.platform === 'anthropic'
+      ? [{ value: 'setup_token', label: t('Setup Token') }]
+      : []),
+    {
+      value: 'apikey',
+      label:
+        draft.platform === 'openai'
+          ? t('OpenAI API Key')
+          : t('Anthropic API Key'),
+    },
+    ...(draft.platform === 'anthropic'
+      ? [
+          { value: 'bedrock', label: 'AWS Bedrock' },
+          { value: 'service_account', label: 'Vertex AI' },
+        ]
+      : []),
+  ]
+  const statusItems = [
+    { value: 'active', label: t('Active') },
+    { value: 'inactive', label: t('Inactive') },
+  ]
   const set = <K extends keyof PoolDraft>(key: K, value: PoolDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }))
   const submit = async () => {
     if (!draft.name.trim()) return toast.error(t('Pool name is required'))
+    const affinityFields = [
+      {
+        key: 'sessionAffinityTTLSeconds' as const,
+        label: t('Affinity TTL'),
+        min: draft.sessionAffinityEnabled ? 60 : 0,
+        max: 86400,
+      },
+      {
+        key: 'sessionAffinityWaitMs' as const,
+        label: t('Affinity wait time'),
+        min: 0,
+        max: 10000,
+      },
+      {
+        key: 'sessionAffinityMaxWaiters' as const,
+        label: t('Maximum affinity waiters'),
+        min: 0,
+        max: 1000,
+      },
+    ]
+    const affinityValues = new Map<keyof PoolDraft, number>()
+    for (const field of affinityFields) {
+      const rawValue = draft[field.key].trim()
+      const value = Number(rawValue)
+      if (
+        rawValue === '' ||
+        !Number.isInteger(value) ||
+        value < field.min ||
+        value > field.max
+      ) {
+        return toast.error(
+          t('Enter a whole number between {{min}} and {{max}} for {{field}}.', {
+            field: field.label,
+            min: field.min,
+            max: field.max,
+          })
+        )
+      }
+      affinityValues.set(field.key, value)
+    }
     setBusy(true)
     try {
       let schedulerConfig: Record<string, unknown> = {}
@@ -404,6 +512,17 @@ function PoolDialog({
       schedulerConfig.top_k = Math.max(
         0,
         Math.min(100, Number(draft.topK) || 0)
+      )
+      schedulerConfig.session_affinity_enabled =
+        draft.platform === 'openai' && draft.sessionAffinityEnabled
+      schedulerConfig.session_affinity_ttl_seconds = affinityValues.get(
+        'sessionAffinityTTLSeconds'
+      )
+      schedulerConfig.session_affinity_wait_ms = affinityValues.get(
+        'sessionAffinityWaitMs'
+      )
+      schedulerConfig.session_affinity_max_waiters = affinityValues.get(
+        'sessionAffinityMaxWaiters'
       )
       const payload: UpstreamPoolPayload = {
         name: draft.name.trim(),
@@ -434,7 +553,7 @@ function PoolDialog({
   }
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className='sm:max-w-lg'>
+      <DialogContent className='max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg'>
         <DialogHeader>
           <DialogTitle>
             {pool ? t('Edit account pool') : t('Add account pool')}
@@ -467,6 +586,7 @@ function PoolDialog({
           <Field>
             <FieldLabel>{t('Platform')}</FieldLabel>
             <Select
+              items={platformItems}
               value={draft.platform}
               disabled={Boolean(pool)}
               onValueChange={(value) =>
@@ -474,6 +594,8 @@ function PoolDialog({
                   ...current,
                   platform: value as UpstreamPlatform,
                   credentialType: 'mixed',
+                  sessionAffinityEnabled:
+                    value === 'openai' ? current.sessionAffinityEnabled : false,
                 }))
               }
             >
@@ -482,8 +604,11 @@ function PoolDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
-                  <SelectItem value='openai'>OpenAI</SelectItem>
-                  <SelectItem value='anthropic'>Anthropic</SelectItem>
+                  {platformItems.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
                 </SelectGroup>
               </SelectContent>
             </Select>
@@ -492,6 +617,7 @@ function PoolDialog({
             <Field>
               <FieldLabel>{t('Credential type')}</FieldLabel>
               <Select
+                items={credentialTypeItems}
                 value={draft.credentialType}
                 onValueChange={(value) =>
                   set('credentialType', value as PoolDraft['credentialType'])
@@ -502,30 +628,11 @@ function PoolDialog({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    <SelectItem value='mixed'>{t('Mixed')}</SelectItem>
-                    <SelectItem value='oauth'>
-                      {draft.platform === 'openai'
-                        ? t('Codex OAuth')
-                        : t('Claude OAuth')}
-                    </SelectItem>
-                    {draft.platform === 'anthropic' && (
-                      <SelectItem value='setup_token'>
-                        {t('Setup Token')}
+                    {credentialTypeItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
                       </SelectItem>
-                    )}
-                    <SelectItem value='apikey'>
-                      {draft.platform === 'openai'
-                        ? t('OpenAI API Key')
-                        : t('Anthropic API Key')}
-                    </SelectItem>
-                    {draft.platform === 'anthropic' && (
-                      <>
-                        <SelectItem value='bedrock'>AWS Bedrock</SelectItem>
-                        <SelectItem value='service_account'>
-                          Vertex AI
-                        </SelectItem>
-                      </>
-                    )}
+                    ))}
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -533,6 +640,7 @@ function PoolDialog({
             <Field>
               <FieldLabel>{t('Status')}</FieldLabel>
               <Select
+                items={statusItems}
                 value={draft.status}
                 onValueChange={(value) =>
                   set('status', value as PoolDraft['status'])
@@ -542,15 +650,35 @@ function PoolDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value='active'>{t('Active')}</SelectItem>
-                  <SelectItem value='inactive'>{t('Inactive')}</SelectItem>
+                  <SelectGroup>
+                    {statusItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
                 </SelectContent>
               </Select>
             </Field>
           </div>
           <Field>
             <FieldLabel>{t('Default proxy')}</FieldLabel>
+            <FieldDescription>
+              {t(
+                'This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.'
+              )}
+            </FieldDescription>
             <Select
+              items={[
+                {
+                  value: 'none',
+                  label: t('Use channel proxy or direct connection'),
+                },
+                ...proxies.map((proxy) => ({
+                  value: String(proxy.id),
+                  label: proxy.name,
+                })),
+              ]}
               value={draft.defaultProxyId || 'none'}
               onValueChange={(value) =>
                 set('defaultProxyId', value === 'none' ? '' : String(value))
@@ -560,14 +688,16 @@ function PoolDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='none'>
-                  {t('Use channel proxy or direct connection')}
-                </SelectItem>
-                {proxies.map((proxy) => (
-                  <SelectItem key={proxy.id} value={String(proxy.id)}>
-                    {proxy.name}
+                <SelectGroup>
+                  <SelectItem value='none'>
+                    {t('Use channel proxy or direct connection')}
                   </SelectItem>
-                ))}
+                  {proxies.map((proxy) => (
+                    <SelectItem key={proxy.id} value={String(proxy.id)}>
+                      {proxy.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
           </Field>
@@ -587,6 +717,113 @@ function PoolDialog({
               )}
             </FieldDescription>
           </Field>
+          <FieldSet>
+            <FieldLegend>{t('Account affinity')}</FieldLegend>
+            <FieldDescription>
+              {t(
+                'Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.'
+              )}
+            </FieldDescription>
+            <FieldDescription>
+              {t(
+                'Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.'
+              )}
+            </FieldDescription>
+            <FieldGroup>
+              <Field
+                orientation='horizontal'
+                className='items-center justify-between rounded-lg border p-3'
+                data-disabled={draft.platform !== 'openai' || undefined}
+              >
+                <div className='flex flex-col gap-1'>
+                  <FieldLabel htmlFor='pool-session-affinity-enabled'>
+                    {t('Enable account affinity')}
+                  </FieldLabel>
+                  <FieldDescription>
+                    {draft.platform === 'openai'
+                      ? t(
+                          'Prefer the account most recently used by the same session.'
+                        )
+                      : t(
+                          'Account affinity is available only for OpenAI pools.'
+                        )}
+                  </FieldDescription>
+                </div>
+                <Switch
+                  id='pool-session-affinity-enabled'
+                  checked={draft.sessionAffinityEnabled}
+                  disabled={draft.platform !== 'openai'}
+                  onCheckedChange={(checked) =>
+                    set('sessionAffinityEnabled', checked)
+                  }
+                />
+              </Field>
+              <div className='grid gap-4 sm:grid-cols-2'>
+                <Field
+                  data-disabled={!draft.sessionAffinityEnabled || undefined}
+                >
+                  <FieldLabel htmlFor='pool-session-affinity-ttl'>
+                    {t('Affinity TTL')}
+                  </FieldLabel>
+                  <Input
+                    id='pool-session-affinity-ttl'
+                    type='number'
+                    min={60}
+                    max={86400}
+                    step={1}
+                    disabled={!draft.sessionAffinityEnabled}
+                    value={draft.sessionAffinityTTLSeconds}
+                    onChange={(event) =>
+                      set('sessionAffinityTTLSeconds', event.target.value)
+                    }
+                  />
+                  <FieldDescription>{t('Seconds, 60-86400')}</FieldDescription>
+                </Field>
+                <Field
+                  data-disabled={!draft.sessionAffinityEnabled || undefined}
+                >
+                  <FieldLabel htmlFor='pool-session-affinity-wait-ms'>
+                    {t('Affinity wait time')}
+                  </FieldLabel>
+                  <Input
+                    id='pool-session-affinity-wait-ms'
+                    type='number'
+                    min={0}
+                    max={10000}
+                    step={1}
+                    disabled={!draft.sessionAffinityEnabled}
+                    value={draft.sessionAffinityWaitMs}
+                    onChange={(event) =>
+                      set('sessionAffinityWaitMs', event.target.value)
+                    }
+                  />
+                  <FieldDescription>
+                    {t('Milliseconds, 0-10000')}
+                  </FieldDescription>
+                </Field>
+                <Field
+                  data-disabled={!draft.sessionAffinityEnabled || undefined}
+                >
+                  <FieldLabel htmlFor='pool-session-affinity-max-waiters'>
+                    {t('Maximum affinity waiters')}
+                  </FieldLabel>
+                  <Input
+                    id='pool-session-affinity-max-waiters'
+                    type='number'
+                    min={0}
+                    max={1000}
+                    step={1}
+                    disabled={!draft.sessionAffinityEnabled}
+                    value={draft.sessionAffinityMaxWaiters}
+                    onChange={(event) =>
+                      set('sessionAffinityMaxWaiters', event.target.value)
+                    }
+                  />
+                  <FieldDescription>{t('Requests, 0-1000')}</FieldDescription>
+                </Field>
+              </div>
+            </FieldGroup>
+          </FieldSet>
         </FieldGroup>
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)}>
@@ -1014,9 +1251,7 @@ function PoolTableRows(props: PoolTableRowsProps) {
       poolCountAvailable(pool.ready_count) &&
       poolCountAvailable(pool.temporarily_limited_count)
     const readyCount = poolCount(pool.ready_count)
-    const temporarilyLimitedCount = poolCount(
-      pool.temporarily_limited_count
-    )
+    const temporarilyLimitedCount = poolCount(pool.temporarily_limited_count)
     const unavailableByStatusOrConfiguration = Math.max(
       0,
       accountCount - readyCount - temporarilyLimitedCount
@@ -2236,24 +2471,24 @@ export function AccountManagement({
                                       account.rate_limit_reset_at != null ||
                                       account.temp_unschedulable_until !=
                                         null) && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        className='gap-2.5 px-3 py-2.5'
-                                        disabled={busyId === account.id}
-                                        onClick={() =>
-                                          runAccountAction(account, 'recover')
-                                        }
-                                      >
-                                        <HugeiconsIcon
-                                          icon={RefreshIcon}
-                                          className='text-success'
-                                          strokeWidth={2}
-                                        />
-                                        {t('Restore scheduling')}
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
+                                      <>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem
+                                          className='gap-2.5 px-3 py-2.5'
+                                          disabled={busyId === account.id}
+                                          onClick={() =>
+                                            runAccountAction(account, 'recover')
+                                          }
+                                        >
+                                          <HugeiconsIcon
+                                            icon={RefreshIcon}
+                                            className='text-success'
+                                            strokeWidth={2}
+                                          />
+                                          {t('Restore scheduling')}
+                                        </DropdownMenuItem>
+                                      </>
+                                    )}
                                 </DropdownMenuGroup>
                               </DropdownMenuContent>
                             </DropdownMenu>

@@ -54,6 +54,14 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 	if err := common.UnmarshalJsonStr(raw, &config); err != nil {
 		return config, errors.New("scheduler_config must be a JSON object")
 	}
+	var affinityFields struct {
+		TTLSeconds *int `json:"session_affinity_ttl_seconds"`
+		WaitMs     *int `json:"session_affinity_wait_ms"`
+		MaxWaiters *int `json:"session_affinity_max_waiters"`
+	}
+	if err := common.UnmarshalJsonStr(raw, &affinityFields); err != nil {
+		return config, errors.New("scheduler_config must be a JSON object")
+	}
 	if config.Version == 0 {
 		config.Version = 1
 	}
@@ -99,13 +107,13 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 		}
 	}
 	if config.SessionAffinityEnabled {
-		if config.SessionAffinityTTLSeconds == 0 {
+		if affinityFields.TTLSeconds == nil {
 			config.SessionAffinityTTLSeconds = 3600
 		}
-		if config.SessionAffinityWaitMs == 0 {
+		if affinityFields.WaitMs == nil {
 			config.SessionAffinityWaitMs = 1500
 		}
-		if config.SessionAffinityMaxWaiters == 0 {
+		if affinityFields.MaxWaiters == nil {
 			config.SessionAffinityMaxWaiters = 3
 		}
 	}

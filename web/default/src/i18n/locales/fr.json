@@ -4974,6 +4974,7 @@
     "This permanently deletes the audit policy and all prompt records for {{username}}.": "Cette action supprime définitivement la politique d'audit et tous les prompts enregistrés pour {{username}}.",
     "This permanently deletes the selected users and cannot be undone.": "Cette action supprime définitivement les utilisateurs sélectionnés et ne peut pas être annulée.",
     "This project must be used in compliance with the": "Ce projet doit être utilisé conformément aux",
+    "This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.": "Ce proxy est utilisé uniquement pour les comptes sans proxy propre. Si le proxy d’un compte devient indisponible, sa propre stratégie de repli s’applique : aucun repli renvoie une erreur, le repli direct établit une connexion directe et le repli vers un proxy utilise le proxy de secours configuré. Il ne revient pas automatiquement au proxy de ce pool.",
     "This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.": "Cet enregistrement provient d’une instance avant la mise à niveau et n’inclut pas d’audits. Mettez à jour l’instance pour enregistrer l’IP du serveur, l’IP de callback, le moyen de paiement et la version du système.",
     "This site currently has {{count}} models enabled": "Ce site compte actuellement {{count}} modèles activés",
     "This tier catches any request that did not match earlier tiers.": "Ce palier récupère toute requête qui n’a pas correspondu aux paliers précédents.",
@@ -5641,6 +5642,19 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Account affinity": "Affinité de compte",
+    "Account affinity is available only for OpenAI pools.": "L’affinité de compte est disponible uniquement pour les pools OpenAI.",
+    "Affinity TTL": "Durée de l’affinité",
+    "Affinity wait time": "Délai d’attente de l’affinité",
+    "Enable account affinity": "Activer l’affinité de compte",
+    "Enter a whole number between {{min}} and {{max}} for {{field}}.": "Saisissez pour {{field}} un nombre entier compris entre {{min}} et {{max}}.",
+    "Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.": "Maintient les requêtes d’une même session OpenAI Responses sur le même compte afin d’améliorer la réutilisation du cache en amont.",
+    "Maximum affinity waiters": "Nombre maximal de requêtes en attente d’affinité",
+    "Milliseconds, 0-10000": "Millisecondes, 0-10000",
+    "Prefer the account most recently used by the same session.": "Privilégier le compte utilisé le plus récemment par la même session.",
+    "Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.": "Nécessite prompt_cache_key dans le corps de la requête ou un en-tête Session_id/Conversation_id.",
+    "Requests, 0-1000": "Requêtes, 0-1000",
+    "Seconds, 60-86400": "Secondes, 60-86400"
   }
 }

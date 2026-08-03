@@ -4974,6 +4974,7 @@
     "This permanently deletes the audit policy and all prompt records for {{username}}.": "This permanently deletes the audit policy and all prompt records for {{username}}.",
     "This permanently deletes the selected users and cannot be undone.": "This permanently deletes the selected users and cannot be undone.",
     "This project must be used in compliance with the": "This project must be used in compliance with the",
+    "This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.": "This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.",
     "This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.": "This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.",
     "This site currently has {{count}} models enabled": "This site currently has {{count}} models enabled",
     "This tier catches any request that did not match earlier tiers.": "This tier catches any request that did not match earlier tiers.",
@@ -5641,6 +5642,19 @@
     "Zero retention": "Zero retention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Account affinity": "Account affinity",
+    "Account affinity is available only for OpenAI pools.": "Account affinity is available only for OpenAI pools.",
+    "Affinity TTL": "Affinity TTL",
+    "Affinity wait time": "Affinity wait time",
+    "Enable account affinity": "Enable account affinity",
+    "Enter a whole number between {{min}} and {{max}} for {{field}}.": "Enter a whole number between {{min}} and {{max}} for {{field}}.",
+    "Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.": "Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.",
+    "Maximum affinity waiters": "Maximum affinity waiters",
+    "Milliseconds, 0-10000": "Milliseconds, 0-10000",
+    "Prefer the account most recently used by the same session.": "Prefer the account most recently used by the same session.",
+    "Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.": "Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.",
+    "Requests, 0-1000": "Requests, 0-1000",
+    "Seconds, 60-86400": "Seconds, 60-86400"
   }
 }

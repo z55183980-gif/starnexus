@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,51 @@ func buildChannelAffinityTemplateContextForTest(meta channelAffinityMeta) *gin.C
 	ctx, _ := gin.CreateTestContext(rec)
 	setChannelAffinityContext(ctx, meta)
 	return ctx
+}
+
+func TestGetUpstreamAccountAffinityContext_PreservesChannelAffinityMeta(t *testing.T) {
+	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+		CacheKey:       "channel-key",
+		KeyFingerprint: "abcd1234",
+		TTLSeconds:     7200,
+	})
+
+	affinity, ok := GetUpstreamAccountAffinityContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, "abcd1234", affinity.KeyFingerprint)
+	require.Equal(t, fmt.Sprintf("%x", common.Sha256Raw([]byte("channel-key"))), affinity.KeySeed)
+	require.Equal(t, 7200, affinity.TTLSeconds)
+}
+
+func TestGetUpstreamAccountAffinityContext_FallsBackWithoutChannelAffinityMeta(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"prompt_cache_key":"session-123"}`))
+	defer common.CleanupBodyStorage(ctx)
+
+	affinity, ok := GetUpstreamAccountAffinityContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, affinityFingerprint("session-123"), affinity.KeyFingerprint)
+	require.NotEmpty(t, affinity.KeySeed)
+	require.Zero(t, affinity.TTLSeconds)
+}
+
+func TestGetUpstreamAccountAffinityContext_FallsBackToSessionHeader(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("Session_id", "session-header-123")
+
+	affinity, ok := GetUpstreamAccountAffinityContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, affinityFingerprint("session-header-123"), affinity.KeyFingerprint)
+	require.NotEmpty(t, affinity.KeySeed)
+}
+
+func TestGetUpstreamAccountAffinityContext_RequiresResponsesSessionKey(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"prompt_cache_key":"session-123"}`))
+
+	_, ok := GetUpstreamAccountAffinityContext(ctx)
+	require.False(t, ok)
 }
 
 func TestApplyChannelAffinityOverrideTemplate_NoTemplate(t *testing.T) {

@@ -424,18 +424,46 @@ func GetUpstreamAccountAffinityContext(c *gin.Context) (UpstreamAccountAffinityC
 		return UpstreamAccountAffinityContext{}, false
 	}
 	meta, ok := getChannelAffinityMeta(c)
-	if !ok || strings.TrimSpace(meta.CacheKey) == "" || strings.TrimSpace(meta.KeyFingerprint) == "" {
+	if ok && strings.TrimSpace(meta.CacheKey) != "" && strings.TrimSpace(meta.KeyFingerprint) != "" {
+		ttlSeconds := meta.TTLSeconds
+		if ttlSeconds <= 0 {
+			ttlSeconds = 3600
+		}
+		return UpstreamAccountAffinityContext{
+			KeyFingerprint: meta.KeyFingerprint,
+			KeySeed:        fmt.Sprintf("%x", common.Sha256Raw([]byte(meta.CacheKey))),
+			TTLSeconds:     ttlSeconds,
+		}, true
+	}
+
+	if c.Request == nil || c.Request.URL == nil || c.Request.URL.Path != "/v1/responses" {
 		return UpstreamAccountAffinityContext{}, false
 	}
-	ttlSeconds := meta.TTLSeconds
-	if ttlSeconds <= 0 {
-		ttlSeconds = 3600
+
+	// Account affinity must remain usable when channel affinity is disabled or
+	// has no matching rule. Prefer the established Responses cache key, then the
+	// stable Codex session headers that are already forwarded upstream.
+	fallbackSources := []struct {
+		name   string
+		source operation_setting.ChannelAffinityKeySource
+	}{
+		{name: "prompt_cache_key", source: operation_setting.ChannelAffinityKeySource{Type: "gjson", Path: "prompt_cache_key"}},
+		{name: "session_id", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "Session_id"}},
+		{name: "conversation_id", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "Conversation_id"}},
 	}
-	return UpstreamAccountAffinityContext{
-		KeyFingerprint: meta.KeyFingerprint,
-		KeySeed:        fmt.Sprintf("%x", common.Sha256Raw([]byte(meta.CacheKey))),
-		TTLSeconds:     ttlSeconds,
-	}, true
+	for _, fallback := range fallbackSources {
+		value := extractChannelAffinityValue(c, fallback.source)
+		if value == "" {
+			continue
+		}
+		seedMaterial := fallback.name + "\x00" + value
+		return UpstreamAccountAffinityContext{
+			KeyFingerprint: affinityFingerprint(value),
+			KeySeed:        fmt.Sprintf("%x", common.Sha256Raw([]byte(seedMaterial))),
+		}, true
+	}
+
+	return UpstreamAccountAffinityContext{}, false
 }
 
 func affinityFingerprint(s string) string {

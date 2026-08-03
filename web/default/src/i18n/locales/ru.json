@@ -4974,6 +4974,7 @@
     "This permanently deletes the audit policy and all prompt records for {{username}}.": "Политика аудита и все записи запросов пользователя {{username}} будут удалены безвозвратно.",
     "This permanently deletes the selected users and cannot be undone.": "Выбранные пользователи будут удалены безвозвратно. Это действие нельзя отменить.",
     "This project must be used in compliance with the": "Этот проект должен использоваться в соответствии с",
+    "This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.": "Этот прокси используется только для аккаунтов без собственного прокси. Если прокси аккаунта недоступен, применяется его собственная стратегия отката: без отката возвращается ошибка, прямой откат использует прямое подключение, а откат на другой прокси использует настроенный резервный прокси. Автоматического перехода на прокси этого пула нет.",
     "This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.": "Запись создана экземпляром до обновления и не содержит сведений аудита. Обновите экземпляр, чтобы фиксировать IP сервера, IP callback, способ оплаты и версию ОС.",
     "This site currently has {{count}} models enabled": "На этом сайте сейчас включено моделей: {{count}}",
     "This tier catches any request that did not match earlier tiers.": "This tier catches any request that did not match earlier tiers.",
@@ -5641,6 +5642,19 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Account affinity": "Привязка к аккаунту",
+    "Account affinity is available only for OpenAI pools.": "Привязка к аккаунту доступна только для пулов OpenAI.",
+    "Affinity TTL": "Срок действия привязки",
+    "Affinity wait time": "Время ожидания привязанного аккаунта",
+    "Enable account affinity": "Включить привязку к аккаунту",
+    "Enter a whole number between {{min}} and {{max}} for {{field}}.": "Для поля «{{field}}» введите целое число от {{min}} до {{max}}.",
+    "Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.": "Сохраняет запросы одной сессии OpenAI Responses на одном аккаунте для повышения повторного использования кэша поставщика.",
+    "Maximum affinity waiters": "Максимальное число ожидающих запросов",
+    "Milliseconds, 0-10000": "Миллисекунды, 0-10000",
+    "Prefer the account most recently used by the same session.": "Предпочитать аккаунт, который последним использовался в той же сессии.",
+    "Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.": "Требуется prompt_cache_key в теле запроса либо заголовок Session_id/Conversation_id.",
+    "Requests, 0-1000": "Запросы, 0-1000",
+    "Seconds, 60-86400": "Секунды, 60-86400"
   }
 }

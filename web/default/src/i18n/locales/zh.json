@@ -4974,6 +4974,7 @@
     "This permanently deletes the audit policy and all prompt records for {{username}}.": "这将永久删除 {{username}} 的审计策略及全部提示词记录。",
     "This permanently deletes the selected users and cannot be undone.": "此操作将永久删除所选用户，且无法撤销。",
     "This project must be used in compliance with the": "此项目的使用必须遵守",
+    "This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.": "此代理仅用于未单独绑定代理的账号。账号代理不可用时，只按该代理自身的回退策略处理：不回退将直接报错，回退直连将改为直连，回退到其他代理将使用已配置的备用代理；不会自动回退到此账号池默认代理。",
     "This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.": "该记录由旧版本实例写入，缺少审计信息，建议将实例升级至最新版本以便记录服务器 IP、回调 IP、支付方式与系统版本等审计字段。",
     "This site currently has {{count}} models enabled": "本站当前已启用模型，总计 {{count}} 个",
     "This tier catches any request that did not match earlier tiers.": "该档位会兜底匹配所有未命中前面档位的请求。",
@@ -5641,6 +5642,19 @@
     "Zero retention": "零数据保留",
     "Zhipu": "智谱",
     "Zhipu V4": "智谱 V4",
-    "Zoom": "缩放"
+    "Zoom": "缩放",
+    "Account affinity": "账号粘性",
+    "Account affinity is available only for OpenAI pools.": "账号粘性仅适用于 OpenAI 账号池。",
+    "Affinity TTL": "粘性有效期",
+    "Affinity wait time": "粘性等待时间",
+    "Enable account affinity": "启用账号粘性",
+    "Enter a whole number between {{min}} and {{max}} for {{field}}.": "请为 {{field}} 输入 {{min}} 到 {{max}} 之间的整数。",
+    "Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.": "将同一 OpenAI Responses 会话的请求固定到同一账号，以提高上游缓存复用率。",
+    "Maximum affinity waiters": "最大粘性等待请求数",
+    "Milliseconds, 0-10000": "毫秒，0-10000",
+    "Prefer the account most recently used by the same session.": "优先使用同一会话最近使用过的账号。",
+    "Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.": "请求体必须提供 prompt_cache_key，或提供 Session_id/Conversation_id 请求头，账号粘性才会生效。",
+    "Requests, 0-1000": "请求数，0-1000",
+    "Seconds, 60-86400": "秒，60-86400"
   }
 }

@@ -4974,6 +4974,7 @@
     "This permanently deletes the audit policy and all prompt records for {{username}}.": "Thao tác này xóa vĩnh viễn chính sách giám sát và toàn bộ bản ghi prompt của {{username}}.",
     "This permanently deletes the selected users and cannot be undone.": "Thao tác này xóa vĩnh viễn người dùng đã chọn và không thể hoàn tác.",
     "This project must be used in compliance with the": "Dự án này phải được sử dụng tuân thủ theo",
+    "This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.": "Proxy này chỉ được dùng cho tài khoản chưa có proxy riêng. Nếu proxy của tài khoản không khả dụng, hệ thống áp dụng chiến lược dự phòng của chính proxy đó: không dự phòng sẽ trả lỗi, dự phòng trực tiếp sẽ kết nối trực tiếp, còn dự phòng sang proxy khác sẽ dùng proxy dự phòng đã cấu hình. Hệ thống không tự động chuyển về proxy mặc định của nhóm tài khoản này.",
     "This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.": "Bản ghi này do bản cũ tạo và thiếu thông tin audit. Nâng cấp bản cài để lưu IP máy chủ, IP callback, hình thức thanh toán và phiên bản hệ thống.",
     "This site currently has {{count}} models enabled": "Trang này hiện đã bật {{count}} mô hình",
     "This tier catches any request that did not match earlier tiers.": "This tier catches any request that did not match earlier tiers.",
@@ -5641,6 +5642,19 @@
     "Zero retention": "Không lưu dữ liệu",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "Account affinity": "Độ bám dính tài khoản",
+    "Account affinity is available only for OpenAI pools.": "Độ bám dính tài khoản chỉ khả dụng cho nhóm OpenAI.",
+    "Affinity TTL": "Thời gian hiệu lực bám dính",
+    "Affinity wait time": "Thời gian chờ bám dính",
+    "Enable account affinity": "Bật độ bám dính tài khoản",
+    "Enter a whole number between {{min}} and {{max}} for {{field}}.": "Nhập số nguyên từ {{min}} đến {{max}} cho {{field}}.",
+    "Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.": "Giữ các yêu cầu từ cùng một phiên OpenAI Responses trên cùng một tài khoản để tăng khả năng tái sử dụng bộ nhớ đệm thượng nguồn.",
+    "Maximum affinity waiters": "Số yêu cầu chờ bám dính tối đa",
+    "Milliseconds, 0-10000": "Mili giây, 0-10000",
+    "Prefer the account most recently used by the same session.": "Ưu tiên tài khoản được cùng phiên sử dụng gần đây nhất.",
+    "Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.": "Yêu cầu prompt_cache_key trong nội dung yêu cầu hoặc tiêu đề Session_id/Conversation_id.",
+    "Requests, 0-1000": "Yêu cầu, 0-1000",
+    "Seconds, 60-86400": "Giây, 60-86400"
   }
 }

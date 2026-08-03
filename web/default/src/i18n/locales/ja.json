@@ -4974,6 +4974,7 @@
     "This permanently deletes the audit policy and all prompt records for {{username}}.": "{{username}} の監査ポリシーとすべてのプロンプト記録を完全に削除します。",
     "This permanently deletes the selected users and cannot be undone.": "選択したユーザーは完全に削除され、元に戻すことはできません。",
     "This project must be used in compliance with the": "このプロジェクトは、以下を遵守して使用する必要があります",
+    "This proxy is used only for accounts without their own proxy. If an account proxy becomes unavailable, its own fallback strategy applies: no fallback returns an error, direct fallback connects directly, and proxy fallback uses the configured backup proxy. It does not automatically fall back to this pool proxy.": "このプロキシは、個別のプロキシが設定されていないアカウントにのみ使用されます。アカウントのプロキシが利用できない場合は、そのプロキシ自身のフォールバック設定に従います。フォールバックなしはエラー、直接接続はプロキシを使わず接続、別のプロキシへのフォールバックは設定済みの予備プロキシを使用します。このプールのデフォルトプロキシへ自動的に切り替わることはありません。",
     "This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.": "古いバージョンのインスタンスがこの記録を書き込み、監査情報がありません。最新に更新し、サーバーIP・コールバックIP・支払方法・OSバージョンの記録を有効にしてください。",
     "This site currently has {{count}} models enabled": "このサイトでは現在 {{count}} 個のモデルが有効です",
     "This tier catches any request that did not match earlier tiers.": "この階層は、前の階層に一致しなかったすべてのリクエストを受けます。",
@@ -5641,6 +5642,19 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "Account affinity": "アカウントアフィニティ",
+    "Account affinity is available only for OpenAI pools.": "アカウントアフィニティは OpenAI プールでのみ利用できます。",
+    "Affinity TTL": "アフィニティ有効期間",
+    "Affinity wait time": "アフィニティ待機時間",
+    "Enable account affinity": "アカウントアフィニティを有効にする",
+    "Enter a whole number between {{min}} and {{max}} for {{field}}.": "{{field}} には {{min}} から {{max}} までの整数を入力してください。",
+    "Keeps requests from the same OpenAI Responses session on the same account to improve upstream cache reuse.": "同じ OpenAI Responses セッションのリクエストを同じアカウントに維持し、上流キャッシュの再利用率を高めます。",
+    "Maximum affinity waiters": "アフィニティ最大待機数",
+    "Milliseconds, 0-10000": "ミリ秒、0-10000",
+    "Prefer the account most recently used by the same session.": "同じセッションで直近に使用したアカウントを優先します。",
+    "Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.": "リクエスト本文の prompt_cache_key、または Session_id/Conversation_id リクエストヘッダーが必要です。",
+    "Requests, 0-1000": "リクエスト数、0-1000",
+    "Seconds, 60-86400": "秒、60-86400"
   }
 }
