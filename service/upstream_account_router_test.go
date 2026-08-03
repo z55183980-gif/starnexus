@@ -360,6 +360,35 @@ func TestUpstreamAccountRouterTreatsZeroMembershipPriorityAsHighest(t *testing.T
 	require.NoError(t, selection.Release(context.Background()))
 }
 
+func TestUpstreamAccountRouterFallsBackWhenHighestPriorityIsFull(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "priority-fallback-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	primary := createRouterTestAccount(t, "primary", pool.Id, nil)
+	fallback := createRouterTestAccount(t, "fallback", pool.Id, nil)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
+		Where("pool_id = ? AND account_id = ?", pool.Id, primary.Id).Update("priority", 1).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
+		Where("pool_id = ? AND account_id = ?", pool.Id, fallback.Id).Update("priority", 2).Error)
+
+	manager := NewLocalUpstreamAccountLeaseManager()
+	busyLease, err := manager.Acquire(context.Background(), primary.Id, primary.Concurrency, time.Minute)
+	require.NoError(t, err)
+	router, err := NewUpstreamAccountRouter(manager, time.Minute)
+	require.NoError(t, err)
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex,
+	})
+	require.NoError(t, err)
+	require.Equal(t, fallback.Id, selection.Account.Id)
+	require.NoError(t, selection.Release(context.Background()))
+	require.NoError(t, busyLease.Release(context.Background()))
+}
+
 func TestUpstreamAccountSupportsModelCapabilities(t *testing.T) {
 	tests := []struct {
 		name      string

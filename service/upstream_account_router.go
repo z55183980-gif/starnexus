@@ -155,7 +155,7 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 	}()
 	for {
 		concurrencyFull := false
-		orderedCandidates := weightedUpstreamCandidateOrder(candidates)
+		orderedCandidates := weightedUpstreamCandidateOrder(candidates, schedulerConfig.TopK)
 		if !request.RequirePreferred {
 			orderedCandidates = preferUpstreamAccountCandidate(orderedCandidates, request.PreferredAccountId)
 		}
@@ -378,31 +378,7 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 		exclusions["preferred_account_unavailable"]++
 		return nil, exclusions, nil
 	}
-	bestPriority := candidates[0].membershipPriority
-	for _, candidate := range candidates[1:] {
-		if candidate.membershipPriority < bestPriority {
-			bestPriority = candidate.membershipPriority
-		}
-	}
-	priorityTier := candidates[:0]
-	for _, candidate := range candidates {
-		if candidate.membershipPriority == bestPriority {
-			priorityTier = append(priorityTier, candidate)
-		} else {
-			exclusions["lower_priority"]++
-		}
-	}
-	if schedulerConfig.TopK > 0 && len(priorityTier) > schedulerConfig.TopK {
-		sort.SliceStable(priorityTier, func(i, j int) bool {
-			if priorityTier[i].loadRate == priorityTier[j].loadRate {
-				return priorityTier[i].account.Id < priorityTier[j].account.Id
-			}
-			return priorityTier[i].loadRate < priorityTier[j].loadRate
-		})
-		exclusions["outside_top_k"] += len(priorityTier) - schedulerConfig.TopK
-		priorityTier = priorityTier[:schedulerConfig.TopK]
-	}
-	return priorityTier, exclusions, nil
+	return candidates, exclusions, nil
 }
 
 type upstreamAccountCapabilities struct {
@@ -645,7 +621,37 @@ func upstreamModelRuleMatches(rule string, modelName string) bool {
 	return err == nil && matched
 }
 
-func weightedUpstreamCandidateOrder(candidates []upstreamAccountCandidate) []upstreamAccountCandidate {
+func weightedUpstreamCandidateOrder(candidates []upstreamAccountCandidate, topK int) []upstreamAccountCandidate {
+	pool := append([]upstreamAccountCandidate(nil), candidates...)
+	sort.SliceStable(pool, func(i, j int) bool {
+		if pool[i].membershipPriority == pool[j].membershipPriority {
+			if pool[i].loadRate == pool[j].loadRate {
+				return pool[i].account.Id < pool[j].account.Id
+			}
+			return pool[i].loadRate < pool[j].loadRate
+		}
+		return pool[i].membershipPriority < pool[j].membershipPriority
+	})
+
+	order := make([]upstreamAccountCandidate, 0, len(pool))
+	for start := 0; start < len(pool); {
+		end := start + 1
+		for end < len(pool) && pool[end].membershipPriority == pool[start].membershipPriority {
+			end++
+		}
+		tier := pool[start:end]
+		if topK > 0 && len(tier) > topK {
+			order = append(order, weightedUpstreamCandidateTierOrder(tier[:topK])...)
+			order = append(order, weightedUpstreamCandidateTierOrder(tier[topK:])...)
+		} else {
+			order = append(order, weightedUpstreamCandidateTierOrder(tier)...)
+		}
+		start = end
+	}
+	return order
+}
+
+func weightedUpstreamCandidateTierOrder(candidates []upstreamAccountCandidate) []upstreamAccountCandidate {
 	pool := append([]upstreamAccountCandidate(nil), candidates...)
 	order := make([]upstreamAccountCandidate, 0, len(pool))
 	for len(pool) > 0 {
