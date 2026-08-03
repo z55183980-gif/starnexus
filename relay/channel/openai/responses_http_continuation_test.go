@@ -28,8 +28,19 @@ func newResponsesHTTPIntegrationContext(userID, tokenID int) (*gin.Context, *htt
 	return ctx, recorder
 }
 
+func enableResponsesHTTPPersist(ctx *gin.Context) {
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, 42)
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountPoolId, 3)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountId, 9)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountPlatform, constant.UpstreamPlatformOpenAI)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountType, constant.UpstreamAccountTypeOAuth)
+	service.MarkResponsesHTTPContinuationPersistTarget(ctx)
+}
+
 func TestResponsesHTTPHandlerCommitsFunctionCallContinuationAfterWrite(t *testing.T) {
 	firstCtx, _ := newResponsesHTTPIntegrationContext(8101, 9101)
+	enableResponsesHTTPPersist(firstCtx)
 	service.PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: json.RawMessage(`"lookup"`)})
 	responseBody := `{
 		"id":"resp_http_handler_call",
@@ -58,6 +69,7 @@ func TestResponsesHTTPHandlerCommitsFunctionCallContinuationAfterWrite(t *testin
 
 func TestResponsesSSEBridgePreservesRawReasoningForContinuation(t *testing.T) {
 	firstCtx, _ := newResponsesHTTPIntegrationContext(8102, 9102)
+	enableResponsesHTTPPersist(firstCtx)
 	service.PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: json.RawMessage(`"first"`)})
 	body := `data: {"type":"response.created","response":{"id":"resp_http_bridge_raw"}}
 
@@ -85,6 +97,7 @@ func TestResponsesStreamHandlerCommitsDeliveredFunctionCall(t *testing.T) {
 	constant.StreamingTimeout = 30
 	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
 	firstCtx, _ := newResponsesHTTPIntegrationContext(8103, 9103)
+	enableResponsesHTTPPersist(firstCtx)
 	service.PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: json.RawMessage(`"lookup"`)})
 	body := `data: {"type":"response.created","response":{"id":"resp_http_stream_call"}}
 

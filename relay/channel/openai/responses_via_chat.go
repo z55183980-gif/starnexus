@@ -116,6 +116,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			}
 		}
 	})
+	service.FinalizeResponsesHTTPContinuationStream(c)
 
 	if streamErr != nil {
 		return nil, streamErr

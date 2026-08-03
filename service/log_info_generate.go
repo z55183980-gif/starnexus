@@ -112,6 +112,15 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	if continuationStatus := ctx.GetString(responsesHTTPStatusContextKey); continuationStatus != "" {
 		adminInfo["responses_http_continuation"] = continuationStatus
 	}
+	if persistStatus := ctx.GetString(responsesHTTPPersistStatusContextKey); persistStatus != "" {
+		adminInfo["responses_http_persist"] = persistStatus
+	}
+	if localCacheStatus := ctx.GetString(responsesHTTPLocalCacheContextKey); localCacheStatus != "" {
+		adminInfo["responses_http_local_cache"] = localCacheStatus
+	}
+	if redisStatus := ctx.GetString(responsesHTTPRedisStatusContextKey); redisStatus != "" {
+		adminInfo["responses_http_redis"] = redisStatus
+	}
 	if v, ok := ctx.Get("context_compaction_admin_info"); ok {
 		if info, ok := v.(map[string]interface{}); ok && len(info) > 0 {
 			adminInfo["context_compaction"] = info

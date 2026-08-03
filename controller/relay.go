@@ -254,6 +254,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				// Mark the initial channel attempt as consumed so the next iteration
 				// enters the normal channel selector instead of retrying the same
 				// unavailable local account pool from middleware context.
+				service.ClearResponsesHTTPContinuationPersistTarget(c)
 				relayInfo.InitChannelMeta(c)
 				continue
 			}
@@ -311,6 +312,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 					common.SetContextKey(c, constant.ContextKeyUpstreamAccountExcluded, excludedIds)
 					if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr == nil {
 						accountFailovers++
+						service.ClearResponsesHTTPContinuationPersistTarget(c)
 						relayInfo.InitChannelMeta(c)
 						continue
 					} else {
@@ -328,6 +330,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
+		service.ClearResponsesHTTPContinuationPersistTarget(c)
 	}
 
 	useChannel := c.GetStringSlice("use_channel")

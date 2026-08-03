@@ -116,6 +116,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		if apiErr := service.ApplyResponsesHTTPContinuationForCodex(c, &request); apiErr != nil {
 			return nil, apiErr
 		}
+		service.MarkResponsesHTTPContinuationPersistTarget(c)
 	}
 	if err := normalizeCodexResponsesRequest(&request); err != nil {
 		return nil, err

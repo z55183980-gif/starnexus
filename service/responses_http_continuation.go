@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -23,13 +22,17 @@ import (
 )
 
 const (
-	responsesHTTPContinuationContextKey = "responses_http_continuation"
-	responsesHTTPDeliveredContextKey    = "responses_http_delivered_context"
-	responsesHTTPStagedOutputContextKey = "responses_http_staged_output"
-	responsesHTTPStatusContextKey       = "responses_http_continuation_status"
-	responsesHTTPContinuationTTL        = 2 * time.Hour
-	responsesHTTPContinuationMaxEntries = 65_536
-	responsesHTTPRedisTimeout           = 500 * time.Millisecond
+	responsesHTTPContinuationContextKey   = "responses_http_continuation"
+	responsesHTTPDeliveredContextKey      = "responses_http_delivered_context"
+	responsesHTTPStagedOutputContextKey   = "responses_http_staged_output"
+	responsesHTTPStatusContextKey         = "responses_http_continuation_status"
+	responsesHTTPPersistStatusContextKey  = "responses_http_persist_status"
+	responsesHTTPLocalCacheContextKey     = "responses_http_local_cache_status"
+	responsesHTTPRedisStatusContextKey    = "responses_http_redis_status"
+	responsesHTTPPersistTargetContextKey  = "responses_http_persist_target"
+	responsesHTTPPendingL1ContextKey      = "responses_http_pending_l1"
+	responsesHTTPContinuationTTL          = 2 * time.Hour
+	responsesHTTPRedisTimeout             = 500 * time.Millisecond
 )
 
 type responsesHTTPContinuationState struct {
@@ -37,8 +40,6 @@ type responsesHTTPContinuationState struct {
 	ReplayInput []json.RawMessage `json:"replay_input"`
 	AccountID   int               `json:"account_id,omitempty"`
 	Complete    bool              `json:"complete"`
-	ExpiresAt   time.Time         `json:"-"`
-	UpdatedAt   time.Time         `json:"-"`
 }
 
 type responsesHTTPContinuationPreparation struct {
@@ -55,8 +56,10 @@ type responsesHTTPContinuationPreparation struct {
 }
 
 type responsesHTTPDeliveredContext struct {
-	ResponseID string
-	Output     []json.RawMessage
+	ResponseID        string
+	Output            []json.RawMessage
+	DeliveredToolCall bool
+	TerminalCommitted bool
 }
 
 type responsesHTTPStagedOutput struct {
@@ -64,13 +67,12 @@ type responsesHTTPStagedOutput struct {
 	Output     []json.RawMessage
 }
 
-type responsesHTTPContinuationCache struct {
-	mu      sync.Mutex
-	entries map[string]responsesHTTPContinuationState
-}
-
-var defaultResponsesHTTPContinuationCache = &responsesHTTPContinuationCache{
-	entries: make(map[string]responsesHTTPContinuationState, 256),
+// ResponsesHTTPPersistTarget fingerprints the Codex HTTP attempt that is
+// allowed to create or update continuation state.
+type ResponsesHTTPPersistTarget struct {
+	ChannelID int
+	PoolID    int
+	AccountID int
 }
 
 // PrepareResponsesHTTPContinuation restores a best-effort, gateway-owned
@@ -93,7 +95,7 @@ func PrepareResponsesHTTPContinuation(c *gin.Context, request *dto.OpenAIRespons
 		ReplayComplete:     strings.TrimSpace(request.PreviousResponseID) == "",
 	}
 	if preparation.PreviousResponseID != "" {
-		if state, found := getResponsesHTTPContinuation(c, preparation.PreviousResponseID); found {
+		if state, found := getResponsesHTTPContinuation(c, preparation.PreviousResponseID, false); found {
 			preparation.StateFound = true
 			preparation.ReplayComplete = state.Complete
 			preparation.PreferredAccountID = state.AccountID
@@ -189,6 +191,78 @@ func ResponsesHTTPContinuationPreferredAccountID(c *gin.Context) int {
 	return preparation.PreferredAccountID
 }
 
+// ClearResponsesHTTPContinuationPersistTarget drops any sticky persist
+// fingerprint before channel or account retries.
+func ClearResponsesHTTPContinuationPersistTarget(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Set(responsesHTTPPersistTargetContextKey, (*ResponsesHTTPPersistTarget)(nil))
+}
+
+// MarkResponsesHTTPContinuationPersistTarget records that this attempt is the
+// Codex HTTP path that may create continuation state, and promotes any
+// request-local Redis payloads into the process L1 cache.
+func MarkResponsesHTTPContinuationPersistTarget(c *gin.Context) {
+	if c == nil || !responsesHTTPContinuationPersistEligible(c) {
+		return
+	}
+	target := &ResponsesHTTPPersistTarget{
+		ChannelID: common.GetContextKeyInt(c, appconstant.ContextKeyChannelId),
+		PoolID:    common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountPoolId),
+		AccountID: common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId),
+	}
+	if target.ChannelID <= 0 || target.PoolID <= 0 || target.AccountID <= 0 {
+		return
+	}
+	c.Set(responsesHTTPPersistTargetContextKey, target)
+	promotePendingResponsesHTTPL1(c)
+}
+
+func responsesHTTPContinuationPersistEligible(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
+		return false
+	}
+	if common.GetContextKeyInt(c, appconstant.ContextKeyChannelType) != appconstant.ChannelTypeCodex {
+		return false
+	}
+	if common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountPoolId) <= 0 {
+		return false
+	}
+	if common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId) <= 0 {
+		return false
+	}
+	platform := strings.TrimSpace(common.GetContextKeyString(c, appconstant.ContextKeyUpstreamAccountPlatform))
+	accountType := strings.TrimSpace(common.GetContextKeyString(c, appconstant.ContextKeyUpstreamAccountType))
+	return platform == appconstant.UpstreamPlatformOpenAI && accountType == appconstant.UpstreamAccountTypeOAuth
+}
+
+func getResponsesHTTPPersistTarget(c *gin.Context) *ResponsesHTTPPersistTarget {
+	if c == nil {
+		return nil
+	}
+	value, ok := c.Get(responsesHTTPPersistTargetContextKey)
+	if !ok {
+		return nil
+	}
+	target, _ := value.(*ResponsesHTTPPersistTarget)
+	return target
+}
+
+func responsesHTTPPersistTargetMatches(c *gin.Context) bool {
+	target := getResponsesHTTPPersistTarget(c)
+	if target == nil {
+		return false
+	}
+	return target.ChannelID == common.GetContextKeyInt(c, appconstant.ContextKeyChannelId) &&
+		target.PoolID == common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountPoolId) &&
+		target.AccountID == common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId) &&
+		responsesHTTPContinuationPersistEligible(c)
+}
+
 // ApplyResponsesHTTPContinuationForCodex expands the input required by the
 // stateless Codex HTTP endpoint. Plain messages fail open when history is not
 // available; tool outputs fail closed because sending an orphan output is not a
@@ -238,6 +312,24 @@ func setResponsesHTTPContinuationStatus(c *gin.Context, status string) {
 	}
 }
 
+func setResponsesHTTPPersistStatus(c *gin.Context, status string) {
+	if c != nil && status != "" {
+		c.Set(responsesHTTPPersistStatusContextKey, status)
+	}
+}
+
+func setResponsesHTTPLocalCacheStatus(c *gin.Context, status string) {
+	if c != nil && status != "" {
+		c.Set(responsesHTTPLocalCacheContextKey, status)
+	}
+}
+
+func setResponsesHTTPRedisStatus(c *gin.Context, status string) {
+	if c != nil && status != "" {
+		c.Set(responsesHTTPRedisStatusContextKey, status)
+	}
+}
+
 func orphanResponsesHTTPToolOutputError() *types.NewAPIError {
 	return types.NewErrorWithStatusCode(
 		errors.New("tool output continuation cannot be recovered without its matching tool call context"),
@@ -269,10 +361,14 @@ func RecordDeliveredResponsesHTTPEvent(c *gin.Context, data []byte) {
 		item := bytes.TrimSpace(event["item"])
 		if len(item) != 0 && !bytes.Equal(item, []byte("null")) {
 			delivered.Output = appendResponsesHTTPRawMessageOnce(delivered.Output, item)
+			var envelope struct {
+				Type string `json:"type"`
+			}
+			if common.Unmarshal(item, &envelope) == nil && isResponsesHTTPToolCallContextType(envelope.Type) {
+				delivered.DeliveredToolCall = true
+			}
 		}
-		if delivered.ResponseID != "" {
-			CommitResponsesHTTPContinuation(c, delivered.ResponseID, delivered.Output)
-		}
+		// Deferred: do not commit on intermediate tool items.
 	case "response.completed", "response.done", "response.incomplete":
 		responseID, output := responsesHTTPResponseEnvelope(event["response"])
 		if responseID != "" {
@@ -283,8 +379,24 @@ func RecordDeliveredResponsesHTTPEvent(c *gin.Context, data []byte) {
 		}
 		if delivered.ResponseID != "" {
 			CommitResponsesHTTPContinuation(c, delivered.ResponseID, delivered.Output)
+			delivered.TerminalCommitted = true
 		}
 	}
+	c.Set(responsesHTTPDeliveredContextKey, delivered)
+}
+
+// FinalizeResponsesHTTPContinuationStream commits once when a stream ends
+// after tool calls were delivered without a terminal Responses event.
+func FinalizeResponsesHTTPContinuationStream(c *gin.Context) {
+	if c == nil || getResponsesHTTPPreparation(c) == nil {
+		return
+	}
+	delivered := getResponsesHTTPDeliveredContext(c)
+	if delivered.TerminalCommitted || !delivered.DeliveredToolCall || strings.TrimSpace(delivered.ResponseID) == "" {
+		return
+	}
+	CommitResponsesHTTPContinuation(c, delivered.ResponseID, delivered.Output)
+	delivered.TerminalCommitted = true
 	c.Set(responsesHTTPDeliveredContextKey, delivered)
 }
 
@@ -296,9 +408,14 @@ func CommitResponsesHTTPContinuation(c *gin.Context, responseID string, output [
 	if preparation == nil || responseID == "" || !preparation.FullInputExists || !preparation.ReplayComplete || preparation.ContinuationConflict != "" || preparation.ContextTooLarge {
 		return
 	}
+	if !responsesHTTPPersistTargetMatches(c) {
+		setResponsesHTTPPersistStatus(c, "skipped_scope")
+		return
+	}
 	replayInput := cloneResponsesHTTPRawMessages(preparation.FullInput)
 	replayInput = append(replayInput, cloneResponsesHTTPRawMessages(output)...)
 	if responsesHTTPRawMessagesSize(replayInput) > responsesHTTPReplayLimitBytes() {
+		setResponsesHTTPPersistStatus(c, "skipped_replay_limit")
 		return
 	}
 	putResponsesHTTPContinuation(c, responseID, responsesHTTPContinuationState{
@@ -401,34 +518,77 @@ func responsesHTTPContinuationCacheKey(c *gin.Context, responseID string) string
 	return fmt.Sprintf("responses:http:continuation:%x", digest)
 }
 
-func getResponsesHTTPContinuation(c *gin.Context, responseID string) (responsesHTTPContinuationState, bool) {
+func getResponsesHTTPContinuation(c *gin.Context, responseID string, promoteToL1 bool) (responsesHTTPContinuationState, bool) {
 	key := responsesHTTPContinuationCacheKey(c, responseID)
 	if key == "" {
 		return responsesHTTPContinuationState{}, false
 	}
-	if state, ok := defaultResponsesHTTPContinuationCache.get(key); ok {
+	if encoded, ok := defaultResponsesHTTPContinuationCache.getEncoded(key); ok {
+		state, err := decodeResponsesHTTPContinuationState(encoded)
+		if err != nil {
+			return responsesHTTPContinuationState{}, false
+		}
 		return state, true
 	}
 	if !common.RedisEnabled || common.RDB == nil {
 		return responsesHTTPContinuationState{}, false
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), responsesHTTPRedisTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), responsesHTTPRedisTimeout)
+	if c != nil && c.Request != nil {
+		ctx, cancel = context.WithTimeout(c.Request.Context(), responsesHTTPRedisTimeout)
+	}
 	defer cancel()
-	encoded, err := common.RDB.Get(ctx, key).Result()
+	encoded, err := common.RDB.Get(ctx, key).Bytes()
 	if err != nil {
 		if !errors.Is(err, redis.Nil) {
 			logger.LogWarn(c, "Responses HTTP continuation Redis read failed: "+err.Error())
 		}
 		return responsesHTTPContinuationState{}, false
 	}
-	var state responsesHTTPContinuationState
-	if common.UnmarshalJsonStr(encoded, &state) != nil {
+	state, decodeErr := decodeResponsesHTTPContinuationState(encoded)
+	if decodeErr != nil {
 		return responsesHTTPContinuationState{}, false
 	}
-	state.ExpiresAt = time.Now().Add(responsesHTTPContinuationTTL)
-	state.UpdatedAt = time.Now()
-	defaultResponsesHTTPContinuationCache.put(key, state)
-	return cloneResponsesHTTPContinuationState(state), true
+	if promoteToL1 {
+		status := defaultResponsesHTTPContinuationCache.putEncoded(key, encoded)
+		setResponsesHTTPLocalCacheStatus(c, status)
+	} else {
+		stashPendingResponsesHTTPL1(c, key, encoded)
+	}
+	return state, true
+}
+
+func stashPendingResponsesHTTPL1(c *gin.Context, key string, encoded []byte) {
+	if c == nil || key == "" || len(encoded) == 0 {
+		return
+	}
+	pending := getPendingResponsesHTTPL1(c)
+	pending[key] = append([]byte(nil), encoded...)
+	c.Set(responsesHTTPPendingL1ContextKey, pending)
+}
+
+func getPendingResponsesHTTPL1(c *gin.Context) map[string][]byte {
+	if c == nil {
+		return map[string][]byte{}
+	}
+	if value, ok := c.Get(responsesHTTPPendingL1ContextKey); ok {
+		if pending, ok := value.(map[string][]byte); ok && pending != nil {
+			return pending
+		}
+	}
+	return map[string][]byte{}
+}
+
+func promotePendingResponsesHTTPL1(c *gin.Context) {
+	pending := getPendingResponsesHTTPL1(c)
+	if len(pending) == 0 {
+		return
+	}
+	for key, encoded := range pending {
+		status := defaultResponsesHTTPContinuationCache.putEncoded(key, encoded)
+		setResponsesHTTPLocalCacheStatus(c, status)
+	}
+	c.Set(responsesHTTPPendingL1ContextKey, map[string][]byte{})
 }
 
 func putResponsesHTTPContinuation(c *gin.Context, responseID string, state responsesHTTPContinuationState) {
@@ -436,67 +596,70 @@ func putResponsesHTTPContinuation(c *gin.Context, responseID string, state respo
 	if key == "" {
 		return
 	}
-	now := time.Now()
 	state.ReplayInput = cloneResponsesHTTPRawMessages(state.ReplayInput)
-	state.ExpiresAt = now.Add(responsesHTTPContinuationTTL)
-	state.UpdatedAt = now
-	defaultResponsesHTTPContinuationCache.put(key, state)
-	if !common.RedisEnabled || common.RDB == nil {
-		return
-	}
 	encoded, err := common.Marshal(state)
 	if err != nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), responsesHTTPRedisTimeout)
-	defer cancel()
-	if err := common.RDB.Set(ctx, key, encoded, responsesHTTPContinuationTTL).Err(); err != nil {
-		logger.LogWarn(c, "Responses HTTP continuation Redis write failed: "+err.Error())
-	}
-}
-
-func (cache *responsesHTTPContinuationCache) get(key string) (responsesHTTPContinuationState, bool) {
-	if cache == nil {
-		return responsesHTTPContinuationState{}, false
-	}
-	now := time.Now()
-	cache.mu.Lock()
-	state, ok := cache.entries[key]
-	if ok && !now.Before(state.ExpiresAt) {
-		delete(cache.entries, key)
-		ok = false
-	}
-	cache.mu.Unlock()
-	if !ok {
-		return responsesHTTPContinuationState{}, false
-	}
-	return cloneResponsesHTTPContinuationState(state), true
-}
-
-func (cache *responsesHTTPContinuationCache) put(key string, state responsesHTTPContinuationState) {
-	if cache == nil || key == "" {
+	limits := defaultResponsesHTTPContinuationCache.limits
+	payloadSize := int64(len(encoded))
+	if payloadSize > limits.RedisMaxEntryBytes {
+		setResponsesHTTPPersistStatus(c, "skipped_redis_entry_limit")
+		setResponsesHTTPRedisStatus(c, "rejected_too_large")
 		return
 	}
-	cache.mu.Lock()
-	now := time.Now()
-	for entryKey, entry := range cache.entries {
-		if !now.Before(entry.ExpiresAt) {
-			delete(cache.entries, entryKey)
-		}
+
+	localStatus := defaultResponsesHTTPContinuationCache.putEncoded(key, encoded)
+	setResponsesHTTPLocalCacheStatus(c, localStatus)
+	setResponsesHTTPPersistStatus(c, "stored")
+
+	if !common.RedisEnabled || common.RDB == nil {
+		setResponsesHTTPRedisStatus(c, "disabled")
+		return
 	}
-	if _, exists := cache.entries[key]; !exists && len(cache.entries) >= responsesHTTPContinuationMaxEntries {
-		oldestKey := ""
-		var oldest time.Time
-		for entryKey, entry := range cache.entries {
-			if oldestKey == "" || entry.UpdatedAt.Before(oldest) {
-				oldestKey = entryKey
-				oldest = entry.UpdatedAt
+	allowed, isProbe := defaultResponsesHTTPRedisCircuit.allow()
+	if !allowed {
+		setResponsesHTTPRedisStatus(c, "oom_circuit")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), responsesHTTPRedisTimeout)
+	if c != nil && c.Request != nil {
+		ctx, cancel = context.WithTimeout(c.Request.Context(), responsesHTTPRedisTimeout)
+	}
+	defer cancel()
+	if err := common.RDB.Set(ctx, key, encoded, limits.TTL).Err(); err != nil {
+		isOOM := isResponsesHTTPRedisOOMError(err)
+		defaultResponsesHTTPRedisCircuit.fail(isOOM)
+		if isOOM {
+			setResponsesHTTPRedisStatus(c, "oom_circuit")
+			if defaultResponsesHTTPRedisCircuit.shouldLog() {
+				logger.LogWarn(c, "Responses HTTP continuation Redis write failed: "+err.Error())
 			}
+			return
 		}
-		delete(cache.entries, oldestKey)
+		setResponsesHTTPRedisStatus(c, "error")
+		if isProbe {
+			// Non-OOM probe failure keeps circuit closed via fail(false).
+		}
+		if defaultResponsesHTTPRedisCircuit.shouldLog() {
+			logger.LogWarn(c, "Responses HTTP continuation Redis write failed: "+err.Error())
+		}
+		return
 	}
-	cache.entries[key] = cloneResponsesHTTPContinuationState(state)
-	cache.mu.Unlock()
+	defaultResponsesHTTPRedisCircuit.success()
+	if isProbe {
+		setResponsesHTTPRedisStatus(c, "recovered")
+	} else {
+		setResponsesHTTPRedisStatus(c, "ok")
+	}
+}
+
+func decodeResponsesHTTPContinuationState(encoded []byte) (responsesHTTPContinuationState, error) {
+	var state responsesHTTPContinuationState
+	if err := common.Unmarshal(encoded, &state); err != nil {
+		return responsesHTTPContinuationState{}, err
+	}
+	return cloneResponsesHTTPContinuationState(state), nil
 }
 
 func cloneResponsesHTTPContinuationState(state responsesHTTPContinuationState) responsesHTTPContinuationState {

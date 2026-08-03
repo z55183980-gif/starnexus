@@ -129,7 +129,14 @@ func TestCodexHTTPExpandsGatewayContinuationBeforeDroppingPreviousResponseID(t *
 	firstCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	common.SetContextKey(firstCtx, constant.ContextKeyUserId, 8201)
 	common.SetContextKey(firstCtx, constant.ContextKeyTokenId, 9201)
+	common.SetContextKey(firstCtx, constant.ContextKeyChannelId, 42)
+	common.SetContextKey(firstCtx, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	common.SetContextKey(firstCtx, constant.ContextKeyUpstreamAccountPoolId, 3)
+	common.SetContextKey(firstCtx, constant.ContextKeyUpstreamAccountId, 9)
+	common.SetContextKey(firstCtx, constant.ContextKeyUpstreamAccountPlatform, constant.UpstreamPlatformOpenAI)
+	common.SetContextKey(firstCtx, constant.ContextKeyUpstreamAccountType, constant.UpstreamAccountTypeOAuth)
 	service.PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: []byte(`"lookup"`)})
+	service.MarkResponsesHTTPContinuationPersistTarget(firstCtx)
 	service.CommitResponsesHTTPContinuation(firstCtx, "resp_codex_http", []json.RawMessage{
 		json.RawMessage(`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{}"}`),
 	})
@@ -138,6 +145,12 @@ func TestCodexHTTPExpandsGatewayContinuationBeforeDroppingPreviousResponseID(t *
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	common.SetContextKey(ctx, constant.ContextKeyUserId, 8201)
 	common.SetContextKey(ctx, constant.ContextKeyTokenId, 9201)
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, 42)
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountPoolId, 3)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountId, 9)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountPlatform, constant.UpstreamPlatformOpenAI)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountType, constant.UpstreamAccountTypeOAuth)
 	request := dto.OpenAIResponsesRequest{
 		Model:              "gpt-5",
 		PreviousResponseID: "resp_codex_http",
