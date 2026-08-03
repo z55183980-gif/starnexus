@@ -33,6 +33,20 @@ type UpstreamAccountSelectionRequest struct {
 	PreferredAccountId    int
 	RequirePreferred      bool
 	RequiredWebSocketMode string
+	AccountAffinitySeed   string
+	AccountAffinityKeyFP  string
+	AccountAffinityTTL    int
+	PreferredWaitTimeout  time.Duration
+	PreferredMaxWaiters   int
+}
+
+type UpstreamAccountAffinitySelectionInfo struct {
+	Enabled            bool
+	KeyFingerprint     string
+	CacheHit           bool
+	PreferredAccountID int
+	SelectedAccountID  int
+	Outcome            string
 }
 
 type UpstreamAccountSelection struct {
@@ -44,6 +58,7 @@ type UpstreamAccountSelection struct {
 	Proxy       *model.UpstreamProxy
 	ProxyURL    string
 	Lease       *UpstreamAccountLease
+	Affinity    *UpstreamAccountAffinitySelectionInfo
 
 	leaseTTL      time.Duration
 	refreshCancel context.CancelFunc
@@ -59,6 +74,8 @@ type UpstreamAccountRouter struct {
 	maxWaiters             int
 	waiterMu               sync.Mutex
 	waiters                int
+	preferredWaiters       map[int]int
+	affinityStore          upstreamAccountAffinityStore
 }
 
 type upstreamAccountCandidate struct {
@@ -94,6 +111,7 @@ func NewUpstreamAccountRouter(leaseManager UpstreamAccountLeaseManager, leaseTTL
 	return &UpstreamAccountRouter{
 		leaseManager: leaseManager, leaseTTL: leaseTTL,
 		concurrencyWaitTimeout: waitTimeout, concurrencyWaitPoll: waitPoll, maxWaiters: maxWaiters,
+		preferredWaiters: make(map[int]int), affinityStore: newDefaultUpstreamAccountAffinityStore(),
 	}, nil
 }
 
@@ -121,6 +139,141 @@ func GetConfiguredUpstreamAccountRouter() (*UpstreamAccountRouter, error) {
 }
 
 func (router *UpstreamAccountRouter) Select(ctx context.Context, request UpstreamAccountSelectionRequest) (*UpstreamAccountSelection, error) {
+	affinity, enabled := router.resolveAccountAffinity(ctx, request)
+	if !enabled {
+		return router.selectWithoutAccountAffinity(ctx, request)
+	}
+
+	if affinity.CacheHit && request.PreferredAccountId <= 0 {
+		stickyRequest := request
+		stickyRequest.AccountAffinitySeed = ""
+		stickyRequest.PreferredAccountId = affinity.PreferredAccountID
+		stickyRequest.RequirePreferred = true
+		stickyRequest.PreferredWaitTimeout = affinity.waitTimeout
+		stickyRequest.PreferredMaxWaiters = affinity.maxWaiters
+		selection, err := router.selectWithoutAccountAffinity(ctx, stickyRequest)
+		if err == nil {
+			affinity.Outcome = "sticky_hit"
+			return router.finishAccountAffinity(ctx, request, selection, affinity), nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+
+		fallbackRequest := request
+		fallbackRequest.AccountAffinitySeed = ""
+		fallbackRequest.ExcludedIds = cloneUpstreamAccountExclusions(request.ExcludedIds)
+		fallbackRequest.ExcludedIds[affinity.PreferredAccountID] = struct{}{}
+		selection, err = router.selectWithoutAccountAffinity(ctx, fallbackRequest)
+		if err != nil {
+			return nil, err
+		}
+		affinity.Outcome = "sticky_fallback"
+		return router.finishAccountAffinity(ctx, request, selection, affinity), nil
+	}
+
+	plainRequest := request
+	plainRequest.AccountAffinitySeed = ""
+	selection, err := router.selectWithoutAccountAffinity(ctx, plainRequest)
+	if err != nil {
+		return nil, err
+	}
+	if affinity.CacheHit {
+		affinity.Outcome = "preferred_override"
+	} else {
+		affinity.Outcome = "bound_new"
+	}
+	return router.finishAccountAffinity(ctx, request, selection, affinity), nil
+}
+
+type resolvedUpstreamAccountAffinity struct {
+	UpstreamAccountAffinitySelectionInfo
+	key         string
+	ttl         time.Duration
+	waitTimeout time.Duration
+	maxWaiters  int
+}
+
+func (router *UpstreamAccountRouter) resolveAccountAffinity(ctx context.Context, request UpstreamAccountSelectionRequest) (*resolvedUpstreamAccountAffinity, bool) {
+	if router == nil || router.affinityStore == nil || request.ResponsesWebSocket || strings.TrimSpace(request.AccountAffinitySeed) == "" || request.PoolId <= 0 || strings.TrimSpace(request.RequestPath) != "/v1/responses" {
+		return nil, false
+	}
+	var pool model.UpstreamAccountPool
+	if err := model.DB.First(&pool, request.PoolId).Error; err != nil || pool.Platform != constant.UpstreamPlatformOpenAI {
+		return nil, false
+	}
+	config, err := model.ParseUpstreamAccountSchedulerConfig(pool.SchedulerConfig)
+	if err != nil || !config.SessionAffinityEnabled {
+		return nil, false
+	}
+	ttlSeconds := config.SessionAffinityTTLSeconds
+	if request.AccountAffinityTTL > 0 && request.AccountAffinityTTL < ttlSeconds {
+		ttlSeconds = request.AccountAffinityTTL
+	}
+	if ttlSeconds <= 0 {
+		ttlSeconds = 3600
+	}
+	key := buildUpstreamAccountAffinityKey(request.PoolId, request.Model, request.AccountAffinitySeed)
+	resolved := &resolvedUpstreamAccountAffinity{
+		UpstreamAccountAffinitySelectionInfo: UpstreamAccountAffinitySelectionInfo{
+			Enabled: true, KeyFingerprint: request.AccountAffinityKeyFP,
+		},
+		key: key, ttl: time.Duration(ttlSeconds) * time.Second,
+		waitTimeout: time.Duration(config.SessionAffinityWaitMs) * time.Millisecond,
+		maxWaiters:  config.SessionAffinityMaxWaiters,
+	}
+	accountID, found, getErr := router.affinityStore.Get(ctx, key)
+	if getErr != nil {
+		common.SysError(fmt.Sprintf("upstream account affinity cache get failed: pool=%d err=%v", request.PoolId, getErr))
+		resolved.Outcome = "cache_error"
+		return resolved, true
+	}
+	resolved.CacheHit = found && accountID > 0
+	resolved.PreferredAccountID = accountID
+	return resolved, true
+}
+
+func (router *UpstreamAccountRouter) finishAccountAffinity(ctx context.Context, request UpstreamAccountSelectionRequest, selection *UpstreamAccountSelection, affinity *resolvedUpstreamAccountAffinity) *UpstreamAccountSelection {
+	if selection == nil || affinity == nil {
+		return selection
+	}
+	affinity.SelectedAccountID = selection.Account.Id
+	if selection.Account.Platform != constant.UpstreamPlatformOpenAI || selection.Account.Type != constant.UpstreamAccountTypeOAuth {
+		affinity.Outcome = "ineligible_account_type"
+		selection.Affinity = &affinity.UpstreamAccountAffinitySelectionInfo
+		return selection
+	}
+	if affinity.CacheHit && affinity.PreferredAccountID > 0 {
+		replaced, err := router.affinityStore.Replace(ctx, affinity.key, affinity.PreferredAccountID, selection.Account.Id, affinity.ttl)
+		if err != nil {
+			common.SysError(fmt.Sprintf("upstream account affinity cache replace failed: pool=%d err=%v", request.PoolId, err))
+			affinity.Outcome = "cache_error"
+		} else if !replaced {
+			affinity.Outcome = "binding_changed"
+		}
+	} else {
+		winner, installed, err := router.affinityStore.BindIfAbsent(ctx, affinity.key, selection.Account.Id, affinity.ttl)
+		if err != nil {
+			common.SysError(fmt.Sprintf("upstream account affinity cache bind failed: pool=%d err=%v", request.PoolId, err))
+			affinity.Outcome = "cache_error"
+		} else if !installed && winner != selection.Account.Id {
+			affinity.Outcome = "binding_race"
+			affinity.PreferredAccountID = winner
+		}
+	}
+	selection.Affinity = &affinity.UpstreamAccountAffinitySelectionInfo
+	return selection
+}
+
+func cloneUpstreamAccountExclusions(source map[int]struct{}) map[int]struct{} {
+	result := make(map[int]struct{}, len(source)+1)
+	for accountID := range source {
+		result[accountID] = struct{}{}
+	}
+	return result
+}
+
+func (router *UpstreamAccountRouter) selectWithoutAccountAffinity(ctx context.Context, request UpstreamAccountSelectionRequest) (*UpstreamAccountSelection, error) {
 	if router == nil || router.leaseManager == nil || request.PoolId <= 0 {
 		return nil, errors.New("invalid upstream account selection request")
 	}
@@ -147,11 +300,19 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 		return nil, err
 	}
 
-	waitDeadline := time.Now().Add(router.concurrencyWaitTimeout)
+	waitTimeout := router.concurrencyWaitTimeout
+	if request.RequirePreferred && request.PreferredWaitTimeout > 0 {
+		waitTimeout = request.PreferredWaitTimeout
+	}
+	waitDeadline := time.Now().Add(waitTimeout)
 	waiting := false
+	preferredWaiting := false
 	defer func() {
 		if waiting {
 			router.endConcurrencyWait()
+		}
+		if preferredWaiting {
+			router.endPreferredConcurrencyWait(request.PreferredAccountId)
 		}
 	}()
 	for {
@@ -209,7 +370,18 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 			break
 		}
 		if !waiting {
+			if request.RequirePreferred && request.PreferredMaxWaiters > 0 {
+				if !router.beginPreferredConcurrencyWait(request.PreferredAccountId, request.PreferredMaxWaiters) {
+					exclusions["preferred_wait_queue_full"]++
+					break
+				}
+				preferredWaiting = true
+			}
 			if !router.beginConcurrencyWait() {
+				if preferredWaiting {
+					router.endPreferredConcurrencyWait(request.PreferredAccountId)
+					preferredWaiting = false
+				}
 				exclusions["wait_queue_full"]++
 				break
 			}
@@ -589,6 +761,35 @@ func (router *UpstreamAccountRouter) endConcurrencyWait() {
 		router.waiters--
 	}
 	router.waiterMu.Unlock()
+}
+
+func (router *UpstreamAccountRouter) beginPreferredConcurrencyWait(accountID int, maxWaiters int) bool {
+	if router == nil || accountID <= 0 || maxWaiters <= 0 {
+		return false
+	}
+	router.waiterMu.Lock()
+	defer router.waiterMu.Unlock()
+	if router.preferredWaiters == nil {
+		router.preferredWaiters = make(map[int]int)
+	}
+	if router.preferredWaiters[accountID] >= maxWaiters {
+		return false
+	}
+	router.preferredWaiters[accountID]++
+	return true
+}
+
+func (router *UpstreamAccountRouter) endPreferredConcurrencyWait(accountID int) {
+	if router == nil || accountID <= 0 {
+		return
+	}
+	router.waiterMu.Lock()
+	defer router.waiterMu.Unlock()
+	if router.preferredWaiters[accountID] <= 1 {
+		delete(router.preferredWaiters, accountID)
+		return
+	}
+	router.preferredWaiters[accountID]--
 }
 
 func (router *UpstreamAccountRouter) waitForConcurrency(ctx context.Context, deadline time.Time) bool {

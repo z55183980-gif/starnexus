@@ -115,6 +115,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
+	AppendUpstreamAccountAffinityAdminInfo(ctx, adminInfo)
 	if continuationStatus := ctx.GetString(responsesHTTPStatusContextKey); continuationStatus != "" {
 		adminInfo["responses_http_continuation"] = continuationStatus
 	}

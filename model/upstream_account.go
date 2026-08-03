@@ -32,14 +32,18 @@ type UpstreamAccountPool struct {
 func (UpstreamAccountPool) TableName() string { return "upstream_account_pools" }
 
 type UpstreamAccountSchedulerConfig struct {
-	Version             int                `json:"version"`
-	TopK                int                `json:"top_k"`
-	Strategy            string             `json:"strategy,omitempty"`
-	PrioritySource      string             `json:"priority_source,omitempty"`
-	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
-	DefaultMappedModel  string             `json:"default_mapped_model"`
-	ModelRouting        map[string][]int64 `json:"model_routing"`
-	ModelRoutingIdSpace string             `json:"model_routing_id_space"`
+	Version                   int                `json:"version"`
+	TopK                      int                `json:"top_k"`
+	Strategy                  string             `json:"strategy,omitempty"`
+	PrioritySource            string             `json:"priority_source,omitempty"`
+	ModelRoutingEnabled       bool               `json:"model_routing_enabled"`
+	DefaultMappedModel        string             `json:"default_mapped_model"`
+	ModelRouting              map[string][]int64 `json:"model_routing"`
+	ModelRoutingIdSpace       string             `json:"model_routing_id_space"`
+	SessionAffinityEnabled    bool               `json:"session_affinity_enabled,omitempty"`
+	SessionAffinityTTLSeconds int                `json:"session_affinity_ttl_seconds,omitempty"`
+	SessionAffinityWaitMs     int                `json:"session_affinity_wait_ms,omitempty"`
+	SessionAffinityMaxWaiters int                `json:"session_affinity_max_waiters,omitempty"`
 }
 
 func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerConfig, error) {
@@ -93,6 +97,29 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 				return config, errors.New("scheduler_config model_routing account ids must be positive")
 			}
 		}
+	}
+	if config.SessionAffinityEnabled {
+		if config.SessionAffinityTTLSeconds == 0 {
+			config.SessionAffinityTTLSeconds = 3600
+		}
+		if config.SessionAffinityWaitMs == 0 {
+			config.SessionAffinityWaitMs = 1500
+		}
+		if config.SessionAffinityMaxWaiters == 0 {
+			config.SessionAffinityMaxWaiters = 3
+		}
+	}
+	if config.SessionAffinityTTLSeconds < 0 || config.SessionAffinityTTLSeconds > 86400 {
+		return config, errors.New("scheduler_config session_affinity_ttl_seconds must be between 0 and 86400")
+	}
+	if config.SessionAffinityEnabled && config.SessionAffinityTTLSeconds < 60 {
+		return config, errors.New("scheduler_config session_affinity_ttl_seconds must be at least 60 when enabled")
+	}
+	if config.SessionAffinityWaitMs < 0 || config.SessionAffinityWaitMs > 10000 {
+		return config, errors.New("scheduler_config session_affinity_wait_ms must be between 0 and 10000")
+	}
+	if config.SessionAffinityMaxWaiters < 0 || config.SessionAffinityMaxWaiters > 1000 {
+		return config, errors.New("scheduler_config session_affinity_max_waiters must be between 0 and 1000")
 	}
 	return config, nil
 }

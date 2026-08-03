@@ -544,6 +544,15 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 	}
 	codexClient, codexAppServer := detectCodexClient(c)
 	excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
+	accountAffinity, hasAccountAffinity := service.GetUpstreamAccountAffinityContext(c)
+	accountAffinitySeed := ""
+	accountAffinityKeyFP := ""
+	accountAffinityTTL := 0
+	if hasAccountAffinity {
+		accountAffinitySeed = accountAffinity.KeySeed
+		accountAffinityKeyFP = accountAffinity.KeyFingerprint
+		accountAffinityTTL = accountAffinity.TTLSeconds
+	}
 	selection, err := router.Select(c.Request.Context(), service.UpstreamAccountSelectionRequest{
 		PoolId: *channel.UpstreamAccountPoolId, ChannelType: channel.Type,
 		AllowedAccountTypes: localUpstreamAllowedAccountTypes(
@@ -557,10 +566,14 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		PreferredAccountId:    common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountPreferredId),
 		RequirePreferred:      common.GetContextKeyBool(c, constant.ContextKeyUpstreamAccountPreferredRequired),
 		RequiredWebSocketMode: common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountRequiredWSMode),
+		AccountAffinitySeed:   accountAffinitySeed,
+		AccountAffinityKeyFP:  accountAffinityKeyFP,
+		AccountAffinityTTL:    accountAffinityTTL,
 	})
 	if err != nil {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
+	service.MarkUpstreamAccountAffinitySelection(c, selection.Affinity)
 	effectiveChannelType, err := localUpstreamChannelType(selection.Account.Platform, selection.Account.Type)
 	if err != nil {
 		_ = selection.Release(context.Background())

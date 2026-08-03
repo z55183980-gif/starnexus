@@ -63,6 +63,15 @@ type ChannelAffinityStatsContext struct {
 	TTLSeconds     int64
 }
 
+// UpstreamAccountAffinityContext exposes an opaque, non-reversible session key
+// for local account-pool routing. The raw client affinity value never leaves
+// this package.
+type UpstreamAccountAffinityContext struct {
+	KeyFingerprint string
+	KeySeed        string
+	TTLSeconds     int
+}
+
 const (
 	cacheTokenRateModeCachedOverPrompt           = "cached_over_prompt"
 	cacheTokenRateModeCachedOverPromptPlusCached = "cached_over_prompt_plus_cached"
@@ -406,6 +415,25 @@ func GetChannelAffinityStatsContext(c *gin.Context) (ChannelAffinityStatsContext
 		RuleName:       ruleName,
 		UsingGroup:     usingGroup,
 		KeyFingerprint: keyFp,
+		TTLSeconds:     ttlSeconds,
+	}, true
+}
+
+func GetUpstreamAccountAffinityContext(c *gin.Context) (UpstreamAccountAffinityContext, bool) {
+	if c == nil {
+		return UpstreamAccountAffinityContext{}, false
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	if !ok || strings.TrimSpace(meta.CacheKey) == "" || strings.TrimSpace(meta.KeyFingerprint) == "" {
+		return UpstreamAccountAffinityContext{}, false
+	}
+	ttlSeconds := meta.TTLSeconds
+	if ttlSeconds <= 0 {
+		ttlSeconds = 3600
+	}
+	return UpstreamAccountAffinityContext{
+		KeyFingerprint: meta.KeyFingerprint,
+		KeySeed:        fmt.Sprintf("%x", common.Sha256Raw([]byte(meta.CacheKey))),
 		TTLSeconds:     ttlSeconds,
 	}, true
 }

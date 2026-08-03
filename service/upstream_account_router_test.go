@@ -77,6 +77,110 @@ func TestUpstreamAccountRouterUsesChannelProxyWhenNoLocalProxy(t *testing.T) {
 	require.NoError(t, selection.Lease.Release(context.Background()))
 }
 
+func TestUpstreamAccountRouterSessionAffinityReusesAccount(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_ttl_seconds":3600,"session_affinity_wait_ms":20,"session_affinity_max_waiters":2}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccount(t, "affinity-first", pool.Id, nil)
+	createRouterTestAccount(t, "affinity-second", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	request := UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", AccountAffinitySeed: "stable-session", AccountAffinityKeyFP: "abc12345",
+	}
+	first, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.NotNil(t, first.Affinity)
+	require.False(t, first.Affinity.CacheHit)
+	require.Equal(t, "bound_new", first.Affinity.Outcome)
+	require.NoError(t, first.Lease.Release(context.Background()))
+
+	second, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, first.Account.Id, second.Account.Id)
+	require.NotNil(t, second.Affinity)
+	require.True(t, second.Affinity.CacheHit)
+	require.Equal(t, "sticky_hit", second.Affinity.Outcome)
+	require.NoError(t, second.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterSessionAffinityFallsBackWhenStickyAccountBusy(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-busy-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_ttl_seconds":3600,"session_affinity_wait_ms":10,"session_affinity_max_waiters":1}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccount(t, "affinity-busy-first", pool.Id, nil)
+	createRouterTestAccount(t, "affinity-busy-second", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	request := UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", AccountAffinitySeed: "busy-session", AccountAffinityKeyFP: "def67890",
+	}
+	first, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	second, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.NotEqual(t, first.Account.Id, second.Account.Id)
+	require.NotNil(t, second.Affinity)
+	require.True(t, second.Affinity.CacheHit)
+	require.Equal(t, "sticky_fallback", second.Affinity.Outcome)
+	require.NoError(t, first.Lease.Release(context.Background()))
+	require.NoError(t, second.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterSessionAffinityDisabledIsNoop(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-disabled-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccount(t, "affinity-disabled", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", AccountAffinitySeed: "ignored-session",
+	})
+	require.NoError(t, err)
+	require.Nil(t, selection.Affinity)
+	require.NoError(t, selection.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterSessionAffinityDoesNotAffectNativeWebSocket(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-websocket-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccountWithExtra(t, "affinity-websocket", pool.Id, `{"openai_oauth_responses_websockets_v2_mode":"ctx_pool"}`)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", ResponsesWebSocket: true,
+		RequiredWebSocketMode: model.UpstreamOpenAIWSModeContextPool,
+		AccountAffinitySeed:   "ignored-websocket-session",
+	})
+	require.NoError(t, err)
+	require.Nil(t, selection.Affinity)
+	require.NoError(t, selection.Lease.Release(context.Background()))
+}
+
 func TestResolveUpstreamAccountModelUsesClaudeGroupDefaultOnlyForClaudeFamilies(t *testing.T) {
 	mapped, matched, supported := resolveUpstreamAccountModel(nil, nil, model.UpstreamAccountOptions{}, "claude-opus-4-6", false, "gpt-5.4")
 	require.True(t, matched)
