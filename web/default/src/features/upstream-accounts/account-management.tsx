@@ -400,7 +400,7 @@ function PoolDialog({
       } catch {
         schedulerConfig = {}
       }
-      schedulerConfig.version = 1
+      schedulerConfig.version = schedulerConfig.version === 2 ? 2 : 1
       schedulerConfig.top_k = Math.max(
         0,
         Math.min(100, Number(draft.topK) || 0)

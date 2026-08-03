@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"path"
 	"sort"
@@ -155,7 +156,7 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 	}()
 	for {
 		concurrencyFull := false
-		orderedCandidates := weightedUpstreamCandidateOrder(candidates, schedulerConfig.TopK)
+		orderedCandidates := weightedUpstreamCandidateOrder(candidates, schedulerConfig)
 		if !request.RequirePreferred {
 			orderedCandidates = preferUpstreamAccountCandidate(orderedCandidates, request.PreferredAccountId)
 		}
@@ -621,7 +622,14 @@ func upstreamModelRuleMatches(rule string, modelName string) bool {
 	return err == nil && matched
 }
 
-func weightedUpstreamCandidateOrder(candidates []upstreamAccountCandidate, topK int) []upstreamAccountCandidate {
+func weightedUpstreamCandidateOrder(candidates []upstreamAccountCandidate, config model.UpstreamAccountSchedulerConfig) []upstreamAccountCandidate {
+	if config.Version == 2 || config.Strategy == "load_score" {
+		return scoredUpstreamCandidateOrder(candidates, config)
+	}
+	return tieredUpstreamCandidateOrder(candidates, config.TopK)
+}
+
+func tieredUpstreamCandidateOrder(candidates []upstreamAccountCandidate, topK int) []upstreamAccountCandidate {
 	pool := append([]upstreamAccountCandidate(nil), candidates...)
 	sort.SliceStable(pool, func(i, j int) bool {
 		if pool[i].membershipPriority == pool[j].membershipPriority {
@@ -647,6 +655,120 @@ func weightedUpstreamCandidateOrder(candidates []upstreamAccountCandidate, topK 
 			order = append(order, weightedUpstreamCandidateTierOrder(tier)...)
 		}
 		start = end
+	}
+	return order
+}
+
+type scoredUpstreamCandidate struct {
+	candidate upstreamAccountCandidate
+	priority  int
+	score     float64
+}
+
+func scoredUpstreamCandidateOrder(candidates []upstreamAccountCandidate, config model.UpstreamAccountSchedulerConfig) []upstreamAccountCandidate {
+	if len(candidates) == 0 {
+		return nil
+	}
+	priorityFor := func(candidate upstreamAccountCandidate) int {
+		if config.PrioritySource == "member" {
+			return candidate.membershipPriority
+		}
+		return candidate.account.Priority
+	}
+	minPriority, maxPriority := priorityFor(candidates[0]), priorityFor(candidates[0])
+	for _, candidate := range candidates[1:] {
+		priority := priorityFor(candidate)
+		if priority < minPriority {
+			minPriority = priority
+		}
+		if priority > maxPriority {
+			maxPriority = priority
+		}
+	}
+
+	ranked := make([]scoredUpstreamCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		priority := priorityFor(candidate)
+		priorityFactor := 1.0
+		if maxPriority > minPriority {
+			priorityFactor = 1 - float64(priority-minPriority)/float64(maxPriority-minPriority)
+		}
+		loadFactor := 1 - candidate.loadRate
+		if loadFactor < 0 {
+			loadFactor = 0
+		}
+		if loadFactor > 1 {
+			loadFactor = 1
+		}
+		ranked = append(ranked, scoredUpstreamCandidate{
+			candidate: candidate,
+			priority:  priority,
+			score:     priorityFactor + loadFactor,
+		})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		if ranked[i].priority != ranked[j].priority {
+			return ranked[i].priority < ranked[j].priority
+		}
+		if ranked[i].candidate.loadRate != ranked[j].candidate.loadRate {
+			return ranked[i].candidate.loadRate < ranked[j].candidate.loadRate
+		}
+		return ranked[i].candidate.account.Id < ranked[j].candidate.account.Id
+	})
+
+	primaryCount := len(ranked)
+	if config.TopK > 0 && primaryCount > config.TopK {
+		primaryCount = config.TopK
+	}
+	order := weightedScoredUpstreamCandidateOrder(ranked[:primaryCount])
+	for _, item := range ranked[primaryCount:] {
+		order = append(order, item.candidate)
+	}
+	return order
+}
+
+func weightedScoredUpstreamCandidateOrder(candidates []scoredUpstreamCandidate) []upstreamAccountCandidate {
+	pool := append([]scoredUpstreamCandidate(nil), candidates...)
+	weights := make([]float64, len(pool))
+	if len(pool) > 0 {
+		minScore := pool[0].score
+		for _, candidate := range pool[1:] {
+			if candidate.score < minScore {
+				minScore = candidate.score
+			}
+		}
+		for index, candidate := range pool {
+			weight := (candidate.score - minScore) + 1
+			weight *= float64(candidate.candidate.membershipWeight)
+			if weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
+				weight = 1
+			}
+			weights[index] = weight
+		}
+	}
+	order := make([]upstreamAccountCandidate, 0, len(pool))
+	for len(pool) > 0 {
+		total := 0.0
+		for _, weight := range weights {
+			total += weight
+		}
+		selected := 0
+		if total > 0 {
+			pick := rand.Float64() * total
+			for index, weight := range weights {
+				pick -= weight
+				if pick <= 0 {
+					selected = index
+					break
+				}
+			}
+		}
+		order = append(order, pool[selected].candidate)
+		pool = append(pool[:selected], pool[selected+1:]...)
+		weights = append(weights[:selected], weights[selected+1:]...)
 	}
 	return order
 }

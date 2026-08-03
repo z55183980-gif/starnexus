@@ -87,10 +87,14 @@ GORM migrations and queries must work on SQLite, MySQL 5.7.8+, and PostgreSQL
 | `source_system`, `source_id` | Idempotent migration identity |
 | `created_at`, `updated_at` | Unix timestamps consistent with StarNexus models |
 
-The scheduler configuration initially supports `version=1` and `top_k` (0 means
-unlimited, otherwise 1-100). Unknown versions and invalid values fail pool
-validation rather than silently changing scheduling behavior. Additional score
-signals may be added in a later version without changing the version 1 contract.
+The scheduler configuration supports the legacy tiered `version=1` mode and the
+load-scored `version=2` mode. `top_k` uses 0 for unlimited or 1-100 for a primary
+candidate set. Load scoring accepts `priority_source=account|member` and defaults
+to account priority for sub2api-compatible scheduling. During mixed-revision
+rollouts, `version=1` may opt in with `strategy=load_score`; older nodes safely
+ignore the unknown strategy field instead of rejecting the shared pool config.
+Unknown versions and invalid values fail validation rather than silently changing
+behavior on nodes that support these settings.
 
 ### 4.2 `upstream_accounts`
 
@@ -200,11 +204,17 @@ An account is eligible only when all of these are true:
 - the global account concurrency lease can be acquired;
 - the resolved proxy is usable or a configured fallback can be resolved.
 
-The scheduler first keeps the smallest pool-member/account priority tier, which
-matches sub2api's priority direction. Within that tier, optional `top_k` keeps
-the least-loaded candidates and weighted random ordering uses the pool-member or
-account weight multiplied by available capacity. This avoids deterministic
-hot-spotting while keeping the first implementation observable and testable.
+Version 1 orders pool members by ascending membership priority and uses weighted
+random ordering inside each tier. Lower tiers and candidates outside `top_k`
+remain overflow candidates so spare capacity is never discarded.
+
+Version 2, or version 1 with `strategy=load_score`, follows sub2api's load-scored
+approach: normalized priority and current lease load contribute equally to the
+score, `top_k` defines the primary candidate set, and weighted random ordering
+prevents a single highest-scored account from becoming a deterministic hot spot.
+Overflow candidates remain available if the primary set cannot acquire a lease.
+Account priority is the default score input; pool-member priority can be selected
+explicitly for pool-local policies.
 
 The scheduler reports deterministic exclusion counts such as `inactive`,
 `not_schedulable`, `rate_limited`, `expired`, `concurrency_full`,

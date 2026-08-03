@@ -34,6 +34,8 @@ func (UpstreamAccountPool) TableName() string { return "upstream_account_pools" 
 type UpstreamAccountSchedulerConfig struct {
 	Version             int                `json:"version"`
 	TopK                int                `json:"top_k"`
+	Strategy            string             `json:"strategy,omitempty"`
+	PrioritySource      string             `json:"priority_source,omitempty"`
 	ModelRoutingEnabled bool               `json:"model_routing_enabled"`
 	DefaultMappedModel  string             `json:"default_mapped_model"`
 	ModelRouting        map[string][]int64 `json:"model_routing"`
@@ -51,11 +53,31 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 	if config.Version == 0 {
 		config.Version = 1
 	}
-	if config.Version != 1 {
+	if config.Version != 1 && config.Version != 2 {
 		return config, fmt.Errorf("unsupported scheduler_config version %d", config.Version)
 	}
 	if config.TopK < 0 || config.TopK > 100 {
 		return config, errors.New("scheduler_config top_k must be between 0 and 100")
+	}
+	if strings.TrimSpace(config.Strategy) == "" {
+		if config.Version == 2 {
+			config.Strategy = "load_score"
+		} else {
+			config.Strategy = "priority_tier"
+		}
+	}
+	switch config.Strategy {
+	case "priority_tier", "load_score":
+	default:
+		return config, errors.New("scheduler_config strategy must be priority_tier or load_score")
+	}
+	if config.Strategy == "load_score" && strings.TrimSpace(config.PrioritySource) == "" {
+		config.PrioritySource = "account"
+	}
+	switch config.PrioritySource {
+	case "", "account", "member":
+	default:
+		return config, errors.New("scheduler_config priority_source must be account or member")
 	}
 	switch config.ModelRoutingIdSpace {
 	case "", "source", "destination":

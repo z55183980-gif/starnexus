@@ -389,6 +389,37 @@ func TestUpstreamAccountRouterFallsBackWhenHighestPriorityIsFull(t *testing.T) {
 	require.NoError(t, busyLease.Release(context.Background()))
 }
 
+func TestUpstreamAccountRouterLoadScorePrefersLowerLoadBeforeCapacityIsFull(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "load-score-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":1,"strategy":"load_score","top_k":1,"priority_source":"account"}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	busy := createRouterTestAccount(t, "busy-not-full", pool.Id, nil)
+	idle := createRouterTestAccount(t, "idle", pool.Id, nil)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).
+		Where("id IN ?", []int{busy.Id, idle.Id}).Updates(map[string]any{"priority": 2, "concurrency": 2}).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
+		Where("pool_id = ? AND account_id = ?", pool.Id, busy.Id).Update("priority", 1).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
+		Where("pool_id = ? AND account_id = ?", pool.Id, idle.Id).Update("priority", 2).Error)
+
+	manager := NewLocalUpstreamAccountLeaseManager()
+	busyLease, err := manager.Acquire(context.Background(), busy.Id, 2, time.Minute)
+	require.NoError(t, err)
+	router, err := NewUpstreamAccountRouter(manager, time.Minute)
+	require.NoError(t, err)
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex,
+	})
+	require.NoError(t, err)
+	require.Equal(t, idle.Id, selection.Account.Id)
+	require.NoError(t, selection.Release(context.Background()))
+	require.NoError(t, busyLease.Release(context.Background()))
+}
+
 func TestUpstreamAccountSupportsModelCapabilities(t *testing.T) {
 	tests := []struct {
 		name      string
