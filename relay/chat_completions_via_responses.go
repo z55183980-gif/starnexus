@@ -3,7 +3,6 @@ package relay
 import (
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -145,13 +144,16 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	statusCodeMappingStr := c.GetString("status_code_mapping")
 
 	httpResp = resp.(*http.Response)
-	upstreamIsStream := strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
+	upstreamIsStream := common.IsEventStreamContentType(httpResp.Header.Get("Content-Type"))
 	if httpResp.StatusCode != http.StatusOK {
 		newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
 		return nil, newApiErr
 	}
-	if info.ChannelType == constant.ChannelTypeCodex && upstreamIsStream && !info.IsStream {
+	// Codex always forces upstream Responses SSE. Bridge for non-stream clients
+	// even when Content-Type is missing/rewritten (otherwise JSON unmarshal of
+	// an "event:..." body yields invalid character 'e').
+	if info.ChannelType == constant.ChannelTypeCodex && !info.IsStream {
 		usage, newApiErr := openaichannel.OaiResponsesSSEToChatHandler(c, info, httpResp)
 		if newApiErr != nil {
 			service.ResetStatusCode(newApiErr, statusCodeMappingStr)

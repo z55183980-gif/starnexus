@@ -72,6 +72,42 @@ func TestResponsesSSEToChatHandlerReturnsJSON(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "data:")
 }
 
+func TestResponsesToChatHandlerBridgesSSEWithWrongContentType(t *testing.T) {
+	t.Parallel()
+	ctx, recorder, info := newResponsesSSEBridgeContext()
+
+	// Reproduces prod log #1404056: SSE body starting with "event:" but
+	// Content-Type not advertised as text/event-stream.
+	sseBody := "event: response.created\n" + completedResponsesSSE
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(sseBody)),
+	}
+
+	usage, apiErr := OaiResponsesToChatHandler(ctx, info, resp)
+	require.Nil(t, apiErr)
+	require.Equal(t, 6, usage.TotalTokens)
+	require.Equal(t, "application/json", recorder.Header().Get("Content-Type"))
+	require.Equal(t, "chat.completion", gjson.Get(recorder.Body.String(), "object").String())
+	require.Equal(t, "hello", gjson.Get(recorder.Body.String(), "choices.0.message.content").String())
+}
+
+func TestResponsesToChatHandlerLogsNonJSONBody(t *testing.T) {
+	t.Parallel()
+	ctx, _, info := newResponsesSSEBridgeContext()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/plain"}},
+		Body:       io.NopCloser(strings.NewReader("error upstream unavailable")),
+	}
+
+	_, apiErr := OaiResponsesToChatHandler(ctx, info, resp)
+	require.NotNil(t, apiErr)
+	require.Contains(t, apiErr.Error(), "invalid character")
+	require.Equal(t, "bad_response_body", string(apiErr.GetErrorCode()))
+}
+
 func TestResponsesSSEBridgeRejectsMissingTerminalResponse(t *testing.T) {
 	t.Parallel()
 	ctx, _, info := newResponsesSSEBridgeContext()

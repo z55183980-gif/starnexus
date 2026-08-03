@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
@@ -50,6 +51,15 @@ func collectResponsesSSE(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		return accumulator.Terminal(), nil
 	})
 	if err != nil {
+		contentType := ""
+		if resp != nil && resp.Header != nil {
+			contentType = resp.Header.Get("Content-Type")
+		}
+		logger.LogError(c, fmt.Sprintf(
+			"read responses SSE failed: content_type=%q err=%v",
+			contentType,
+			err,
+		))
 		return nil, types.NewOpenAIError(fmt.Errorf("read responses stream: %w", err), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	if accumulator.Failed() {

@@ -107,6 +107,12 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	if isLocalCountTokens {
 		adminInfo["local_count_tokens"] = isLocalCountTokens
 	}
+	if reconcile := getCodexUsageReconcileInfo(ctx); reconcile != nil {
+		adminInfo["usage_reconciled"] = true
+		adminInfo["usage_reconciled_reason"] = reconcile.Reason
+		adminInfo["upstream_prompt_tokens"] = reconcile.UpstreamPromptTokens
+		adminInfo["upstream_cache_tokens"] = reconcile.UpstreamCacheTokens
+	}
 
 	AppendChannelAffinityAdminInfo(ctx, adminInfo)
 	if continuationStatus := ctx.GetString(responsesHTTPStatusContextKey); continuationStatus != "" {

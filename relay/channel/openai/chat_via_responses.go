@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -51,7 +52,37 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
 
+	contentType := ""
+	if resp.Header != nil {
+		contentType = resp.Header.Get("Content-Type")
+	}
+	// Safety net: upstream SSE with missing/wrong Content-Type used to hit
+	// json.Unmarshal and surface as invalid character 'e' (from "event:").
+	if common.LooksLikeSSEBody(body) {
+		logger.LogWarn(c, fmt.Sprintf(
+			"responses-to-chat got SSE body with content_type=%q; bridging to SSE collector",
+			contentType,
+		))
+		bridged := *resp
+		bridged.Body = io.NopCloser(bytes.NewReader(body))
+		if bridged.Header == nil {
+			bridged.Header = make(http.Header)
+		} else {
+			bridged.Header = resp.Header.Clone()
+		}
+		if !common.IsEventStreamContentType(contentType) {
+			bridged.Header.Set("Content-Type", "text/event-stream")
+		}
+		return OaiResponsesSSEToChatHandler(c, info, &bridged)
+	}
+
 	if err := common.Unmarshal(body, &responsesResp); err != nil {
+		logger.LogError(c, fmt.Sprintf(
+			"bad responses JSON body: content_type=%q body_prefix=%q err=%v",
+			contentType,
+			common.PreviewUpstreamBody(body, 256),
+			err,
+		))
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 

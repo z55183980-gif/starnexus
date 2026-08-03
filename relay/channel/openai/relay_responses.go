@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,8 +27,35 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
+	contentType := ""
+	if resp.Header != nil {
+		contentType = resp.Header.Get("Content-Type")
+	}
+	if common.LooksLikeSSEBody(responseBody) {
+		logger.LogWarn(c, fmt.Sprintf(
+			"responses handler got SSE body with content_type=%q; bridging to SSE collector",
+			contentType,
+		))
+		bridged := *resp
+		bridged.Body = io.NopCloser(bytes.NewReader(responseBody))
+		if bridged.Header == nil {
+			bridged.Header = make(http.Header)
+		} else {
+			bridged.Header = resp.Header.Clone()
+		}
+		if !common.IsEventStreamContentType(contentType) {
+			bridged.Header.Set("Content-Type", "text/event-stream")
+		}
+		return OaiResponsesSSEToNonStreamHandler(c, info, &bridged)
+	}
 	err = common.Unmarshal(responseBody, &responsesResponse)
 	if err != nil {
+		logger.LogError(c, fmt.Sprintf(
+			"bad responses JSON body: content_type=%q body_prefix=%q err=%v",
+			contentType,
+			common.PreviewUpstreamBody(responseBody, 256),
+			err,
+		))
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 	if oaiError := responsesResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
@@ -61,6 +89,7 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			usage.PromptTokensDetails.CacheWriteTokens = responsesResponse.Usage.InputTokensDetails.CacheWriteTokens
 		}
 	}
+	service.ReconcileCodexResponsesUsage(c, info, &usage)
 	if info == nil || info.ResponsesUsageInfo == nil || info.ResponsesUsageInfo.BuiltInTools == nil {
 		return &usage, nil
 	}
@@ -161,6 +190,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	service.ReconcileCodexResponsesUsage(c, info, usage)
 
 	return usage, nil
 }
