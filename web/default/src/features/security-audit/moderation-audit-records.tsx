@@ -102,9 +102,6 @@ function getResultBadge(log: PromptAuditLog) {
   if (log.action === 'hit') {
     return { variant: 'secondary' as const, labelKey: 'Observed hit' }
   }
-  if (log.action === 'recorded') {
-    return { variant: 'outline' as const, labelKey: 'Passed' }
-  }
   return { variant: 'outline' as const, labelKey: log.action }
 }
 
@@ -114,9 +111,6 @@ function getDisposalLabel(log: PromptAuditLog, t: (key: string) => string) {
   }
   if (log.action === 'hit') {
     return t('Observed only, not blocked')
-  }
-  if (log.action === 'recorded') {
-    return t('Allowed by content audit')
   }
   return t(log.action)
 }
@@ -166,7 +160,6 @@ export function ModerationAuditRecords({
 
   const actionItems = [
     { value: 'all', label: t('All results') },
-    { value: 'recorded', label: t('Passed') },
     { value: 'blocked', label: t('blocked') },
     { value: 'hit', label: t('Observed hit') },
   ]
@@ -179,7 +172,7 @@ export function ModerationAuditRecords({
   ]
 
   return (
-    <div className='bg-card overflow-hidden rounded-xl ring-1 ring-foreground/10'>
+    <div className='bg-card ring-foreground/10 overflow-hidden rounded-xl ring-1'>
       <div className='flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between'>
         <div className='min-w-0'>
           <h3 className='text-sm font-medium'>{t('Audit Records')}</h3>
@@ -293,17 +286,33 @@ export function ModerationAuditRecords({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className='whitespace-nowrap'>{t('Time')}</TableHead>
-                  <TableHead className='whitespace-nowrap'>{t('Model')}</TableHead>
-                  <TableHead className='whitespace-nowrap'>{t('User')}</TableHead>
-                  <TableHead className='whitespace-nowrap'>{t('API Key')}</TableHead>
-                  <TableHead className='whitespace-nowrap'>{t('Node')}</TableHead>
-                  <TableHead className='whitespace-nowrap'>{t('Result')}</TableHead>
+                  <TableHead className='whitespace-nowrap'>
+                    {t('Time')}
+                  </TableHead>
+                  <TableHead className='whitespace-nowrap'>
+                    {t('Model')}
+                  </TableHead>
+                  <TableHead className='whitespace-nowrap'>
+                    {t('User')}
+                  </TableHead>
+                  <TableHead className='whitespace-nowrap'>
+                    {t('API Key')}
+                  </TableHead>
+                  <TableHead className='whitespace-nowrap'>
+                    {t('Node')}
+                  </TableHead>
+                  <TableHead className='whitespace-nowrap'>
+                    {t('Result')}
+                  </TableHead>
                   <TableHead className='whitespace-nowrap'>
                     {t('Highest score')}
                   </TableHead>
-                  <TableHead className='whitespace-nowrap'>{t('Disposal')}</TableHead>
-                  <TableHead className='min-w-48'>{t('Input summary')}</TableHead>
+                  <TableHead className='whitespace-nowrap'>
+                    {t('Disposal')}
+                  </TableHead>
+                  <TableHead className='min-w-48'>
+                    {t('Input summary')}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -312,7 +321,7 @@ export function ModerationAuditRecords({
                   const highestCategory = getHighestCategory(log)
                   return (
                     <TableRow key={log.id}>
-                      <TableCell className='text-muted-foreground whitespace-nowrap text-xs'>
+                      <TableCell className='text-muted-foreground text-xs whitespace-nowrap'>
                         {formatTimestampToDate(log.created_at, 'seconds')}
                       </TableCell>
                       <TableCell className='max-w-36 truncate text-sm'>
@@ -335,9 +344,11 @@ export function ModerationAuditRecords({
                         {log.endpoint || '-'}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={result.variant}>{t(result.labelKey)}</Badge>
+                        <Badge variant={result.variant}>
+                          {t(result.labelKey)}
+                        </Badge>
                       </TableCell>
-                      <TableCell className='whitespace-nowrap text-sm'>
+                      <TableCell className='text-sm whitespace-nowrap'>
                         <span className='font-mono text-xs'>
                           {highestCategory === '-'
                             ? highestCategory

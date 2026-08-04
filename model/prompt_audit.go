@@ -314,7 +314,9 @@ func ListContentModerationLogs(filter ContentModerationLogFilter, pageInfo *comm
 	if pageInfo == nil {
 		pageInfo = &common.PageInfo{Page: 1, PageSize: common.ItemsPerPage}
 	}
-	query := LOG_DB.Model(&PromptAuditLog{}).Where("matched_words LIKE ?", "%moderation:%")
+	query := LOG_DB.Model(&PromptAuditLog{}).
+		Where("matched_words LIKE ?", "%moderation:%").
+		Where("action IN ?", []string{PromptAuditActionHit, PromptAuditActionBlocked})
 	if action := strings.TrimSpace(filter.Action); action != "" && action != "all" {
 		query = query.Where("action = ?", action)
 	}

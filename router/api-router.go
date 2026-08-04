@@ -307,6 +307,7 @@ func SetApiRouter(router *gin.Engine) {
 			securityAuditRoute.GET("/users/:user_id/prompts", controller.ListPromptAuditLogs)
 			securityAuditRoute.DELETE("/users/:user_id/prompts", controller.DeletePromptAuditLogs)
 			securityAuditRoute.GET("/moderation-logs", controller.ListContentModerationLogs)
+			securityAuditRoute.GET("/moderation-key-usage", controller.GetContentModerationKeyUsage)
 			securityAuditRoute.POST("/moderation-api-key/test", controller.TestContentModerationAPIKey)
 			securityAuditRoute.POST("/providers/:provider/models", controller.ListContentModerationProviderModels)
 		}

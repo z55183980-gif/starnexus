@@ -94,7 +94,7 @@ func TestListPromptAuditLogsByCursor(t *testing.T) {
 	require.Equal(t, []int{logs[2].Id}, promptAuditLogIds(newest))
 }
 
-func TestListContentModerationLogsIncludesAllowedResults(t *testing.T) {
+func TestListContentModerationLogsExcludesAllowedResults(t *testing.T) {
 	db := openPromptAuditTestDB(t)
 	setPromptAuditTestDatabases(t, db, db)
 
@@ -107,13 +107,13 @@ func TestListContentModerationLogsIncludesAllowedResults(t *testing.T) {
 
 	items, total, err := ListContentModerationLogs(ContentModerationLogFilter{}, nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), total)
-	require.Equal(t, []int{logs[1].Id, logs[0].Id}, promptAuditLogIds(items))
+	require.Equal(t, int64(1), total)
+	require.Equal(t, []int{logs[1].Id}, promptAuditLogIds(items))
 
 	items, total, err = ListContentModerationLogs(ContentModerationLogFilter{Action: PromptAuditActionRecorded}, nil)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), total)
-	require.Equal(t, []int{logs[0].Id}, promptAuditLogIds(items))
+	require.Zero(t, total)
+	require.Empty(t, items)
 }
 
 func TestHasContentModerationObservedHit(t *testing.T) {

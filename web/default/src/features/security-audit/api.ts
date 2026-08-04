@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import type {
   ContentModerationLogQuery,
+  ContentModerationKeyUsageResponse,
   PromptAuditClearLogsResponse,
   PromptAuditLogCursorResponse,
   PromptAuditLogsResponse,
@@ -26,6 +27,18 @@ import type {
   PromptAuditPolicy,
   PromptAuditPolicyResponse,
 } from './types'
+
+export async function getContentModerationKeyUsage(params: {
+  start_timestamp: number
+  end_timestamp: number
+}): Promise<ContentModerationKeyUsageResponse> {
+  const response = await api.get('/api/security-audit/moderation-key-usage', {
+    params,
+  })
+  const result = response.data as ContentModerationKeyUsageResponse
+  if (!result.success) throw new Error(result.message || 'Failed to load')
+  return result
+}
 
 export async function listPromptAuditPolicies(): Promise<PromptAuditPoliciesResponse> {
   const response = await api.get('/api/security-audit/policies')

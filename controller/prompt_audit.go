@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -310,4 +311,36 @@ func ListContentModerationLogs(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(logs)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func GetContentModerationKeyUsage(c *gin.Context) {
+	now := time.Now()
+	startTime := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+	endTime := now.Unix()
+	if raw := c.Query("start_timestamp"); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			common.ApiError(c, errors.New("invalid start_timestamp"))
+			return
+		}
+		startTime = value
+	}
+	if raw := c.Query("end_timestamp"); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			common.ApiError(c, errors.New("invalid end_timestamp"))
+			return
+		}
+		endTime = value
+	}
+	if endTime < startTime || endTime-startTime > 366*24*60*60 {
+		common.ApiError(c, errors.New("content moderation usage range must be within 366 days"))
+		return
+	}
+	result, err := service.GetContentModerationKeyUsage(c.Request.Context(), startTime, endTime)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
 }

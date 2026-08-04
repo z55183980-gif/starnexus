@@ -462,14 +462,9 @@ export function useCommonLogsColumns(
             : `#${log.channel}`
           const channelIdDisplay = `#${log.channel}`
           const channelName = sensitiveVisible ? log.channel_name : '••••'
-          const upstreamAccountId = log.upstream_account_id ?? 0
-          const accountIdDisplay = `#${upstreamAccountId}`
           const accountName = sensitiveVisible
             ? log.upstream_account_name
             : '••••'
-          const accountDisplay = log.upstream_account_name
-            ? `${accountIdDisplay} ${accountName}`
-            : accountIdDisplay
 
           return (
             <TooltipProvider>
@@ -516,9 +511,9 @@ export function useCommonLogsColumns(
                       </span>
                     )}
                   </div>
-                  {upstreamAccountId > 0 && (
+                  {log.upstream_account_name && (
                     <span className='text-muted-foreground/70 block max-w-[170px] truncate text-[11px]'>
-                      {t('Account')}: {accountDisplay}
+                      {accountName}
                     </span>
                   )}
                 </TooltipTrigger>
@@ -527,11 +522,7 @@ export function useCommonLogsColumns(
                     <p>
                       {sensitiveVisible ? channelDisplay : channelIdDisplay}
                     </p>
-                    {upstreamAccountId > 0 && (
-                      <p>
-                        {t('Account')}: {accountDisplay}
-                      </p>
-                    )}
+                    {log.upstream_account_name && <p>{accountName}</p>}
                     {channelChain && (
                       <p className='text-muted-foreground text-xs'>
                         {t('Chain')}: {channelChain}

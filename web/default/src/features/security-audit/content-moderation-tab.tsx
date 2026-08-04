@@ -43,6 +43,7 @@ import {
 } from '@/features/system-settings/request-limits/content-moderation-utils'
 import { listContentModerationLogs } from './api'
 import { ModerationAuditRecords } from './moderation-audit-records'
+import { ModerationKeyUsageCard } from './moderation-key-usage-card'
 
 const defaultOptions = {
   ContentModerationConfig: stringifyContentModerationConfig(
@@ -193,10 +194,6 @@ export function ContentModerationTab({
     config.keys_configured || config.api_keys.length > 0
   )
   const keyCount = config.api_key_count ?? config.api_keys.length
-  const keyMasks =
-    (config.api_key_masks?.length ?? 0) > 0
-      ? (config.api_key_masks ?? [])
-      : config.api_keys
   const recordsHits = logsCountQuery.data?.hits ?? 0
   const recordsTotal = logsCountQuery.data?.total ?? 0
   const isObserve = config.mode === 'observe'
@@ -334,50 +331,11 @@ export function ContentModerationTab({
             </CardContent>
           </Card>
 
-          <Card className='gap-0 py-0 shadow-sm'>
-            <div className='flex flex-col gap-2 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between'>
-              <div>
-                <h3 className='text-base font-semibold'>
-                  {t('Audit API key load')}
-                </h3>
-                <p className='text-muted-foreground mt-1 text-sm'>
-                  {t(
-                    'Configured audit API keys. Per-key latency load is not tracked yet.'
-                  )}
-                </p>
-              </div>
-              <Badge variant='secondary' className='w-fit rounded-full'>
-                {keysConfigured
-                  ? t('{{count}} keys', { count: keyCount })
-                  : t('Not configured')}
-              </Badge>
-            </div>
-            <CardContent className='p-5'>
-              {keysConfigured ? (
-                <div className='max-h-[280px] space-y-3 overflow-y-auto pr-1'>
-                  {keyMasks.map((mask, index) => (
-                    <div
-                      key={`${mask}-${index}`}
-                      className='bg-muted/40 rounded-lg p-3'
-                    >
-                      <div className='flex min-w-0 items-center gap-2'>
-                        <span className='font-mono text-sm font-semibold'>
-                          #{index + 1}
-                        </span>
-                        <span className='truncate font-mono text-sm'>
-                          {mask}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className='bg-muted/40 text-muted-foreground rounded-lg p-4 text-sm'>
-                  {t('No audit API key load data')}
-                </p>
-              )}
-            </CardContent>
-          </Card>
+          <ModerationKeyUsageCard
+            enabled={keysConfigured}
+            keyCount={keyCount}
+            refreshNonce={refreshNonce}
+          />
         </div>
       ) : null}
 

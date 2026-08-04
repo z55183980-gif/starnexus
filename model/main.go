@@ -300,6 +300,7 @@ func migrateDB() error {
 		&Log{},
 		&PromptAuditPolicy{},
 		&PromptAuditLog{},
+		&ContentModerationKeyUsage{},
 		&Midjourney{},
 		&TopUp{},
 		&QuotaData{},
@@ -396,6 +397,7 @@ func migrateDBFast() error {
 		{&Log{}, "Log"},
 		{&PromptAuditPolicy{}, "PromptAuditPolicy"},
 		{&PromptAuditLog{}, "PromptAuditLog"},
+		{&ContentModerationKeyUsage{}, "ContentModerationKeyUsage"},
 		{&Midjourney{}, "Midjourney"},
 		{&TopUp{}, "TopUp"},
 		{&QuotaData{}, "QuotaData"},
@@ -497,7 +499,7 @@ func backfillUserConcurrencyDefault() error {
 
 func migrateLOGDB() error {
 	var err error
-	if err = LOG_DB.AutoMigrate(&Log{}, &ErrorAlert{}, &PromptAuditLog{}); err != nil {
+	if err = LOG_DB.AutoMigrate(&Log{}, &ErrorAlert{}, &PromptAuditLog{}, &ContentModerationKeyUsage{}); err != nil {
 		return err
 	}
 	return migrateErrorAlertReadState()

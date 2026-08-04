@@ -64,6 +64,38 @@ export interface ContentModerationLogQuery {
   end_timestamp?: number
 }
 
+export interface ContentModerationKeyBalance {
+  currency: string
+  total_balance: string
+  granted_balance: string
+  topped_up_balance: string
+}
+
+export interface ContentModerationKeyUsageItem {
+  index: number
+  key_mask: string
+  provider: string
+  model_name: string
+  request_count: number
+  prompt_tokens: number
+  completion_tokens: number
+  cache_hit_tokens: number
+  cache_miss_tokens: number
+  total_tokens: number
+  token_usage_available: boolean
+  billing_usd: number
+  billing_available: boolean
+  balance_available: boolean
+  balances: ContentModerationKeyBalance[]
+  balance_error?: string
+}
+
+export interface ContentModerationKeyUsageResult {
+  start_time: number
+  end_time: number
+  items: ContentModerationKeyUsageItem[]
+}
+
 export interface PromptAuditLogPage {
   page: number
   page_size: number
@@ -82,3 +114,5 @@ export type PromptAuditPoliciesResponse = ApiResponse<PromptAuditPolicy[]>
 export type PromptAuditLogsResponse = ApiResponse<PromptAuditLogPage>
 export type PromptAuditLogCursorResponse = ApiResponse<PromptAuditLogCursorPage>
 export type PromptAuditClearLogsResponse = ApiResponse<{ deleted: number }>
+export type ContentModerationKeyUsageResponse =
+  ApiResponse<ContentModerationKeyUsageResult>

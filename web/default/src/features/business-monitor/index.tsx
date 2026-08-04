@@ -228,13 +228,8 @@ function TokenUsageDisplay({
 }
 
 function ChannelDisplay({ log }: { log: BusinessMonitorUsageLog }) {
-  const { t } = useTranslation()
   const other = parseLogOther(log.other)
   const affinity = other?.admin_info?.channel_affinity
-  const accountID = log.upstream_account_id ?? 0
-  const accountDisplay = log.upstream_account_name
-    ? `#${accountID} ${log.upstream_account_name}`
-    : `#${accountID}`
 
   return (
     <TooltipProvider>
@@ -263,9 +258,9 @@ function ChannelDisplay({ log }: { log: BusinessMonitorUsageLog }) {
               </span>
             )}
           </div>
-          {accountID > 0 && (
+          {log.upstream_account_name && (
             <span className='text-muted-foreground/70 block max-w-[170px] truncate text-[11px]'>
-              {t('Account')}: {accountDisplay}
+              {log.upstream_account_name}
             </span>
           )}
         </TooltipTrigger>
@@ -276,11 +271,7 @@ function ChannelDisplay({ log }: { log: BusinessMonitorUsageLog }) {
                 ? `${log.channel_name} #${log.channel}`
                 : `#${log.channel}`}
             </p>
-            {accountID > 0 && (
-              <p>
-                {t('Account')}: {accountDisplay}
-              </p>
-            )}
+            {log.upstream_account_name && <p>{log.upstream_account_name}</p>}
           </div>
         </TooltipContent>
       </Tooltip>
