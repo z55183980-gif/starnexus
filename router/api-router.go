@@ -308,6 +308,7 @@ func SetApiRouter(router *gin.Engine) {
 			securityAuditRoute.DELETE("/users/:user_id/prompts", controller.DeletePromptAuditLogs)
 			securityAuditRoute.GET("/moderation-logs", controller.ListContentModerationLogs)
 			securityAuditRoute.POST("/moderation-api-key/test", controller.TestContentModerationAPIKey)
+			securityAuditRoute.POST("/providers/:provider/models", controller.ListContentModerationProviderModels)
 		}
 
 		affiliateAgentRoute := apiRouter.Group("/affiliate/agent")

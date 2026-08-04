@@ -17,14 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
 import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { MultiSelect } from '@/components/multi-select'
-import { PasswordInput } from '@/components/password-input'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -46,8 +44,14 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { MultiSelect } from '@/components/multi-select'
+import { PasswordInput } from '@/components/password-input'
+import {
+  listContentModerationProviderModels,
+  testContentModerationAPIKey,
+} from '@/features/security-audit/api'
 import { getGroups } from '@/features/users/api'
-import { testContentModerationAPIKey } from '@/features/security-audit/api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import {
@@ -59,6 +63,8 @@ const contentModerationSchema = z
   .object({
     enabled: z.boolean(),
     mode: z.enum(['pre_block', 'observe']),
+    model_type: z.enum(['general', 'dedicated']),
+    provider: z.enum(['deepseek']),
     base_url: z.string().min(1),
     model: z.string().min(1),
     api_key: z.string().optional(),
@@ -94,6 +100,8 @@ function toFormValues(raw: string): ContentModerationFormValues {
   return {
     enabled: config.enabled,
     mode: config.mode,
+    model_type: config.model_type,
+    provider: config.provider,
     base_url: config.base_url,
     model: config.model,
     api_key: config.api_keys[0] ?? '',
@@ -112,7 +120,11 @@ export function ContentModerationSection({
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const [testingKey, setTestingKey] = useState(false)
+  const [fetchingModels, setFetchingModels] = useState(false)
   const defaults = useMemo(() => toFormValues(defaultValue), [defaultValue])
+  const [availableModels, setAvailableModels] = useState<string[]>(() =>
+    defaults.model ? [defaults.model] : []
+  )
   const thresholds = useMemo(
     () => parseContentModerationConfig(defaultValue).thresholds,
     [defaultValue]
@@ -138,10 +150,12 @@ export function ContentModerationSection({
 
   useEffect(() => {
     form.reset(defaults)
+    setAvailableModels(defaults.model ? [defaults.model] : [])
   }, [defaults, form])
 
   const allGroups = form.watch('all_groups')
   const modelFilterType = form.watch('model_filter_type')
+  const modelType = form.watch('model_type')
 
   const onSubmit = async (values: ContentModerationFormValues) => {
     const apiKey = (values.api_key ?? '').trim()
@@ -153,6 +167,8 @@ export function ContentModerationSection({
     const payload = stringifyContentModerationConfig({
       enabled: values.enabled,
       mode: values.mode,
+      model_type: values.model_type,
+      provider: values.provider,
       base_url: values.base_url.trim(),
       model: values.model.trim(),
       api_keys: apiKey ? [apiKey] : [],
@@ -175,6 +191,8 @@ export function ContentModerationSection({
     const apiKey = (form.getValues('api_key') ?? '').trim()
     const baseUrl = form.getValues('base_url').trim()
     const model = form.getValues('model').trim()
+    const modelTypeValue = form.getValues('model_type')
+    const provider = form.getValues('provider')
     const timeoutMs = form.getValues('timeout_ms')
     if (!apiKey) {
       toast.error(t('Enter or save an API key before testing'))
@@ -184,27 +202,66 @@ export function ContentModerationSection({
     try {
       const result = await testContentModerationAPIKey({
         api_key: apiKey,
+        model_type: modelTypeValue,
+        provider,
         base_url: baseUrl,
         model,
         timeout_ms: timeoutMs,
       })
       if (result.ok) {
         toast.success(
-          t('Moderation API key is valid ({{ms}} ms)', {
+          t('Audit API key is valid ({{ms}} ms)', {
             ms: result.latency_ms,
           })
         )
       } else {
-        toast.error(result.error || t('Moderation API key test failed'))
+        toast.error(result.error || t('Audit API key test failed'))
       }
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : t('Moderation API key test failed')
+        error instanceof Error ? error.message : t('Audit API key test failed')
       )
     } finally {
       setTestingKey(false)
+    }
+  }
+
+  const onFetchModels = async () => {
+    const apiKey = (form.getValues('api_key') ?? '').trim()
+    if (!apiKey) {
+      toast.error(t('Enter or save an API key before testing'))
+      return
+    }
+    setFetchingModels(true)
+    try {
+      const result = await listContentModerationProviderModels({
+        provider: form.getValues('provider'),
+        api_key: apiKey,
+        base_url: form.getValues('base_url').trim(),
+        timeout_ms: form.getValues('timeout_ms'),
+      })
+      form.setValue('base_url', result.base_url, { shouldDirty: true })
+      setAvailableModels(result.models)
+      const selectedModel = form.getValues('model')
+      if (!result.models.includes(selectedModel)) {
+        form.setValue('model', result.models[0] ?? '', {
+          shouldDirty: true,
+          shouldValidate: true,
+        })
+      }
+      if (result.models.length > 0) {
+        toast.success(
+          t('Fetched {{count}} models', { count: result.models.length })
+        )
+      } else {
+        toast.error(t('No models fetched from upstream'))
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t('Failed to fetch models')
+      )
+    } finally {
+      setFetchingModels(false)
     }
   }
 
@@ -231,10 +288,10 @@ export function ContentModerationSection({
                 <FormDescription>
                   {embedded
                     ? t(
-                        'Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.'
+                        'Call the configured audit API before upstream. Disabled by default. API failures fail open.'
                       )
                     : t(
-                        'When enabled, the latest user prompt is checked via Moderations API before billing.'
+                        'When enabled, the latest user prompt is checked through the configured audit API before billing.'
                       )}
                 </FormDescription>
               </div>
@@ -249,6 +306,131 @@ export function ContentModerationSection({
         />
 
         <div className='grid gap-4 md:grid-cols-2'>
+          <FormField
+            control={form.control}
+            name='model_type'
+            render={({ field }) => (
+              <FormItem className='md:col-span-2'>
+                <FormLabel>{t('Audit model type')}</FormLabel>
+                <FormControl>
+                  <ToggleGroup
+                    value={[field.value]}
+                    onValueChange={(value) => {
+                      if (!value[0]) return
+                      field.onChange(value[0])
+                      if (value[0] === 'general') {
+                        form.setValue('provider', 'deepseek')
+                        form.setValue('model', 'deepseek-v4-flash')
+                        setAvailableModels(['deepseek-v4-flash'])
+                        if (
+                          form.getValues('base_url') ===
+                          'https://api.openai.com'
+                        ) {
+                          form.setValue('base_url', 'https://api.deepseek.com')
+                        }
+                        if (form.getValues('timeout_ms') === 3000) {
+                          form.setValue('timeout_ms', 8000)
+                        }
+                      } else {
+                        form.setValue('model', 'omni-moderation-latest')
+                        setAvailableModels(['omni-moderation-latest'])
+                        if (
+                          form.getValues('base_url') ===
+                          'https://api.deepseek.com'
+                        ) {
+                          form.setValue('base_url', 'https://api.openai.com')
+                        }
+                        if (form.getValues('timeout_ms') === 8000) {
+                          form.setValue('timeout_ms', 3000)
+                        }
+                      }
+                    }}
+                    variant='outline'
+                    spacing={0}
+                    className='w-full'
+                    aria-label={t('Audit model type')}
+                  >
+                    <ToggleGroupItem value='general' className='flex-1'>
+                      {t('General-purpose model')}
+                    </ToggleGroupItem>
+                    <ToggleGroupItem value='dedicated' className='flex-1'>
+                      {t('Dedicated model')}
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {modelType === 'general' ? (
+            <FormField
+              control={form.control}
+              name='provider'
+              render={({ field }) => (
+                <FormItem className='md:col-span-2'>
+                  <FormLabel>{t('Provider')}</FormLabel>
+                  <Select
+                    items={[{ value: 'deepseek', label: 'DeepSeek' }]}
+                    value={field.value}
+                    onValueChange={(value) => {
+                      if (value === 'deepseek') field.onChange(value)
+                    }}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        <SelectItem value='deepseek'>DeepSeek</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    {t('Fetch Models')}: GET /models · POST /chat/completions
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ) : null}
+
+          <FormField
+            control={form.control}
+            name='api_key'
+            render={({ field }) => (
+              <FormItem className='md:col-span-2'>
+                <FormLabel>{t('API Key')}</FormLabel>
+                <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+                  <FormControl>
+                    <PasswordInput
+                      value={field.value ?? ''}
+                      onBlur={field.onBlur}
+                      name={field.name}
+                      ref={field.ref}
+                      onChange={field.onChange}
+                      autoComplete='off'
+                      placeholder={t('Enter API Key')}
+                      className='flex-1'
+                    />
+                  </FormControl>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    disabled={testingKey || updateOption.isPending}
+                    onClick={() => void onTestAPIKey()}
+                    className='sm:shrink-0'
+                  >
+                    {testingKey ? t('Testing...') : t('Test')}
+                  </Button>
+                </div>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
           <FormField
             control={form.control}
             name='mode'
@@ -317,7 +499,7 @@ export function ContentModerationSection({
                   />
                 </FormControl>
                 <FormDescription>
-                  {t('Maximum wait time for the Moderations API response.')}
+                  {t('Maximum wait time for the audit API response.')}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -329,10 +511,30 @@ export function ContentModerationSection({
             name='base_url'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('OpenAI Base URL')}</FormLabel>
-                <FormControl>
-                  <Input {...field} placeholder='https://api.openai.com' />
-                </FormControl>
+                <FormLabel>{t('API Base URL')}</FormLabel>
+                <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder={
+                        modelType === 'general'
+                          ? 'https://api.deepseek.com'
+                          : 'https://api.openai.com'
+                      }
+                    />
+                  </FormControl>
+                  {modelType === 'general' ? (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      disabled={fetchingModels || testingKey}
+                      onClick={() => void onFetchModels()}
+                      className='sm:shrink-0'
+                    >
+                      {fetchingModels ? t('Loading...') : t('Fetch Models')}
+                    </Button>
+                  ) : null}
+                </div>
                 <FormMessage />
               </FormItem>
             )}
@@ -344,55 +546,50 @@ export function ContentModerationSection({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>{t('Model Name')}</FormLabel>
-                <FormControl>
-                  <Input {...field} placeholder='omni-moderation-latest' />
-                </FormControl>
+                {modelType === 'general' ? (
+                  <Select
+                    items={availableModels.map((model) => ({
+                      value: model,
+                      label: model,
+                    }))}
+                    value={field.value}
+                    onValueChange={(value) => {
+                      if (value) field.onChange(value)
+                    }}
+                    disabled={availableModels.length === 0}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('No models available')} />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {availableModels.map((model) => (
+                          <SelectItem key={model} value={model}>
+                            {model}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <FormControl>
+                    <Input {...field} placeholder='omni-moderation-latest' />
+                  </FormControl>
+                )}
                 <FormMessage />
               </FormItem>
             )}
           />
         </div>
 
-        <FormField
-          control={form.control}
-          name='api_key'
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>{t('OpenAI API Key')}</FormLabel>
-              <div className='flex flex-col gap-2 sm:flex-row sm:items-center'>
-                <FormControl>
-                  <PasswordInput
-                    value={field.value ?? ''}
-                    onBlur={field.onBlur}
-                    name={field.name}
-                    ref={field.ref}
-                    onChange={field.onChange}
-                    autoComplete='off'
-                    placeholder={t('Enter API Key')}
-                    className='flex-1'
-                  />
-                </FormControl>
-                <Button
-                  type='button'
-                  variant='outline'
-                  disabled={testingKey || updateOption.isPending}
-                  onClick={() => void onTestAPIKey()}
-                  className='sm:shrink-0'
-                >
-                  {testingKey ? t('Testing...') : t('Test')}
-                </Button>
-              </div>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
         <div className='space-y-4 rounded-lg border p-4'>
           <div>
             <h3 className='text-sm font-medium'>{t('Audit scope')}</h3>
             <p className='text-muted-foreground mt-1 text-sm'>
               {t(
-                'Choose which request groups and models are checked by Moderations. Out-of-scope traffic is skipped.'
+                'Choose which request groups and models are checked by content audit. Out-of-scope traffic is skipped.'
               )}
             </p>
           </div>
@@ -564,7 +761,7 @@ export function ContentModerationSection({
     <SettingsSection
       title={t('Content Moderation (API)')}
       description={t(
-        'Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.'
+        'Call the configured audit API before upstream. Disabled by default. API failures fail open.'
       )}
     >
       {formBody}

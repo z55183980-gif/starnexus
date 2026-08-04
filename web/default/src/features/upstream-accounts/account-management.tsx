@@ -726,7 +726,12 @@ function PoolDialog({
             </FieldDescription>
             <FieldDescription>
               {t(
-                'Requires prompt_cache_key in the request body or a Session_id/Conversation_id request header.'
+                'Requires prompt_cache_key in the request body or a supported stable session request header.'
+              )}
+            </FieldDescription>
+            <FieldDescription>
+              {t(
+                'Responses continuations prefer the account that created the previous response, then fall back safely after the configured wait.'
               )}
             </FieldDescription>
             <FieldGroup>
@@ -798,7 +803,7 @@ function PoolDialog({
                     }
                   />
                   <FieldDescription>
-                    {t('Milliseconds, 0-10000')}
+                    {t('Milliseconds, 0 disables waiting, maximum 10000')}
                   </FieldDescription>
                 </Field>
                 <Field
@@ -819,7 +824,11 @@ function PoolDialog({
                       set('sessionAffinityMaxWaiters', event.target.value)
                     }
                   />
-                  <FieldDescription>{t('Requests, 0-1000')}</FieldDescription>
+                  <FieldDescription>
+                    {t(
+                      'Requests, 0 disables the affinity wait queue, maximum 1000'
+                    )}
+                  </FieldDescription>
                 </Field>
               </div>
             </FieldGroup>

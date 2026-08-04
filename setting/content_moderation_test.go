@@ -18,6 +18,12 @@ func TestParseContentModerationConfigJSONDefaults(t *testing.T) {
 	if cfg.Mode != ContentModerationModePreBlock {
 		t.Fatalf("unexpected mode: %s", cfg.Mode)
 	}
+	if cfg.ModelType != ContentModerationModelTypeDedicated {
+		t.Fatalf("unexpected model type: %s", cfg.ModelType)
+	}
+	if cfg.Provider != "" {
+		t.Fatalf("dedicated model must not keep a provider: %q", cfg.Provider)
+	}
 	if cfg.Model != defaultContentModerationModel {
 		t.Fatalf("unexpected model: %s", cfg.Model)
 	}
@@ -82,6 +88,28 @@ func TestContentModerationModeNormalize(t *testing.T) {
 	}
 }
 
+func TestContentModerationModelTypeNormalize(t *testing.T) {
+	cfg, err := ParseContentModerationConfigJSON(`{"model_type":"general"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelType != ContentModerationModelTypeGeneral {
+		t.Fatalf("expected general model type, got %q", cfg.ModelType)
+	}
+	if cfg.Provider != ContentModerationProviderDeepSeek || cfg.BaseURL != defaultGeneralModerationBaseURL ||
+		cfg.Model != defaultGeneralModerationModel || cfg.TimeoutMS != defaultGeneralModerationTimeoutMS {
+		t.Fatalf("unexpected general defaults: provider=%q base=%q model=%q timeout=%d", cfg.Provider, cfg.BaseURL, cfg.Model, cfg.TimeoutMS)
+	}
+
+	cfg, err = ParseContentModerationConfigJSON(`{"model_type":"unknown"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelType != ContentModerationModelTypeDedicated {
+		t.Fatalf("expected dedicated model type fallback, got %q", cfg.ModelType)
+	}
+}
+
 func TestParseContentModerationConfigJSONLegacyAllGroupsDefault(t *testing.T) {
 	cfg, err := ParseContentModerationConfigJSON(`{"enabled":true,"mode":"observe"}`, nil)
 	if err != nil {
@@ -123,8 +151,11 @@ func TestContentModerationConfigJSONRoundTripAuditScope(t *testing.T) {
 	in := `{
 		"enabled":true,
 		"mode":"pre_block",
-		"base_url":"https://api.openai.com",
-		"model":"omni-moderation-latest",
+		"model_type":"general",
+		"provider":"deepseek",
+		"base_url":"https://api.deepseek.com",
+		"model":"deepseek-v4-flash",
+		"prompt":"custom audit policy",
 		"api_keys":["****abcd"],
 		"timeout_ms":3000,
 		"all_groups":false,
@@ -139,6 +170,9 @@ func TestContentModerationConfigJSONRoundTripAuditScope(t *testing.T) {
 	if cfg.AllGroups {
 		t.Fatal("expected all_groups=false after parse")
 	}
+	if cfg.ModelType != ContentModerationModelTypeGeneral {
+		t.Fatalf("expected general model type after parse, got %q", cfg.ModelType)
+	}
 	out := ContentModerationConfigJSON(cfg)
 	if !strings.Contains(out, `"all_groups":false`) {
 		t.Fatalf("persist JSON dropped all_groups=false: %s", out)
@@ -148,6 +182,15 @@ func TestContentModerationConfigJSONRoundTripAuditScope(t *testing.T) {
 	}
 	if !strings.Contains(out, `"include"`) || !strings.Contains(out, `"gpt-4o"`) {
 		t.Fatalf("persist JSON dropped model_filter: %s", out)
+	}
+	if !strings.Contains(out, `"model_type":"general"`) {
+		t.Fatalf("persist JSON dropped model_type: %s", out)
+	}
+	if !strings.Contains(out, `"provider":"deepseek"`) {
+		t.Fatalf("persist JSON dropped provider: %s", out)
+	}
+	if strings.Contains(out, `"prompt"`) {
+		t.Fatalf("persist JSON must not expose or preserve a configurable prompt: %s", out)
 	}
 
 	cfg2, err := ParseContentModerationConfigJSON(out, cfg.APIKeys)

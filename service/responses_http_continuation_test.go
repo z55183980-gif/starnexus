@@ -87,6 +87,22 @@ func TestResponsesHTTPContinuationExpandsMatchingFunctionCallOutput(t *testing.T
 	require.Equal(t, "function_call_output", gjson.GetBytes(second.Input, "2.type").String())
 }
 
+func TestResponsesHTTPContinuationExposesCreatingAccountAsAffinityHint(t *testing.T) {
+	resetResponsesHTTPContinuationTestCache(t)
+	firstCtx := newResponsesHTTPContinuationTestContext(t)
+	enableResponsesHTTPContinuationPersist(t, firstCtx)
+	PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: json.RawMessage(`"first"`)})
+	CommitResponsesHTTPContinuation(firstCtx, "resp_affinity", []json.RawMessage{
+		json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`),
+	})
+
+	secondCtx := newResponsesHTTPContinuationTestContext(t)
+	PrepareResponsesHTTPContinuation(secondCtx, &dto.OpenAIResponsesRequest{
+		Model: "gpt-5", PreviousResponseID: "resp_affinity", Input: json.RawMessage(`"second"`),
+	})
+	require.Equal(t, 9, ResponsesHTTPContinuationPreferredAccountID(secondCtx))
+}
+
 func TestResponsesHTTPContinuationRollsBackUnansweredCallForPlainMessage(t *testing.T) {
 	resetResponsesHTTPContinuationTestCache(t)
 	firstCtx := newResponsesHTTPContinuationTestContext(t)

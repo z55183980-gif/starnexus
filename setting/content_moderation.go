@@ -14,6 +14,10 @@ const (
 	ContentModerationModePreBlock = "pre_block"
 	ContentModerationModeObserve  = "observe"
 
+	ContentModerationModelTypeGeneral   = "general"
+	ContentModerationModelTypeDedicated = "dedicated"
+	ContentModerationProviderDeepSeek   = "deepseek"
+
 	ContentModerationModelFilterAll     = "all"
 	ContentModerationModelFilterInclude = "include"
 	ContentModerationModelFilterExclude = "exclude"
@@ -21,6 +25,9 @@ const (
 	defaultContentModerationBaseURL   = "https://api.openai.com"
 	defaultContentModerationModel     = "omni-moderation-latest"
 	defaultContentModerationTimeoutMS = 3000
+	defaultGeneralModerationBaseURL   = "https://api.deepseek.com"
+	defaultGeneralModerationModel     = "deepseek-v4-flash"
+	defaultGeneralModerationTimeoutMS = 8000
 	maxContentModerationTimeoutMS     = 30000
 	maxContentModerationScopeGroups   = 1000
 	maxContentModerationScopeModels   = 1000
@@ -50,13 +57,15 @@ type ContentModerationModelFilter struct {
 	Models []string `json:"models"`
 }
 
-// ContentModerationConfig is the global OpenAI Moderations gate configuration.
+// ContentModerationConfig is the global content-audit gate configuration.
 // Audit scope (all_groups / groups / model_filter) mirrors sub2api risk-control
-// 「审计范围」: which request groups and models are subject to Moderations.
+// 「审计范围」: which request groups and models are subject to content audit.
 // Groups are StarNexus string channel/request groups (not numeric IDs).
 type ContentModerationConfig struct {
 	Enabled     bool                         `json:"enabled"`
 	Mode        string                       `json:"mode"`
+	ModelType   string                       `json:"model_type"`
+	Provider    string                       `json:"provider,omitempty"`
 	BaseURL     string                       `json:"base_url"`
 	Model       string                       `json:"model"`
 	APIKeys     []string                     `json:"api_keys,omitempty"`
@@ -71,6 +80,8 @@ type ContentModerationConfig struct {
 type ContentModerationConfigView struct {
 	Enabled        bool                         `json:"enabled"`
 	Mode           string                       `json:"mode"`
+	ModelType      string                       `json:"model_type"`
+	Provider       string                       `json:"provider,omitempty"`
 	BaseURL        string                       `json:"base_url"`
 	Model          string                       `json:"model"`
 	APIKeyCount    int                          `json:"api_key_count"`
@@ -117,6 +128,8 @@ func defaultContentModerationConfig() ContentModerationConfig {
 	return ContentModerationConfig{
 		Enabled:   false,
 		Mode:      ContentModerationModePreBlock,
+		ModelType: ContentModerationModelTypeDedicated,
+		Provider:  "",
 		BaseURL:   defaultContentModerationBaseURL,
 		Model:     defaultContentModerationModel,
 		APIKeys:   nil,
@@ -212,6 +225,8 @@ func ContentModerationConfigToView(cfg ContentModerationConfig) ContentModeratio
 	return ContentModerationConfigView{
 		Enabled:        cfg.Enabled,
 		Mode:           cfg.Mode,
+		ModelType:      cfg.ModelType,
+		Provider:       cfg.Provider,
 		BaseURL:        cfg.BaseURL,
 		Model:          cfg.Model,
 		APIKeyCount:    len(cfg.APIKeys),
@@ -236,16 +251,42 @@ func (cfg *ContentModerationConfig) normalize() {
 	default:
 		cfg.Mode = ContentModerationModePreBlock
 	}
+	cfg.ModelType = strings.ToLower(strings.TrimSpace(cfg.ModelType))
+	switch cfg.ModelType {
+	case ContentModerationModelTypeGeneral, ContentModerationModelTypeDedicated:
+	default:
+		cfg.ModelType = ContentModerationModelTypeDedicated
+	}
+	if cfg.ModelType == ContentModerationModelTypeGeneral {
+		cfg.Provider = strings.ToLower(strings.TrimSpace(cfg.Provider))
+		if cfg.Provider != ContentModerationProviderDeepSeek {
+			cfg.Provider = ContentModerationProviderDeepSeek
+		}
+	} else {
+		cfg.Provider = ""
+	}
 	cfg.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if cfg.BaseURL == "" {
-		cfg.BaseURL = defaultContentModerationBaseURL
+		if cfg.ModelType == ContentModerationModelTypeGeneral {
+			cfg.BaseURL = defaultGeneralModerationBaseURL
+		} else {
+			cfg.BaseURL = defaultContentModerationBaseURL
+		}
 	}
 	cfg.Model = strings.TrimSpace(cfg.Model)
 	if cfg.Model == "" {
-		cfg.Model = defaultContentModerationModel
+		if cfg.ModelType == ContentModerationModelTypeGeneral {
+			cfg.Model = defaultGeneralModerationModel
+		} else {
+			cfg.Model = defaultContentModerationModel
+		}
 	}
 	if cfg.TimeoutMS <= 0 {
-		cfg.TimeoutMS = defaultContentModerationTimeoutMS
+		if cfg.ModelType == ContentModerationModelTypeGeneral {
+			cfg.TimeoutMS = defaultGeneralModerationTimeoutMS
+		} else {
+			cfg.TimeoutMS = defaultContentModerationTimeoutMS
+		}
 	}
 	if cfg.TimeoutMS > maxContentModerationTimeoutMS {
 		cfg.TimeoutMS = maxContentModerationTimeoutMS
@@ -297,6 +338,8 @@ func contentModerationConfigFromView(view ContentModerationConfigView) ContentMo
 	return ContentModerationConfig{
 		Enabled:     view.Enabled,
 		Mode:        view.Mode,
+		ModelType:   view.ModelType,
+		Provider:    view.Provider,
 		BaseURL:     view.BaseURL,
 		Model:       view.Model,
 		APIKeys:     view.APIKeys,
@@ -375,6 +418,8 @@ func cloneContentModerationConfig(cfg ContentModerationConfig) ContentModeration
 	return ContentModerationConfig{
 		Enabled:     cfg.Enabled,
 		Mode:        cfg.Mode,
+		ModelType:   cfg.ModelType,
+		Provider:    cfg.Provider,
 		BaseURL:     cfg.BaseURL,
 		Model:       cfg.Model,
 		APIKeys:     append([]string(nil), cfg.APIKeys...),

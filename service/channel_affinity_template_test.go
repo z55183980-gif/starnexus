@@ -59,6 +59,17 @@ func TestGetUpstreamAccountAffinityContext_FallsBackToSessionHeader(t *testing.T
 	require.NotEmpty(t, affinity.KeySeed)
 }
 
+func TestGetUpstreamAccountAffinityContext_FallsBackToCompatibleSessionHeader(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Request.Header.Set("X-Session-Affinity", "compatible-session-123")
+
+	affinity, ok := GetUpstreamAccountAffinityContext(ctx)
+	require.True(t, ok)
+	require.Equal(t, affinityFingerprint("compatible-session-123"), affinity.KeyFingerprint)
+	require.NotEmpty(t, affinity.KeySeed)
+}
+
 func TestGetUpstreamAccountAffinityContext_RequiresResponsesSessionKey(t *testing.T) {
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"prompt_cache_key":"session-123"}`))

@@ -222,13 +222,14 @@ func DeletePromptAuditLogs(c *gin.Context) {
 
 type testContentModerationAPIKeyRequest struct {
 	APIKey    string `json:"api_key"`
+	ModelType string `json:"model_type"`
+	Provider  string `json:"provider"`
 	BaseURL   string `json:"base_url"`
 	Model     string `json:"model"`
 	TimeoutMS int    `json:"timeout_ms"`
 }
 
-// TestContentModerationAPIKey probes Moderations with a draft or stored key
-// (same approach as sub2api risk-control api-keys/test: POST /v1/moderations).
+// TestContentModerationAPIKey probes the selected audit API with a draft or stored key.
 func TestContentModerationAPIKey(c *gin.Context) {
 	var req testContentModerationAPIKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -237,8 +238,37 @@ func TestContentModerationAPIKey(c *gin.Context) {
 	}
 	result, err := service.TestContentModerationAPIKey(
 		c.Request.Context(),
+		req.ModelType,
+		req.Provider,
 		req.BaseURL,
 		req.Model,
+		req.APIKey,
+		req.TimeoutMS,
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, result)
+}
+
+type listContentModerationProviderModelsRequest struct {
+	APIKey    string `json:"api_key"`
+	BaseURL   string `json:"base_url"`
+	TimeoutMS int    `json:"timeout_ms"`
+}
+
+// ListContentModerationProviderModels fetches provider model IDs using a draft or stored key.
+func ListContentModerationProviderModels(c *gin.Context) {
+	var req listContentModerationProviderModelsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	result, err := service.ListContentModerationProviderModels(
+		c.Request.Context(),
+		c.Param("provider"),
+		req.BaseURL,
 		req.APIKey,
 		req.TimeoutMS,
 	)

@@ -137,6 +137,131 @@ func TestUpstreamAccountRouterSessionAffinityFallsBackWhenStickyAccountBusy(t *t
 	require.Equal(t, "sticky_fallback", second.Affinity.Outcome)
 	require.NoError(t, first.Lease.Release(context.Background()))
 	require.NoError(t, second.Lease.Release(context.Background()))
+	third, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, first.Account.Id, third.Account.Id, "temporary concurrency fallback must preserve the original session binding")
+	require.NoError(t, third.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterSessionAffinityExplicitZeroDisablesPreferredWait(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-zero-wait-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_ttl_seconds":3600,"session_affinity_wait_ms":0,"session_affinity_max_waiters":0}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccount(t, "affinity-zero-first", pool.Id, nil)
+	createRouterTestAccount(t, "affinity-zero-second", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	request := UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", AccountAffinitySeed: "zero-wait-session",
+	}
+	first, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	startedAt := time.Now()
+	second, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.Less(t, time.Since(startedAt), 100*time.Millisecond)
+	require.NotEqual(t, first.Account.Id, second.Account.Id)
+	require.Equal(t, "sticky_fallback", second.Affinity.Outcome)
+	require.NoError(t, first.Lease.Release(context.Background()))
+	require.NoError(t, second.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterResponseAffinityWaitsThenFallsBack(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "response-affinity-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_ttl_seconds":3600,"session_affinity_wait_ms":10,"session_affinity_max_waiters":1}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	preferred := createRouterTestAccount(t, "response-preferred", pool.Id, nil)
+	fallback := createRouterTestAccount(t, "response-fallback", pool.Id, nil)
+	manager := NewLocalUpstreamAccountLeaseManager()
+	busyLease, err := manager.Acquire(context.Background(), preferred.Id, preferred.Concurrency, time.Minute)
+	require.NoError(t, err)
+	router, err := NewUpstreamAccountRouter(manager, time.Minute)
+	require.NoError(t, err)
+
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", PreferredAccountId: preferred.Id,
+	})
+	require.NoError(t, err)
+	require.Equal(t, fallback.Id, selection.Account.Id)
+	require.NotNil(t, selection.Affinity)
+	require.Equal(t, "response", selection.Affinity.Source)
+	require.Equal(t, "response_fallback", selection.Affinity.Outcome)
+	require.Equal(t, preferred.Id, selection.Affinity.PreferredAccountID)
+	require.NoError(t, busyLease.Release(context.Background()))
+	require.NoError(t, selection.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterResponseAffinityUsesPreferredAccount(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "response-affinity-hit-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_ttl_seconds":3600,"session_affinity_wait_ms":10,"session_affinity_max_waiters":1}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	preferred := createRouterTestAccount(t, "response-hit-preferred", pool.Id, nil)
+	createRouterTestAccount(t, "response-hit-other", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", PreferredAccountId: preferred.Id,
+	})
+	require.NoError(t, err)
+	require.Equal(t, preferred.Id, selection.Account.Id)
+	require.NotNil(t, selection.Affinity)
+	require.Equal(t, "response", selection.Affinity.Source)
+	require.Equal(t, "response_hit", selection.Affinity.Outcome)
+	require.NoError(t, selection.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterResponseAffinityFallsBackToSessionBindingFirst(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "response-session-affinity-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_ttl_seconds":3600,"session_affinity_wait_ms":10,"session_affinity_max_waiters":1}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	responseAccount := createRouterTestAccount(t, "response-chain-account", pool.Id, nil)
+	sessionAccount := createRouterTestAccount(t, "session-binding-account", pool.Id, nil)
+	manager := NewLocalUpstreamAccountLeaseManager()
+	responseBusy, err := manager.Acquire(context.Background(), responseAccount.Id, responseAccount.Concurrency, time.Minute)
+	require.NoError(t, err)
+	router, err := NewUpstreamAccountRouter(manager, time.Minute)
+	require.NoError(t, err)
+	request := UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
+		RequestPath: "/v1/responses", AccountAffinitySeed: "combined-session", AccountAffinityKeyFP: "combined1",
+	}
+	bound, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, sessionAccount.Id, bound.Account.Id)
+	require.NoError(t, bound.Lease.Release(context.Background()))
+	require.NoError(t, responseBusy.Release(context.Background()))
+
+	responseBusy, err = manager.Acquire(context.Background(), responseAccount.Id, responseAccount.Concurrency, time.Minute)
+	require.NoError(t, err)
+	request.PreferredAccountId = responseAccount.Id
+	selection, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, sessionAccount.Id, selection.Account.Id)
+	require.Equal(t, "response", selection.Affinity.Source)
+	require.Equal(t, "response_fallback_session_hit", selection.Affinity.Outcome)
+	require.NoError(t, responseBusy.Release(context.Background()))
+	require.NoError(t, selection.Lease.Release(context.Background()))
 }
 
 func TestUpstreamAccountRouterSessionAffinityDisabledIsNoop(t *testing.T) {

@@ -23,16 +23,83 @@ type upstreamAccountAffinityStore interface {
 	Get(ctx context.Context, key string) (int, bool, error)
 	BindIfAbsent(ctx context.Context, key string, accountID int, ttl time.Duration) (int, bool, error)
 	Replace(ctx context.Context, key string, expectedAccountID int, accountID int, ttl time.Duration) (bool, error)
+	AcquireWaiter(ctx context.Context, key string, maxWaiters int, ttl time.Duration) (bool, error)
+	ReleaseWaiter(ctx context.Context, key string) error
 }
 
 type defaultUpstreamAccountAffinityStore struct {
 	memOnce sync.Once
 	mem     *hot.HotCache[string, int]
 	memMu   sync.Mutex
+	waiters map[string]int
 }
 
 func newDefaultUpstreamAccountAffinityStore() upstreamAccountAffinityStore {
-	return &defaultUpstreamAccountAffinityStore{}
+	return &defaultUpstreamAccountAffinityStore{waiters: make(map[string]int)}
+}
+
+func buildUpstreamAccountAffinityWaiterKey(poolID int, accountID int) string {
+	if poolID <= 0 || accountID <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("waiters:%d:%d", poolID, accountID)
+}
+
+func (s *defaultUpstreamAccountAffinityStore) AcquireWaiter(ctx context.Context, key string, maxWaiters int, ttl time.Duration) (bool, error) {
+	fullKey := upstreamAccountAffinityFullKey(key)
+	if fullKey == "" || maxWaiters <= 0 || ttl <= 0 {
+		return false, nil
+	}
+	if common.RedisEnabled && common.RDB != nil {
+		const acquireWaiter = `
+local current = tonumber(redis.call("GET", KEYS[1]) or "0")
+if current >= tonumber(ARGV[1]) then
+  return 0
+end
+redis.call("INCR", KEYS[1])
+redis.call("PEXPIRE", KEYS[1], ARGV[2])
+return 1`
+		result, err := common.RDB.Eval(ctx, acquireWaiter, []string{fullKey}, maxWaiters, ttl.Milliseconds()).Int()
+		return result == 1, err
+	}
+
+	s.memMu.Lock()
+	defer s.memMu.Unlock()
+	if s.waiters == nil {
+		s.waiters = make(map[string]int)
+	}
+	if s.waiters[fullKey] >= maxWaiters {
+		return false, nil
+	}
+	s.waiters[fullKey]++
+	return true, nil
+}
+
+func (s *defaultUpstreamAccountAffinityStore) ReleaseWaiter(ctx context.Context, key string) error {
+	fullKey := upstreamAccountAffinityFullKey(key)
+	if fullKey == "" {
+		return nil
+	}
+	if common.RedisEnabled && common.RDB != nil {
+		const releaseWaiter = `
+local current = tonumber(redis.call("GET", KEYS[1]) or "0")
+if current <= 1 then
+  redis.call("DEL", KEYS[1])
+  return 0
+end
+return redis.call("DECR", KEYS[1])`
+		_, err := common.RDB.Eval(ctx, releaseWaiter, []string{fullKey}).Result()
+		return err
+	}
+
+	s.memMu.Lock()
+	defer s.memMu.Unlock()
+	if s.waiters[fullKey] <= 1 {
+		delete(s.waiters, fullKey)
+	} else {
+		s.waiters[fullKey]--
+	}
+	return nil
 }
 
 func (s *defaultUpstreamAccountAffinityStore) memory() *hot.HotCache[string, int] {
@@ -137,6 +204,7 @@ func MarkUpstreamAccountAffinitySelection(c *gin.Context, info *UpstreamAccountA
 	}
 	c.Set(ginKeyUpstreamAccountAffinityLogInfo, map[string]interface{}{
 		"enabled":              true,
+		"source":               info.Source,
 		"key_fp":               info.KeyFingerprint,
 		"cache_hit":            info.CacheHit,
 		"preferred_account_id": info.PreferredAccountID,

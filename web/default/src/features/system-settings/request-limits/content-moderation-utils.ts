@@ -51,6 +51,10 @@ export const DEFAULT_CONTENT_MODERATION_THRESHOLDS: Record<string, number> = {
 
 export type ContentModerationMode = 'pre_block' | 'observe'
 
+export type ContentModerationModelType = 'general' | 'dedicated'
+
+export type ContentModerationProvider = 'deepseek'
+
 export type ContentModerationModelFilterType = 'all' | 'include' | 'exclude'
 
 export type ContentModerationModelFilter = {
@@ -61,6 +65,8 @@ export type ContentModerationModelFilter = {
 export type ContentModerationConfigView = {
   enabled: boolean
   mode: ContentModerationMode
+  model_type: ContentModerationModelType
+  provider: ContentModerationProvider
   base_url: string
   model: string
   api_key_count?: number
@@ -77,6 +83,8 @@ export type ContentModerationConfigView = {
 export const DEFAULT_CONTENT_MODERATION_CONFIG: ContentModerationConfigView = {
   enabled: false,
   mode: 'pre_block',
+  model_type: 'dedicated',
+  provider: 'deepseek',
   base_url: 'https://api.openai.com',
   model: 'omni-moderation-latest',
   api_keys: [],
@@ -93,6 +101,19 @@ export const DEFAULT_CONTENT_MODERATION_CONFIG: ContentModerationConfigView = {
 
 function normalizeMode(value: unknown): ContentModerationMode {
   return value === 'observe' ? 'observe' : 'pre_block'
+}
+
+function normalizeModelType(value: unknown): ContentModerationModelType {
+  return value === 'general' ? 'general' : 'dedicated'
+}
+
+function normalizeProvider(value: unknown): ContentModerationProvider {
+  switch (value) {
+    case 'deepseek':
+      return value
+    default:
+      return 'deepseek'
+  }
 }
 
 function normalizeModelFilterType(
@@ -121,9 +142,7 @@ function normalizeStringList(value: unknown): string[] {
   return out
 }
 
-function normalizeModelFilter(
-  value: unknown
-): ContentModerationModelFilter {
+function normalizeModelFilter(value: unknown): ContentModerationModelFilter {
   const raw =
     value && typeof value === 'object'
       ? (value as Partial<ContentModerationModelFilter>)
@@ -159,20 +178,33 @@ export function parseContentModerationConfig(
     )
     const allGroups = hasAllGroupsField ? Boolean(parsed.all_groups) : true
     const groups = allGroups ? [] : normalizeStringList(parsed.groups)
+    const modelType = normalizeModelType(parsed.model_type)
     return {
       enabled: Boolean(parsed.enabled),
       mode: normalizeMode(parsed.mode),
+      model_type: modelType,
+      provider: normalizeProvider(parsed.provider),
       base_url: String(
-        parsed.base_url || DEFAULT_CONTENT_MODERATION_CONFIG.base_url
+        parsed.base_url ||
+          (modelType === 'general'
+            ? 'https://api.deepseek.com'
+            : DEFAULT_CONTENT_MODERATION_CONFIG.base_url)
       ),
-      model: String(parsed.model || DEFAULT_CONTENT_MODERATION_CONFIG.model),
+      model: String(
+        parsed.model ||
+          (modelType === 'general'
+            ? 'deepseek-v4-flash'
+            : DEFAULT_CONTENT_MODERATION_CONFIG.model)
+      ),
       api_key_count: parsed.api_key_count,
       api_key_masks: parsed.api_key_masks,
       api_keys: apiKeys,
       timeout_ms:
         typeof parsed.timeout_ms === 'number' && parsed.timeout_ms > 0
           ? parsed.timeout_ms
-          : DEFAULT_CONTENT_MODERATION_CONFIG.timeout_ms,
+          : modelType === 'general'
+            ? 8000
+            : DEFAULT_CONTENT_MODERATION_CONFIG.timeout_ms,
       all_groups: allGroups,
       groups,
       model_filter: normalizeModelFilter(parsed.model_filter),
@@ -191,6 +223,8 @@ export function stringifyContentModerationConfig(
   return JSON.stringify({
     enabled: config.enabled,
     mode: normalizeMode(config.mode),
+    model_type: normalizeModelType(config.model_type),
+    provider: normalizeProvider(config.provider),
     base_url: config.base_url,
     model: config.model,
     api_keys: config.api_keys,

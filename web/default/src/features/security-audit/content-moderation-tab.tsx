@@ -16,17 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ReactNode } from 'react'
-import { useEffect } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  CheckCircle2,
-  FileText,
-  KeyRound,
-  Shield,
-  XCircle,
-} from 'lucide-react'
+import { CheckCircle2, FileText, KeyRound, Shield, XCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -37,7 +31,6 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/utils'
 import {
   getOptionValue,
   useSystemOptions,
@@ -111,7 +104,7 @@ function SummaryCard({
             ) : null}
           </div>
           <div className='mt-1 flex min-w-0 items-baseline gap-2'>
-            <p className='truncate text-xl font-semibold leading-7'>{value}</p>
+            <p className='truncate text-xl leading-7 font-semibold'>{value}</p>
             {meta ? (
               <p className='text-muted-foreground truncate text-xs'>{meta}</p>
             ) : null}
@@ -207,9 +200,7 @@ export function ContentModerationTab({
   const recordsHits = logsCountQuery.data?.hits ?? 0
   const recordsTotal = logsCountQuery.data?.total ?? 0
   const isObserve = config.mode === 'observe'
-  const modeLabel = isObserve
-    ? t('Observe only')
-    : t('Front interception')
+  const modeLabel = isObserve ? t('Observe only') : t('Front interception')
   const showRuntimePanels = config.enabled
   let scopeValue = t('All Groups')
   if (!config.all_groups) {
@@ -262,7 +253,7 @@ export function ContentModerationTab({
           }
           meta={
             keysConfigured
-              ? t('Ready for Moderations calls')
+              ? t('Ready for audit API calls')
               : t('Add keys in content audit settings')
           }
         />
@@ -299,7 +290,7 @@ export function ContentModerationTab({
                 </h3>
                 <p className='text-muted-foreground mt-1 text-sm'>
                   {t(
-                    'Runtime settings used for Moderations checks. Sync queue metrics are not available in this build.'
+                    'Runtime settings used for content audit checks. Sync queue metrics are not available in this build.'
                   )}
                 </p>
               </div>
@@ -309,7 +300,9 @@ export function ContentModerationTab({
             </div>
             <CardContent className='grid grid-cols-2 gap-3 p-5 md:grid-cols-3'>
               <div className='rounded-lg bg-sky-500/5 p-4'>
-                <p className='text-muted-foreground text-xs'>{t('Model Name')}</p>
+                <p className='text-muted-foreground text-xs'>
+                  {t('Model Name')}
+                </p>
                 <p className='mt-2 truncate text-lg font-semibold'>
                   {config.model}
                 </p>
@@ -318,17 +311,21 @@ export function ContentModerationTab({
                 <p className='text-muted-foreground text-xs'>
                   {t('HTTP Timeout (ms)')}
                 </p>
-                <p className='mt-2 text-lg font-semibold'>{config.timeout_ms}</p>
+                <p className='mt-2 text-lg font-semibold'>
+                  {config.timeout_ms}
+                </p>
               </div>
               <div className='rounded-lg bg-emerald-500/5 p-4'>
-                <p className='text-muted-foreground text-xs'>{t('Fail-open')}</p>
+                <p className='text-muted-foreground text-xs'>
+                  {t('Fail-open')}
+                </p>
                 <p className='mt-2 text-lg font-semibold'>
                   {t('API failures allow requests')}
                 </p>
               </div>
               <div className='col-span-2 rounded-lg bg-violet-500/5 p-4 md:col-span-3'>
                 <p className='text-muted-foreground text-xs'>
-                  {t('OpenAI Base URL')}
+                  {t('API Base URL')}
                 </p>
                 <p className='mt-2 truncate font-mono text-sm font-semibold'>
                   {config.base_url}
@@ -341,11 +338,11 @@ export function ContentModerationTab({
             <div className='flex flex-col gap-2 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between'>
               <div>
                 <h3 className='text-base font-semibold'>
-                  {t('Moderation API key load')}
+                  {t('Audit API key load')}
                 </h3>
                 <p className='text-muted-foreground mt-1 text-sm'>
                   {t(
-                    'Configured Moderations keys. Per-key latency load is not tracked yet.'
+                    'Configured audit API keys. Per-key latency load is not tracked yet.'
                   )}
                 </p>
               </div>
@@ -376,7 +373,7 @@ export function ContentModerationTab({
                 </div>
               ) : (
                 <p className='bg-muted/40 text-muted-foreground rounded-lg p-4 text-sm'>
-                  {t('No moderation API key load data')}
+                  {t('No audit API key load data')}
                 </p>
               )}
             </CardContent>
@@ -392,7 +389,7 @@ export function ContentModerationTab({
             <SheetTitle>{t('Content audit settings')}</SheetTitle>
             <SheetDescription>
               {t(
-                'Call OpenAI Moderations before upstream. Disabled by default. API failures fail open.'
+                'Call the configured audit API before upstream. Disabled by default. API failures fail open.'
               )}
             </SheetDescription>
           </SheetHeader>

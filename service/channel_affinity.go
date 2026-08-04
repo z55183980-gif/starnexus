@@ -450,6 +450,10 @@ func GetUpstreamAccountAffinityContext(c *gin.Context) (UpstreamAccountAffinityC
 		{name: "prompt_cache_key", source: operation_setting.ChannelAffinityKeySource{Type: "gjson", Path: "prompt_cache_key"}},
 		{name: "session_id", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "Session_id"}},
 		{name: "conversation_id", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "Conversation_id"}},
+		{name: "x_session_affinity", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "X-Session-Affinity"}},
+		{name: "x_session_id", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "X-Session-Id"}},
+		{name: "x_opencode_session", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "X-OpenCode-Session"}},
+		{name: "x_conversation_id", source: operation_setting.ChannelAffinityKeySource{Type: "request_header", Key: "X-Conversation-ID"}},
 	}
 	for _, fallback := range fallbackSources {
 		value := extractChannelAffinityValue(c, fallback.source)

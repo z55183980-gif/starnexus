@@ -145,9 +145,42 @@ export async function listContentModerationLogs(
 
 export type ContentModerationAPIKeyTestPayload = {
   api_key?: string
+  model_type?: 'general' | 'dedicated'
+  provider?: 'deepseek'
   base_url?: string
   model?: string
   timeout_ms?: number
+}
+
+export type ContentModerationProviderModelsResult = {
+  provider: 'deepseek'
+  base_url: string
+  models: string[]
+}
+
+export async function listContentModerationProviderModels(payload: {
+  provider: 'deepseek'
+  api_key?: string
+  base_url: string
+  timeout_ms?: number
+}): Promise<ContentModerationProviderModelsResult> {
+  const response = await api.post(
+    `/api/security-audit/providers/${payload.provider}/models`,
+    {
+      api_key: payload.api_key,
+      base_url: payload.base_url,
+      timeout_ms: payload.timeout_ms,
+    }
+  )
+  const result = response.data as {
+    success: boolean
+    message?: string
+    data?: ContentModerationProviderModelsResult
+  }
+  if (!result.success || !result.data) {
+    throw new Error(result.message || 'Failed to fetch models')
+  }
+  return result.data
 }
 
 export type ContentModerationAPIKeyTestResult = {
