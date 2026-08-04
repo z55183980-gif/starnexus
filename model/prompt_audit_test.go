@@ -162,6 +162,34 @@ func TestHasContentModerationObservedHit(t *testing.T) {
 	require.True(t, hasHit)
 }
 
+func TestEnsureSystemPromptAuditPolicyCreatesOnceAndPreservesExisting(t *testing.T) {
+	db := openPromptAuditTestDB(t)
+	require.NoError(t, db.AutoMigrate(&User{}))
+	setPromptAuditTestDatabases(t, db, db)
+	require.NoError(t, db.Create(&User{Id: 51, Username: "observed-user", Password: "password"}).Error)
+
+	created, err := EnsureSystemPromptAuditPolicy(51)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	policy, err := GetPromptAuditPolicyByUserId(51)
+	require.NoError(t, err)
+	require.True(t, policy.MonitorEnabled)
+	require.Zero(t, policy.CreatedBy)
+
+	created, err = EnsureSystemPromptAuditPolicy(51)
+	require.NoError(t, err)
+	require.False(t, created)
+
+	policy.CreatedBy = 99
+	require.NoError(t, db.Model(policy).Update("created_by", policy.CreatedBy).Error)
+	created, err = EnsureSystemPromptAuditPolicy(51)
+	require.NoError(t, err)
+	require.False(t, created)
+	require.NoError(t, db.First(policy, policy.Id).Error)
+	require.Equal(t, 99, policy.CreatedBy)
+}
+
 func promptAuditLogIds(logs []PromptAuditLog) []int {
 	ids := make([]int, len(logs))
 	for index, log := range logs {

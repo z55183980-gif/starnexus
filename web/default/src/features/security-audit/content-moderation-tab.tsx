@@ -61,7 +61,7 @@ type SummaryCardProps = {
   icon: ReactNode
   iconClassName: string
   label: string
-  value: string
+  value: ReactNode
   meta?: string
   badge?: string
   badgeClassName?: string
@@ -269,9 +269,16 @@ export function ContentModerationTab({
           iconClassName='bg-amber-500/10'
           label={t('Audit overview')}
           value={
-            logsCountQuery.isLoading
-              ? '—'
-              : `${passedCount} / ${observedHits} / ${blockedHits} / ${recordsTotal}`
+            logsCountQuery.isLoading ? (
+              '—'
+            ) : (
+              <>
+                <span className='text-success'>{passedCount}</span> /{' '}
+                <span className='text-warning'>{observedHits}</span> /{' '}
+                <span className='text-destructive'>{blockedHits}</span> /{' '}
+                <span>{recordsTotal}</span>
+              </>
+            )
           }
           meta={t('Passed · Observed hits · Blocked hits · Total audits')}
         />

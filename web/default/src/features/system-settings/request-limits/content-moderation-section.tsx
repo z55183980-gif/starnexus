@@ -63,7 +63,7 @@ const contentModerationSchema = z
   .object({
     enabled: z.boolean(),
     mode: z.enum(['pre_block', 'observe']),
-    observe_hit_action: z.enum(['observe', 'pre_block']),
+    observe_hit_action: z.enum(['observe', 'pre_block', 'pre_block_monitor']),
     model_type: z.enum(['general', 'dedicated']),
     provider: z.enum(['deepseek']),
     base_url: z.string().min(1),
@@ -507,10 +507,16 @@ export function ContentModerationSection({
                     value: 'pre_block',
                     label: t('Upgrade to front interception'),
                   },
+                  {
+                    value: 'pre_block_monitor',
+                    label: t('Upgrade to front interception and monitor'),
+                  },
                 ]
                 return (
                   <FormItem>
-                    <FormLabel>{t('Action after first observed hit')}</FormLabel>
+                    <FormLabel>
+                      {t('Action after first observed hit')}
+                    </FormLabel>
                     <Select
                       items={items}
                       value={field.value}

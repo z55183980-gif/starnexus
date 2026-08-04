@@ -7,10 +7,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestExtractPromptAuditUserTextOpenAIUsesLatestUserMessage(t *testing.T) {
@@ -382,7 +387,7 @@ func TestShouldSkipPromptAuditText(t *testing.T) {
 	}
 }
 
-func TestBuildPromptAuditLogUsesEmptyMatchedWordsArray(t *testing.T) {
+func TestBuildPromptAuditLogIncludesUserBehaviorSource(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
 
@@ -397,7 +402,50 @@ func TestBuildPromptAuditLogUsesEmptyMatchedWordsArray(t *testing.T) {
 		model.PromptAuditActionRecorded,
 		0,
 	)
-	if log.MatchedWords != "[]" {
+	if log.MatchedWords != `["audit-source:user-behavior"]` {
 		t.Fatalf("unexpected matched words: %q", log.MatchedWords)
 	}
+}
+
+func TestApplyPromptAuditUsesUserBehaviorBlockedCode(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PromptAuditPolicy{}, &model.PromptAuditLog{}))
+
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	originalSensitiveWords := append([]string(nil), setting.SensitiveWords...)
+	model.DB = db
+	model.LOG_DB = db
+	setting.SensitiveWords = []string{"blocked-local-word"}
+	InvalidatePromptAuditPolicyCache()
+	t.Cleanup(func() {
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		setting.SensitiveWords = originalSensitiveWords
+		InvalidatePromptAuditPolicyCache()
+	})
+
+	require.NoError(t, db.Create(&model.PromptAuditPolicy{
+		UserId:         77,
+		MonitorEnabled: true,
+		BlockOnHit:     true,
+		DelaySeconds:   model.PromptAuditDefaultDelaySeconds,
+		CreatedAt:      1,
+		UpdatedAt:      1,
+	}).Error)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	c.Set(string(constant.ContextKeyUserId), 77)
+	request := &dto.GeneralOpenAIRequest{
+		Messages: []dto.Message{{Role: "user", Content: "contains blocked-local-word"}},
+	}
+	apiErr := ApplyPromptAudit(c, request, types.RelayFormatOpenAI, "gpt-test")
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeUserBehaviorBlocked, apiErr.GetErrorCode())
+
+	var log model.PromptAuditLog
+	require.NoError(t, db.First(&log).Error)
+	require.Contains(t, log.MatchedWords, promptAuditBehaviorSourceMarker)
 }

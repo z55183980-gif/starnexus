@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import type { InfiniteData } from '@tanstack/react-query'
 import {
+  type InfiniteData,
   useInfiniteQuery,
   useQuery,
   useQueryClient,
@@ -37,6 +37,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatTimestampToDate } from '@/lib/format'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -171,7 +172,7 @@ function AddUserPopover({
         render={
           <Button size='sm'>
             <Plus className='size-4' />
-            {t('Add audit user')}
+            {t('Add monitored user')}
           </Button>
         }
       />
@@ -241,8 +242,10 @@ function PromptLogSheet({
       return page.next_cursor
     },
   })
-  const logs =
-    logsQuery.data?.pages.flatMap((page) => page.data?.items ?? []) ?? []
+  const logs = useMemo(
+    () => logsQuery.data?.pages.flatMap((page) => page.data?.items ?? []) ?? [],
+    [logsQuery.data?.pages]
+  )
 
   useEffect(() => {
     refreshCursorRef.current = 0
@@ -605,7 +608,9 @@ export function SecurityAudit() {
         <SectionPageLayout.Description>
           {view === 'moderation'
             ? t('Configure content audit policies and view audit records')
-            : t('Monitor and control user prompts with sensitive-word rules.')}
+            : t(
+                'Monitor selected users with local sensitive-word rules after the upstream account-risk audit.'
+              )}
         </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           {view === 'moderation' ? (
@@ -613,17 +618,12 @@ export function SecurityAudit() {
               <Button
                 variant='outline'
                 size='sm'
-                onClick={() =>
-                  setModerationRefreshNonce((value) => value + 1)
-                }
+                onClick={() => setModerationRefreshNonce((value) => value + 1)}
               >
                 <RefreshCw data-icon='inline-start' />
                 {t('Refresh status')}
               </Button>
-              <Button
-                size='sm'
-                onClick={() => setModerationSettingsOpen(true)}
-              >
+              <Button size='sm' onClick={() => setModerationSettingsOpen(true)}>
                 <Settings2 data-icon='inline-start' />
                 {t('Content audit settings')}
               </Button>
@@ -638,196 +638,227 @@ export function SecurityAudit() {
         <SectionPageLayout.Content>
           <Tabs
             value={view}
-            onValueChange={(value) =>
-              setView(value as 'policies' | 'moderation')
-            }
+            onValueChange={(value) => {
+              const nextView = value as 'policies' | 'moderation'
+              setView(nextView)
+              if (nextView === 'policies') {
+                void policiesQuery.refetch()
+              }
+            }}
           >
             <TabsList variant='line'>
-              <TabsTrigger value='policies'>
-                {t('Prompt audit users')}
-              </TabsTrigger>
               <TabsTrigger value='moderation'>
                 {t('Content Moderation (API)')}
               </TabsTrigger>
+              <TabsTrigger value='policies'>
+                {t('User behavior rules')}
+              </TabsTrigger>
             </TabsList>
-            <TabsContent value='policies' className='mt-4'>
+            <TabsContent value='policies' className='mt-4 flex flex-col gap-4'>
+              <Alert>
+                <AlertTitle>
+                  {t('User behavior rules run after API content audit')}
+                </AlertTitle>
+                <AlertDescription>
+                  {t(
+                    'API content audit always runs first. These local rules only add per-user monitoring, delay, or blocking and do not replace upstream account-risk classification.'
+                  )}
+                </AlertDescription>
+              </Alert>
               <div className='overflow-hidden rounded-lg border'>
-            {policiesQuery.isLoading ? (
-              <div className='space-y-3 p-4'>
-                {Array.from({ length: 5 }).map((_, index) => (
-                  <Skeleton key={index} className='h-12 w-full' />
-                ))}
-              </div>
-            ) : policiesQuery.isError ? (
-              <Empty className='min-h-72 rounded-none'>
-                <EmptyHeader>
-                  <EmptyTitle>{t('Failed to load')}</EmptyTitle>
-                </EmptyHeader>
-                <Button
-                  variant='outline'
-                  onClick={() => void policiesQuery.refetch()}
-                >
-                  {t('Retry')}
-                </Button>
-              </Empty>
-            ) : policies.length === 0 ? (
-              <Empty className='min-h-72 rounded-none'>
-                <EmptyHeader>
-                  <EmptyMedia variant='icon'>
-                    <ShieldCheck />
-                  </EmptyMedia>
-                  <EmptyTitle>{t('No audit users')}</EmptyTitle>
-                  <EmptyDescription>
-                    {t('Add a user to start monitoring prompts.')}
-                  </EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('User')}</TableHead>
-                    <TableHead className='text-center'>
-                      {t('Monitor')}
-                    </TableHead>
-                    <TableHead className='text-center'>
-                      {t('Delay on hit')}
-                    </TableHead>
-                    <TableHead className='text-center'>
-                      {t('Block on hit')}
-                    </TableHead>
-                    <TableHead className='text-right'>{t('Actions')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {policies.map((policy) => {
-                    const disabled = pendingPolicyId === policy.id
-                    return (
-                      <TableRow key={policy.id}>
-                        <TableCell>
-                          <div className='max-w-72 min-w-40'>
-                            <div className='truncate font-medium'>
-                              {policy.username || `#${policy.user_id}`}
-                            </div>
-                            <div className='text-muted-foreground truncate text-xs'>
-                              {policy.display_name ||
-                                policy.email ||
-                                `#${policy.user_id}`}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell className='text-center'>
-                          <Switch
-                            checked={policy.monitor_enabled}
-                            disabled={disabled}
-                            aria-label={t('Monitor prompts for {{username}}', {
-                              username: policy.username,
-                            })}
-                            onCheckedChange={(checked) =>
-                              void updatePolicy(policy, {
-                                monitor_enabled: checked,
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex items-center justify-center gap-2'>
-                            <Switch
-                              checked={policy.delay_on_hit}
-                              disabled={disabled}
-                              aria-label={t(
-                                'Delay sensitive prompts for {{username}}',
-                                {
-                                  username: policy.username,
-                                }
-                              )}
-                              onCheckedChange={(checked) =>
-                                void updatePolicy(policy, {
-                                  delay_on_hit: checked,
-                                  ...(checked ? { block_on_hit: false } : {}),
-                                })
-                              }
-                            />
-                            <Select
-                              items={delaySecondsOptions.map((seconds) => ({
-                                value: String(seconds),
-                                label: `${seconds} ${t('seconds')}`,
-                              }))}
-                              value={String(policy.delay_seconds || 3)}
-                              onValueChange={(value) =>
-                                void updatePolicy(policy, {
-                                  delay_seconds: Number(value),
-                                })
-                              }
-                            >
-                              <SelectTrigger
-                                size='sm'
-                                className='w-20'
-                                disabled={disabled}
-                                aria-label={`${t('Delay on hit')}: ${policy.username}`}
-                              >
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent alignItemWithTrigger={false}>
-                                <SelectGroup>
-                                  {delaySecondsOptions.map((seconds) => (
-                                    <SelectItem
-                                      key={seconds}
-                                      value={String(seconds)}
-                                    >
-                                      {seconds} {t('seconds')}
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </TableCell>
-                        <TableCell className='text-center'>
-                          <Switch
-                            checked={policy.block_on_hit}
-                            disabled={disabled}
-                            aria-label={t(
-                              'Block sensitive prompts for {{username}}',
-                              {
-                                username: policy.username,
-                              }
-                            )}
-                            onCheckedChange={(checked) =>
-                              void updatePolicy(policy, {
-                                block_on_hit: checked,
-                                ...(checked ? { delay_on_hit: false } : {}),
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <div className='flex justify-end gap-1'>
-                            <Button
-                              variant='ghost'
-                              size='sm'
-                              onClick={() => setViewingPolicy(policy)}
-                            >
-                              <Eye className='size-4' />
-                              {t('View')}
-                            </Button>
-                            <Button
-                              variant='ghost'
-                              size='icon-sm'
-                              disabled={disabled}
-                              aria-label={t('Delete audit user')}
-                              onClick={() => setDeletingPolicy(policy)}
-                            >
-                              <Trash2 className='size-4' />
-                            </Button>
-                          </div>
-                        </TableCell>
+                {policiesQuery.isLoading ? (
+                  <div className='space-y-3 p-4'>
+                    {Array.from({ length: 5 }).map((_, index) => (
+                      <Skeleton key={index} className='h-12 w-full' />
+                    ))}
+                  </div>
+                ) : policiesQuery.isError ? (
+                  <Empty className='min-h-72 rounded-none'>
+                    <EmptyHeader>
+                      <EmptyTitle>{t('Failed to load')}</EmptyTitle>
+                    </EmptyHeader>
+                    <Button
+                      variant='outline'
+                      onClick={() => void policiesQuery.refetch()}
+                    >
+                      {t('Retry')}
+                    </Button>
+                  </Empty>
+                ) : policies.length === 0 ? (
+                  <Empty className='min-h-72 rounded-none'>
+                    <EmptyHeader>
+                      <EmptyMedia variant='icon'>
+                        <ShieldCheck />
+                      </EmptyMedia>
+                      <EmptyTitle>{t('No monitored users')}</EmptyTitle>
+                      <EmptyDescription>
+                        {t('Add a user to start monitoring prompts.')}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t('User')}</TableHead>
+                        <TableHead className='text-center'>
+                          {t('Monitor local rules')}
+                        </TableHead>
+                        <TableHead className='text-center'>
+                          {t('Delay on local hit')}
+                        </TableHead>
+                        <TableHead className='text-center'>
+                          {t('Block on local hit')}
+                        </TableHead>
+                        <TableHead className='text-right'>
+                          {t('Actions')}
+                        </TableHead>
                       </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            )}
+                    </TableHeader>
+                    <TableBody>
+                      {policies.map((policy) => {
+                        const disabled = pendingPolicyId === policy.id
+                        return (
+                          <TableRow key={policy.id}>
+                            <TableCell>
+                              <div className='max-w-72 min-w-40'>
+                                <div className='flex items-center gap-2'>
+                                  <span className='truncate font-medium'>
+                                    {policy.username || `#${policy.user_id}`}
+                                  </span>
+                                  {policy.created_by === 0 && (
+                                    <Badge
+                                      variant='secondary'
+                                      className='shrink-0'
+                                    >
+                                      {t('System created')}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className='text-muted-foreground truncate text-xs'>
+                                  {policy.display_name ||
+                                    policy.email ||
+                                    `#${policy.user_id}`}
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className='text-center'>
+                              <Switch
+                                checked={policy.monitor_enabled}
+                                disabled={disabled}
+                                aria-label={t(
+                                  'Monitor prompts for {{username}}',
+                                  {
+                                    username: policy.username,
+                                  }
+                                )}
+                                onCheckedChange={(checked) =>
+                                  void updatePolicy(policy, {
+                                    monitor_enabled: checked,
+                                  })
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className='flex items-center justify-center gap-2'>
+                                <Switch
+                                  checked={policy.delay_on_hit}
+                                  disabled={disabled}
+                                  aria-label={t(
+                                    'Delay sensitive prompts for {{username}}',
+                                    {
+                                      username: policy.username,
+                                    }
+                                  )}
+                                  onCheckedChange={(checked) =>
+                                    void updatePolicy(policy, {
+                                      delay_on_hit: checked,
+                                      ...(checked
+                                        ? { block_on_hit: false }
+                                        : {}),
+                                    })
+                                  }
+                                />
+                                <Select
+                                  items={delaySecondsOptions.map((seconds) => ({
+                                    value: String(seconds),
+                                    label: `${seconds} ${t('seconds')}`,
+                                  }))}
+                                  value={String(policy.delay_seconds || 3)}
+                                  onValueChange={(value) =>
+                                    void updatePolicy(policy, {
+                                      delay_seconds: Number(value),
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger
+                                    size='sm'
+                                    className='w-20'
+                                    disabled={disabled}
+                                    aria-label={`${t('Delay on hit')}: ${policy.username}`}
+                                  >
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent alignItemWithTrigger={false}>
+                                    <SelectGroup>
+                                      {delaySecondsOptions.map((seconds) => (
+                                        <SelectItem
+                                          key={seconds}
+                                          value={String(seconds)}
+                                        >
+                                          {seconds} {t('seconds')}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectGroup>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </TableCell>
+                            <TableCell className='text-center'>
+                              <Switch
+                                checked={policy.block_on_hit}
+                                disabled={disabled}
+                                aria-label={t(
+                                  'Block sensitive prompts for {{username}}',
+                                  {
+                                    username: policy.username,
+                                  }
+                                )}
+                                onCheckedChange={(checked) =>
+                                  void updatePolicy(policy, {
+                                    block_on_hit: checked,
+                                    ...(checked ? { delay_on_hit: false } : {}),
+                                  })
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className='flex justify-end gap-1'>
+                                <Button
+                                  variant='ghost'
+                                  size='sm'
+                                  onClick={() => setViewingPolicy(policy)}
+                                >
+                                  <Eye className='size-4' />
+                                  {t('View')}
+                                </Button>
+                                <Button
+                                  variant='ghost'
+                                  size='icon-sm'
+                                  disabled={disabled}
+                                  aria-label={t('Delete audit user')}
+                                  onClick={() => setDeletingPolicy(policy)}
+                                >
+                                  <Trash2 className='size-4' />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                )}
               </div>
             </TabsContent>
             <TabsContent value='moderation' className='mt-4'>

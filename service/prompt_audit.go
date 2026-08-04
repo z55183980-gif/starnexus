@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	promptAuditMaxPromptRunes = 12000
-	promptAuditPolicyCacheTTL = 5 * time.Second
+	promptAuditMaxPromptRunes       = 12000
+	promptAuditPolicyCacheTTL       = 5 * time.Second
+	promptAuditBehaviorSourceMarker = "audit-source:user-behavior"
 )
 
 var promptAuditSystemReminderBlock = regexp.MustCompile(`(?is)<system-reminder>.*?</system-reminder>`)
@@ -92,9 +93,10 @@ func getPromptAuditPolicy(userId int) (*model.PromptAuditPolicy, error) {
 	return &policy, nil
 }
 
-// ApplyPromptAudit applies the per-user security audit policy before token
-// counting, billing, or upstream forwarding. Global sensitive-word enforcement
-// remains independent and must still run after this audit step.
+// ApplyPromptAudit applies local per-user behavior controls after the global
+// upstream account-risk content audit and before billing or forwarding. It is
+// not an OpenAI policy classifier; it only monitors, delays, or blocks local
+// sensitive-word hits for selected users.
 func ApplyPromptAudit(c *gin.Context, request dto.Request, relayFormat types.RelayFormat, modelName string) *types.NewAPIError {
 	userId := common.GetContextKeyInt(c, constant.ContextKeyUserId)
 	if userId <= 0 {
@@ -140,8 +142,8 @@ func ApplyPromptAudit(c *gin.Context, request dto.Request, relayFormat types.Rel
 
 	if action == model.PromptAuditActionBlocked {
 		return types.NewErrorWithStatusCode(
-			errors.New("prompt blocked by security audit"),
-			types.ErrorCodePromptBlocked,
+			errors.New("prompt blocked by user behavior rule"),
+			types.ErrorCodeUserBehaviorBlocked,
 			http.StatusBadRequest,
 			types.ErrOptionWithSkipRetry(),
 		)
@@ -174,9 +176,7 @@ func promptAuditDelayMilliseconds(seconds int) int {
 
 func buildPromptAuditLog(c *gin.Context, userId int, modelName string, relayFormat types.RelayFormat, prompt string, words []string, hit bool, action string, delayMs int) *model.PromptAuditLog {
 	storedPrompt, truncated := truncatePromptAuditText(prompt)
-	if words == nil {
-		words = []string{}
-	}
+	words = append([]string{promptAuditBehaviorSourceMarker}, words...)
 	matchedWords, err := common.Marshal(words)
 	if err != nil {
 		matchedWords = []byte("[]")

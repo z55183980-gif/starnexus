@@ -576,7 +576,7 @@ func contentModerationUnavailableError() *types.NewAPIError {
 
 func contentModerationEffectiveMode(cfg setting.ContentModerationConfig, userId int) string {
 	if cfg.Mode != setting.ContentModerationModeObserve ||
-		cfg.ObserveHitAction != setting.ContentModerationObserveHitActionPreBlock ||
+		!contentModerationObserveActionEscalates(cfg.ObserveHitAction) ||
 		userId <= 0 {
 		return cfg.Mode
 	}
@@ -589,6 +589,25 @@ func contentModerationEffectiveMode(cfg setting.ContentModerationConfig, userId 
 		return setting.ContentModerationModePreBlock
 	}
 	return setting.ContentModerationModeObserve
+}
+
+func contentModerationObserveActionEscalates(action string) bool {
+	return action == setting.ContentModerationObserveHitActionPreBlock ||
+		action == setting.ContentModerationObserveHitActionPreBlockMonitor
+}
+
+func enableContentModerationPromptMonitoring(cfg setting.ContentModerationConfig, userId int) {
+	if cfg.ObserveHitAction != setting.ContentModerationObserveHitActionPreBlockMonitor || userId <= 0 {
+		return
+	}
+	created, err := model.EnsureSystemPromptAuditPolicy(userId)
+	if err != nil {
+		common.SysError("failed to create system prompt monitoring policy: " + err.Error())
+		return
+	}
+	if created {
+		InvalidatePromptAuditPolicyCache()
+	}
 }
 
 func scheduleContentModerationObserve(cfg setting.ContentModerationConfig, logCtx contentModerationLogContext, prompt string) {
@@ -632,6 +651,9 @@ func runContentModerationObserve(cfg setting.ContentModerationConfig, logCtx con
 	flagged, highestCategory, highestScore, hitCategories := evaluateContentModerationResult(result, cfg)
 	action := contentModerationAction(cfg.Mode, flagged)
 	logContentModerationResult(logCtx, prompt, hitCategories, highestCategory, highestScore, flagged, action)
+	if flagged {
+		enableContentModerationPromptMonitoring(cfg, logCtx.UserId)
+	}
 }
 
 func contentModerationAction(mode string, flagged bool) string {

@@ -100,6 +100,14 @@ func TestContentModerationObserveHitActionNormalize(t *testing.T) {
 		t.Fatalf("expected pre_block escalation, got %q", cfg.ObserveHitAction)
 	}
 
+	cfg, err = ParseContentModerationConfigJSON(`{"mode":"observe","observe_hit_action":"pre_block_monitor"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ObserveHitAction != ContentModerationObserveHitActionPreBlockMonitor {
+		t.Fatalf("expected pre_block_monitor escalation, got %q", cfg.ObserveHitAction)
+	}
+
 	cfg, err = ParseContentModerationConfigJSON(`{"mode":"observe","observe_hit_action":"unknown"}`, nil)
 	if err != nil {
 		t.Fatal(err)

@@ -219,8 +219,40 @@ func TestContentModerationEffectiveModeEscalatesAfterObservedHit(t *testing.T) {
 	require.Equal(t, setting.ContentModerationModePreBlock, contentModerationEffectiveMode(cfg, 51))
 	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 52))
 
+	cfg.ObserveHitAction = setting.ContentModerationObserveHitActionPreBlockMonitor
+	require.Equal(t, setting.ContentModerationModePreBlock, contentModerationEffectiveMode(cfg, 51))
+
 	cfg.ObserveHitAction = setting.ContentModerationObserveHitActionObserve
 	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 51))
+}
+
+func TestEnableContentModerationPromptMonitoringCreatesSystemPolicy(t *testing.T) {
+	db := openContentModerationServiceTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.PromptAuditPolicy{}))
+	originalDB := model.DB
+	originalLogDB := model.LOG_DB
+	model.DB = db
+	model.LOG_DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+		model.LOG_DB = originalLogDB
+		InvalidatePromptAuditPolicyCache()
+	})
+	require.NoError(t, db.Create(&model.User{Id: 52, Username: "observed-user", Password: "password"}).Error)
+
+	enableContentModerationPromptMonitoring(setting.ContentModerationConfig{
+		ObserveHitAction: setting.ContentModerationObserveHitActionPreBlock,
+	}, 52)
+	_, err := model.GetPromptAuditPolicyByUserId(52)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	enableContentModerationPromptMonitoring(setting.ContentModerationConfig{
+		ObserveHitAction: setting.ContentModerationObserveHitActionPreBlockMonitor,
+	}, 52)
+	policy, err := model.GetPromptAuditPolicyByUserId(52)
+	require.NoError(t, err)
+	require.True(t, policy.MonitorEnabled)
+	require.Zero(t, policy.CreatedBy)
 }
 
 func TestApplyContentModerationDisabled(t *testing.T) {

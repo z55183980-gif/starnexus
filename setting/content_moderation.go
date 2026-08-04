@@ -14,8 +14,9 @@ const (
 	ContentModerationModePreBlock = "pre_block"
 	ContentModerationModeObserve  = "observe"
 
-	ContentModerationObserveHitActionObserve  = "observe"
-	ContentModerationObserveHitActionPreBlock = "pre_block"
+	ContentModerationObserveHitActionObserve         = "observe"
+	ContentModerationObserveHitActionPreBlock        = "pre_block"
+	ContentModerationObserveHitActionPreBlockMonitor = "pre_block_monitor"
 
 	ContentModerationModelTypeGeneral   = "general"
 	ContentModerationModelTypeDedicated = "dedicated"
@@ -257,6 +258,8 @@ func (cfg *ContentModerationConfig) normalize() {
 	switch strings.ToLower(strings.TrimSpace(cfg.ObserveHitAction)) {
 	case ContentModerationObserveHitActionPreBlock:
 		cfg.ObserveHitAction = ContentModerationObserveHitActionPreBlock
+	case ContentModerationObserveHitActionPreBlockMonitor:
+		cfg.ObserveHitAction = ContentModerationObserveHitActionPreBlockMonitor
 	default:
 		cfg.ObserveHitAction = ContentModerationObserveHitActionObserve
 	}

@@ -146,13 +146,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
-	if promptAuditError := service.ApplyPromptAudit(c, request, relayFormat, relayInfo.OriginModelName); promptAuditError != nil {
-		newAPIError = promptAuditError
+	if moderationError := service.ApplyContentModeration(c, request, relayFormat, relayInfo.OriginModelName); moderationError != nil {
+		newAPIError = moderationError
 		return
 	}
 
-	if moderationError := service.ApplyContentModeration(c, request, relayFormat, relayInfo.OriginModelName); moderationError != nil {
-		newAPIError = moderationError
+	if promptAuditError := service.ApplyPromptAudit(c, request, relayFormat, relayInfo.OriginModelName); promptAuditError != nil {
+		newAPIError = promptAuditError
 		return
 	}
 

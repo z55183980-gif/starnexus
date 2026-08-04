@@ -132,6 +132,41 @@ func CreatePromptAuditPolicy(userId int, createdBy int) (*PromptAuditPolicy, err
 	return policy, nil
 }
 
+// EnsureSystemPromptAuditPolicy creates a monitoring policy for an observed
+// moderation hit. Existing policies are preserved so automatic escalation
+// never overwrites an administrator's settings.
+func EnsureSystemPromptAuditPolicy(userId int) (bool, error) {
+	if userId <= 0 {
+		return false, errors.New("invalid user id")
+	}
+	if _, err := GetPromptAuditPolicyByUserId(userId); err == nil {
+		return false, nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+	if _, err := GetUserById(userId, false); err != nil {
+		return false, errors.New("user not found")
+	}
+
+	now := common.GetTimestamp()
+	policy := &PromptAuditPolicy{
+		UserId:         userId,
+		MonitorEnabled: true,
+		DelaySeconds:   PromptAuditDefaultDelaySeconds,
+		CreatedBy:      0,
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := DB.Create(policy).Error; err != nil {
+		// Another observed request may have created the same unique policy.
+		if _, lookupErr := GetPromptAuditPolicyByUserId(userId); lookupErr == nil {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func UpdatePromptAuditPolicy(policy *PromptAuditPolicy) error {
 	if policy == nil || policy.Id <= 0 {
 		return errors.New("invalid prompt audit policy")

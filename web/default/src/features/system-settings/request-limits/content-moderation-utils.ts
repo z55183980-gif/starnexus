@@ -63,7 +63,10 @@ export const DEFAULT_CONTENT_MODERATION_THRESHOLDS: Record<string, number> = {
 
 export type ContentModerationMode = 'pre_block' | 'observe'
 
-export type ContentModerationObserveHitAction = 'observe' | 'pre_block'
+export type ContentModerationObserveHitAction =
+  | 'observe'
+  | 'pre_block'
+  | 'pre_block_monitor'
 
 export type ContentModerationModelType = 'general' | 'dedicated'
 
@@ -122,7 +125,10 @@ function normalizeMode(value: unknown): ContentModerationMode {
 function normalizeObserveHitAction(
   value: unknown
 ): ContentModerationObserveHitAction {
-  return value === 'pre_block' ? 'pre_block' : 'observe'
+  if (value === 'pre_block' || value === 'pre_block_monitor') {
+    return value
+  }
+  return 'observe'
 }
 
 function normalizeModelType(value: unknown): ContentModerationModelType {
