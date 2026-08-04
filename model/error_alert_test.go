@@ -188,10 +188,28 @@ func TestAcknowledgeAllErrorAlerts(t *testing.T) {
 func TestGetErrorAlertLatestLog(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	originalDB := DB
 	originalLogDB := LOG_DB
+	DB = db
 	LOG_DB = db
-	t.Cleanup(func() { LOG_DB = originalLogDB })
-	require.NoError(t, db.AutoMigrate(&Log{}, &ErrorAlert{}))
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}, &ErrorAlert{}, &UpstreamAccount{}))
+	account := &UpstreamAccount{
+		Name:                 "monitor-account",
+		Platform:             "openai",
+		Type:                 "apikey",
+		CredentialCiphertext: "encrypted",
+		CredentialNonce:      "nonce",
+		Extra:                "{}",
+		Status:               "active",
+		Schedulable:          true,
+		CreatedAt:            common.GetTimestamp(),
+		UpdatedAt:            common.GetTimestamp(),
+	}
+	require.NoError(t, db.Create(account).Error)
 
 	firstLog := &Log{
 		Id:        61,
@@ -205,11 +223,12 @@ func TestGetErrorAlertLatestLog(t *testing.T) {
 	require.NoError(t, err)
 
 	latestLog := &Log{
-		Id:        62,
-		CreatedAt: 601,
-		Type:      LogTypeError,
-		Content:   "latest upstream failure",
-		ModelName: "gpt-5.6-sol",
+		Id:                62,
+		CreatedAt:         601,
+		Type:              LogTypeError,
+		Content:           "latest upstream failure",
+		ModelName:         "gpt-5.6-sol",
+		UpstreamAccountId: account.Id,
 	}
 	require.NoError(t, db.Create(latestLog).Error)
 	alert, err = UpsertErrorAlert(latestLog)
@@ -219,6 +238,8 @@ func TestGetErrorAlertLatestLog(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, latestLog.Id, log.Id)
 	require.Equal(t, latestLog.Content, log.Content)
+	require.Equal(t, account.Id, log.UpstreamAccountId)
+	require.Equal(t, account.Name, log.UpstreamAccountName)
 }
 
 func TestErrorAlertOutOfOrderUpdatesRemainMonotonic(t *testing.T) {
