@@ -35,31 +35,32 @@ func sanitizeUserLogContent(content string) string {
 }
 
 type Log struct {
-	Id                int     `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
-	UserId            int     `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt         int64   `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
-	Type              int     `json:"type" gorm:"index:idx_created_at_type"`
-	Content           string  `json:"content"`
-	Username          string  `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
-	TokenName         string  `json:"token_name" gorm:"index;default:''"`
-	ModelName         string  `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
-	Quota             int     `json:"quota" gorm:"default:0"`
-	PromptTokens      int     `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens  int     `json:"completion_tokens" gorm:"default:0"`
-	UseTime           int     `json:"use_time" gorm:"default:0"`
-	UseTimeMs         *int64  `json:"use_time_ms,omitempty" gorm:"bigint"`
-	IsStream          bool    `json:"is_stream"`
-	ChannelId         int     `json:"channel" gorm:"index"`
-	ChannelName       string  `json:"channel_name" gorm:"->"`
-	TokenId           int     `json:"token_id" gorm:"default:0;index"`
-	Group             string  `json:"group" gorm:"index"`
-	Ip                string  `json:"ip" gorm:"index;default:''"`
-	RequestId         string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
-	UpstreamRequestId string  `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
-	UpstreamAccountId int     `json:"upstream_account_id,omitempty" gorm:"index;default:0"`
-	AccountCost       float64 `json:"account_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
-	UserCost          float64 `json:"user_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
-	Other             string  `json:"other"`
+	Id                  int     `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
+	UserId              int     `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	CreatedAt           int64   `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
+	Type                int     `json:"type" gorm:"index:idx_created_at_type"`
+	Content             string  `json:"content"`
+	Username            string  `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	TokenName           string  `json:"token_name" gorm:"index;default:''"`
+	ModelName           string  `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota               int     `json:"quota" gorm:"default:0"`
+	PromptTokens        int     `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens    int     `json:"completion_tokens" gorm:"default:0"`
+	UseTime             int     `json:"use_time" gorm:"default:0"`
+	UseTimeMs           *int64  `json:"use_time_ms,omitempty" gorm:"bigint"`
+	IsStream            bool    `json:"is_stream"`
+	ChannelId           int     `json:"channel" gorm:"index"`
+	ChannelName         string  `json:"channel_name" gorm:"->"`
+	TokenId             int     `json:"token_id" gorm:"default:0;index"`
+	Group               string  `json:"group" gorm:"index"`
+	Ip                  string  `json:"ip" gorm:"index;default:''"`
+	RequestId           string  `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
+	UpstreamRequestId   string  `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
+	UpstreamAccountId   int     `json:"upstream_account_id,omitempty" gorm:"index;default:0"`
+	UpstreamAccountName string  `json:"upstream_account_name,omitempty" gorm:"->"`
+	AccountCost         float64 `json:"account_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
+	UserCost            float64 `json:"user_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
+	Other               string  `json:"other"`
 }
 
 func publishBusinessMonitorLog(log *Log) {
@@ -566,9 +567,13 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 
 	channelIds := types.NewSet[int]()
+	accountIds := types.NewSet[int]()
 	for _, log := range logs {
 		if log.ChannelId != 0 {
 			channelIds.Add(log.ChannelId)
+		}
+		if log.UpstreamAccountId != 0 {
+			accountIds.Add(log.UpstreamAccountId)
 		}
 	}
 
@@ -602,6 +607,26 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		}
 		for i := range logs {
 			logs[i].ChannelName = channelMap[logs[i].ChannelId]
+		}
+	}
+
+	if accountIds.Len() > 0 {
+		var accounts []struct {
+			Id   int    `gorm:"column:id"`
+			Name string `gorm:"column:name"`
+		}
+		if err = DB.Model(&UpstreamAccount{}).
+			Select("id, name").
+			Where("id IN ?", accountIds.Items()).
+			Find(&accounts).Error; err != nil {
+			return logs, total, err
+		}
+		accountMap := make(map[int]string, len(accounts))
+		for _, account := range accounts {
+			accountMap[account.Id] = account.Name
+		}
+		for i := range logs {
+			logs[i].UpstreamAccountName = accountMap[logs[i].UpstreamAccountId]
 		}
 	}
 

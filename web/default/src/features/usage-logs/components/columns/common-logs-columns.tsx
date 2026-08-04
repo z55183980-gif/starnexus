@@ -78,6 +78,11 @@ interface DetailSegment {
   danger?: boolean
 }
 
+type UsageLogWithUpstreamAccount = UsageLog & {
+  upstream_account_id?: number
+  upstream_account_name?: string | null
+}
+
 function formatRatioCompact(ratio: number | undefined): string {
   if (ratio == null || !Number.isFinite(ratio)) return '-'
   return ratio % 1 === 0
@@ -441,7 +446,7 @@ export function useCommonLogsColumns(
         cell: function ChannelCell({ row }) {
           const { sensitiveVisible, setAffinityTarget, setAffinityDialogOpen } =
             useUsageLogsContext()
-          const log = row.original
+          const log = row.original as UsageLogWithUpstreamAccount
 
           if (!isDisplayableLogType(log.type)) return null
 
@@ -457,48 +462,63 @@ export function useCommonLogsColumns(
             : `#${log.channel}`
           const channelIdDisplay = `#${log.channel}`
           const channelName = sensitiveVisible ? log.channel_name : '••••'
+          const upstreamAccountId = log.upstream_account_id ?? 0
+          const accountIdDisplay = `#${upstreamAccountId}`
+          const accountName = sensitiveVisible
+            ? log.upstream_account_name
+            : '••••'
+          const accountDisplay = log.upstream_account_name
+            ? `${accountIdDisplay} ${accountName}`
+            : accountIdDisplay
 
           return (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <div className='flex max-w-[160px] flex-col gap-0.5' />
+                    <div className='flex max-w-[180px] flex-col items-start gap-0.5' />
                   }
                 >
-                  <div className='relative inline-flex w-fit'>
-                    <StatusBadge
-                      label={channelIdDisplay}
-                      autoColor={String(log.channel)}
-                      copyText={String(log.channel)}
-                      size='sm'
-                      className='font-mono'
-                    />
-                    {affinity && (
-                      <button
-                        type='button'
-                        className='absolute -top-1 -right-1 leading-none text-amber-500'
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setAffinityTarget({
-                            rule_name: affinity.rule_name || '',
-                            using_group:
-                              affinity.using_group ||
-                              affinity.selected_group ||
-                              '',
-                            key_hint: affinity.key_hint || '',
-                            key_fp: affinity.key_fp || '',
-                          })
-                          setAffinityDialogOpen(true)
-                        }}
-                      >
-                        <Sparkles className='size-3 fill-current' />
-                      </button>
+                  <div className='flex max-w-full items-center gap-1.5'>
+                    <div className='relative inline-flex w-fit shrink-0'>
+                      <StatusBadge
+                        label={channelIdDisplay}
+                        autoColor={String(log.channel)}
+                        copyText={String(log.channel)}
+                        size='sm'
+                        className='font-mono'
+                      />
+                      {affinity && (
+                        <button
+                          type='button'
+                          className='absolute -top-1 -right-1 leading-none text-amber-500'
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setAffinityTarget({
+                              rule_name: affinity.rule_name || '',
+                              using_group:
+                                affinity.using_group ||
+                                affinity.selected_group ||
+                                '',
+                              key_hint: affinity.key_hint || '',
+                              key_fp: affinity.key_fp || '',
+                            })
+                            setAffinityDialogOpen(true)
+                          }}
+                        >
+                          <Sparkles className='size-3 fill-current' />
+                        </button>
+                      )}
+                    </div>
+                    {log.channel_name && (
+                      <span className='text-muted-foreground/70 min-w-0 truncate text-[11px]'>
+                        {channelName}
+                      </span>
                     )}
                   </div>
-                  {log.channel_name && (
-                    <span className='text-muted-foreground/70 truncate text-[11px]'>
-                      {channelName}
+                  {upstreamAccountId > 0 && (
+                    <span className='text-muted-foreground/70 block max-w-[170px] truncate text-[11px]'>
+                      {t('Account')}: {accountDisplay}
                     </span>
                   )}
                 </TooltipTrigger>
@@ -507,6 +527,11 @@ export function useCommonLogsColumns(
                     <p>
                       {sensitiveVisible ? channelDisplay : channelIdDisplay}
                     </p>
+                    {upstreamAccountId > 0 && (
+                      <p>
+                        {t('Account')}: {accountDisplay}
+                      </p>
+                    )}
                     {channelChain && (
                       <p className='text-muted-foreground text-xs'>
                         {t('Chain')}: {channelChain}
