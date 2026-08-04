@@ -198,6 +198,21 @@ func CreatePromptAuditLog(log *PromptAuditLog) error {
 	return LOG_DB.Create(log).Error
 }
 
+func HasContentModerationObservedHit(userId int) (bool, error) {
+	if userId <= 0 {
+		return false, nil
+	}
+	var log PromptAuditLog
+	err := LOG_DB.Model(&PromptAuditLog{}).
+		Where("user_id = ? AND action = ? AND matched_words LIKE ?", userId, PromptAuditActionHit, "%moderation:%").
+		Select("id").
+		First(&log).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func DeletePromptAuditLogsByUserId(userId int) (int64, error) {
 	if userId <= 0 {
 		return 0, errors.New("invalid user id")
@@ -284,7 +299,7 @@ func normalizePromptAuditLogLimit(limit int) int {
 	return limit
 }
 
-// ContentModerationLogFilter filters global OpenAI Moderations audit hits.
+// ContentModerationLogFilter filters global content moderation audit results.
 type ContentModerationLogFilter struct {
 	Action    string
 	Category  string
@@ -293,7 +308,7 @@ type ContentModerationLogFilter struct {
 	EndTime   int64
 }
 
-// ListContentModerationLogs returns moderation-flagged prompt audit logs (global).
+// ListContentModerationLogs returns content moderation audit logs (global).
 // Rows are identified by matched_words containing the "moderation:" prefix.
 func ListContentModerationLogs(filter ContentModerationLogFilter, pageInfo *common.PageInfo) ([]PromptAuditLog, int64, error) {
 	if pageInfo == nil {

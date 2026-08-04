@@ -63,6 +63,7 @@ const contentModerationSchema = z
   .object({
     enabled: z.boolean(),
     mode: z.enum(['pre_block', 'observe']),
+    observe_hit_action: z.enum(['observe', 'pre_block']),
     model_type: z.enum(['general', 'dedicated']),
     provider: z.enum(['deepseek']),
     base_url: z.string().min(1),
@@ -100,6 +101,7 @@ function toFormValues(raw: string): ContentModerationFormValues {
   return {
     enabled: config.enabled,
     mode: config.mode,
+    observe_hit_action: config.observe_hit_action,
     model_type: config.model_type,
     provider: config.provider,
     base_url: config.base_url,
@@ -156,6 +158,7 @@ export function ContentModerationSection({
   const allGroups = form.watch('all_groups')
   const modelFilterType = form.watch('model_filter_type')
   const modelType = form.watch('model_type')
+  const mode = form.watch('mode')
 
   const onSubmit = async (values: ContentModerationFormValues) => {
     const apiKey = (values.api_key ?? '').trim()
@@ -167,6 +170,7 @@ export function ContentModerationSection({
     const payload = stringifyContentModerationConfig({
       enabled: values.enabled,
       mode: values.mode,
+      observe_hit_action: values.observe_hit_action,
       model_type: values.model_type,
       provider: values.provider,
       base_url: values.base_url.trim(),
@@ -479,6 +483,59 @@ export function ContentModerationSection({
               </FormItem>
             )}
           />
+
+          {mode === 'observe' ? (
+            <FormField
+              control={form.control}
+              name='observe_hit_action'
+              render={({ field }) => {
+                const items = [
+                  {
+                    value: 'observe',
+                    label: t('Continue observing'),
+                  },
+                  {
+                    value: 'pre_block',
+                    label: t('Upgrade to front interception'),
+                  },
+                ]
+                return (
+                  <FormItem>
+                    <FormLabel>{t('Action after first observed hit')}</FormLabel>
+                    <Select
+                      items={items}
+                      value={field.value}
+                      onValueChange={(value) => {
+                        if (!value) return
+                        field.onChange(value)
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          {items.map((item) => (
+                            <SelectItem key={item.value} value={item.value}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormDescription>
+                      {t(
+                        'After this user is first flagged in observe mode, later requests can be checked synchronously and blocked when flagged again.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )
+              }}
+            />
+          ) : null}
 
           <FormField
             control={form.control}

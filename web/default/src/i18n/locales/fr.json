@@ -5670,6 +5670,13 @@
     "Requires prompt_cache_key in the request body or a supported stable session request header.": "Nécessite prompt_cache_key dans le corps de la requête ou un en-tête de session stable pris en charge.",
     "Requests, 0 disables the affinity wait queue, maximum 1000": "Requêtes ; 0 désactive la file d’attente d’affinité, maximum 1000",
     "Responses continuations prefer the account that created the previous response, then fall back safely after the configured wait.": "Les continuations Responses privilégient le compte ayant créé la réponse précédente, puis basculent en toute sécurité après le délai configuré.",
-    "Seconds, 60-86400": "Secondes, 60-86400"
+    "Seconds, 60-86400": "Secondes, 60-86400",
+    "Allowed by content audit": "Autorisé par la modération du contenu",
+    "Content moderation results will appear here.": "Les résultats de la modération du contenu apparaîtront ici.",
+    "Passed": "Autorisé",
+    "Action after first observed hit": "Action après le premier signalement observé",
+    "Continue observing": "Continuer l’observation",
+    "Upgrade to front interception": "Passer à l’interception préalable",
+    "After this user is first flagged in observe mode, later requests can be checked synchronously and blocked when flagged again.": "Après le premier signalement de cet utilisateur en mode observation, ses requêtes suivantes peuvent être vérifiées de façon synchrone et bloquées en cas de nouveau signalement."
   }
 }

@@ -5670,6 +5670,13 @@
     "Requires prompt_cache_key in the request body or a supported stable session request header.": "リクエスト本文の prompt_cache_key、または対応する安定したセッションリクエストヘッダーが必要です。",
     "Requests, 0 disables the affinity wait queue, maximum 1000": "リクエスト数。0 でアフィニティ待機キューを無効化、最大 1000",
     "Responses continuations prefer the account that created the previous response, then fall back safely after the configured wait.": "Responses の継続リクエストは前のレスポンスを作成したアカウントを優先し、設定した待機時間後に安全にフォールバックします。",
-    "Seconds, 60-86400": "秒、60-86400"
+    "Seconds, 60-86400": "秒、60-86400",
+    "Allowed by content audit": "コンテンツ審査により許可",
+    "Content moderation results will appear here.": "コンテンツ審査の結果がここに表示されます。",
+    "Passed": "通過",
+    "Action after first observed hit": "最初の観察ヒット後のアクション",
+    "Continue observing": "観察を継続",
+    "Upgrade to front interception": "事前ブロックに昇格",
+    "After this user is first flagged in observe mode, later requests can be checked synchronously and blocked when flagged again.": "このユーザーが観察モードで初めて検出された後、以降のリクエストを同期審査に切り替え、再度検出された場合にブロックできます。"
   }
 }

@@ -5670,6 +5670,13 @@
     "Requires prompt_cache_key in the request body or a supported stable session request header.": "Requires prompt_cache_key in the request body or a supported stable session request header.",
     "Requests, 0 disables the affinity wait queue, maximum 1000": "Requests, 0 disables the affinity wait queue, maximum 1000",
     "Responses continuations prefer the account that created the previous response, then fall back safely after the configured wait.": "Responses continuations prefer the account that created the previous response, then fall back safely after the configured wait.",
-    "Seconds, 60-86400": "Seconds, 60-86400"
+    "Seconds, 60-86400": "Seconds, 60-86400",
+    "Allowed by content audit": "Allowed by content audit",
+    "Content moderation results will appear here.": "Content moderation results will appear here.",
+    "Passed": "Passed",
+    "Action after first observed hit": "Action after first observed hit",
+    "Continue observing": "Continue observing",
+    "Upgrade to front interception": "Upgrade to front interception",
+    "After this user is first flagged in observe mode, later requests can be checked synchronously and blocked when flagged again.": "After this user is first flagged in observe mode, later requests can be checked synchronously and blocked when flagged again."
   }
 }

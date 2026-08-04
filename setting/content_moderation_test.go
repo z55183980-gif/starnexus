@@ -18,6 +18,9 @@ func TestParseContentModerationConfigJSONDefaults(t *testing.T) {
 	if cfg.Mode != ContentModerationModePreBlock {
 		t.Fatalf("unexpected mode: %s", cfg.Mode)
 	}
+	if cfg.ObserveHitAction != ContentModerationObserveHitActionObserve {
+		t.Fatalf("unexpected observe hit action: %s", cfg.ObserveHitAction)
+	}
 	if cfg.ModelType != ContentModerationModelTypeDedicated {
 		t.Fatalf("unexpected model type: %s", cfg.ModelType)
 	}
@@ -85,6 +88,24 @@ func TestContentModerationModeNormalize(t *testing.T) {
 	}
 	if cfg.Mode != ContentModerationModePreBlock {
 		t.Fatalf("expected pre_block default, got %q", cfg.Mode)
+	}
+}
+
+func TestContentModerationObserveHitActionNormalize(t *testing.T) {
+	cfg, err := ParseContentModerationConfigJSON(`{"mode":"observe","observe_hit_action":"pre_block"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ObserveHitAction != ContentModerationObserveHitActionPreBlock {
+		t.Fatalf("expected pre_block escalation, got %q", cfg.ObserveHitAction)
+	}
+
+	cfg, err = ParseContentModerationConfigJSON(`{"mode":"observe","observe_hit_action":"unknown"}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ObserveHitAction != ContentModerationObserveHitActionObserve {
+		t.Fatalf("expected observe fallback, got %q", cfg.ObserveHitAction)
 	}
 }
 

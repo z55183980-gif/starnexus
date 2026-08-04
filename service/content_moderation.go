@@ -25,6 +25,7 @@ import (
 
 const (
 	contentModerationSourcePrefix          = "moderation:"
+	contentModerationAllowMarker           = contentModerationSourcePrefix + "allow"
 	maxContentModerationInputRunes         = 12000
 	maxContentModerationObserveConcurrency = 32
 	maxGeneralModerationReasonRunes        = 500
@@ -190,8 +191,9 @@ func ApplyContentModeration(c *gin.Context, request dto.Request, relayFormat typ
 	}
 	prompt = trimContentModerationRunes(prompt)
 	logCtx := captureContentModerationLogContext(c, modelName, relayFormat)
+	effectiveMode := contentModerationEffectiveMode(cfg, logCtx.UserId)
 
-	if cfg.Mode == setting.ContentModerationModeObserve {
+	if effectiveMode == setting.ContentModerationModeObserve {
 		scheduleContentModerationObserve(cfg, logCtx, prompt)
 		return nil
 	}
@@ -203,17 +205,34 @@ func ApplyContentModeration(c *gin.Context, request dto.Request, relayFormat typ
 	}
 
 	flagged, highestCategory, highestScore, hitCategories := evaluateContentModerationResult(result, cfg)
-	if !flagged {
+	action := contentModerationAction(effectiveMode, flagged)
+	logContentModerationResult(logCtx, prompt, hitCategories, highestCategory, highestScore, flagged, action)
+	if action != model.PromptAuditActionBlocked {
 		return nil
 	}
-
-	logContentModerationResult(logCtx, prompt, hitCategories, highestCategory, highestScore, true, model.PromptAuditActionBlocked)
 	return types.NewErrorWithStatusCode(
 		errors.New("prompt blocked by content moderation"),
 		types.ErrorCodePromptBlocked,
 		http.StatusBadRequest,
 		types.ErrOptionWithSkipRetry(),
 	)
+}
+
+func contentModerationEffectiveMode(cfg setting.ContentModerationConfig, userId int) string {
+	if cfg.Mode != setting.ContentModerationModeObserve ||
+		cfg.ObserveHitAction != setting.ContentModerationObserveHitActionPreBlock ||
+		userId <= 0 {
+		return cfg.Mode
+	}
+	hasHit, err := model.HasContentModerationObservedHit(userId)
+	if err != nil {
+		common.SysError("failed to resolve content moderation observe escalation: " + err.Error())
+		return setting.ContentModerationModeObserve
+	}
+	if hasHit {
+		return setting.ContentModerationModePreBlock
+	}
+	return setting.ContentModerationModeObserve
 }
 
 func scheduleContentModerationObserve(cfg setting.ContentModerationConfig, logCtx contentModerationLogContext, prompt string) {
@@ -255,10 +274,18 @@ func runContentModerationObserve(cfg setting.ContentModerationConfig, logCtx con
 	}
 
 	flagged, highestCategory, highestScore, hitCategories := evaluateContentModerationResult(result, cfg)
+	action := contentModerationAction(cfg.Mode, flagged)
+	logContentModerationResult(logCtx, prompt, hitCategories, highestCategory, highestScore, flagged, action)
+}
+
+func contentModerationAction(mode string, flagged bool) string {
 	if !flagged {
-		return
+		return model.PromptAuditActionRecorded
 	}
-	logContentModerationResult(logCtx, prompt, hitCategories, highestCategory, highestScore, true, model.PromptAuditActionHit)
+	if mode == setting.ContentModerationModeObserve {
+		return model.PromptAuditActionHit
+	}
+	return model.PromptAuditActionBlocked
 }
 
 func captureContentModerationLogContext(c *gin.Context, modelName string, relayFormat types.RelayFormat) contentModerationLogContext {
@@ -843,22 +870,7 @@ func logContentModerationResult(
 	action string,
 ) {
 	storedPrompt, truncated := truncatePromptAuditText(prompt)
-	if matched == nil {
-		matched = []string{}
-	}
-	if highestCategory != "" && hit {
-		label := contentModerationSourcePrefix + highestCategory
-		found := false
-		for _, item := range matched {
-			if item == label {
-				found = true
-				break
-			}
-		}
-		if !found {
-			matched = append(matched, label)
-		}
-	}
+	matched = contentModerationMatchedWords(matched, highestCategory, hit)
 	matchedWords, err := common.Marshal(matched)
 	if err != nil {
 		matchedWords = []byte("[]")
@@ -885,6 +897,29 @@ func logContentModerationResult(
 	if err := model.CreatePromptAuditLog(log); err != nil {
 		common.SysError("failed to create content moderation audit log: " + err.Error())
 	}
+}
+
+func contentModerationMatchedWords(matched []string, highestCategory string, hit bool) []string {
+	if matched == nil {
+		matched = []string{}
+	}
+	if !hit {
+		matched = append(matched, contentModerationAllowMarker)
+	}
+	if highestCategory != "" && hit {
+		label := contentModerationSourcePrefix + highestCategory
+		found := false
+		for _, item := range matched {
+			if item == label {
+				found = true
+				break
+			}
+		}
+		if !found {
+			matched = append(matched, label)
+		}
+	}
+	return matched
 }
 
 func trimContentModerationRunes(text string) string {

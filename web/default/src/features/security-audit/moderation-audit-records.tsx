@@ -69,6 +69,11 @@ function parseMatchedCategories(matchedWords: string): string[] {
       .map((item) => String(item ?? ''))
       .filter((item) => item.startsWith(MODERATION_PREFIX))
       .map((item) => item.slice(MODERATION_PREFIX.length))
+      .filter((item) =>
+        CONTENT_MODERATION_CATEGORIES.includes(
+          item as (typeof CONTENT_MODERATION_CATEGORIES)[number]
+        )
+      )
   } catch {
     return []
   }
@@ -97,6 +102,9 @@ function getResultBadge(log: PromptAuditLog) {
   if (log.action === 'hit') {
     return { variant: 'secondary' as const, labelKey: 'Observed hit' }
   }
+  if (log.action === 'recorded') {
+    return { variant: 'outline' as const, labelKey: 'Passed' }
+  }
   return { variant: 'outline' as const, labelKey: log.action }
 }
 
@@ -106,6 +114,9 @@ function getDisposalLabel(log: PromptAuditLog, t: (key: string) => string) {
   }
   if (log.action === 'hit') {
     return t('Observed only, not blocked')
+  }
+  if (log.action === 'recorded') {
+    return t('Allowed by content audit')
   }
   return t(log.action)
 }
@@ -155,6 +166,7 @@ export function ModerationAuditRecords({
 
   const actionItems = [
     { value: 'all', label: t('All results') },
+    { value: 'recorded', label: t('Passed') },
     { value: 'blocked', label: t('blocked') },
     { value: 'hit', label: t('Observed hit') },
   ]
@@ -271,7 +283,7 @@ export function ModerationAuditRecords({
             </EmptyMedia>
             <EmptyTitle>{t('No audit records')}</EmptyTitle>
             <EmptyDescription>
-              {t('Flagged moderation results will appear here.')}
+              {t('Content moderation results will appear here.')}
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

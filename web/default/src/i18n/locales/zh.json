@@ -5670,6 +5670,13 @@
     "Requires prompt_cache_key in the request body or a supported stable session request header.": "请求体必须提供 prompt_cache_key，或提供受支持的稳定会话请求头，账号粘性才会生效。",
     "Requests, 0 disables the affinity wait queue, maximum 1000": "请求数；0 表示禁用粘性等待队列，最大 1000",
     "Responses continuations prefer the account that created the previous response, then fall back safely after the configured wait.": "Responses 续链会优先使用创建上一响应的账号，超过配置的等待时间后安全回退。",
-    "Seconds, 60-86400": "秒，60-86400"
+    "Seconds, 60-86400": "秒，60-86400",
+    "Allowed by content audit": "内容审核通过",
+    "Content moderation results will appear here.": "内容审核结果将显示在这里。",
+    "Passed": "已通过",
+    "Action after first observed hit": "首次观察命中后的动作",
+    "Continue observing": "继续仅观察",
+    "Upgrade to front interception": "升级为前置拦截",
+    "After this user is first flagged in observe mode, later requests can be checked synchronously and blocked when flagged again.": "该用户在仅观察模式下首次命中后，后续请求可升级为同步审核，并在再次命中时拦截。"
   }
 }

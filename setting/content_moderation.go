@@ -14,6 +14,9 @@ const (
 	ContentModerationModePreBlock = "pre_block"
 	ContentModerationModeObserve  = "observe"
 
+	ContentModerationObserveHitActionObserve  = "observe"
+	ContentModerationObserveHitActionPreBlock = "pre_block"
+
 	ContentModerationModelTypeGeneral   = "general"
 	ContentModerationModelTypeDedicated = "dedicated"
 	ContentModerationProviderDeepSeek   = "deepseek"
@@ -62,37 +65,39 @@ type ContentModerationModelFilter struct {
 // 「审计范围」: which request groups and models are subject to content audit.
 // Groups are StarNexus string channel/request groups (not numeric IDs).
 type ContentModerationConfig struct {
-	Enabled     bool                         `json:"enabled"`
-	Mode        string                       `json:"mode"`
-	ModelType   string                       `json:"model_type"`
-	Provider    string                       `json:"provider,omitempty"`
-	BaseURL     string                       `json:"base_url"`
-	Model       string                       `json:"model"`
-	APIKeys     []string                     `json:"api_keys,omitempty"`
-	TimeoutMS   int                          `json:"timeout_ms"`
-	AllGroups   bool                         `json:"all_groups"`
-	Groups      []string                     `json:"groups"`
-	ModelFilter ContentModerationModelFilter `json:"model_filter"`
-	Thresholds  map[string]float64           `json:"thresholds"`
+	Enabled          bool                         `json:"enabled"`
+	Mode             string                       `json:"mode"`
+	ObserveHitAction string                       `json:"observe_hit_action"`
+	ModelType        string                       `json:"model_type"`
+	Provider         string                       `json:"provider,omitempty"`
+	BaseURL          string                       `json:"base_url"`
+	Model            string                       `json:"model"`
+	APIKeys          []string                     `json:"api_keys,omitempty"`
+	TimeoutMS        int                          `json:"timeout_ms"`
+	AllGroups        bool                         `json:"all_groups"`
+	Groups           []string                     `json:"groups"`
+	ModelFilter      ContentModerationModelFilter `json:"model_filter"`
+	Thresholds       map[string]float64           `json:"thresholds"`
 }
 
 // ContentModerationConfigView is the admin-facing DTO with masked API keys.
 type ContentModerationConfigView struct {
-	Enabled        bool                         `json:"enabled"`
-	Mode           string                       `json:"mode"`
-	ModelType      string                       `json:"model_type"`
-	Provider       string                       `json:"provider,omitempty"`
-	BaseURL        string                       `json:"base_url"`
-	Model          string                       `json:"model"`
-	APIKeyCount    int                          `json:"api_key_count"`
-	APIKeyMasks    []string                     `json:"api_key_masks"`
-	APIKeys        []string                     `json:"api_keys"`
-	TimeoutMS      int                          `json:"timeout_ms"`
-	AllGroups      bool                         `json:"all_groups"`
-	Groups         []string                     `json:"groups"`
-	ModelFilter    ContentModerationModelFilter `json:"model_filter"`
-	Thresholds     map[string]float64           `json:"thresholds"`
-	KeysConfigured bool                         `json:"keys_configured"`
+	Enabled          bool                         `json:"enabled"`
+	Mode             string                       `json:"mode"`
+	ObserveHitAction string                       `json:"observe_hit_action"`
+	ModelType        string                       `json:"model_type"`
+	Provider         string                       `json:"provider,omitempty"`
+	BaseURL          string                       `json:"base_url"`
+	Model            string                       `json:"model"`
+	APIKeyCount      int                          `json:"api_key_count"`
+	APIKeyMasks      []string                     `json:"api_key_masks"`
+	APIKeys          []string                     `json:"api_keys"`
+	TimeoutMS        int                          `json:"timeout_ms"`
+	AllGroups        bool                         `json:"all_groups"`
+	Groups           []string                     `json:"groups"`
+	ModelFilter      ContentModerationModelFilter `json:"model_filter"`
+	Thresholds       map[string]float64           `json:"thresholds"`
+	KeysConfigured   bool                         `json:"keys_configured"`
 }
 
 var (
@@ -126,16 +131,17 @@ func ContentModerationCategories() []string {
 
 func defaultContentModerationConfig() ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:   false,
-		Mode:      ContentModerationModePreBlock,
-		ModelType: ContentModerationModelTypeDedicated,
-		Provider:  "",
-		BaseURL:   defaultContentModerationBaseURL,
-		Model:     defaultContentModerationModel,
-		APIKeys:   nil,
-		TimeoutMS: defaultContentModerationTimeoutMS,
-		AllGroups: true,
-		Groups:    nil,
+		Enabled:          false,
+		Mode:             ContentModerationModePreBlock,
+		ObserveHitAction: ContentModerationObserveHitActionObserve,
+		ModelType:        ContentModerationModelTypeDedicated,
+		Provider:         "",
+		BaseURL:          defaultContentModerationBaseURL,
+		Model:            defaultContentModerationModel,
+		APIKeys:          nil,
+		TimeoutMS:        defaultContentModerationTimeoutMS,
+		AllGroups:        true,
+		Groups:           nil,
 		ModelFilter: ContentModerationModelFilter{
 			Type:   ContentModerationModelFilterAll,
 			Models: nil,
@@ -223,21 +229,22 @@ func ContentModerationConfigToView(cfg ContentModerationConfig) ContentModeratio
 		placeholders = append(placeholders, maskSecretPlaceholder(key))
 	}
 	return ContentModerationConfigView{
-		Enabled:        cfg.Enabled,
-		Mode:           cfg.Mode,
-		ModelType:      cfg.ModelType,
-		Provider:       cfg.Provider,
-		BaseURL:        cfg.BaseURL,
-		Model:          cfg.Model,
-		APIKeyCount:    len(cfg.APIKeys),
-		APIKeyMasks:    masks,
-		APIKeys:        placeholders,
-		TimeoutMS:      cfg.TimeoutMS,
-		AllGroups:      cfg.AllGroups,
-		Groups:         append([]string(nil), cfg.Groups...),
-		ModelFilter:    cloneContentModerationModelFilter(cfg.ModelFilter),
-		Thresholds:     cloneFloatMap(cfg.Thresholds),
-		KeysConfigured: len(cfg.APIKeys) > 0,
+		Enabled:          cfg.Enabled,
+		Mode:             cfg.Mode,
+		ObserveHitAction: cfg.ObserveHitAction,
+		ModelType:        cfg.ModelType,
+		Provider:         cfg.Provider,
+		BaseURL:          cfg.BaseURL,
+		Model:            cfg.Model,
+		APIKeyCount:      len(cfg.APIKeys),
+		APIKeyMasks:      masks,
+		APIKeys:          placeholders,
+		TimeoutMS:        cfg.TimeoutMS,
+		AllGroups:        cfg.AllGroups,
+		Groups:           append([]string(nil), cfg.Groups...),
+		ModelFilter:      cloneContentModerationModelFilter(cfg.ModelFilter),
+		Thresholds:       cloneFloatMap(cfg.Thresholds),
+		KeysConfigured:   len(cfg.APIKeys) > 0,
 	}
 }
 
@@ -250,6 +257,12 @@ func (cfg *ContentModerationConfig) normalize() {
 	case ContentModerationModeObserve, ContentModerationModePreBlock:
 	default:
 		cfg.Mode = ContentModerationModePreBlock
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.ObserveHitAction)) {
+	case ContentModerationObserveHitActionPreBlock:
+		cfg.ObserveHitAction = ContentModerationObserveHitActionPreBlock
+	default:
+		cfg.ObserveHitAction = ContentModerationObserveHitActionObserve
 	}
 	cfg.ModelType = strings.ToLower(strings.TrimSpace(cfg.ModelType))
 	switch cfg.ModelType {
@@ -336,18 +349,19 @@ func (cfg *ContentModerationConfig) IncludesModel(modelName string) bool {
 
 func contentModerationConfigFromView(view ContentModerationConfigView) ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:     view.Enabled,
-		Mode:        view.Mode,
-		ModelType:   view.ModelType,
-		Provider:    view.Provider,
-		BaseURL:     view.BaseURL,
-		Model:       view.Model,
-		APIKeys:     view.APIKeys,
-		TimeoutMS:   view.TimeoutMS,
-		AllGroups:   view.AllGroups,
-		Groups:      view.Groups,
-		ModelFilter: view.ModelFilter,
-		Thresholds:  view.Thresholds,
+		Enabled:          view.Enabled,
+		Mode:             view.Mode,
+		ObserveHitAction: view.ObserveHitAction,
+		ModelType:        view.ModelType,
+		Provider:         view.Provider,
+		BaseURL:          view.BaseURL,
+		Model:            view.Model,
+		APIKeys:          view.APIKeys,
+		TimeoutMS:        view.TimeoutMS,
+		AllGroups:        view.AllGroups,
+		Groups:           view.Groups,
+		ModelFilter:      view.ModelFilter,
+		Thresholds:       view.Thresholds,
 	}
 }
 
@@ -416,18 +430,19 @@ func mergeContentModerationThresholds(defaults, overrides map[string]float64) ma
 
 func cloneContentModerationConfig(cfg ContentModerationConfig) ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:     cfg.Enabled,
-		Mode:        cfg.Mode,
-		ModelType:   cfg.ModelType,
-		Provider:    cfg.Provider,
-		BaseURL:     cfg.BaseURL,
-		Model:       cfg.Model,
-		APIKeys:     append([]string(nil), cfg.APIKeys...),
-		TimeoutMS:   cfg.TimeoutMS,
-		AllGroups:   cfg.AllGroups,
-		Groups:      append([]string(nil), cfg.Groups...),
-		ModelFilter: cloneContentModerationModelFilter(cfg.ModelFilter),
-		Thresholds:  cloneFloatMap(cfg.Thresholds),
+		Enabled:          cfg.Enabled,
+		Mode:             cfg.Mode,
+		ObserveHitAction: cfg.ObserveHitAction,
+		ModelType:        cfg.ModelType,
+		Provider:         cfg.Provider,
+		BaseURL:          cfg.BaseURL,
+		Model:            cfg.Model,
+		APIKeys:          append([]string(nil), cfg.APIKeys...),
+		TimeoutMS:        cfg.TimeoutMS,
+		AllGroups:        cfg.AllGroups,
+		Groups:           append([]string(nil), cfg.Groups...),
+		ModelFilter:      cloneContentModerationModelFilter(cfg.ModelFilter),
+		Thresholds:       cloneFloatMap(cfg.Thresholds),
 	}
 }
 

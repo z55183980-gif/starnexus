@@ -5670,6 +5670,13 @@
     "Requires prompt_cache_key in the request body or a supported stable session request header.": "Yêu cầu prompt_cache_key trong nội dung yêu cầu hoặc một tiêu đề phiên ổn định được hỗ trợ.",
     "Requests, 0 disables the affinity wait queue, maximum 1000": "Yêu cầu; 0 tắt hàng đợi chờ liên kết, tối đa 1000",
     "Responses continuations prefer the account that created the previous response, then fall back safely after the configured wait.": "Các yêu cầu tiếp nối Responses ưu tiên tài khoản đã tạo phản hồi trước, sau đó chuyển dự phòng an toàn khi hết thời gian chờ đã cấu hình.",
-    "Seconds, 60-86400": "Giây, 60-86400"
+    "Seconds, 60-86400": "Giây, 60-86400",
+    "Allowed by content audit": "Được kiểm duyệt nội dung cho phép",
+    "Content moderation results will appear here.": "Kết quả kiểm duyệt nội dung sẽ xuất hiện tại đây.",
+    "Passed": "Đã duyệt",
+    "Action after first observed hit": "Hành động sau lần phát hiện đầu tiên khi quan sát",
+    "Continue observing": "Tiếp tục chỉ quan sát",
+    "Upgrade to front interception": "Nâng cấp lên chặn trước",
+    "After this user is first flagged in observe mode, later requests can be checked synchronously and blocked when flagged again.": "Sau lần đầu người dùng này bị phát hiện trong chế độ quan sát, các yêu cầu tiếp theo có thể được kiểm tra đồng bộ và bị chặn nếu tái phạm."
   }
 }

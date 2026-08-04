@@ -12,10 +12,22 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
+
+func openContentModerationServiceTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.PromptAuditLog{}))
+	return db
+}
 
 func TestEvaluateContentModerationScores(t *testing.T) {
 	thresholds := setting.ContentModerationDefaultThresholds()
@@ -51,6 +63,78 @@ func TestEvaluateContentModerationScoresClean(t *testing.T) {
 	if len(hits) != 0 {
 		t.Fatalf("unexpected hits: %#v", hits)
 	}
+}
+
+func TestContentModerationAuditMarkersMatchResults(t *testing.T) {
+	tests := []struct {
+		name    string
+		hit     bool
+		matched []string
+		want    []string
+	}{
+		{
+			name: "allow",
+			want: []string{contentModerationAllowMarker},
+		},
+		{
+			name:    "hit",
+			hit:     true,
+			matched: []string{contentModerationSourcePrefix + "sexual"},
+			want:    []string{contentModerationSourcePrefix + "sexual"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := contentModerationMatchedWords(test.matched, "sexual", test.hit)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("unexpected markers: got %#v want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestContentModerationActionMatchesGlobalMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		mode    string
+		flagged bool
+		want    string
+	}{
+		{name: "pre-block allows clean result", mode: setting.ContentModerationModePreBlock, want: model.PromptAuditActionRecorded},
+		{name: "pre-block blocks hit", mode: setting.ContentModerationModePreBlock, flagged: true, want: model.PromptAuditActionBlocked},
+		{name: "observe allows clean result", mode: setting.ContentModerationModeObserve, want: model.PromptAuditActionRecorded},
+		{name: "observe records hit", mode: setting.ContentModerationModeObserve, flagged: true, want: model.PromptAuditActionHit},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, contentModerationAction(test.mode, test.flagged))
+		})
+	}
+}
+
+func TestContentModerationEffectiveModeEscalatesAfterObservedHit(t *testing.T) {
+	db := openContentModerationServiceTestDB(t)
+	originalLogDB := model.LOG_DB
+	model.LOG_DB = db
+	t.Cleanup(func() { model.LOG_DB = originalLogDB })
+
+	cfg := setting.ContentModerationConfig{
+		Mode:             setting.ContentModerationModeObserve,
+		ObserveHitAction: setting.ContentModerationObserveHitActionPreBlock,
+	}
+	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 51))
+
+	require.NoError(t, db.Create(&model.PromptAuditLog{
+		UserId: 51, Prompt: "first hit", PromptHash: "first", MatchedWords: `["moderation:sexual"]`,
+		Hit: true, Action: model.PromptAuditActionHit, CreatedAt: 1,
+	}).Error)
+	require.Equal(t, setting.ContentModerationModePreBlock, contentModerationEffectiveMode(cfg, 51))
+	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 52))
+
+	cfg.ObserveHitAction = setting.ContentModerationObserveHitActionObserve
+	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 51))
 }
 
 func TestApplyContentModerationDisabled(t *testing.T) {

@@ -94,6 +94,47 @@ func TestListPromptAuditLogsByCursor(t *testing.T) {
 	require.Equal(t, []int{logs[2].Id}, promptAuditLogIds(newest))
 }
 
+func TestListContentModerationLogsIncludesAllowedResults(t *testing.T) {
+	db := openPromptAuditTestDB(t)
+	setPromptAuditTestDatabases(t, db, db)
+
+	logs := []PromptAuditLog{
+		{UserId: 31, Prompt: "allowed", PromptHash: "allow", MatchedWords: `["moderation:allow"]`, Action: PromptAuditActionRecorded, CreatedAt: 1},
+		{UserId: 31, Prompt: "observed hit", PromptHash: "hit", MatchedWords: `["moderation:sexual"]`, Hit: true, Action: PromptAuditActionHit, CreatedAt: 2},
+		{UserId: 31, Prompt: "user audit", PromptHash: "user", MatchedWords: `[]`, Action: PromptAuditActionRecorded, CreatedAt: 3},
+	}
+	require.NoError(t, db.Create(&logs).Error)
+
+	items, total, err := ListContentModerationLogs(ContentModerationLogFilter{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+	require.Equal(t, []int{logs[1].Id, logs[0].Id}, promptAuditLogIds(items))
+
+	items, total, err = ListContentModerationLogs(ContentModerationLogFilter{Action: PromptAuditActionRecorded}, nil)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Equal(t, []int{logs[0].Id}, promptAuditLogIds(items))
+}
+
+func TestHasContentModerationObservedHit(t *testing.T) {
+	db := openPromptAuditTestDB(t)
+	setPromptAuditTestDatabases(t, db, db)
+
+	logs := []PromptAuditLog{
+		{UserId: 41, Prompt: "ordinary hit", PromptHash: "ordinary", MatchedWords: `["sensitive"]`, Hit: true, Action: PromptAuditActionHit, CreatedAt: 1},
+		{UserId: 42, Prompt: "moderation hit", PromptHash: "moderation", MatchedWords: `["moderation:sexual"]`, Hit: true, Action: PromptAuditActionHit, CreatedAt: 2},
+	}
+	require.NoError(t, db.Create(&logs).Error)
+
+	hasHit, err := HasContentModerationObservedHit(41)
+	require.NoError(t, err)
+	require.False(t, hasHit)
+
+	hasHit, err = HasContentModerationObservedHit(42)
+	require.NoError(t, err)
+	require.True(t, hasHit)
+}
+
 func promptAuditLogIds(logs []PromptAuditLog) []int {
 	ids := make([]int, len(logs))
 	for index, log := range logs {

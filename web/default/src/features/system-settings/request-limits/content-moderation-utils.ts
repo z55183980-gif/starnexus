@@ -51,6 +51,8 @@ export const DEFAULT_CONTENT_MODERATION_THRESHOLDS: Record<string, number> = {
 
 export type ContentModerationMode = 'pre_block' | 'observe'
 
+export type ContentModerationObserveHitAction = 'observe' | 'pre_block'
+
 export type ContentModerationModelType = 'general' | 'dedicated'
 
 export type ContentModerationProvider = 'deepseek'
@@ -65,6 +67,7 @@ export type ContentModerationModelFilter = {
 export type ContentModerationConfigView = {
   enabled: boolean
   mode: ContentModerationMode
+  observe_hit_action: ContentModerationObserveHitAction
   model_type: ContentModerationModelType
   provider: ContentModerationProvider
   base_url: string
@@ -83,6 +86,7 @@ export type ContentModerationConfigView = {
 export const DEFAULT_CONTENT_MODERATION_CONFIG: ContentModerationConfigView = {
   enabled: false,
   mode: 'pre_block',
+  observe_hit_action: 'observe',
   model_type: 'dedicated',
   provider: 'deepseek',
   base_url: 'https://api.openai.com',
@@ -101,6 +105,12 @@ export const DEFAULT_CONTENT_MODERATION_CONFIG: ContentModerationConfigView = {
 
 function normalizeMode(value: unknown): ContentModerationMode {
   return value === 'observe' ? 'observe' : 'pre_block'
+}
+
+function normalizeObserveHitAction(
+  value: unknown
+): ContentModerationObserveHitAction {
+  return value === 'pre_block' ? 'pre_block' : 'observe'
 }
 
 function normalizeModelType(value: unknown): ContentModerationModelType {
@@ -182,6 +192,7 @@ export function parseContentModerationConfig(
     return {
       enabled: Boolean(parsed.enabled),
       mode: normalizeMode(parsed.mode),
+      observe_hit_action: normalizeObserveHitAction(parsed.observe_hit_action),
       model_type: modelType,
       provider: normalizeProvider(parsed.provider),
       base_url: String(
@@ -223,6 +234,7 @@ export function stringifyContentModerationConfig(
   return JSON.stringify({
     enabled: config.enabled,
     mode: normalizeMode(config.mode),
+    observe_hit_action: normalizeObserveHitAction(config.observe_hit_action),
     model_type: normalizeModelType(config.model_type),
     provider: normalizeProvider(config.provider),
     base_url: config.base_url,
