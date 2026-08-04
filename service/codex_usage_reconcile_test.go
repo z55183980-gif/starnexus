@@ -114,6 +114,74 @@ func TestReconcileOpenAICompatibleResponsesUsageRaisesObviousUndercount(t *testi
 	require.NotNil(t, getCodexUsageReconcileInfo(ctx))
 }
 
+func TestReconcileOpenAICompatibleShortProbeUsesBillingFloor(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI},
+		RequestURLPath:  "/v1/responses",
+		OriginModelName: "gpt-5.6-terra",
+		IsStream:        true,
+	}
+	info.SetEstimatePromptTokens(7)
+	usage := &dto.Usage{PromptTokens: 7, CompletionTokens: 12, TotalTokens: 19}
+
+	ReconcileCodexResponsesUsage(ctx, info, usage)
+
+	require.Equal(t, codexShortProbePromptFloor, usage.PromptTokens)
+	require.Equal(t, codexShortProbePromptFloor, usage.InputTokens)
+	require.Equal(t, codexShortProbePromptFloor+12, usage.TotalTokens)
+	require.Equal(t, 3842, usage.PromptTokensDetails.CachedTokens)
+	reconcile := getCodexUsageReconcileInfo(ctx)
+	require.NotNil(t, reconcile)
+	require.Equal(t, 7, reconcile.UpstreamPromptTokens)
+	require.Equal(t, codexShortProbeReason, reconcile.Reason)
+}
+
+func TestReconcileOpenAICompatibleShortProbeGuardrails(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		model      string
+		stream     bool
+		estimate   int
+		prompt     int
+		completion int
+		cached     int
+	}{
+		{name: "chat endpoint", path: "/v1/chat/completions", model: "gpt-5.5", stream: true, estimate: 7, prompt: 7, completion: 14},
+		{name: "non codex model", path: "/v1/responses", model: "gpt-4.1", stream: true, estimate: 7, prompt: 7, completion: 14},
+		{name: "non stream", path: "/v1/responses", model: "gpt-5.5", stream: false, estimate: 7, prompt: 7, completion: 14},
+		{name: "normal estimate", path: "/v1/responses", model: "gpt-5.5", stream: true, estimate: 512, prompt: 512, completion: 14},
+		{name: "normal upstream prompt", path: "/v1/responses", model: "gpt-5.5", stream: true, estimate: 7, prompt: 512, completion: 14},
+		{name: "long completion", path: "/v1/responses", model: "gpt-5.5", stream: true, estimate: 7, prompt: 7, completion: 256},
+		{name: "cache reported", path: "/v1/responses", model: "gpt-5.5", stream: true, estimate: 7, prompt: 7, completion: 14, cached: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest(http.MethodPost, tt.path, nil)
+			info := &relaycommon.RelayInfo{
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI},
+				RequestURLPath:  tt.path,
+				OriginModelName: tt.model,
+				IsStream:        tt.stream,
+			}
+			info.SetEstimatePromptTokens(tt.estimate)
+			usage := &dto.Usage{PromptTokens: tt.prompt, CompletionTokens: tt.completion, TotalTokens: tt.prompt + tt.completion}
+			usage.PromptTokensDetails.CachedTokens = tt.cached
+
+			ReconcileCodexResponsesUsage(ctx, info, usage)
+
+			require.Equal(t, tt.prompt, usage.PromptTokens)
+			require.Nil(t, getCodexUsageReconcileInfo(ctx))
+		})
+	}
+}
+
 func TestReconcileCodexResponsesUsageSkipsNonCodexAndNoise(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

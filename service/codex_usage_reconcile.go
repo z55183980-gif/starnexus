@@ -13,7 +13,14 @@ import (
 const (
 	codexUsageReconcileContextKey = "codex_usage_reconcile"
 	codexUsageReconcileReason     = "codex_estimate_floor"
+	codexShortProbeReason         = "codex_short_probe_floor"
 	codexUsageReconcileAbsGap     = 256
+	// Lightweight multi-model probes can contain only a few client-visible
+	// tokens while the upstream account is charged for the provider-owned Codex
+	// prefix as well. Keep this billing-only floor scoped to unmistakably small,
+	// streamed GPT-5/Codex Responses requests on OpenAI-compatible channels.
+	codexShortProbeMaxTokens   = 128
+	codexShortProbePromptFloor = 4436
 	// When upstream prompt is implausibly small, its uncached/cache split is
 	// also untrusted. Impute ~13.4% uncached (~86.6% prompt-cache hit), matching
 	// observed Codex CLI stable-prefix traffic vs OpenAI-compatible channels.
@@ -59,6 +66,31 @@ func isNativeResponsesRequestPath(requestPath string) bool {
 	return strings.TrimRight(path, "/") == "/v1/responses"
 }
 
+func isCodexShortProbeModel(modelName string) bool {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	return strings.HasPrefix(modelName, "gpt-5") || strings.HasPrefix(modelName, "codex-")
+}
+
+func codexShortProbeBillingTarget(info *relaycommon.RelayInfo, usage *dto.Usage) (int, bool) {
+	if info == nil || info.ChannelMeta == nil || usage == nil {
+		return 0, false
+	}
+	if info.ChannelType != constant.ChannelTypeOpenAI || !isNativeResponsesRequestPath(info.RequestURLPath) || !info.IsStream {
+		return 0, false
+	}
+	if !isCodexShortProbeModel(info.OriginModelName) && !isCodexShortProbeModel(info.UpstreamModelName) {
+		return 0, false
+	}
+	estimate := info.GetEstimatePromptTokens()
+	if estimate <= 0 || estimate > codexShortProbeMaxTokens ||
+		usage.PromptTokens <= 0 || usage.PromptTokens > codexShortProbeMaxTokens ||
+		usage.CompletionTokens < 0 || usage.CompletionTokens > codexShortProbeMaxTokens ||
+		usage.PromptTokensDetails.CachedTokens != 0 {
+		return 0, false
+	}
+	return codexShortProbePromptFloor, true
+}
+
 // ReconcileCodexResponsesUsage raises Codex Responses prompt tokens to the
 // request estimate when upstream usage is obviously under-reported.
 //
@@ -76,8 +108,12 @@ func ReconcileCodexResponsesUsage(c *gin.Context, info *relaycommon.RelayInfo, u
 	if info == nil || info.ChannelMeta == nil || usage == nil {
 		return
 	}
-	estimate := info.GetEstimatePromptTokens()
-	if !ShouldRaiseCodexResponsesPromptTokens(info.ChannelType, info.RequestURLPath, estimate, usage.PromptTokens) {
+	targetPromptTokens := info.GetEstimatePromptTokens()
+	reason := codexUsageReconcileReason
+	if probeTarget, ok := codexShortProbeBillingTarget(info, usage); ok {
+		targetPromptTokens = probeTarget
+		reason = codexShortProbeReason
+	} else if !ShouldRaiseCodexResponsesPromptTokens(info.ChannelType, info.RequestURLPath, targetPromptTokens, usage.PromptTokens) {
 		return
 	}
 
@@ -88,8 +124,8 @@ func ReconcileCodexResponsesUsage(c *gin.Context, info *relaycommon.RelayInfo, u
 		uncached = 0
 	}
 
-	if upstreamPrompt*10 < estimate {
-		imputed := estimate * codexUsageReconcileUncachedNum / codexUsageReconcileUncachedDen
+	if upstreamPrompt*10 < targetPromptTokens {
+		imputed := targetPromptTokens * codexUsageReconcileUncachedNum / codexUsageReconcileUncachedDen
 		if imputed < 1 {
 			imputed = 1
 		}
@@ -97,22 +133,22 @@ func ReconcileCodexResponsesUsage(c *gin.Context, info *relaycommon.RelayInfo, u
 			uncached = imputed
 		}
 	}
-	if uncached > estimate {
-		uncached = estimate
+	if uncached > targetPromptTokens {
+		uncached = targetPromptTokens
 	}
 
-	usage.PromptTokens = estimate
-	usage.InputTokens = estimate
-	usage.PromptTokensDetails.CachedTokens = estimate - uncached
+	usage.PromptTokens = targetPromptTokens
+	usage.InputTokens = targetPromptTokens
+	usage.PromptTokensDetails.CachedTokens = targetPromptTokens - uncached
 	if usage.InputTokensDetails != nil {
-		usage.InputTokensDetails.CachedTokens = estimate - uncached
+		usage.InputTokensDetails.CachedTokens = targetPromptTokens - uncached
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	if c != nil {
 		c.Set(codexUsageReconcileContextKey, &codexUsageReconcileInfo{
 			UpstreamPromptTokens: upstreamPrompt,
 			UpstreamCacheTokens:  upstreamCache,
-			Reason:               codexUsageReconcileReason,
+			Reason:               reason,
 		})
 	}
 }
