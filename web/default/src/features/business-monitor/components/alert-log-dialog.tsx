@@ -41,6 +41,11 @@ interface AlertLogDialogProps {
   children: ReactNode
 }
 
+type BusinessMonitorAlertLog = UsageLog & {
+  upstream_account_id?: number
+  upstream_account_name?: string | null
+}
+
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className='grid min-w-0 grid-cols-[7rem_minmax(0,1fr)] gap-3 text-sm'>
@@ -73,7 +78,7 @@ export function AlertLogDialog({ alert, children }: AlertLogDialogProps) {
     retry: false,
   })
 
-  const log = logQuery.data
+  const log = logQuery.data as BusinessMonitorAlertLog | undefined
   const logOther = log ? parseLogOther(log.other) : undefined
 
   return (
@@ -151,6 +156,16 @@ export function AlertLogDialog({ alert, children }: AlertLogDialogProps) {
                   label={t('Channel')}
                   value={log.channel_name || `#${log.channel}`}
                 />
+                {(log.upstream_account_id ?? 0) > 0 && (
+                  <InfoRow
+                    label={t('Account')}
+                    value={
+                      log.upstream_account_name
+                        ? `#${log.upstream_account_id} ${log.upstream_account_name}`
+                        : `#${log.upstream_account_id}`
+                    }
+                  />
+                )}
                 <InfoRow label={t('Model')} value={log.model_name} />
                 <InfoRow label={t('Node Name')} value={getNodeName(log)} />
                 <InfoRow label={t('Request ID')} value={log.request_id} />

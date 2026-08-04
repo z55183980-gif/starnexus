@@ -67,6 +67,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
 import { getUserQuotaDates } from '@/features/dashboard/api'
@@ -88,6 +94,11 @@ import {
   type ErrorAlert,
 } from './api'
 import { AlertLogDialog } from './components/alert-log-dialog'
+
+type BusinessMonitorUsageLog = UsageLog & {
+  upstream_account_id?: number
+  upstream_account_name?: string | null
+}
 
 const NODE_STYLES: Record<number, string> = {
   1: 'bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300',
@@ -216,30 +227,64 @@ function TokenUsageDisplay({
   )
 }
 
-function ChannelDisplay({ log }: { log: UsageLog }) {
+function ChannelDisplay({ log }: { log: BusinessMonitorUsageLog }) {
+  const { t } = useTranslation()
   const other = parseLogOther(log.other)
   const affinity = other?.admin_info?.channel_affinity
+  const accountID = log.upstream_account_id ?? 0
+  const accountDisplay = log.upstream_account_name
+    ? `#${accountID} ${log.upstream_account_name}`
+    : `#${accountID}`
 
   return (
-    <div className='flex max-w-[160px] flex-col gap-0.5'>
-      <div className='relative inline-flex w-fit'>
-        <StatusBadge
-          label={`#${log.channel}`}
-          autoColor={String(log.channel)}
-          copyText={String(log.channel)}
-          size='sm'
-          className='font-mono'
-        />
-        {affinity && (
-          <Sparkles className='absolute -top-1 -right-1 size-3 fill-current text-amber-500' />
-        )}
-      </div>
-      {log.channel_name && (
-        <span className='text-muted-foreground/70 truncate text-[11px]'>
-          {log.channel_name}
-        </span>
-      )}
-    </div>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <div className='flex max-w-[180px] flex-col items-start gap-0.5' />
+          }
+        >
+          <div className='flex max-w-full items-center gap-1.5'>
+            <div className='relative inline-flex w-fit shrink-0'>
+              <StatusBadge
+                label={`#${log.channel}`}
+                autoColor={String(log.channel)}
+                copyText={String(log.channel)}
+                size='sm'
+                className='font-mono'
+              />
+              {affinity && (
+                <Sparkles className='absolute -top-1 -right-1 size-3 fill-current text-amber-500' />
+              )}
+            </div>
+            {log.channel_name && (
+              <span className='text-muted-foreground/70 min-w-0 truncate text-[11px]'>
+                {log.channel_name}
+              </span>
+            )}
+          </div>
+          {accountID > 0 && (
+            <span className='text-muted-foreground/70 block max-w-[170px] truncate text-[11px]'>
+              {t('Account')}: {accountDisplay}
+            </span>
+          )}
+        </TooltipTrigger>
+        <TooltipContent>
+          <div className='flex flex-col gap-1'>
+            <p>
+              {log.channel_name
+                ? `${log.channel_name} #${log.channel}`
+                : `#${log.channel}`}
+            </p>
+            {accountID > 0 && (
+              <p>
+                {t('Account')}: {accountDisplay}
+              </p>
+            )}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
 }
 

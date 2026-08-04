@@ -83,6 +83,48 @@ func TestResolveUseTimeMilliseconds(t *testing.T) {
 	require.Nil(t, resolveUseTimeMilliseconds(0, nil))
 }
 
+func TestGetAllLogsIncludesUpstreamAccountName(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalDB := DB
+	originalLogDB := LOG_DB
+	DB = db
+	LOG_DB = db
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+	})
+
+	require.NoError(t, db.AutoMigrate(&Log{}, &UpstreamAccount{}))
+	account := UpstreamAccount{
+		Name:                 "primary-account",
+		Platform:             "openai",
+		Type:                 "apikey",
+		CredentialCiphertext: "encrypted",
+		CredentialNonce:      "nonce",
+		Extra:                "{}",
+		Status:               "active",
+		Schedulable:          true,
+		CreatedAt:            common.GetTimestamp(),
+		UpdatedAt:            common.GetTimestamp(),
+	}
+	require.NoError(t, db.Create(&account).Error)
+	require.NoError(t, db.Create(&Log{
+		Type:              LogTypeConsume,
+		CreatedAt:         common.GetTimestamp(),
+		UpstreamAccountId: account.Id,
+	}).Error)
+
+	logs, total, err := GetAllLogs(
+		LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "", nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+	require.Equal(t, account.Id, logs[0].UpstreamAccountId)
+	require.Equal(t, "primary-account", logs[0].UpstreamAccountName)
+}
+
 func TestGetAgentUserLogsScopesToAgentAndInvitees(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

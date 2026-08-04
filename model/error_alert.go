@@ -220,6 +220,7 @@ func GetErrorAlertLatestLog(id uint) (*Log, error) {
 			log.ChannelName = channel.Name
 		}
 	}
+	_ = populateLogUpstreamAccountName(&log)
 	return &log, nil
 }
 

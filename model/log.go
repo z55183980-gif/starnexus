@@ -69,6 +69,9 @@ func publishBusinessMonitorLog(log *Log) {
 	}
 	logCopy := *log
 	gopool.Go(func() {
+		if err := populateLogUpstreamAccountName(&logCopy); err != nil {
+			common.SysLog("failed to populate business monitor upstream account name: " + err.Error())
+		}
 		if logCopy.ChannelName == "" && logCopy.ChannelId > 0 {
 			channel, err := CacheGetChannel(logCopy.ChannelId)
 			if err == nil && channel != nil {
@@ -79,6 +82,22 @@ func publishBusinessMonitorLog(log *Log) {
 			common.SysLog("failed to publish business monitor log: " + err.Error())
 		}
 	})
+}
+
+func populateLogUpstreamAccountName(log *Log) error {
+	if log == nil || log.UpstreamAccountId <= 0 || log.UpstreamAccountName != "" {
+		return nil
+	}
+	var account UpstreamAccount
+	err := DB.Select("name").First(&account, log.UpstreamAccountId).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	log.UpstreamAccountName = account.Name
+	return nil
 }
 
 func publishBusinessMonitorAlert(log *Log) {
@@ -217,6 +236,8 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	upstreamAccountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
+	upstreamAccountName := common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountName)
 	otherStr := common.MapToJsonStr(attachNodeNameToLogOther(other))
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -248,9 +269,11 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 			}
 			return ""
 		}(),
-		RequestId:         requestId,
-		UpstreamRequestId: upstreamRequestId,
-		Other:             otherStr,
+		RequestId:           requestId,
+		UpstreamRequestId:   upstreamRequestId,
+		UpstreamAccountId:   upstreamAccountId,
+		UpstreamAccountName: upstreamAccountName,
+		Other:               otherStr,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
@@ -317,6 +340,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	upstreamAccountId, accountCost, userCost := consumeLogAccountCosts(c, params)
+	upstreamAccountName := common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountName)
 	otherStr := common.MapToJsonStr(attachNodeNameToLogOther(params.Other))
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -348,12 +372,13 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			}
 			return ""
 		}(),
-		RequestId:         requestId,
-		UpstreamRequestId: upstreamRequestId,
-		UpstreamAccountId: upstreamAccountId,
-		AccountCost:       accountCost,
-		UserCost:          userCost,
-		Other:             otherStr,
+		RequestId:           requestId,
+		UpstreamRequestId:   upstreamRequestId,
+		UpstreamAccountId:   upstreamAccountId,
+		UpstreamAccountName: upstreamAccountName,
+		AccountCost:         accountCost,
+		UserCost:            userCost,
+		Other:               otherStr,
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
