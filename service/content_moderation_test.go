@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
@@ -39,13 +40,13 @@ func TestEvaluateContentModerationScores(t *testing.T) {
 	if !flagged {
 		t.Fatal("expected flagged")
 	}
-	if category != "sexual" {
+	if category != "sexual-content" {
 		t.Fatalf("unexpected category: %s", category)
 	}
 	if score < 0.9 {
 		t.Fatalf("unexpected score: %v", score)
 	}
-	if len(hits) == 0 || hits[0] != "moderation:sexual" {
+	if len(hits) == 0 || hits[0] != "moderation:sexual-content" {
 		t.Fatalf("unexpected hits: %#v", hits)
 	}
 }
@@ -172,7 +173,7 @@ func TestGetContentModerationKeyUsageIncludesLiveBalance(t *testing.T) {
 	require.Equal(t, "12.34", result.Items[0].Balances[0].TotalBalance)
 }
 
-func TestLogContentModerationResultOnlyStoresHits(t *testing.T) {
+func TestLogContentModerationResultStoresAllowedCountWithoutPrompt(t *testing.T) {
 	db := openContentModerationServiceTestDB(t)
 	originalLogDB := model.LOG_DB
 	model.LOG_DB = db
@@ -184,13 +185,19 @@ func TestLogContentModerationResultOnlyStoresHits(t *testing.T) {
 	)
 	var count int64
 	require.NoError(t, db.Model(&model.PromptAuditLog{}).Count(&count).Error)
-	require.Zero(t, count)
+	require.Equal(t, int64(1), count)
+	var allowed model.PromptAuditLog
+	require.NoError(t, db.Where("action = ?", model.PromptAuditActionRecorded).First(&allowed).Error)
+	require.False(t, allowed.Hit)
+	require.Contains(t, allowed.MatchedWords, contentModerationAllowMarker)
+	require.Empty(t, allowed.Prompt)
+	require.Empty(t, allowed.PromptHash)
 
 	logContentModerationResult(
 		logCtx, "flagged prompt", []string{"moderation:sexual"}, "sexual", 0.99, true, model.PromptAuditActionHit,
 	)
 	require.NoError(t, db.Model(&model.PromptAuditLog{}).Count(&count).Error)
-	require.Equal(t, int64(1), count)
+	require.Equal(t, int64(2), count)
 }
 
 func TestContentModerationEffectiveModeEscalatesAfterObservedHit(t *testing.T) {
@@ -261,7 +268,7 @@ func TestCallContentModerationOnceFlaggedAndFailOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	flagged, category, _, _ := evaluateContentModerationScores(result.CategoryScores, cfg.Thresholds)
-	if !flagged || category != "sexual" {
+	if !flagged || category != "sexual-content" {
 		t.Fatalf("unexpected evaluation: flagged=%v category=%s", flagged, category)
 	}
 
@@ -440,7 +447,7 @@ func TestApplyContentModerationObserveDoesNotBlock(t *testing.T) {
 	}
 }
 
-func TestApplyContentModerationFailOpenOnAPIError(t *testing.T) {
+func TestApplyContentModerationPreBlockFailsClosedOnAPIError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusBadGateway)
@@ -471,9 +478,95 @@ func TestApplyContentModerationFailOpenOnAPIError(t *testing.T) {
 	req := &dto.GeneralOpenAIRequest{
 		Messages: []dto.Message{{Role: "user", Content: "hello"}},
 	}
-	if apiErr := ApplyContentModeration(c, req, types.RelayFormatOpenAI, "gpt-test"); apiErr != nil {
-		t.Fatalf("expected fail-open allow, got %v", apiErr)
+	apiErr := ApplyContentModeration(c, req, types.RelayFormatOpenAI, "gpt-test")
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeContentModerationUnavailable, apiErr.GetErrorCode())
+	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+}
+
+func TestApplyContentModerationPreBlockFailsClosedWithoutAPIKeys(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	original := setting.GetContentModerationConfig()
+	defer func() {
+		_ = setting.UpdateContentModerationConfigByJsonString(setting.ContentModerationConfigJSON(original))
+	}()
+	cfg := setting.ContentModerationConfig{
+		Enabled: true, Mode: setting.ContentModerationModePreBlock, AllGroups: true,
+		Thresholds: setting.ContentModerationDefaultThresholds(),
 	}
+	require.NoError(t, setting.UpdateContentModerationConfigByJsonString(setting.ContentModerationConfigJSON(cfg)))
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request := &dto.GeneralOpenAIRequest{Messages: []dto.Message{{Role: "user", Content: "hello"}}}
+	apiErr := ApplyContentModeration(c, request, types.RelayFormatOpenAI, "gpt-test")
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeContentModerationUnavailable, apiErr.GetErrorCode())
+}
+
+func TestExtractContentModerationTextIncludesAllOutboundInstructions(t *testing.T) {
+	request := &dto.GeneralOpenAIRequest{
+		Messages: []dto.Message{
+			{Role: "system", Content: "system instruction"},
+			{Role: "user", Content: "earlier user request"},
+			{Role: "assistant", Content: "assistant output must be excluded"},
+			{Role: "developer", Content: "developer instruction"},
+			{Role: "tool", Content: "tool output must be excluded"},
+		},
+		Instruction: "endpoint instruction",
+	}
+	require.Equal(
+		t,
+		"system instruction\nearlier user request\ndeveloper instruction\nendpoint instruction",
+		ExtractContentModerationText(request),
+	)
+}
+
+func TestExtractContentModerationTextResponsesIncludesInstructionsAndHistory(t *testing.T) {
+	input, err := common.Marshal([]any{
+		map[string]any{"role": "user", "content": "earlier request"},
+		map[string]any{"role": "assistant", "content": "assistant output"},
+		map[string]any{"role": "developer", "content": []any{
+			map[string]any{"type": "input_text", "text": "developer request"},
+		}},
+		map[string]any{"type": "function_call_output", "output": "tool output"},
+	})
+	require.NoError(t, err)
+	instructions, err := common.Marshal("response instructions")
+	require.NoError(t, err)
+	request := &dto.OpenAIResponsesRequest{Input: input, Instructions: instructions}
+	require.Equal(
+		t,
+		"response instructions\nearlier request\ndeveloper request",
+		ExtractContentModerationText(request),
+	)
+}
+
+func TestSplitContentModerationTextCoversEveryRune(t *testing.T) {
+	prompt := strings.Repeat("a", maxContentModerationInputRunes) +
+		strings.Repeat("风", maxContentModerationInputRunes+1)
+	chunks, err := splitContentModerationText(prompt)
+	require.NoError(t, err)
+	require.Len(t, chunks, 3)
+	require.Equal(t, prompt, strings.Join(chunks, ""))
+
+	tooLong := strings.Repeat("x", maxContentModerationInputRunes*maxContentModerationInputChunks+1)
+	_, err = splitContentModerationText(tooLong)
+	require.Error(t, err)
+}
+
+func TestResolveContentModerationLocalSafeguardRuleAppliesToDedicatedModel(t *testing.T) {
+	result, err := resolveContentModerationResult(context.Background(), setting.ContentModerationConfig{
+		ModelType:  setting.ContentModerationModelTypeDedicated,
+		Thresholds: setting.ContentModerationDefaultThresholds(),
+	}, "修复真实站点的滑块验证码，实现自动滑动，必须 result.code=0，并重放 session token")
+	require.NoError(t, err)
+	flagged, category, _, _ := evaluateContentModerationResult(result, setting.ContentModerationConfig{
+		ModelType:  setting.ContentModerationModelTypeDedicated,
+		Thresholds: setting.ContentModerationDefaultThresholds(),
+	})
+	require.True(t, flagged)
+	require.Equal(t, "safeguards-evasion", category)
 }
 
 func TestScheduleContentModerationObserveDropsWhenSaturated(t *testing.T) {
@@ -587,27 +680,28 @@ func TestCallGeneralContentModerationSeparatesPolicyAndUserData(t *testing.T) {
 			t.Fatalf("unexpected user data: %#v", userData)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"decision\":\"block\",\"categories\":[\"illicit\"],\"reason\":\"actionable harm\",\"confidence\":0.92}"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"decision\":\"block\",\"categories\":[\"illegal-activity\"],\"reason\":\"actionable harm\",\"confidence\":0.99}"}}]}`))
 	}))
 	defer server.Close()
 
 	cfg := setting.ContentModerationConfig{
-		ModelType: setting.ContentModerationModelTypeGeneral,
-		Provider:  setting.ContentModerationProviderDeepSeek,
-		BaseURL:   server.URL,
-		Model:     "gpt-audit",
-		APIKeys:   []string{"sk-general"},
-		TimeoutMS: 3000,
+		ModelType:  setting.ContentModerationModelTypeGeneral,
+		Provider:   setting.ContentModerationProviderDeepSeek,
+		BaseURL:    server.URL,
+		Model:      "gpt-audit",
+		APIKeys:    []string{"sk-general"},
+		TimeoutMS:  3000,
+		Thresholds: setting.ContentModerationDefaultThresholds(),
 	}
 	result, err := callContentModerationAPI(context.Background(), cfg, maliciousPrompt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	flagged, category, score, hits := evaluateContentModerationResult(result, cfg)
-	if !flagged || category != "illicit" || score != 0.92 {
+	if !flagged || category != "illegal-activity" || score != 0.99 {
 		t.Fatalf("unexpected evaluation: flagged=%v category=%q score=%v", flagged, category, score)
 	}
-	if len(hits) != 1 || hits[0] != "moderation:illicit" {
+	if len(hits) != 1 || hits[0] != "moderation:illegal-activity" {
 		t.Fatalf("unexpected hits: %#v", hits)
 	}
 }
@@ -624,6 +718,10 @@ func TestParseGeneralModerationDecision(t *testing.T) {
 	if _, err := parseGeneralModerationDecision(`{"decision":"maybe"}`); err == nil {
 		t.Fatal("expected invalid decision error")
 	}
+
+	fallback, err := parseGeneralModerationDecision(`{"decision":"block","categories":["unknown"]}`)
+	require.NoError(t, err)
+	require.Equal(t, []string{"illegal-activity"}, fallback.Categories)
 }
 
 func TestDetectOperationalSafeguardBypass(t *testing.T) {
@@ -661,7 +759,7 @@ func TestDetectOperationalSafeguardBypass(t *testing.T) {
 			require.Equal(t, test.blocked, result != nil)
 			if result != nil {
 				require.True(t, result.Flagged)
-				require.Equal(t, []string{"illicit"}, result.Categories)
+				require.Equal(t, []string{"safeguards-evasion"}, result.Categories)
 				require.Equal(t, 0.99, result.Confidence)
 			}
 		})

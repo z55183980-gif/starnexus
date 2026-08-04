@@ -502,6 +502,9 @@ func migrateLOGDB() error {
 	if err = LOG_DB.AutoMigrate(&Log{}, &ErrorAlert{}, &PromptAuditLog{}, &ContentModerationKeyUsage{}); err != nil {
 		return err
 	}
+	if err = SanitizeAllowedContentModerationCounts(); err != nil {
+		return fmt.Errorf("failed to sanitize allowed content moderation counts: %w", err)
+	}
 	return migrateErrorAlertReadState()
 }
 

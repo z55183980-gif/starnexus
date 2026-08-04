@@ -38,19 +38,17 @@ const (
 )
 
 var contentModerationCategoryOrder = []string{
-	"harassment",
-	"harassment/threatening",
-	"hate",
-	"hate/threatening",
-	"illicit",
-	"illicit/violent",
+	"child-exploitation",
+	"sexual-content",
+	"violence-weapons-terrorism",
 	"self-harm",
-	"self-harm/intent",
-	"self-harm/instructions",
-	"sexual",
-	"sexual/minors",
-	"violence",
-	"violence/graphic",
+	"hate-harassment",
+	"fraud-scams-spam",
+	"illegal-activity",
+	"cyber-abuse",
+	"privacy-abuse",
+	"intellectual-property",
+	"safeguards-evasion",
 }
 
 // ContentModerationModelFilter selects which requested models are audited.
@@ -107,19 +105,17 @@ var (
 
 func ContentModerationDefaultThresholds() map[string]float64 {
 	return map[string]float64{
-		"harassment":             0.98,
-		"harassment/threatening": 0.90,
-		"hate":                   0.65,
-		"hate/threatening":       0.65,
-		"illicit":                0.95,
-		"illicit/violent":        0.95,
-		"self-harm":              0.65,
-		"self-harm/intent":       0.85,
-		"self-harm/instructions": 0.65,
-		"sexual":                 0.65,
-		"sexual/minors":          0.65,
-		"violence":               0.95,
-		"violence/graphic":       0.95,
+		"child-exploitation":         0.65,
+		"sexual-content":             0.65,
+		"violence-weapons-terrorism": 0.95,
+		"self-harm":                  0.65,
+		"hate-harassment":            0.65,
+		"fraud-scams-spam":           0.90,
+		"illegal-activity":           0.95,
+		"cyber-abuse":                0.90,
+		"privacy-abuse":              0.90,
+		"intellectual-property":      0.90,
+		"safeguards-evasion":         0.90,
 	}
 }
 

@@ -94,7 +94,7 @@ func TestListPromptAuditLogsByCursor(t *testing.T) {
 	require.Equal(t, []int{logs[2].Id}, promptAuditLogIds(newest))
 }
 
-func TestListContentModerationLogsExcludesAllowedResults(t *testing.T) {
+func TestListContentModerationLogsReturnsAllowedCountWithoutAllowedItems(t *testing.T) {
 	db := openPromptAuditTestDB(t)
 	setPromptAuditTestDatabases(t, db, db)
 
@@ -112,8 +112,35 @@ func TestListContentModerationLogsExcludesAllowedResults(t *testing.T) {
 
 	items, total, err = ListContentModerationLogs(ContentModerationLogFilter{Action: PromptAuditActionRecorded}, nil)
 	require.NoError(t, err)
-	require.Zero(t, total)
+	require.Equal(t, int64(1), total)
 	require.Empty(t, items)
+}
+
+func TestSanitizeAllowedContentModerationCountsRemovesRequestDetails(t *testing.T) {
+	db := openPromptAuditTestDB(t)
+	setPromptAuditTestDatabases(t, db, db)
+	require.NoError(t, db.Create(&PromptAuditLog{
+		UserId: 7, Username: "alice", TokenId: 9, TokenName: "secret", RequestId: "req-1",
+		ModelName: "gpt-test", Protocol: "openai", Endpoint: "/v1/responses",
+		Prompt: "benign content", PromptHash: "hash", MatchedWords: `["moderation:allow"]`,
+		Action: PromptAuditActionRecorded, CreatedAt: 100, Score: 0.1,
+	}).Error)
+
+	require.NoError(t, SanitizeAllowedContentModerationCounts())
+	var count PromptAuditLog
+	require.NoError(t, db.First(&count).Error)
+	require.Zero(t, count.UserId)
+	require.Zero(t, count.TokenId)
+	require.Empty(t, count.Username)
+	require.Empty(t, count.TokenName)
+	require.Empty(t, count.RequestId)
+	require.Empty(t, count.ModelName)
+	require.Empty(t, count.Protocol)
+	require.Empty(t, count.Endpoint)
+	require.Empty(t, count.Prompt)
+	require.Empty(t, count.PromptHash)
+	require.Equal(t, `["moderation:allow"]`, count.MatchedWords)
+	require.Equal(t, int64(100), count.CreatedAt)
 }
 
 func TestHasContentModerationObservedHit(t *testing.T) {

@@ -198,6 +198,42 @@ func CreatePromptAuditLog(log *PromptAuditLog) error {
 	return LOG_DB.Create(log).Error
 }
 
+func CreateContentModerationPassCount(createdAt int64) error {
+	if createdAt <= 0 {
+		return errors.New("invalid content moderation pass count")
+	}
+	return LOG_DB.Create(&PromptAuditLog{
+		MatchedWords: `["moderation:allow"]`,
+		Action:       PromptAuditActionRecorded,
+		CreatedAt:    createdAt,
+	}).Error
+}
+
+// SanitizeAllowedContentModerationCounts removes all request-identifying data
+// from historical allowed moderation rows. The row itself is retained solely
+// as an aggregateable pass counter.
+func SanitizeAllowedContentModerationCounts() error {
+	return LOG_DB.Model(&PromptAuditLog{}).
+		Where("action = ? AND matched_words LIKE ?", PromptAuditActionRecorded, "%moderation:%").
+		Updates(map[string]any{
+			"user_id":       0,
+			"username":      "",
+			"token_id":      0,
+			"token_name":    "",
+			"request_id":    "",
+			"model_name":    "",
+			"protocol":      "",
+			"endpoint":      "",
+			"prompt":        "",
+			"prompt_hash":   "",
+			"hit":           false,
+			"matched_words": `["moderation:allow"]`,
+			"delay_ms":      0,
+			"truncated":     false,
+			"score":         0,
+		}).Error
+}
+
 func HasContentModerationObservedHit(userId int) (bool, error) {
 	if userId <= 0 {
 		return false, nil
@@ -315,10 +351,16 @@ func ListContentModerationLogs(filter ContentModerationLogFilter, pageInfo *comm
 		pageInfo = &common.PageInfo{Page: 1, PageSize: common.ItemsPerPage}
 	}
 	query := LOG_DB.Model(&PromptAuditLog{}).
-		Where("matched_words LIKE ?", "%moderation:%").
-		Where("action IN ?", []string{PromptAuditActionHit, PromptAuditActionBlocked})
+		Where("matched_words LIKE ?", "%moderation:%")
 	if action := strings.TrimSpace(filter.Action); action != "" && action != "all" {
+		if action == PromptAuditActionRecorded {
+			var total int64
+			err := query.Where("action = ?", PromptAuditActionRecorded).Count(&total).Error
+			return []PromptAuditLog{}, total, err
+		}
 		query = query.Where("action = ?", action)
+	} else {
+		query = query.Where("action IN ?", []string{PromptAuditActionHit, PromptAuditActionBlocked})
 	}
 	if category := strings.TrimSpace(filter.Category); category != "" && category != "all" {
 		query = query.Where("matched_words LIKE ?", "%moderation:"+category+"%")

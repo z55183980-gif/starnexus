@@ -17,36 +17,48 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-export const CONTENT_MODERATION_CATEGORIES = [
-  'harassment',
-  'harassment/threatening',
-  'hate',
-  'hate/threatening',
-  'illicit',
-  'illicit/violent',
-  'self-harm',
-  'self-harm/intent',
-  'self-harm/instructions',
-  'sexual',
-  'sexual/minors',
-  'violence',
-  'violence/graphic',
+export const CONTENT_MODERATION_CATEGORY_GROUPS = [
+  {
+    label: 'Severe safety risks in prompts',
+    categories: [
+      'child-exploitation',
+      'sexual-content',
+      'violence-weapons-terrorism',
+      'self-harm',
+      'hate-harassment',
+    ],
+  },
+  {
+    label: 'Illegal or abusive requests',
+    categories: [
+      'fraud-scams-spam',
+      'illegal-activity',
+      'cyber-abuse',
+      'privacy-abuse',
+      'intellectual-property',
+    ],
+  },
+  {
+    label: 'Safeguard bypass requests',
+    categories: ['safeguards-evasion'],
+  },
 ] as const
 
+export const CONTENT_MODERATION_CATEGORIES =
+  CONTENT_MODERATION_CATEGORY_GROUPS.flatMap((group) => group.categories)
+
 export const DEFAULT_CONTENT_MODERATION_THRESHOLDS: Record<string, number> = {
-  harassment: 0.98,
-  'harassment/threatening': 0.9,
-  hate: 0.65,
-  'hate/threatening': 0.65,
-  illicit: 0.95,
-  'illicit/violent': 0.95,
+  'child-exploitation': 0.65,
+  'sexual-content': 0.65,
+  'violence-weapons-terrorism': 0.95,
   'self-harm': 0.65,
-  'self-harm/intent': 0.85,
-  'self-harm/instructions': 0.65,
-  sexual: 0.65,
-  'sexual/minors': 0.65,
-  violence: 0.95,
-  'violence/graphic': 0.95,
+  'hate-harassment': 0.65,
+  'fraud-scams-spam': 0.9,
+  'illegal-activity': 0.95,
+  'cyber-abuse': 0.9,
+  'privacy-abuse': 0.9,
+  'intellectual-property': 0.9,
+  'safeguards-evasion': 0.9,
 }
 
 export type ContentModerationMode = 'pre_block' | 'observe'

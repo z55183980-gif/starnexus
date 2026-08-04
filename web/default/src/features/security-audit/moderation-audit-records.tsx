@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useDeferredValue, useEffect, useState } from 'react'
+import { Fragment, useDeferredValue, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronLeft, ChevronRight, RefreshCw, Search } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -41,6 +41,8 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -54,7 +56,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { CONTENT_MODERATION_CATEGORIES } from '@/features/system-settings/request-limits/content-moderation-utils'
+import {
+  CONTENT_MODERATION_CATEGORIES,
+  CONTENT_MODERATION_CATEGORY_GROUPS,
+} from '@/features/system-settings/request-limits/content-moderation-utils'
 import { listContentModerationLogs } from './api'
 import type { PromptAuditLog } from './types'
 
@@ -230,12 +235,24 @@ export function ModerationAuditRecords({
           </SelectTrigger>
           <SelectContent alignItemWithTrigger={false}>
             <SelectGroup>
-              {categoryItems.map((item) => (
-                <SelectItem key={item.value} value={item.value}>
-                  {item.label}
-                </SelectItem>
-              ))}
+              <SelectItem value='all'>{t('All categories')}</SelectItem>
             </SelectGroup>
+            <SelectSeparator />
+            {CONTENT_MODERATION_CATEGORY_GROUPS.map((group, groupIndex) => (
+              <Fragment key={group.label}>
+                <SelectGroup>
+                  <SelectLabel>{t(group.label)}</SelectLabel>
+                  {group.categories.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {t(item)}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+                {groupIndex < CONTENT_MODERATION_CATEGORY_GROUPS.length - 1 && (
+                  <SelectSeparator />
+                )}
+              </Fragment>
+            ))}
           </SelectContent>
         </Select>
 

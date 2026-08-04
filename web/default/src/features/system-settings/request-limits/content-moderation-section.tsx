@@ -292,10 +292,10 @@ export function ContentModerationSection({
                 <FormDescription>
                   {embedded
                     ? t(
-                        'Call the configured audit API before upstream. Disabled by default. API failures fail open.'
+                        'Audit all client-supplied prompt text before it reaches upstream GPT/OpenAI accounts. Pre-block mode denies requests when the audit service is unavailable.'
                       )
                     : t(
-                        'When enabled, the latest user prompt is checked through the configured audit API before billing.'
+                        'Checks outbound user, system, developer, and instruction text for policy-enforcement risk to upstream GPT/OpenAI accounts.'
                       )}
                 </FormDescription>
               </div>
@@ -362,6 +362,15 @@ export function ContentModerationSection({
                     </ToggleGroupItem>
                   </ToggleGroup>
                 </FormControl>
+                <FormDescription>
+                  {modelType === 'general'
+                    ? t(
+                        'Recommended for full account-risk coverage, including fraud, cyber abuse, privacy abuse, intellectual property, and safeguard evasion.'
+                      )
+                    : t(
+                        'Dedicated moderation covers core safety categories only. Use a general-purpose model for full upstream account-risk coverage.'
+                      )}
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -818,7 +827,7 @@ export function ContentModerationSection({
     <SettingsSection
       title={t('Content Moderation (API)')}
       description={t(
-        'Call the configured audit API before upstream. Disabled by default. API failures fail open.'
+        'Audit all client-supplied prompt text before it reaches upstream GPT/OpenAI accounts. Pre-block mode denies requests when the audit service is unavailable.'
       )}
     >
       {formBody}

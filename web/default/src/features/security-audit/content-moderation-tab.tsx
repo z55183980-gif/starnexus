@@ -127,14 +127,15 @@ export function ContentModerationTab({
   const logsCountQuery = useQuery({
     queryKey: ['security-audit', 'moderation-logs-count'],
     queryFn: async () => {
-      const [totalRes, hitRes, blockedRes] = await Promise.all([
-        listContentModerationLogs({ p: 1, page_size: 1 }),
+      const [passedRes, hitRes, blockedRes] = await Promise.all([
+        listContentModerationLogs({ p: 1, page_size: 1, action: 'recorded' }),
         listContentModerationLogs({ p: 1, page_size: 1, action: 'hit' }),
         listContentModerationLogs({ p: 1, page_size: 1, action: 'blocked' }),
       ])
       return {
-        total: totalRes.data?.total ?? 0,
-        hits: (hitRes.data?.total ?? 0) + (blockedRes.data?.total ?? 0),
+        passed: passedRes.data?.total ?? 0,
+        observedHits: hitRes.data?.total ?? 0,
+        blockedHits: blockedRes.data?.total ?? 0,
       }
     },
     staleTime: 30_000,
@@ -194,8 +195,10 @@ export function ContentModerationTab({
     config.keys_configured || config.api_keys.length > 0
   )
   const keyCount = config.api_key_count ?? config.api_keys.length
-  const recordsHits = logsCountQuery.data?.hits ?? 0
-  const recordsTotal = logsCountQuery.data?.total ?? 0
+  const observedHits = logsCountQuery.data?.observedHits ?? 0
+  const blockedHits = logsCountQuery.data?.blockedHits ?? 0
+  const passedCount = logsCountQuery.data?.passed ?? 0
+  const recordsTotal = passedCount + observedHits + blockedHits
   const isObserve = config.mode === 'observe'
   const modeLabel = isObserve ? t('Observe only') : t('Front interception')
   const showRuntimePanels = config.enabled
@@ -264,16 +267,13 @@ export function ContentModerationTab({
         <SummaryCard
           icon={<FileText className='size-4 text-amber-600' />}
           iconClassName='bg-amber-500/10'
-          label={t('Audit Records')}
+          label={t('Audit overview')}
           value={
             logsCountQuery.isLoading
               ? '—'
-              : t('{{hits}} / {{total}}', {
-                  hits: recordsHits,
-                  total: recordsTotal,
-                })
+              : `${passedCount} / ${observedHits} / ${blockedHits} / ${recordsTotal}`
           }
-          meta={t('Hits · Total')}
+          meta={t('Passed · Observed hits · Blocked hits · Total audits')}
         />
       </div>
 
@@ -314,10 +314,12 @@ export function ContentModerationTab({
               </div>
               <div className='rounded-lg bg-emerald-500/5 p-4'>
                 <p className='text-muted-foreground text-xs'>
-                  {t('Fail-open')}
+                  {isObserve ? t('Fail-open') : t('Fail-closed')}
                 </p>
                 <p className='mt-2 text-lg font-semibold'>
-                  {t('API failures allow requests')}
+                  {isObserve
+                    ? t('API failures allow requests')
+                    : t('API failures deny requests')}
                 </p>
               </div>
               <div className='col-span-2 rounded-lg bg-violet-500/5 p-4 md:col-span-3'>
@@ -347,7 +349,7 @@ export function ContentModerationTab({
             <SheetTitle>{t('Content audit settings')}</SheetTitle>
             <SheetDescription>
               {t(
-                'Call the configured audit API before upstream. Disabled by default. API failures fail open.'
+                'Audit all client-supplied prompt text before it reaches upstream GPT/OpenAI accounts. Pre-block mode denies requests when the audit service is unavailable.'
               )}
             </SheetDescription>
           </SheetHeader>
