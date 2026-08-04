@@ -149,17 +149,21 @@ func TestHasContentModerationObservedHit(t *testing.T) {
 
 	logs := []PromptAuditLog{
 		{UserId: 41, Prompt: "ordinary hit", PromptHash: "ordinary", MatchedWords: `["sensitive"]`, Hit: true, Action: PromptAuditActionHit, CreatedAt: 1},
-		{UserId: 42, Prompt: "moderation hit", PromptHash: "moderation", MatchedWords: `["moderation:sexual"]`, Hit: true, Action: PromptAuditActionHit, CreatedAt: 2},
+		{UserId: 42, Prompt: "moderation hit", PromptHash: "moderation", ModerationPolicyHash: "policy-v2", MatchedWords: `["moderation:sexual"]`, Hit: true, Action: PromptAuditActionHit, CreatedAt: 2},
 	}
 	require.NoError(t, db.Create(&logs).Error)
 
-	hasHit, err := HasContentModerationObservedHit(41)
+	hasHit, err := HasContentModerationObservedHit(41, "policy-v2")
 	require.NoError(t, err)
 	require.False(t, hasHit)
 
-	hasHit, err = HasContentModerationObservedHit(42)
+	hasHit, err = HasContentModerationObservedHit(42, "policy-v2")
 	require.NoError(t, err)
 	require.True(t, hasHit)
+
+	hasHit, err = HasContentModerationObservedHit(42, "new-policy")
+	require.NoError(t, err)
+	require.False(t, hasHit)
 }
 
 func TestEnsureSystemPromptAuditPolicyCreatesOnceAndPreservesExisting(t *testing.T) {

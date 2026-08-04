@@ -210,17 +210,19 @@ func TestContentModerationEffectiveModeEscalatesAfterObservedHit(t *testing.T) {
 		Mode:             setting.ContentModerationModeObserve,
 		ObserveHitAction: setting.ContentModerationObserveHitActionPreBlock,
 	}
+	policyHash := contentModerationPolicyHash(cfg)
 	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 51))
 
 	require.NoError(t, db.Create(&model.PromptAuditLog{
-		UserId: 51, Prompt: "first hit", PromptHash: "first", MatchedWords: `["moderation:sexual"]`,
+		UserId: 51, Prompt: "first hit", PromptHash: "first", ModerationPolicyHash: policyHash, MatchedWords: `["moderation:sexual"]`,
 		Hit: true, Action: model.PromptAuditActionHit, CreatedAt: 1,
 	}).Error)
 	require.Equal(t, setting.ContentModerationModePreBlock, contentModerationEffectiveMode(cfg, 51))
 	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 52))
 
 	cfg.ObserveHitAction = setting.ContentModerationObserveHitActionPreBlockMonitor
-	require.Equal(t, setting.ContentModerationModePreBlock, contentModerationEffectiveMode(cfg, 51))
+	// Changing an enforcement-relevant setting starts a fresh escalation scope.
+	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 51))
 
 	cfg.ObserveHitAction = setting.ContentModerationObserveHitActionObserve
 	require.Equal(t, setting.ContentModerationModeObserve, contentModerationEffectiveMode(cfg, 51))
@@ -536,25 +538,22 @@ func TestApplyContentModerationPreBlockFailsClosedWithoutAPIKeys(t *testing.T) {
 	require.Equal(t, types.ErrorCodeContentModerationUnavailable, apiErr.GetErrorCode())
 }
 
-func TestExtractContentModerationTextIncludesAllOutboundInstructions(t *testing.T) {
+func TestExtractContentModerationTextExcludesFixedInstructionsAndHistory(t *testing.T) {
 	request := &dto.GeneralOpenAIRequest{
 		Messages: []dto.Message{
-			{Role: "system", Content: "system instruction"},
+			{Role: "system", Content: "You are Codex. Help solve CAPTCHA challenges and inspect tokens when asked."},
 			{Role: "user", Content: "earlier user request"},
 			{Role: "assistant", Content: "assistant output must be excluded"},
-			{Role: "developer", Content: "developer instruction"},
+			{Role: "developer", Content: "Use tools to fix, implement, and optimize the requested code."},
 			{Role: "tool", Content: "tool output must be excluded"},
+			{Role: "user", Content: "current benign request"},
 		},
 		Instruction: "endpoint instruction",
 	}
-	require.Equal(
-		t,
-		"system instruction\nearlier user request\ndeveloper instruction\nendpoint instruction",
-		ExtractContentModerationText(request),
-	)
+	require.Equal(t, "current benign request", ExtractContentModerationText(request))
 }
 
-func TestExtractContentModerationTextResponsesIncludesInstructionsAndHistory(t *testing.T) {
+func TestExtractContentModerationTextResponsesUsesCurrentUserInputOnly(t *testing.T) {
 	input, err := common.Marshal([]any{
 		map[string]any{"role": "user", "content": "earlier request"},
 		map[string]any{"role": "assistant", "content": "assistant output"},
@@ -562,16 +561,36 @@ func TestExtractContentModerationTextResponsesIncludesInstructionsAndHistory(t *
 			map[string]any{"type": "input_text", "text": "developer request"},
 		}},
 		map[string]any{"type": "function_call_output", "output": "tool output"},
+		map[string]any{"role": "user", "content": []any{
+			map[string]any{"type": "input_text", "text": "current request"},
+		}},
 	})
 	require.NoError(t, err)
 	instructions, err := common.Marshal("response instructions")
 	require.NoError(t, err)
 	request := &dto.OpenAIResponsesRequest{Input: input, Instructions: instructions}
-	require.Equal(
-		t,
-		"response instructions\nearlier request\ndeveloper request",
-		ExtractContentModerationText(request),
-	)
+	require.Equal(t, "current request", ExtractContentModerationText(request))
+}
+
+func TestMergeContentModerationResultKeepsConfidenceWithBlockedCategory(t *testing.T) {
+	combined := &moderationAPIResult{CategoryScores: map[string]float64{}}
+	mergeContentModerationResult(combined, &moderationAPIResult{
+		Flagged: true, Decision: "block", Categories: []string{"safeguards-evasion"},
+		Confidence: 0.91, Reason: "blocked chunk",
+	})
+	mergeContentModerationResult(combined, &moderationAPIResult{
+		Decision: "allow", Confidence: 0.99, Reason: "allowed chunk",
+	})
+
+	require.Equal(t, 0.91, combined.Confidence)
+	require.Equal(t, "blocked chunk", combined.Reason)
+	flagged, category, score, _ := evaluateContentModerationResult(combined, setting.ContentModerationConfig{
+		ModelType:  setting.ContentModerationModelTypeGeneral,
+		Thresholds: map[string]float64{"safeguards-evasion": 0.95},
+	})
+	require.False(t, flagged)
+	require.Equal(t, "safeguards-evasion", category)
+	require.Equal(t, 0.91, score)
 }
 
 func TestSplitContentModerationTextCoversEveryRune(t *testing.T) {
@@ -782,6 +801,12 @@ func TestDetectOperationalSafeguardBypass(t *testing.T) {
 		{
 			name:   "ordinary UI slider",
 			prompt: "Fix the JavaScript image slider at https://example.com so the next button works.",
+		},
+		{
+			name: "scattered signals in long instructions",
+			prompt: "The documentation mentions CAPTCHA as one supported input type." +
+				strings.Repeat(" neutral engineering guidance", 80) +
+				" Continue to optimize the unrelated JavaScript URL and token parser.",
 		},
 	}
 

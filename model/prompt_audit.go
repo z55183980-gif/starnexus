@@ -46,24 +46,28 @@ type PromptAuditPolicyView struct {
 }
 
 type PromptAuditLog struct {
-	Id           int     `json:"id" gorm:"index:idx_prompt_audit_created_id,priority:2"`
-	UserId       int     `json:"user_id" gorm:"index:idx_prompt_audit_user_created,priority:1;not null"`
-	Username     string  `json:"username" gorm:"type:varchar(64);not null;default:''"`
-	TokenId      int     `json:"token_id" gorm:"index;not null;default:0"`
-	TokenName    string  `json:"token_name" gorm:"type:varchar(64);not null;default:''"`
-	RequestId    string  `json:"request_id" gorm:"type:varchar(64);index;not null;default:''"`
-	ModelName    string  `json:"model_name" gorm:"type:varchar(255);index;not null;default:''"`
-	Protocol     string  `json:"protocol" gorm:"type:varchar(32);not null;default:''"`
-	Endpoint     string  `json:"endpoint" gorm:"type:varchar(128);not null;default:''"`
-	Prompt       string  `json:"prompt" gorm:"type:text;not null"`
-	PromptHash   string  `json:"prompt_hash" gorm:"type:varchar(64);index;not null"`
-	Hit          bool    `json:"hit" gorm:"index;not null;default:false"`
-	MatchedWords string  `json:"matched_words" gorm:"type:text;not null;default:'[]'"`
-	Action       string  `json:"action" gorm:"type:varchar(24);index;not null;default:'recorded'"`
-	DelayMs      int     `json:"delay_ms" gorm:"not null;default:0"`
-	Truncated    bool    `json:"truncated" gorm:"not null;default:false"`
-	CreatedAt    int64   `json:"created_at" gorm:"bigint;index:idx_prompt_audit_created_id,priority:1;index:idx_prompt_audit_user_created,priority:2;not null"`
-	Score        float64 `json:"score" gorm:"not null;default:0"`
+	Id         int    `json:"id" gorm:"index:idx_prompt_audit_created_id,priority:2"`
+	UserId     int    `json:"user_id" gorm:"index:idx_prompt_audit_user_created,priority:1;not null"`
+	Username   string `json:"username" gorm:"type:varchar(64);not null;default:''"`
+	TokenId    int    `json:"token_id" gorm:"index;not null;default:0"`
+	TokenName  string `json:"token_name" gorm:"type:varchar(64);not null;default:''"`
+	RequestId  string `json:"request_id" gorm:"type:varchar(64);index;not null;default:''"`
+	ModelName  string `json:"model_name" gorm:"type:varchar(255);index;not null;default:''"`
+	Protocol   string `json:"protocol" gorm:"type:varchar(32);not null;default:''"`
+	Endpoint   string `json:"endpoint" gorm:"type:varchar(128);not null;default:''"`
+	Prompt     string `json:"prompt" gorm:"type:text;not null"`
+	PromptHash string `json:"prompt_hash" gorm:"type:varchar(64);index;not null"`
+	// ModerationPolicyHash scopes observe-to-pre-block escalation to the exact
+	// detector/config revision that produced the hit. It is internal metadata,
+	// not part of the admin log response.
+	ModerationPolicyHash string  `json:"-" gorm:"type:varchar(64);index;not null;default:''"`
+	Hit                  bool    `json:"hit" gorm:"index;not null;default:false"`
+	MatchedWords         string  `json:"matched_words" gorm:"type:text;not null;default:'[]'"`
+	Action               string  `json:"action" gorm:"type:varchar(24);index;not null;default:'recorded'"`
+	DelayMs              int     `json:"delay_ms" gorm:"not null;default:0"`
+	Truncated            bool    `json:"truncated" gorm:"not null;default:false"`
+	CreatedAt            int64   `json:"created_at" gorm:"bigint;index:idx_prompt_audit_created_id,priority:1;index:idx_prompt_audit_user_created,priority:2;not null"`
+	Score                float64 `json:"score" gorm:"not null;default:0"`
 }
 
 func ListPromptAuditPolicies() ([]PromptAuditPolicyView, error) {
@@ -269,13 +273,16 @@ func SanitizeAllowedContentModerationCounts() error {
 		}).Error
 }
 
-func HasContentModerationObservedHit(userId int) (bool, error) {
-	if userId <= 0 {
+func HasContentModerationObservedHit(userId int, policyHash string) (bool, error) {
+	if userId <= 0 || strings.TrimSpace(policyHash) == "" {
 		return false, nil
 	}
 	var log PromptAuditLog
 	err := LOG_DB.Model(&PromptAuditLog{}).
-		Where("user_id = ? AND action = ? AND matched_words LIKE ?", userId, PromptAuditActionHit, "%moderation:%").
+		Where(
+			"user_id = ? AND action = ? AND matched_words LIKE ? AND moderation_policy_hash = ?",
+			userId, PromptAuditActionHit, "%moderation:%", policyHash,
+		).
 		Select("id").
 		First(&log).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

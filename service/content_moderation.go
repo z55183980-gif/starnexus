@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +32,7 @@ const (
 	maxContentModerationObserveConcurrency = 32
 	maxGeneralModerationReasonRunes        = 500
 	maxContentModerationProviderModels     = 500
+	contentModerationDetectorRevision      = "current-user-v2"
 )
 
 type contentModerationProviderSpec struct {
@@ -313,189 +313,24 @@ func fetchDeepSeekModerationBalance(ctx context.Context, cfg setting.ContentMode
 }
 
 type contentModerationLogContext struct {
-	UserId    int
-	Username  string
-	TokenId   int
-	TokenName string
-	RequestId string
-	Endpoint  string
-	ModelName string
-	Protocol  string
+	UserId     int
+	Username   string
+	TokenId    int
+	TokenName  string
+	RequestId  string
+	Endpoint   string
+	ModelName  string
+	Protocol   string
+	PolicyHash string
 }
 
-// ExtractContentModerationText returns the client-controlled text that will be
-// forwarded upstream. Unlike the per-user keyword audit, account protection
-// must also inspect system/developer instructions and earlier user turns: all
-// of them are part of the outbound prompt and can trigger upstream enforcement.
+// ExtractContentModerationText returns only text introduced by the user in the
+// current request turn. System/developer instructions, assistant/tool output,
+// and earlier conversation turns are deliberately excluded: combining those
+// sources can turn fixed client prompts into false positives and makes the
+// evidence recorded in the audit log misleading.
 func ExtractContentModerationText(request dto.Request) string {
-	var parts []string
-	appendPart := func(value string) {
-		if value = strings.TrimSpace(value); value != "" {
-			parts = append(parts, value)
-		}
-	}
-	switch req := request.(type) {
-	case *dto.GeneralOpenAIRequest:
-		if req == nil {
-			break
-		}
-		for index := range req.Messages {
-			message := &req.Messages[index]
-			if !isContentModerationInstructionRole(message.Role) {
-				continue
-			}
-			for _, content := range message.ParseContent() {
-				if content.Type == dto.ContentTypeText {
-					appendPart(content.Text)
-				}
-			}
-		}
-		appendPart(stringValue(req.Prompt))
-		appendPart(stringValue(req.Input))
-		appendPart(req.Instruction)
-	case *dto.OpenAIResponsesRequest:
-		if req == nil {
-			break
-		}
-		appendRawContentModerationString(&parts, req.Instructions)
-		appendResponsesContentModerationText(&parts, req.Input)
-	case *dto.AlphaSearchRequest:
-		appendPart(extractAlphaSearchUserText(req))
-	case *dto.ClaudeRequest:
-		if req == nil {
-			break
-		}
-		if req.IsStringSystem() {
-			appendPart(req.GetStringSystem())
-		} else {
-			for _, content := range req.ParseSystem() {
-				if content.Type == "text" {
-					appendPart(content.GetText())
-				}
-			}
-		}
-		for index := range req.Messages {
-			message := &req.Messages[index]
-			if message.Role != "user" {
-				continue
-			}
-			if message.IsStringContent() {
-				appendPart(message.GetStringContent())
-				continue
-			}
-			content, err := message.ParseContent()
-			if err != nil {
-				continue
-			}
-			for _, item := range content {
-				if item.Type == "text" {
-					appendPart(item.GetText())
-				}
-			}
-		}
-		appendPart(req.Prompt)
-	case *dto.GeminiChatRequest:
-		appendGeminiContentModerationText(&parts, req)
-	case *dto.ImageRequest:
-		if req != nil {
-			appendPart(req.Prompt)
-		}
-	}
-	return strings.TrimSpace(strings.Join(parts, "\n"))
-}
-
-func isContentModerationInstructionRole(role string) bool {
-	switch strings.ToLower(strings.TrimSpace(role)) {
-	case "user", "system", "developer", "human":
-		return true
-	default:
-		return false
-	}
-}
-
-func appendRawContentModerationString(parts *[]string, raw json.RawMessage) {
-	if len(raw) == 0 {
-		return
-	}
-	if common.GetJsonType(raw) == "string" {
-		var value string
-		if common.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) != "" {
-			*parts = append(*parts, strings.TrimSpace(value))
-		}
-	}
-}
-
-func appendResponsesContentModerationText(parts *[]string, raw json.RawMessage) {
-	if len(raw) == 0 {
-		return
-	}
-	if common.GetJsonType(raw) == "string" {
-		appendRawContentModerationString(parts, raw)
-		return
-	}
-	if common.GetJsonType(raw) != "array" {
-		return
-	}
-	type responseInput struct {
-		Type    string          `json:"type,omitempty"`
-		Role    string          `json:"role,omitempty"`
-		Text    string          `json:"text,omitempty"`
-		Content json.RawMessage `json:"content,omitempty"`
-	}
-	var inputs []responseInput
-	if common.Unmarshal(raw, &inputs) != nil {
-		return
-	}
-	for _, input := range inputs {
-		if input.Type == "input_text" {
-			if value := strings.TrimSpace(input.Text); value != "" {
-				*parts = append(*parts, value)
-			}
-			continue
-		}
-		if !isContentModerationInstructionRole(input.Role) {
-			continue
-		}
-		if common.GetJsonType(input.Content) == "string" {
-			appendRawContentModerationString(parts, input.Content)
-			continue
-		}
-		if common.GetJsonType(input.Content) == "array" {
-			var content []dto.MediaInput
-			if common.Unmarshal(input.Content, &content) != nil {
-				continue
-			}
-			for _, item := range content {
-				if item.Type == "input_text" && strings.TrimSpace(item.Text) != "" {
-					*parts = append(*parts, strings.TrimSpace(item.Text))
-				}
-			}
-		}
-	}
-}
-
-func appendGeminiContentModerationText(parts *[]string, req *dto.GeminiChatRequest) {
-	if req == nil {
-		return
-	}
-	appendContent := func(content dto.GeminiChatContent) {
-		for _, part := range content.Parts {
-			if !part.Thought && strings.TrimSpace(part.Text) != "" {
-				*parts = append(*parts, strings.TrimSpace(part.Text))
-			}
-		}
-	}
-	if req.SystemInstructions != nil {
-		appendContent(*req.SystemInstructions)
-	}
-	for _, content := range req.Contents {
-		if content.Role == "" || strings.EqualFold(content.Role, "user") {
-			appendContent(content)
-		}
-	}
-	for index := range req.Requests {
-		appendGeminiContentModerationText(parts, &req.Requests[index])
-	}
+	return ExtractPromptAuditUserText(request)
 }
 
 // ApplyContentModeration runs the global OpenAI Moderations gate before billing
@@ -530,6 +365,7 @@ func ApplyContentModeration(c *gin.Context, request dto.Request, relayFormat typ
 		return nil
 	}
 	logCtx := captureContentModerationLogContext(c, modelName, relayFormat)
+	logCtx.PolicyHash = contentModerationPolicyHash(cfg)
 	effectiveMode := contentModerationEffectiveMode(cfg, logCtx.UserId)
 
 	if effectiveMode == setting.ContentModerationModeObserve {
@@ -580,7 +416,7 @@ func contentModerationEffectiveMode(cfg setting.ContentModerationConfig, userId 
 		userId <= 0 {
 		return cfg.Mode
 	}
-	hasHit, err := model.HasContentModerationObservedHit(userId)
+	hasHit, err := model.HasContentModerationObservedHit(userId, contentModerationPolicyHash(cfg))
 	if err != nil {
 		common.SysError("failed to resolve content moderation observe escalation: " + err.Error())
 		return setting.ContentModerationModeObserve
@@ -589,6 +425,34 @@ func contentModerationEffectiveMode(cfg setting.ContentModerationConfig, userId 
 		return setting.ContentModerationModePreBlock
 	}
 	return setting.ContentModerationModeObserve
+}
+
+// contentModerationPolicyHash prevents historical hits from a previous
+// detector or materially different moderation configuration from silently
+// escalating a user under the current policy.
+func contentModerationPolicyHash(cfg setting.ContentModerationConfig) string {
+	fingerprint := struct {
+		Revision         string                               `json:"revision"`
+		ModelType        string                               `json:"model_type"`
+		Provider         string                               `json:"provider"`
+		BaseURL          string                               `json:"base_url"`
+		Model            string                               `json:"model"`
+		ObserveHitAction string                               `json:"observe_hit_action"`
+		AllGroups        bool                                 `json:"all_groups"`
+		Groups           []string                             `json:"groups"`
+		ModelFilter      setting.ContentModerationModelFilter `json:"model_filter"`
+		Thresholds       map[string]float64                   `json:"thresholds"`
+	}{
+		Revision: contentModerationDetectorRevision, ModelType: cfg.ModelType,
+		Provider: cfg.Provider, BaseURL: cfg.BaseURL, Model: cfg.Model,
+		ObserveHitAction: cfg.ObserveHitAction, AllGroups: cfg.AllGroups,
+		Groups: cfg.Groups, ModelFilter: cfg.ModelFilter, Thresholds: cfg.Thresholds,
+	}
+	payload, err := common.Marshal(fingerprint)
+	if err != nil {
+		payload = []byte(contentModerationDetectorRevision)
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(payload))
 }
 
 func contentModerationObserveActionEscalates(action string) bool {
@@ -747,7 +611,10 @@ func mergeContentModerationResult(combined, result *moderationAPIResult) {
 	} else if combined.Decision == "" {
 		combined.Decision = result.Decision
 	}
-	if result.Confidence > combined.Confidence {
+	// General classifiers return one confidence for their decision. Only a
+	// blocked chunk may contribute confidence/reason to a blocked aggregate;
+	// otherwise a highly confident allow chunk can inflate an unrelated hit.
+	if result.Flagged && result.Confidence > combined.Confidence {
 		combined.Confidence = result.Confidence
 		combined.Reason = result.Reason
 	}
@@ -770,6 +637,13 @@ func mergeContentModerationResult(combined, result *moderationAPIResult) {
 			combined.CategoryScores[category] = score
 		}
 	}
+	if result.Flagged {
+		for _, category := range result.Categories {
+			if result.Confidence > combined.CategoryScores[category] {
+				combined.CategoryScores[category] = result.Confidence
+			}
+		}
+	}
 }
 
 // detectOperationalSafeguardBypass is a deliberately narrow deterministic
@@ -777,6 +651,30 @@ func mergeContentModerationResult(combined, result *moderationAPIResult) {
 // not replace semantic moderation: ambiguous and defensive discussions still
 // go to the configured classifier.
 func detectOperationalSafeguardBypass(prompt string) *moderationAPIResult {
+	const (
+		windowRunes   = 600
+		windowOverlap = 200
+	)
+	runes := []rune(prompt)
+	for start := 0; start < len(runes); start += windowRunes - windowOverlap {
+		end := start + windowRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		if result := detectOperationalSafeguardBypassWindow(string(runes[start:end])); result != nil {
+			return result
+		}
+		if end == len(runes) {
+			break
+		}
+	}
+	return nil
+}
+
+// detectOperationalSafeguardBypassWindow requires safeguard and operational
+// intent signals to occur in the same local passage. Signals scattered across
+// a long instruction document must not accumulate into a hard-block score.
+func detectOperationalSafeguardBypassWindow(prompt string) *moderationAPIResult {
 	normalized, compact := normalizeContentModerationSignals(prompt)
 	explicitSafeguard := containsContentModerationSignal(normalized, compact,
 		"captcha", "recaptcha", "hcaptcha", "turnstile", "slider challenge",
@@ -1438,22 +1336,26 @@ func evaluateContentModerationResult(result *moderationAPIResult, cfg setting.Co
 		return evaluateContentModerationScores(result.CategoryScores, cfg.Thresholds)
 	}
 	hitCategories := make([]string, 0, len(result.Categories))
+	highestCategory := ""
+	highestScore := 0.0
 	for _, category := range result.Categories {
 		threshold := 1.0
 		if configured, ok := cfg.Thresholds[category]; ok {
 			threshold = configured
 		}
-		if result.Flagged && result.Confidence >= threshold {
+		score := result.Confidence
+		if categoryScore, ok := result.CategoryScores[category]; ok {
+			score = categoryScore
+		}
+		if highestCategory == "" || score > highestScore {
+			highestCategory = category
+			highestScore = score
+		}
+		if result.Flagged && score >= threshold {
 			hitCategories = append(hitCategories, contentModerationSourcePrefix+category)
 		}
 	}
-	highestCategory := ""
-	if len(hitCategories) > 0 {
-		highestCategory = strings.TrimPrefix(hitCategories[0], contentModerationSourcePrefix)
-	} else if len(result.Categories) > 0 {
-		highestCategory = result.Categories[0]
-	}
-	return len(hitCategories) > 0, highestCategory, result.Confidence, hitCategories
+	return len(hitCategories) > 0, highestCategory, highestScore, hitCategories
 }
 
 func evaluateContentModerationScores(scores, thresholds map[string]float64) (bool, string, float64, []string) {
@@ -1533,23 +1435,24 @@ func logContentModerationResult(
 	}
 	storedPrompt, truncated := truncatePromptAuditText(prompt)
 	log := &model.PromptAuditLog{
-		UserId:       logCtx.UserId,
-		Username:     logCtx.Username,
-		TokenId:      logCtx.TokenId,
-		TokenName:    logCtx.TokenName,
-		RequestId:    logCtx.RequestId,
-		ModelName:    logCtx.ModelName,
-		Protocol:     logCtx.Protocol,
-		Endpoint:     logCtx.Endpoint,
-		Prompt:       storedPrompt,
-		PromptHash:   fmt.Sprintf("%x", sha256.Sum256([]byte(prompt))),
-		Hit:          hit,
-		MatchedWords: string(matchedWords),
-		Action:       action,
-		DelayMs:      0,
-		Truncated:    truncated,
-		CreatedAt:    common.GetTimestamp(),
-		Score:        highestScore,
+		UserId:               logCtx.UserId,
+		Username:             logCtx.Username,
+		TokenId:              logCtx.TokenId,
+		TokenName:            logCtx.TokenName,
+		RequestId:            logCtx.RequestId,
+		ModelName:            logCtx.ModelName,
+		Protocol:             logCtx.Protocol,
+		Endpoint:             logCtx.Endpoint,
+		Prompt:               storedPrompt,
+		PromptHash:           fmt.Sprintf("%x", sha256.Sum256([]byte(prompt))),
+		ModerationPolicyHash: logCtx.PolicyHash,
+		Hit:                  hit,
+		MatchedWords:         string(matchedWords),
+		Action:               action,
+		DelayMs:              0,
+		Truncated:            truncated,
+		CreatedAt:            common.GetTimestamp(),
+		Score:                highestScore,
 	}
 	if err := model.CreatePromptAuditLog(log); err != nil {
 		common.SysError("failed to create content moderation audit log: " + err.Error())

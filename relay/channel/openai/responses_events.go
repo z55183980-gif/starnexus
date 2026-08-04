@@ -142,8 +142,10 @@ func (a *ResponsesEventAccumulator) applyResponseUsage(response *dto.OpenAIRespo
 
 func (a *ResponsesEventAccumulator) Usage(info *relaycommon.RelayInfo) *dto.Usage {
 	usage := a.usage
-	if usage.CompletionTokens == 0 && a.outputText.Len() > 0 && info != nil {
-		usage.CompletionTokens = service.CountTextToken(a.outputText.String(), info.UpstreamModelName)
+	if usage.CompletionTokens == 0 && info != nil {
+		if completionText := a.fallbackCompletionText(); completionText != "" {
+			usage.CompletionTokens = service.CountTextToken(completionText, info.UpstreamModelName)
+		}
 	}
 	if usage.PromptTokens == 0 && usage.CompletionTokens != 0 && info != nil {
 		usage.PromptTokens = info.GetEstimatePromptTokens()
@@ -152,6 +154,42 @@ func (a *ResponsesEventAccumulator) Usage(info *relaycommon.RelayInfo) *dto.Usag
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 	return &usage
+}
+
+// fallbackCompletionText collects every locally observable output category
+// used by Responses clients. This keeps interrupted/tool-only streams billable
+// when the upstream terminal usage frame is unavailable.
+func (a *ResponsesEventAccumulator) fallbackCompletionText() string {
+	var text strings.Builder
+	appendPart := func(part string) {
+		if part = strings.TrimSpace(part); part == "" {
+			return
+		}
+		if text.Len() > 0 {
+			text.WriteByte('\n')
+		}
+		text.WriteString(part)
+	}
+
+	appendPart(a.outputText.String())
+	appendPart(a.reasoningSummary.String())
+
+	indexes := make([]int, 0, len(a.itemsByIndex))
+	for index := range a.itemsByIndex {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	for _, index := range indexes {
+		item := cloneResponsesOutput(a.itemsByIndex[index])
+		a.applyBufferedFunctionArgs(item)
+		if item.Type != "function_call" {
+			continue
+		}
+		appendPart(item.Name)
+		appendPart(item.ArgumentsString())
+	}
+
+	return text.String()
 }
 
 func (a *ResponsesEventAccumulator) Terminal() bool {

@@ -213,6 +213,49 @@ func TestResponsesStreamRecordsFirstSSEEvent(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamBillsUsageFromResponseDone(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setStreamTestTimeout(t)
+
+	recorder := newStreamFlushRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := relaycommon.GenRelayInfoOpenAI(c, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-luna"}
+	body := strings.NewReader("data: {\"type\":\"response.done\",\"response\":{\"id\":\"resp_done\",\"usage\":{\"input_tokens\":1200,\"output_tokens\":80,\"total_tokens\":1280,\"input_tokens_details\":{\"cached_tokens\":900}}}}\n\ndata: [DONE]\n\n")
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, &http.Response{Body: io.NopCloser(body)})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 1200, usage.PromptTokens)
+	require.Equal(t, 80, usage.CompletionTokens)
+	require.Equal(t, 1280, usage.TotalTokens)
+	require.Equal(t, 900, usage.PromptTokensDetails.CachedTokens)
+	require.Contains(t, recorder.BodyString(), `"type":"response.done"`)
+}
+
+func TestResponsesStreamEstimatesToolOnlyUsageWithoutTerminalFrame(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setStreamTestTimeout(t)
+
+	recorder := newStreamFlushRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := relaycommon.GenRelayInfoOpenAI(c, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "tool-fallback-test"}
+	info.SetEstimatePromptTokens(600)
+	body := strings.NewReader("data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"fc_1\",\"type\":\"function_call\",\"name\":\"shell_command\"}}\n\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"output_index\":0,\"delta\":\"{\\\"command\\\":\\\"go test ./...\\\"}\"}\n\ndata: [DONE]\n\n")
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, &http.Response{Body: io.NopCloser(body)})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 600, usage.PromptTokens)
+	require.Positive(t, usage.CompletionTokens)
+	require.Equal(t, usage.PromptTokens+usage.CompletionTokens, usage.TotalTokens)
+}
+
 func TestOpenAIStreamFlushesCurrentFrameWithoutWaitingForNextFrame(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setStreamTestTimeout(t)
