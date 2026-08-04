@@ -104,10 +104,12 @@ function SummaryCard({
               </Badge>
             ) : null}
           </div>
-          <div className='mt-1 flex min-w-0 items-baseline gap-2'>
-            <p className='truncate text-xl leading-7 font-semibold'>{value}</p>
+          <div className='mt-1 flex min-w-0 flex-col gap-0.5'>
+            <p className='break-words text-xl leading-7 font-semibold'>
+              {value}
+            </p>
             {meta ? (
-              <p className='text-muted-foreground truncate text-xs'>{meta}</p>
+              <p className='text-muted-foreground text-xs leading-4'>{meta}</p>
             ) : null}
           </div>
         </div>

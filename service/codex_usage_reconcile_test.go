@@ -16,14 +16,17 @@ import (
 func TestShouldRaiseCodexResponsesPromptTokens(t *testing.T) {
 	t.Parallel()
 
-	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeOpenAI, 4000, 56))
-	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, 0, 56))
-	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, 4000, 0))
-	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, 100, 100))
-	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, 300, 100)) // abs gap < 256
-	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, 500, 300)) // not half
-	require.True(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, 4436, 56))
-	require.True(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, 1000, 56))
+	require.True(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeOpenAI, "/v1/responses", 4436, 56))
+	require.True(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeOpenAI, "/v1/responses/?stream=true", 4436, 56))
+	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeOpenAI, "/v1/chat/completions", 4436, 56))
+	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeOpenAI, "", 4436, 56))
+	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, "", 0, 56))
+	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, "", 4000, 0))
+	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, "", 100, 100))
+	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, "", 300, 100)) // abs gap < 256
+	require.False(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, "", 500, 300)) // not half
+	require.True(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, "", 4436, 56))
+	require.True(t, ShouldRaiseCodexResponsesPromptTokens(constant.ChannelTypeCodex, "", 1000, 56))
 }
 
 func TestReconcileCodexResponsesUsageRaisesObviousUndercount(t *testing.T) {
@@ -90,13 +93,35 @@ func TestReconcileCodexResponsesUsagePreservesUpstreamUncachedRemainder(t *testi
 	require.Equal(t, 800, reconcile.UpstreamCacheTokens)
 }
 
+func TestReconcileOpenAICompatibleResponsesUsageRaisesObviousUndercount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:    &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI},
+		RequestURLPath: "/v1/responses",
+	}
+	info.SetEstimatePromptTokens(4436)
+	usage := &dto.Usage{PromptTokens: 56, CompletionTokens: 18, TotalTokens: 74}
+
+	ReconcileCodexResponsesUsage(ctx, info, usage)
+
+	require.Equal(t, 4436, usage.PromptTokens)
+	require.Equal(t, 18, usage.CompletionTokens)
+	require.Equal(t, 4454, usage.TotalTokens)
+	require.Equal(t, 3842, usage.PromptTokensDetails.CachedTokens)
+	require.NotNil(t, getCodexUsageReconcileInfo(ctx))
+}
+
 func TestReconcileCodexResponsesUsageSkipsNonCodexAndNoise(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 
 	openAI := &relaycommon.RelayInfo{
-		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI},
+		ChannelMeta:    &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI},
+		RequestURLPath: "/v1/chat/completions",
 	}
 	openAI.SetEstimatePromptTokens(4436)
 	usage := &dto.Usage{PromptTokens: 56, CompletionTokens: 18, TotalTokens: 74}

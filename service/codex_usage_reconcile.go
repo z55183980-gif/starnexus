@@ -1,6 +1,8 @@
 package service
 
 import (
+	"strings"
+
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -27,8 +29,11 @@ type codexUsageReconcileInfo struct {
 
 // ShouldRaiseCodexResponsesPromptTokens reports whether upstream prompt usage
 // is obviously below the request estimate and should be raised for settlement.
-func ShouldRaiseCodexResponsesPromptTokens(channelType int, estimate int, promptTokens int) bool {
-	if channelType != constant.ChannelTypeCodex {
+// OpenAI-compatible channels are eligible only for native Responses requests;
+// this keeps the correction out of chat, image, audio, and other API flows.
+func ShouldRaiseCodexResponsesPromptTokens(channelType int, requestPath string, estimate int, promptTokens int) bool {
+	if channelType != constant.ChannelTypeCodex &&
+		!(channelType == constant.ChannelTypeOpenAI && isNativeResponsesRequestPath(requestPath)) {
 		return false
 	}
 	if estimate <= 0 || promptTokens <= 0 {
@@ -44,6 +49,14 @@ func ShouldRaiseCodexResponsesPromptTokens(channelType int, estimate int, prompt
 		return false
 	}
 	return true
+}
+
+func isNativeResponsesRequestPath(requestPath string) bool {
+	path := strings.TrimSpace(requestPath)
+	if queryIndex := strings.IndexByte(path, '?'); queryIndex >= 0 {
+		path = path[:queryIndex]
+	}
+	return strings.TrimRight(path, "/") == "/v1/responses"
 }
 
 // ReconcileCodexResponsesUsage raises Codex Responses prompt tokens to the
@@ -64,7 +77,7 @@ func ReconcileCodexResponsesUsage(c *gin.Context, info *relaycommon.RelayInfo, u
 		return
 	}
 	estimate := info.GetEstimatePromptTokens()
-	if !ShouldRaiseCodexResponsesPromptTokens(info.ChannelType, estimate, usage.PromptTokens) {
+	if !ShouldRaiseCodexResponsesPromptTokens(info.ChannelType, info.RequestURLPath, estimate, usage.PromptTokens) {
 		return
 	}
 
