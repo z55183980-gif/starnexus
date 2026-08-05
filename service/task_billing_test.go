@@ -718,10 +718,15 @@ func TestApplyTaskResultSuccessSettlesAfterCASWin(t *testing.T) {
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	consumeLog := &model.Log{UserId: userID, Type: model.LogTypeConsume, ModelName: "test-model"}
+	require.NoError(t, model.LOG_DB.Create(consumeLog).Error)
+	task.PrivateData.ConsumeLogID = consumeLog.Id
 	require.NoError(t, model.DB.Create(task).Error)
 
 	applied, err := ApplyTaskResult(ctx, &mockAdaptor{adjustReturn: actualQuota}, task, &relaycommon.TaskInfo{
-		Status: model.TaskStatusSuccess,
+		Status:      model.TaskStatusSuccess,
+		CreatedAt:   100,
+		CompletedAt: 105,
 	}, nil)
 	require.NoError(t, err)
 	require.True(t, applied)
@@ -731,6 +736,13 @@ func TestApplyTaskResultSuccessSettlesAfterCASWin(t *testing.T) {
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	require.Equal(t, actualQuota, reloaded.Quota, "completion settlement must persist the adjusted task quota")
+	require.EqualValues(t, 100, reloaded.StartTime)
+	require.EqualValues(t, 105, reloaded.FinishTime)
+	var reloadedLog model.Log
+	require.NoError(t, model.LOG_DB.First(&reloadedLog, consumeLog.Id).Error)
+	require.Equal(t, 5, reloadedLog.UseTime)
+	require.NotNil(t, reloadedLog.UseTimeMs)
+	require.EqualValues(t, 5000, *reloadedLog.UseTimeMs)
 }
 
 // ===========================================================================

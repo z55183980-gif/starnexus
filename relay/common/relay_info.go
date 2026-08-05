@@ -830,6 +830,8 @@ type TaskInfo struct {
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
 	DurationSeconds  int    `json:"duration_seconds,omitempty"`  // 上游实际输出时长，用于异步差额结算
+	CreatedAt        int64  `json:"created_at,omitempty"`        // 上游任务创建时间（秒）
+	CompletedAt      int64  `json:"completed_at,omitempty"`      // 上游任务完成时间（秒）
 	// Resolution is the upstream-reported output resolution when available.
 	// Doubao Seedance settle uses this to correct OtherRatios; other adaptors leave it empty.
 	Resolution string `json:"resolution,omitempty"`

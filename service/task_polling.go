@@ -461,12 +461,24 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	case model.TaskStatusInProgress:
 		task.Progress = taskcommon.ProgressInProgress
 		if task.StartTime == 0 {
-			task.StartTime = now
+			task.StartTime = taskResult.CreatedAt
+			if task.StartTime == 0 {
+				task.StartTime = now
+			}
 		}
 	case model.TaskStatusSuccess:
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
-			task.FinishTime = now
+			task.FinishTime = taskResult.CompletedAt
+			if task.FinishTime == 0 {
+				task.FinishTime = now
+			}
+		}
+		if task.StartTime == 0 {
+			task.StartTime = taskResult.CreatedAt
+			if task.StartTime == 0 {
+				task.StartTime = task.SubmitTime
+			}
 		}
 		if strings.HasPrefix(taskResult.Url, "data:") {
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
@@ -484,7 +496,16 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
-			task.FinishTime = now
+			task.FinishTime = taskResult.CompletedAt
+			if task.FinishTime == 0 {
+				task.FinishTime = now
+			}
+		}
+		if task.StartTime == 0 {
+			task.StartTime = taskResult.CreatedAt
+			if task.StartTime == 0 {
+				task.StartTime = task.SubmitTime
+			}
 		}
 		task.FailReason = taskResult.Reason
 		logger.LogInfo(ctx, fmt.Sprintf("Task %s failed: %s", task.TaskID, task.FailReason))
@@ -535,8 +556,28 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)
 	}
+	if isDone {
+		updateTaskConsumeLogTiming(ctx, task)
+	}
 
 	return true, nil
+}
+
+func updateTaskConsumeLogTiming(ctx context.Context, task *model.Task) {
+	if task == nil || task.PrivateData.ConsumeLogID <= 0 || task.FinishTime <= 0 {
+		return
+	}
+	startTime := task.StartTime
+	if startTime <= 0 {
+		startTime = task.SubmitTime
+	}
+	if startTime <= 0 || task.FinishTime < startTime {
+		return
+	}
+	useTimeMilliseconds := (task.FinishTime - startTime) * 1000
+	if err := model.UpdateLogUseTime(task.PrivateData.ConsumeLogID, useTimeMilliseconds); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("update task consume log timing failed task %s: %s", task.TaskID, err.Error()))
+	}
 }
 
 func redactVideoResponseBody(body []byte) []byte {

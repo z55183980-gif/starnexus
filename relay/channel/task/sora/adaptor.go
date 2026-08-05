@@ -316,7 +316,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	taskResult := relaycommon.TaskInfo{
-		Code: 0,
+		Code:        0,
+		CreatedAt:   normalizeTaskTimestamp(resTask.CreatedAt),
+		CompletedAt: normalizeTaskTimestamp(resTask.CompletedAt),
 	}
 
 	switch resTask.Status {
@@ -344,6 +346,15 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	return &taskResult, nil
+}
+
+func normalizeTaskTimestamp(timestamp int64) int64 {
+	// Providers use seconds, milliseconds, microseconds, or nanoseconds for
+	// OpenAI-compatible task timestamps. Task persistence uses Unix seconds.
+	for timestamp > 9_999_999_999 {
+		timestamp /= 1000
+	}
+	return timestamp
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {

@@ -7,14 +7,17 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 )
 
-func TestParseTaskResultIncludesDuration(t *testing.T) {
+func TestParseTaskResultIncludesDurationAndTimestamps(t *testing.T) {
 	adaptor := &TaskAdaptor{}
-	result, err := adaptor.ParseTaskResult([]byte(`{"id":"upstream-task","status":"completed","progress":100,"seconds":"5"}`))
+	result, err := adaptor.ParseTaskResult([]byte(`{"id":"upstream-task","status":"completed","progress":100,"seconds":"5","created_at":1700000000000,"completed_at":1700000123000}`))
 	if err != nil {
 		t.Fatalf("ParseTaskResult() error = %v", err)
 	}
 	if result.DurationSeconds != 5 {
 		t.Fatalf("DurationSeconds = %d, want 5", result.DurationSeconds)
+	}
+	if result.CreatedAt != 1_700_000_000 || result.CompletedAt != 1_700_000_123 {
+		t.Fatalf("timestamps = %d/%d, want normalized Unix seconds", result.CreatedAt, result.CompletedAt)
 	}
 }
 

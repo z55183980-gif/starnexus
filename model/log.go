@@ -332,8 +332,14 @@ func resolveUseTimeMilliseconds(useTimeSeconds int, useTimeMilliseconds *int64) 
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+	_ = RecordConsumeLogWithID(c, userId, params)
+}
+
+// RecordConsumeLogWithID records a consumption log and returns its primary key.
+// Async tasks persist this ID so completion can update the original log timing.
+func RecordConsumeLogWithID(c *gin.Context, userId int, params RecordConsumeLogParams) int {
 	if !common.LogConsumeEnabled {
-		return
+		return 0
 	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
 	username := c.GetString("username")
@@ -383,6 +389,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+		return 0
 	} else {
 		publishBusinessMonitorLog(log)
 	}
@@ -391,6 +398,20 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
 		})
 	}
+	return log.Id
+}
+
+func UpdateLogUseTime(logID int, useTimeMilliseconds int64) error {
+	if logID <= 0 {
+		return nil
+	}
+	if useTimeMilliseconds < 0 {
+		useTimeMilliseconds = 0
+	}
+	return LOG_DB.Model(&Log{}).Where("id = ?", logID).Updates(map[string]any{
+		"use_time":    int(useTimeMilliseconds / 1000),
+		"use_time_ms": useTimeMilliseconds,
+	}).Error
 }
 
 func consumeLogAccountCosts(c *gin.Context, params RecordConsumeLogParams) (int, float64, float64) {
