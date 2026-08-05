@@ -1647,7 +1647,7 @@ export function AccountManagement({
         const response = await recoverUpstreamAccount(account.id)
         if (!response.success)
           throw new Error(response.message || t('Request failed'))
-        toast.success(t('Account scheduling restored'))
+        toast.success(t('Account state recovered'))
       } else {
         const response = await refreshUpstreamOAuth(account.id)
         if (!response.success)
@@ -2478,6 +2478,7 @@ export function AccountManagement({
                                   ) &&
                                     (account.status === 'error' ||
                                       account.rate_limit_reset_at != null ||
+                                      account.overload_until != null ||
                                       account.temp_unschedulable_until !=
                                         null) && (
                                       <>
@@ -2494,7 +2495,7 @@ export function AccountManagement({
                                             className='text-success'
                                             strokeWidth={2}
                                           />
-                                          {t('Restore scheduling')}
+                                          {t('Recover state')}
                                         </DropdownMenuItem>
                                       </>
                                     )}

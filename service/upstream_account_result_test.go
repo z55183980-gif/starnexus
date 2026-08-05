@@ -114,7 +114,7 @@ func TestApplyUpstreamAccountErrorUsesOverloadCooldown(t *testing.T) {
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.NotNil(t, updated.OverloadUntil)
-	require.GreaterOrEqual(t, *updated.OverloadUntil, before+int64((10*time.Minute).Seconds()))
+	require.InDelta(t, before+int64(upstreamAccountOverloadCooldown.Seconds()), *updated.OverloadUntil, 1)
 	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
 	require.True(t, updated.Schedulable)
 	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))

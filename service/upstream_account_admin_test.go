@@ -607,6 +607,8 @@ func TestRecoverUpstreamAccountRuntimeState(t *testing.T) {
 	require.Empty(t, recovered.TempUnschedulableReason)
 	require.Nil(t, recovered.SessionWindowStart)
 	require.Nil(t, recovered.SessionWindowEnd)
+	require.Empty(t, recovered.SessionWindowStatus)
+	require.True(t, recovered.IsSchedulableAt(now))
 }
 
 func TestRecoverUpstreamAccountKeepsExpiredAccountPaused(t *testing.T) {

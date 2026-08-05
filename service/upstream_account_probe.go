@@ -754,7 +754,7 @@ func recordUpstreamAccountTestState(account *model.UpstreamAccount, success bool
 			updates["session_window_status"] = "rejected"
 		}
 	} else if statusCode == 529 {
-		updates["overload_until"] = now + int64((10 * time.Minute).Seconds())
+		updates["overload_until"] = now + int64(upstreamAccountOverloadCooldown.Seconds())
 		updates["temp_unschedulable_reason"] = "upstream_overloaded"
 	}
 	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error

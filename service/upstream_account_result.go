@@ -28,6 +28,8 @@ const (
 	UpstreamAccountErrorGlobal
 )
 
+const upstreamAccountOverloadCooldown = time.Minute
+
 func (disposition UpstreamAccountErrorDisposition) Handled() bool {
 	return disposition != UpstreamAccountErrorNotHandled
 }
@@ -186,7 +188,7 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 			updates["session_window_status"] = "rejected"
 		}
 	case apiErr.StatusCode == 529:
-		updates["overload_until"] = now + int64((10 * time.Minute).Seconds())
+		updates["overload_until"] = now + int64(upstreamAccountOverloadCooldown.Seconds())
 		updates["temp_unschedulable_reason"] = "upstream_overloaded"
 	case apiErr.StatusCode == 408 || isUpstreamTransportError(apiErr):
 		disposition = UpstreamAccountErrorRetryTransport
