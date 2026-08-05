@@ -247,7 +247,7 @@ func RecalculateTaskQuotaWithOther(ctx context.Context, task *model.Task, actual
 	if quotaDelta > 0 {
 		logType = model.LogTypeConsume
 		logQuota = quotaDelta
-		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
+		model.UpdateUserUsedQuota(task.UserId, quotaDelta)
 		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
 	} else {
 		logType = model.LogTypeRefund

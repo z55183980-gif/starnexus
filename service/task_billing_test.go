@@ -148,6 +148,13 @@ func getUserQuota(t *testing.T, id int) int {
 	return user.Quota
 }
 
+func getUserRequestCount(t *testing.T, id int) int {
+	t.Helper()
+	var user model.User
+	require.NoError(t, model.DB.Select("request_count").Where("id = ?", id).First(&user).Error)
+	return user.RequestCount
+}
+
 func getTokenRemainQuota(t *testing.T, id int) int {
 	t.Helper()
 	var token model.Token
@@ -720,6 +727,7 @@ func TestApplyTaskResultSuccessSettlesAfterCASWin(t *testing.T) {
 	require.True(t, applied)
 	require.Equal(t, initialQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
 	require.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	require.Zero(t, getUserRequestCount(t, userID), "completion settlement must not count a second request")
 }
 
 // ===========================================================================
