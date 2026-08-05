@@ -67,6 +67,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { formatPricingNumber } from './pricing-format'
 import { TieredPricingEditor } from './tiered-pricing-editor'
+import { VideoTokenPricingFields } from './video-token-pricing-fields'
+import {
+  emptyVideoTokenModelPrice,
+  isSeedanceVideoModel,
+  scaleVideoTokenModelPrice,
+  seedVideoTokenModelPrice,
+  type VideoTokenModelPrice,
+} from './video-token-price'
 
 const createModelPricingSchema = (t: (key: string) => string) =>
   z.object({
@@ -104,6 +112,7 @@ export type ModelRatioData = {
   imageRatio?: string
   audioRatio?: string
   audioCompletionRatio?: string
+  videoTokenPrice?: VideoTokenModelPrice | null
   billingMode?: PricingMode
   billingExpr?: string
   requestRuleExpr?: string
@@ -422,6 +431,9 @@ export function ModelPricingEditorPanel({
   const [laneEnabled, setLaneEnabled] = useState<Record<LaneKey, boolean>>({
     ...EMPTY_LANE_ENABLED,
   })
+  const [videoTokenTiers, setVideoTokenTiers] = useState<VideoTokenModelPrice>(
+    emptyVideoTokenModelPrice()
+  )
   const [billingExpr, setBillingExpr] = useState('')
   const [requestRuleExpr, setRequestRuleExpr] = useState('')
   const [previewOpen, setPreviewOpen] = useState(true)
@@ -464,6 +476,13 @@ export function ModelPricingEditorPanel({
             ? 'per-request'
             : 'per-token'
       )
+      if (isSeedanceVideoModel(editData.name)) {
+        setVideoTokenTiers(
+          editData.videoTokenPrice || emptyVideoTokenModelPrice()
+        )
+      } else {
+        setVideoTokenTiers(emptyVideoTokenModelPrice())
+      }
       setBillingExpr(editData.billingExpr || '')
       setRequestRuleExpr(editData.requestRuleExpr || '')
     } else {
@@ -479,6 +498,7 @@ export function ModelPricingEditorPanel({
         audioCompletionRatio: '',
       })
       setPricingMode('per-token')
+      setVideoTokenTiers(emptyVideoTokenModelPrice())
       setBillingExpr('')
       setRequestRuleExpr('')
     }
@@ -549,6 +569,27 @@ export function ModelPricingEditorPanel({
     if (!numericDraftRegex.test(value)) return
     setPromptPrice(value)
     syncLaneRatios(value, lanePrices, laneEnabled)
+    if (
+      showVideoTokenPricing &&
+      (videoTokenTiers.default.base ||
+        videoTokenTiers['720p'].base ||
+        videoTokenTiers['480p'].base)
+    ) {
+      setVideoTokenTiers((prev) => scaleVideoTokenModelPrice(prev, value))
+    }
+  }
+
+  const handleVideoTokenTiersChange = (next: VideoTokenModelPrice) => {
+    setVideoTokenTiers(next)
+    const syncedBase = next.default.base || next['720p'].base
+    if (
+      syncedBase !== promptPrice &&
+      numericDraftRegex.test(syncedBase) &&
+      syncedBase !== ''
+    ) {
+      setPromptPrice(syncedBase)
+      syncLaneRatios(syncedBase, lanePrices, laneEnabled)
+    }
   }
 
   const handleLanePriceChange = (lane: LaneKey, value: string) => {
@@ -610,6 +651,8 @@ export function ModelPricingEditorPanel({
   }
 
   const watchedValues = form.watch()
+  const activeModelName = watchedValues.name || editData?.name || ''
+  const showVideoTokenPricing = isSeedanceVideoModel(activeModelName)
   const previewRows = useMemo(
     () =>
       buildPreviewRows(
@@ -717,6 +760,10 @@ export function ModelPricingEditorPanel({
       audioCompletionRatio: values.audioCompletionRatio || '',
     }
 
+    if (isSeedanceVideoModel(data.name)) {
+      data.videoTokenPrice = videoTokenTiers
+    }
+
     if (pricingMode === 'tiered_expr') {
       data.billingExpr = billingExpr
       data.requestRuleExpr = requestRuleExpr
@@ -727,7 +774,7 @@ export function ModelPricingEditorPanel({
     onCancel?.()
   }
 
-  const activeName = watchedValues.name || editData?.name || t('New model')
+  const activeName = activeModelName || t('New model')
 
   return (
     <div
@@ -815,7 +862,11 @@ export function ModelPricingEditorPanel({
                         onChange={handlePromptPriceChange}
                       />
                       <FieldDescription>
-                        {t('USD price per 1M input tokens.')}
+                        {showVideoTokenPricing
+                          ? t(
+                              'USD per 1M tokens. For Seedance this is also the Default/720p base when the video matrix is configured.'
+                            )
+                          : t('USD price per 1M input tokens.')}
                       </FieldDescription>
                     </Field>
 
@@ -844,6 +895,23 @@ export function ModelPricingEditorPanel({
                         )
                       })}
                     </div>
+
+                    {showVideoTokenPricing && (
+                      <VideoTokenPricingFields
+                        value={videoTokenTiers}
+                        onChange={handleVideoTokenTiersChange}
+                        onFillRelativeDefaults={() => {
+                          const base =
+                            Number(promptPrice) > 0 ? Number(promptPrice) : 46
+                          handleVideoTokenTiersChange(
+                            seedVideoTokenModelPrice(
+                              activeModelName,
+                              base
+                            )
+                          )
+                        }}
+                      />
+                    )}
                   </FieldGroup>
                 </TabsContent>
 

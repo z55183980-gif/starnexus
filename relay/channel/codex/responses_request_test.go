@@ -100,6 +100,163 @@ func TestNormalizeCodexResponsesInputPreservesLargeIntegers(t *testing.T) {
 	require.False(t, gjson.GetBytes(normalized, "1.quality").Exists())
 }
 
+func TestCodexStructuredOutputAddsJSONModeInstructionOnlyWhenMissing(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing JSON context", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		request := dto.OpenAIResponsesRequest{
+			Instructions: json.RawMessage(`"Be concise."`),
+			Input:        json.RawMessage(`[{"role":"user","content":"Summarize this."}]`),
+			Text:         json.RawMessage(`{"format":{"type":"json_object"}}`),
+		}
+
+		applyCodexStructuredOutputCompatibility(ctx, &request)
+
+		require.Equal(t, "Be concise.", gjson.ParseBytes(request.Instructions).String())
+		require.Equal(t, codexJSONModeInstruction, gjson.GetBytes(request.Input, "1.content.0.text").String())
+		value, exists := ctx.Get("codex_structured_output_compat")
+		require.True(t, exists)
+		require.True(t, value.(map[string]interface{})["json_instruction_added"].(bool))
+	})
+
+	t.Run("existing JSON context", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		request := dto.OpenAIResponsesRequest{
+			Instructions: json.RawMessage(`"Be concise."`),
+			Input:        json.RawMessage(`[{"role":"user","content":"Return JSON matching the requested shape."}]`),
+			Text:         json.RawMessage(`{"format":{"type":"json_object"}}`),
+		}
+		original := append(json.RawMessage(nil), request.Input...)
+
+		applyCodexStructuredOutputCompatibility(ctx, &request)
+
+		require.Equal(t, original, request.Input)
+		_, exists := ctx.Get("codex_structured_output_compat")
+		require.False(t, exists)
+	})
+
+	t.Run("string input", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		request := dto.OpenAIResponsesRequest{
+			Input: json.RawMessage(`"Summarize this."`),
+			Text:  json.RawMessage(`{"format":{"type":"json_object"}}`),
+		}
+
+		applyCodexStructuredOutputCompatibility(ctx, &request)
+
+		require.Equal(t, "Summarize this.\n\n"+codexJSONModeInstruction, gjson.ParseBytes(request.Input).String())
+	})
+}
+
+func TestCodexStructuredOutputNormalizesStrictSchemaWithoutReorderingProperties(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	request := dto.OpenAIResponsesRequest{
+		Text: json.RawMessage(`{"format":{"type":"json_schema","name":"response","strict":true,"schema":{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"object","properties":{"summaryFieldName":{"type":"string"}}},"items":{"type":"array","items":{"type":"object","properties":{"item.value":{"type":"integer"}}}}},"required":["zeta"],"$defs":{"child.node":{"type":"object","properties":{"enabled":{"type":"boolean"}}}}}}}`),
+	}
+
+	applyCodexStructuredOutputCompatibility(ctx, &request)
+
+	schema := gjson.GetBytes(request.Text, "format.schema")
+	require.Less(t, strings.Index(schema.Raw, `"zeta"`), strings.Index(schema.Raw, `"alpha"`))
+	require.Less(t, strings.Index(schema.Raw, `"alpha"`), strings.Index(schema.Raw, `"items"`))
+	require.Equal(t, []string{"zeta", "alpha", "items"}, gjsonStringArray(schema.Get("required")))
+	require.False(t, schema.Get("additionalProperties").Bool())
+	require.Equal(t, []string{"summaryFieldName"}, gjsonStringArray(schema.Get("properties.alpha.required")))
+	require.False(t, schema.Get("properties.alpha.additionalProperties").Bool())
+	require.Equal(t, []string{"item.value"}, gjsonStringArray(schema.Get(`properties.items.items.required`)))
+	require.False(t, schema.Get(`properties.items.items.additionalProperties`).Bool())
+	require.Equal(t, []string{"enabled"}, gjsonStringArray(schema.Get(`$defs.child\.node.required`)))
+	require.False(t, schema.Get(`$defs.child\.node.additionalProperties`).Bool())
+
+	value, exists := ctx.Get("codex_structured_output_compat")
+	require.True(t, exists)
+	info := value.(map[string]interface{})
+	require.Equal(t, 5, info["required_fields_added"])
+	require.Equal(t, 4, info["additional_properties_added"])
+}
+
+func TestCodexStructuredOutputLeavesNonStrictAndConflictingSchemasUnchanged(t *testing.T) {
+	t.Parallel()
+
+	t.Run("strict false", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		request := dto.OpenAIResponsesRequest{Text: json.RawMessage(`{"format":{"type":"json_schema","strict":false,"schema":{"type":"object","properties":{"optional":{"type":"string"}}}}}`)}
+		original := append(json.RawMessage(nil), request.Text...)
+
+		applyCodexStructuredOutputCompatibility(ctx, &request)
+
+		require.Equal(t, original, request.Text)
+		_, exists := ctx.Get("codex_structured_output_compat")
+		require.False(t, exists)
+	})
+
+	t.Run("explicit additional properties", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		request := dto.OpenAIResponsesRequest{Text: json.RawMessage(`{"format":{"type":"json_schema","strict":true,"schema":{"type":"object","properties":{"optional":{"type":"string"}},"additionalProperties":true}}}`)}
+		original := append(json.RawMessage(nil), request.Text...)
+
+		applyCodexStructuredOutputCompatibility(ctx, &request)
+
+		require.Equal(t, original, request.Text)
+		value, exists := ctx.Get("codex_structured_output_compat")
+		require.True(t, exists)
+		require.True(t, value.(map[string]interface{})["explicit_additional_properties_conflict"].(bool))
+	})
+
+	t.Run("root anyOf", func(t *testing.T) {
+		t.Parallel()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		request := dto.OpenAIResponsesRequest{Text: json.RawMessage(`{"format":{"type":"json_schema","strict":true,"schema":{"anyOf":[{"type":"object","properties":{"value":{"type":"string"}}}]}}}`)}
+		original := append(json.RawMessage(nil), request.Text...)
+
+		applyCodexStructuredOutputCompatibility(ctx, &request)
+
+		require.Equal(t, original, request.Text)
+		_, exists := ctx.Get("codex_structured_output_compat")
+		require.False(t, exists)
+	})
+}
+
+func TestCodexStructuredOutputCompatibilityCoversChatCompletionsConversion(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	chatRequest := &dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-luna",
+		Messages: []dto.Message{{
+			Role:    "user",
+			Content: "Summarize this.",
+		}},
+		ResponseFormat: &dto.ResponseFormat{Type: "json_object"},
+	}
+	responsesRequest, err := service.ChatCompletionsRequestToResponsesRequest(chatRequest)
+	require.NoError(t, err)
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, *responsesRequest)
+	require.NoError(t, err)
+	request := converted.(dto.OpenAIResponsesRequest)
+	require.Equal(t, codexJSONModeInstruction, gjson.GetBytes(request.Input, "1.content.0.text").String())
+	require.Equal(t, "json_object", gjson.GetBytes(request.Text, "format.type").String())
+}
+
+func gjsonStringArray(result gjson.Result) []string {
+	values := result.Array()
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, value.String())
+	}
+	return out
+}
+
 func TestRepairCodexInvalidLocalReasoningItemsIsTopLevelAndNarrow(t *testing.T) {
 	t.Parallel()
 	input := json.RawMessage(`[

@@ -111,6 +111,15 @@ const modelSchema = z.object({
       })
     }
   }),
+  VideoTokenPrice: z.string().superRefine((value, ctx) => {
+    const result = validateJsonString(value)
+    if (!result.valid) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: result.message || 'Invalid JSON',
+      })
+    }
+  }),
   ExposeRatioEnabled: z.boolean(),
   BillingMode: z.string().superRefine((value, ctx) => {
     const result = validateJsonString(value)
@@ -248,6 +257,9 @@ export function RatioSettingsCard({
     AudioCompletionRatio: normalizeJsonString(
       modelDefaults.AudioCompletionRatio
     ),
+    VideoTokenPrice: normalizeJsonString(
+      modelDefaults.VideoTokenPrice || '{}'
+    ),
     ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
     BillingMode: normalizeJsonString(modelDefaults.BillingMode),
     BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
@@ -279,6 +291,9 @@ export function RatioSettingsCard({
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
       AudioCompletionRatio: formatJsonForTextarea(
         modelDefaults.AudioCompletionRatio
+      ),
+      VideoTokenPrice: formatJsonForTextarea(
+        modelDefaults.VideoTokenPrice || '{}'
       ),
       BillingMode: formatJsonForTextarea(modelDefaults.BillingMode),
       BillingExpr: formatJsonForTextarea(modelDefaults.BillingExpr),
@@ -313,6 +328,9 @@ export function RatioSettingsCard({
       AudioCompletionRatio: normalizeJsonString(
         modelDefaults.AudioCompletionRatio
       ),
+      VideoTokenPrice: normalizeJsonString(
+        modelDefaults.VideoTokenPrice || '{}'
+      ),
       ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
       BillingMode: normalizeJsonString(modelDefaults.BillingMode),
       BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
@@ -329,6 +347,9 @@ export function RatioSettingsCard({
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
       AudioCompletionRatio: formatJsonForTextarea(
         modelDefaults.AudioCompletionRatio
+      ),
+      VideoTokenPrice: formatJsonForTextarea(
+        modelDefaults.VideoTokenPrice || '{}'
       ),
       BillingMode: formatJsonForTextarea(modelDefaults.BillingMode),
       BillingExpr: formatJsonForTextarea(modelDefaults.BillingExpr),
@@ -372,6 +393,7 @@ export function RatioSettingsCard({
         ImageRatio: normalizeJsonString(values.ImageRatio),
         AudioRatio: normalizeJsonString(values.AudioRatio),
         AudioCompletionRatio: normalizeJsonString(values.AudioCompletionRatio),
+        VideoTokenPrice: normalizeJsonString(values.VideoTokenPrice || '{}'),
         ExposeRatioEnabled: values.ExposeRatioEnabled,
         BillingMode: normalizeJsonString(values.BillingMode),
         BillingExpr: normalizeJsonString(values.BillingExpr),

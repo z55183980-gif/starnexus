@@ -133,11 +133,8 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 			adminInfo["context_compaction"] = info
 		}
 	}
-	if v, ok := ctx.Get("codex_input_repair_admin_info"); ok {
-		if info, ok := v.(map[string]interface{}); ok && len(info) > 0 {
-			adminInfo["codex_input_repair"] = info
-		}
-	}
+	AppendCodexInputRepairAdminInfo(ctx, adminInfo)
+	AppendCodexStructuredOutputCompatAdminInfo(ctx, adminInfo)
 
 	other["admin_info"] = adminInfo
 	appendRequestPath(ctx, relayInfo, other)
@@ -148,6 +145,28 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	appendParamOverrideInfo(relayInfo, other)
 	appendStreamStatus(relayInfo, other)
 	return other
+}
+
+func AppendCodexInputRepairAdminInfo(ctx *gin.Context, adminInfo map[string]interface{}) {
+	if ctx == nil || adminInfo == nil {
+		return
+	}
+	if value, ok := ctx.Get("codex_input_repair_admin_info"); ok {
+		if info, ok := value.(map[string]interface{}); ok && len(info) > 0 {
+			adminInfo["codex_input_repair"] = info
+		}
+	}
+}
+
+func AppendCodexStructuredOutputCompatAdminInfo(ctx *gin.Context, adminInfo map[string]interface{}) {
+	if ctx == nil || adminInfo == nil {
+		return
+	}
+	if value, ok := ctx.Get("codex_structured_output_compat"); ok {
+		if info, ok := value.(map[string]interface{}); ok && len(info) > 0 {
+			adminInfo["codex_structured_output_compat"] = info
+		}
+	}
 }
 
 func appendStreamTransportInfo(ctx *gin.Context, other map[string]interface{}) {

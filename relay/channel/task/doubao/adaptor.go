@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -132,22 +133,59 @@ func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *r
 	return nil
 }
 
-// EstimateBilling 检测请求 metadata 中是否包含视频输入，返回视频折扣 OtherRatio。
+// EstimateBilling 根据请求 metadata 中的输出分辨率与是否包含视频输入，返回相对基准价的计费 OtherRatio。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	req, err := relaycommon.GetTaskRequest(c)
 	if err != nil {
 		return nil
 	}
-	if hasVideoInMetadata(req.Metadata) {
-		if ratio, ok := GetVideoInputRatio(info.OriginModelName); ok {
-			return map[string]float64{"video_input": ratio}
-		}
+	hasVideo := hasVideoInMetadata(req.Metadata)
+	if c != nil {
+		c.Set(contextKeySeedanceHasVideo, hasVideo)
 	}
-	return nil
+	resolution, _ := req.Metadata["resolution"].(string)
+	ratio, ok := GetVideoInputRatio(info.OriginModelName, resolution, hasVideo)
+	if !ok || ratio == 1.0 {
+		return nil
+	}
+	return map[string]float64{"video_input": ratio}
 }
 
-// hasVideoInMetadata 直接检查 metadata 的 content 数组是否包含 video_url 条目，
-// 避免构建完整的上游 requestPayload。
+// AdjustBillingOnComplete updates OtherRatios from upstream-reported resolution, then
+// returns 0 so the shared token recalculation path continues (no cross-channel formula change).
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil {
+		return 0
+	}
+	res := strings.TrimSpace(taskResult.Resolution)
+	if res == "" {
+		return 0
+	}
+	bc := task.PrivateData.BillingContext
+	if bc == nil || bc.OriginModelName == "" {
+		return 0
+	}
+	hasVideo := false
+	if bc.VideoHasInput != nil {
+		hasVideo = *bc.VideoHasInput
+	}
+	ratio, ok := GetVideoInputRatio(bc.OriginModelName, res, hasVideo)
+	if !ok {
+		return 0
+	}
+	if bc.OtherRatios == nil {
+		bc.OtherRatios = map[string]float64{}
+	}
+	if ratio == 1.0 {
+		delete(bc.OtherRatios, "video_input")
+	} else {
+		bc.OtherRatios["video_input"] = ratio
+	}
+	return 0
+}
+
+// hasVideoInMetadata 检查 metadata 的 content 是否包含非空 video_url，
+// 避免空壳 type=video_url 骗取含视频输入折扣。
 func hasVideoInMetadata(metadata map[string]interface{}) bool {
 	if metadata == nil {
 		return false
@@ -165,14 +203,30 @@ func hasVideoInMetadata(metadata map[string]interface{}) bool {
 		if !ok {
 			continue
 		}
-		if itemMap["type"] == "video_url" {
-			return true
-		}
-		if _, has := itemMap["video_url"]; has {
+		if url := videoURLFromContentItem(itemMap); url != "" {
 			return true
 		}
 	}
 	return false
+}
+
+func videoURLFromContentItem(itemMap map[string]interface{}) string {
+	if raw, ok := itemMap["video_url"]; ok {
+		switch v := raw.(type) {
+		case string:
+			return strings.TrimSpace(v)
+		case map[string]interface{}:
+			if u, ok := v["url"].(string); ok {
+				return strings.TrimSpace(u)
+			}
+		}
+	}
+	if itemMap["type"] == "video_url" {
+		if u, ok := itemMap["url"].(string); ok {
+			return strings.TrimSpace(u)
+		}
+	}
+	return ""
 }
 
 // BuildRequestBody converts request into Doubao specific format.
@@ -328,6 +382,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		// 解析 usage 信息用于按倍率计费
 		taskResult.CompletionTokens = resTask.Usage.CompletionTokens
 		taskResult.TotalTokens = resTask.Usage.TotalTokens
+		taskResult.Resolution = resTask.Resolution
 	case "failed":
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"

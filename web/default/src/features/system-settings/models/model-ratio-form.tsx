@@ -43,6 +43,7 @@ type ModelFormValues = {
   ImageRatio: string
   AudioRatio: string
   AudioCompletionRatio: string
+  VideoTokenPrice: string
   ExposeRatioEnabled: boolean
   BillingMode: string
   BillingExpr: string
@@ -110,6 +111,7 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               imageRatio={form.watch('ImageRatio')}
               audioRatio={form.watch('AudioRatio')}
               audioCompletionRatio={form.watch('AudioCompletionRatio')}
+              videoTokenPrice={form.watch('VideoTokenPrice') || '{}'}
               billingMode={form.watch('BillingMode')}
               billingExpr={form.watch('BillingExpr')}
               onChange={(field, value) => {
@@ -307,6 +309,25 @@ export const ModelRatioForm = memo(function ModelRatioForm({
                   <FormDescription>
                     {t(
                       'Ratio applied to audio completions for streaming models.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name='VideoTokenPrice'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Video token price')}</FormLabel>
+                  <FormControl>
+                    <Textarea rows={6} {...field} />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'JSON map of model → Seedance video token pricing tiers.'
                     )}
                   </FormDescription>
                   <FormMessage />

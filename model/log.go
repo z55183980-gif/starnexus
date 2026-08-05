@@ -58,8 +58,8 @@ type Log struct {
 	UpstreamRequestId   string  `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	UpstreamAccountId   int     `json:"upstream_account_id,omitempty" gorm:"index;default:0"`
 	UpstreamAccountName string  `json:"upstream_account_name,omitempty" gorm:"->"`
-	AccountCost         float64 `json:"account_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
-	UserCost            float64 `json:"user_cost,omitempty" gorm:"type:decimal(20,8);not null;default:0"`
+	AccountCost         float64 `json:"account_cost,omitempty" gorm:"type:decimal(20,8);size:20;not null;default:0.000000"`
+	UserCost            float64 `json:"user_cost,omitempty" gorm:"type:decimal(20,8);size:20;not null;default:0.000000"`
 	Other               string  `json:"other"`
 }
 

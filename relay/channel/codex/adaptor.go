@@ -98,6 +98,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	if err := applyCodexChannelSystemPrompt(info, &request, hadClientInstructions); err != nil {
 		return nil, err
 	}
+	applyCodexStructuredOutputCompatibility(c, &request)
 	ensureCodexInstructionsField(&request)
 	// ChatGPT's Codex Responses endpoint only accepts streaming requests. Keep
 	// the downstream stream preference in RelayInfo and force only the outbound

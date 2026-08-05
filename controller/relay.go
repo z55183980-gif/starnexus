@@ -297,6 +297,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
 			relayInfo.LastError = newAPIError
+			if relay.TryRepairCodexInvalidMessageIDForRetry(c, relayInfo, newAPIError) {
+				logger.LogWarn(c, "retrying Codex Responses once after removing an upstream-rejected message id")
+				recordUpstreamRequestEvent(c, "request_retry", "retry", "removed upstream-rejected Codex message id")
+				service.ClearResponsesHTTPContinuationPersistTarget(c)
+				relayInfo.LastError = nil
+				continue
+			}
 			accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 			proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
 			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
@@ -524,6 +531,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 			adminInfo["multi_key_index"] = common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex)
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
+		service.AppendCodexInputRepairAdminInfo(c, adminInfo)
+		service.AppendCodexStructuredOutputCompatAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 		if startTime.IsZero() {
@@ -748,6 +757,11 @@ func RelayTask(c *gin.Context) {
 			OtherRatios:     relayInfo.PriceData.OtherRatios,
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
+		}
+		if v, ok := c.Get("doubao_seedance_has_video"); ok {
+			if hasVideo, ok := v.(bool); ok {
+				task.PrivateData.BillingContext.VideoHasInput = &hasVideo
+			}
 		}
 		task.Quota = result.Quota
 		task.Data = result.TaskData

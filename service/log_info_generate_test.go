@@ -42,3 +42,53 @@ func TestGenerateTextOtherInfoIncludesStreamTransport(t *testing.T) {
 		"end_reason": "done",
 	}, other["stream_status"])
 }
+
+func TestGenerateTextOtherInfoIncludesCodexStructuredOutputCompatibility(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Set("codex_structured_output_compat", map[string]interface{}{
+		"required_fields_added":       2,
+		"additional_properties_added": 1,
+	})
+
+	started := time.Now().Add(-time.Second)
+	info := &relaycommon.RelayInfo{
+		StartTime:         started,
+		FirstResponseTime: started.Add(500 * time.Millisecond),
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+	}
+
+	other := GenerateTextOtherInfo(ctx, info, 1, 1, 1, 0, 0, -1, -1)
+	adminInfo := other["admin_info"].(map[string]interface{})
+	require.Equal(t, map[string]interface{}{
+		"required_fields_added":       2,
+		"additional_properties_added": 1,
+	}, adminInfo["codex_structured_output_compat"])
+}
+
+func TestGenerateTextOtherInfoIncludesCodexInputRepair(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ctx.Set("codex_input_repair_admin_info", map[string]interface{}{
+		"invalid_message_ids_removed": 1,
+		"first_removed_index":         178,
+		"upstream_validation_retry":   true,
+	})
+
+	started := time.Now().Add(-time.Second)
+	info := &relaycommon.RelayInfo{
+		StartTime:         started,
+		FirstResponseTime: started.Add(500 * time.Millisecond),
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+	}
+
+	other := GenerateTextOtherInfo(ctx, info, 1, 1, 1, 0, 0, -1, -1)
+	adminInfo := other["admin_info"].(map[string]interface{})
+	require.Equal(t, map[string]interface{}{
+		"invalid_message_ids_removed": 1,
+		"first_removed_index":         178,
+		"upstream_validation_retry":   true,
+	}, adminInfo["codex_input_repair"])
+}

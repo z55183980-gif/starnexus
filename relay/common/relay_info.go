@@ -829,6 +829,9 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	// Resolution is the upstream-reported output resolution when available.
+	// Doubao Seedance settle uses this to correct OtherRatios; other adaptors leave it empty.
+	Resolution string `json:"resolution,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

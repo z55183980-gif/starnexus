@@ -83,6 +83,17 @@ func TestResolveUseTimeMilliseconds(t *testing.T) {
 	require.Nil(t, resolveUseTimeMilliseconds(0, nil))
 }
 
+func TestSQLiteDecimalAutoMigrateIsIdempotent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/log-migration.db"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	models := []interface{}{&Log{}, &ContentModerationKeyUsage{}, &SubscriptionPlan{}, &UserAffiliate{}}
+	require.NoError(t, db.AutoMigrate(models...))
+	require.NoError(t, db.AutoMigrate(models...))
+}
+
 func TestGetAllLogsIncludesUpstreamAccountName(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

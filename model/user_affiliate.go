@@ -26,7 +26,7 @@ type UserAffiliate struct {
 	AffQuotaUSD          decimal.Decimal `json:"aff_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
 	AffFrozenQuotaUSD    decimal.Decimal `json:"aff_frozen_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
 	AffHistoryQuotaUSD   decimal.Decimal `json:"aff_history_quota_usd" gorm:"type:decimal(20,8);not null;default:0"`
-	AffRebateRatePercent *float64        `json:"aff_rebate_rate_percent" gorm:"type:decimal(5,2)"`
+	AffRebateRatePercent *float64        `json:"aff_rebate_rate_percent" gorm:"type:decimal(5,2);size:5"`
 	AffCodeCustom        bool            `json:"aff_code_custom" gorm:"not null;default:false"`
 	CreatedAt            time.Time       `json:"created_at"`
 	UpdatedAt            time.Time       `json:"updated_at"`

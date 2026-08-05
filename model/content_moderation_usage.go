@@ -20,7 +20,7 @@ type ContentModerationKeyUsage struct {
 	CacheMissTokens     int64   `json:"cache_miss_tokens" gorm:"not null;default:0"`
 	TotalTokens         int64   `json:"total_tokens" gorm:"not null;default:0"`
 	TokenUsageAvailable bool    `json:"token_usage_available" gorm:"not null;default:false"`
-	BillingUSD          float64 `json:"billing_usd" gorm:"type:decimal(20,10);not null;default:0"`
+	BillingUSD          float64 `json:"billing_usd" gorm:"type:decimal(20,10);size:20;not null;default:0.000000"`
 	BillingAvailable    bool    `json:"billing_available" gorm:"not null;default:false"`
 	CreatedAt           int64   `json:"created_at" gorm:"bigint;index:idx_content_moderation_key_created,priority:2;not null"`
 }
