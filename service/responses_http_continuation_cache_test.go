@@ -4,9 +4,20 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestLoadResponsesHTTPContinuationLimitsFromEnv(t *testing.T) {
+	t.Setenv("RESPONSES_HTTP_CONT_REDIS_MAX_ENTRY_MB", "4")
+	t.Setenv("RESPONSES_HTTP_CONT_TTL_MINUTES", "30")
+
+	limits := loadResponsesHTTPContinuationLimits()
+
+	require.Equal(t, int64(4<<20), limits.RedisMaxEntryBytes)
+	require.Equal(t, 30*time.Minute, limits.TTL)
+}
 
 func TestResponsesHTTPContinuationCacheRespectsByteBudget(t *testing.T) {
 	cache := newResponsesHTTPContinuationCache(responsesHTTPContinuationLimits{

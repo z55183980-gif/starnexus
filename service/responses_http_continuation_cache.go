@@ -17,7 +17,7 @@ const (
 	responsesHTTPContinuationDefaultLocalMaxEntryMB = 64
 	responsesHTTPContinuationDefaultMaxEntries      = 4096
 	responsesHTTPContinuationEntryOverheadBytes     = 128
-	responsesHTTPContinuationRedisOOMCooldown        = 30 * time.Second
+	responsesHTTPContinuationRedisOOMCooldown       = 30 * time.Second
 	responsesHTTPContinuationRedisOOMJitter         = 15 * time.Second
 )
 
@@ -27,7 +27,7 @@ type responsesHTTPContinuationLimits struct {
 	RedisMaxEntryBytes int64
 	MaxEntries         int
 	TTL                time.Duration
-	RedisOOMCooldown    time.Duration
+	RedisOOMCooldown   time.Duration
 	RedisOOMJitter     time.Duration
 }
 
@@ -40,7 +40,7 @@ func loadResponsesHTTPContinuationLimits() responsesHTTPContinuationLimits {
 		MaxEntries:         responsesHTTPContinuationDefaultMaxEntries,
 		TTL:                responsesHTTPContinuationTTL,
 		RedisOOMCooldown:   responsesHTTPContinuationRedisOOMCooldown,
-		RedisOOMJitter:    responsesHTTPContinuationRedisOOMJitter,
+		RedisOOMJitter:     responsesHTTPContinuationRedisOOMJitter,
 	}
 	if v := envInt64("RESPONSES_HTTP_CONT_LOCAL_BUDGET_MB"); v > 0 {
 		limits.LocalBudgetBytes = v << 20
@@ -52,6 +52,9 @@ func loadResponsesHTTPContinuationLimits() responsesHTTPContinuationLimits {
 		limits.RedisMaxEntryBytes = v << 20
 	} else if appconstant.MaxRequestBodyMB > 0 {
 		limits.RedisMaxEntryBytes = int64(appconstant.MaxRequestBodyMB) << 20
+	}
+	if v := envInt("RESPONSES_HTTP_CONT_TTL_MINUTES"); v > 0 {
+		limits.TTL = time.Duration(v) * time.Minute
 	}
 	if v := envInt("RESPONSES_HTTP_CONT_MAX_ENTRIES"); v > 0 {
 		limits.MaxEntries = v
