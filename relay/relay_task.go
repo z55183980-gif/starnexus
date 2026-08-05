@@ -470,6 +470,9 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 	if err != nil || ti == nil {
 		return nil, nil
 	}
+	if shouldIgnoreEmptyRealtimeTaskStatus(task, ti.Status) {
+		return nil, nil
+	}
 
 	if _, err := service.ApplyTaskResult(ctx, adaptor, task, ti, body); err != nil {
 		return nil, err
@@ -495,6 +498,14 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 		Data: out,
 	})
 	return respBody, nil
+}
+
+func shouldIgnoreEmptyRealtimeTaskStatus(task *model.Task, status string) bool {
+	if status != "" || task == nil || task.PrivateData.BillingContext == nil {
+		return false
+	}
+	bc := task.PrivateData.BillingContext
+	return bc.PreAuthorization && bc.VideoTokenBilling
 }
 
 func supportsRealtimeTaskFetch(channelType int) bool {
