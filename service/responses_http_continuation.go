@@ -31,7 +31,7 @@ const (
 	responsesHTTPRedisStatusContextKey    = "responses_http_redis_status"
 	responsesHTTPPersistTargetContextKey  = "responses_http_persist_target"
 	responsesHTTPPendingL1ContextKey      = "responses_http_pending_l1"
-	responsesHTTPContinuationTTL          = 2 * time.Hour
+	responsesHTTPContinuationTTL          = time.Hour
 	responsesHTTPRedisTimeout             = 500 * time.Millisecond
 )
 
