@@ -9,6 +9,7 @@ var CountToken bool
 var GetMediaToken bool
 var GetMediaTokenNotStream bool
 var UpdateTask bool
+var TaskPollingEnabled bool
 var MaxRequestBodyMB int
 var AzureDefaultAPIVersion string
 var NotifyLimitCount int

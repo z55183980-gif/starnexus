@@ -146,7 +146,8 @@ func main() {
 	// Channel upstream model update check task
 	controller.StartChannelUpstreamModelUpdateTask()
 
-	if common.IsMasterNode && constant.UpdateTask {
+	if constant.TaskPollingEnabled {
+		common.SysLog("asynchronous task polling enabled")
 		gopool.Go(func() {
 			controller.UpdateMidjourneyTaskBulk()
 		})

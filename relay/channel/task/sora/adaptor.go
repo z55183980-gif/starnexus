@@ -129,6 +129,28 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
+// AdjustBillingOnComplete reconciles the requested/default duration with the
+// duration reported by the upstream. Some OpenAI-compatible Seedance services
+// default to five seconds while the gateway estimates an omitted value as four.
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil || taskResult.DurationSeconds <= 0 {
+		return 0
+	}
+	bc := task.PrivateData.BillingContext
+	if bc == nil || bc.OtherRatios == nil {
+		return 0
+	}
+	estimatedSeconds := bc.OtherRatios["seconds"]
+	actualSeconds := float64(taskResult.DurationSeconds)
+	if estimatedSeconds <= 0 || estimatedSeconds == actualSeconds {
+		return 0
+	}
+
+	actualQuota, _ := common.QuotaFromFloatChecked(float64(task.Quota) / estimatedSeconds * actualSeconds)
+	bc.OtherRatios["seconds"] = actualSeconds
+	return actualQuota
+}
+
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	if info.Action == constant.TaskActionRemix {
 		return fmt.Sprintf("%s/v1/videos/%s/remix", a.baseURL, info.OriginTaskID), nil
@@ -316,6 +338,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 	if resTask.Progress > 0 && resTask.Progress < 100 {
 		taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)
+	}
+	if seconds, err := strconv.Atoi(resTask.Seconds); err == nil && seconds > 0 {
+		taskResult.DurationSeconds = seconds
 	}
 
 	return &taskResult, nil

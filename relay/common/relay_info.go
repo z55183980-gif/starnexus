@@ -829,6 +829,7 @@ type TaskInfo struct {
 	Progress         string `json:"progress,omitempty"`
 	CompletionTokens int    `json:"completion_tokens,omitempty"` // 用于按倍率计费
 	TotalTokens      int    `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	DurationSeconds  int    `json:"duration_seconds,omitempty"`  // 上游实际输出时长，用于异步差额结算
 	// Resolution is the upstream-reported output resolution when available.
 	// Doubao Seedance settle uses this to correct OtherRatios; other adaptors leave it empty.
 	Resolution string `json:"resolution,omitempty"`

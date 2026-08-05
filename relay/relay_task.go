@@ -426,15 +426,14 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	return
 }
 
-// tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。
-// 仅当渠道类型为 Gemini 或 Vertex 时触发；其他渠道或出错时返回 nil。
+// tryRealtimeFetch 尝试从上游实时拉取支持的异步视频任务状态。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
 func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bool) ([]byte, error) {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil, nil
 	}
-	if channelModel.Type != constant.ChannelTypeVertexAi && channelModel.Type != constant.ChannelTypeGemini {
+	if !supportsRealtimeTaskFetch(channelModel.Type) {
 		return nil, nil
 	}
 
@@ -490,6 +489,15 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 		Data: out,
 	})
 	return respBody, nil
+}
+
+func supportsRealtimeTaskFetch(channelType int) bool {
+	switch channelType {
+	case constant.ChannelTypeVertexAi, constant.ChannelTypeGemini, constant.ChannelTypeSora:
+		return true
+	default:
+		return false
+	}
 }
 
 // detectVideoFormat 从 Gemini/Vertex 原始响应中探测视频格式

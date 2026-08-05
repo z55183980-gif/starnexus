@@ -149,6 +149,10 @@ func initConstantEnv() {
 	constant.GetMediaToken = GetEnvOrDefaultBool("GET_MEDIA_TOKEN", true)
 	constant.GetMediaTokenNotStream = GetEnvOrDefaultBool("GET_MEDIA_TOKEN_NOT_STREAM", false)
 	constant.UpdateTask = GetEnvOrDefaultBool("UPDATE_TASK", true)
+	// By default only the master polls asynchronous tasks. Deployments with an
+	// isolated database can explicitly nominate a slave as that database's sole
+	// task worker without enabling unrelated master-only jobs.
+	constant.TaskPollingEnabled = constant.UpdateTask && GetEnvOrDefaultBool("TASK_POLLING_ENABLED", IsMasterNode)
 	constant.AzureDefaultAPIVersion = GetEnvOrDefaultString("AZURE_DEFAULT_API_VERSION", "2025-04-01-preview")
 	constant.NotifyLimitCount = GetEnvOrDefault("NOTIFY_LIMIT_COUNT", 2)
 	constant.NotificationLimitDurationMinute = GetEnvOrDefault("NOTIFICATION_LIMIT_DURATION_MINUTE", 10)
