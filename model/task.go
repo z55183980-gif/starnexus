@@ -105,12 +105,18 @@ type TaskPrivateData struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice      float64            `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio      float64            `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio      float64            `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios     map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	OriginModelName string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling  bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	ModelPrice         float64            `json:"model_price,omitempty"`       // 模型单价
+	GroupRatio         float64            `json:"group_ratio,omitempty"`       // 分组倍率
+	ModelRatio         float64            `json:"model_ratio,omitempty"`       // 模型倍率
+	OtherRatios        map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
+	OriginModelName    string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
+	PerCallBilling     bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	PreAuthorization   bool               `json:"pre_authorization,omitempty"` // 异步任务预授权：终态前仅冻结额度，不记录消费日志
+	PreAuthorizedQuota int                `json:"pre_authorized_quota,omitempty"`
+	RequestPath        string             `json:"request_path,omitempty"`
+	QuotaPerUnit       float64            `json:"quota_per_unit,omitempty"`
+	VideoResolution    string             `json:"video_resolution,omitempty"`
+	VideoTokenBilling  bool               `json:"video_token_billing,omitempty"`
 	// Seedance-only snapshot for settle-time OtherRatio correction. Other channels leave unset.
 	VideoHasInput *bool `json:"video_has_input,omitempty"`
 }

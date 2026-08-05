@@ -49,8 +49,9 @@ var (
 
 // videoPriceTable maps model name → (resolution × hasVideo) unit prices.
 // Dreamina aliases share the same cards as the matching Doubao Seedance tier:
-//   pro: 260128 / ep / hc
-//   fast: fast-260128 / fast-hc / mini-hc
+//
+//	pro: 260128 / ep / hc
+//	fast: fast-260128 / fast-hc / mini-hc
 var videoPriceTable = map[string]map[videoPriceKey]float64{
 	"doubao-seedance-2-0-260128":      videoPriceTablePro,
 	"doubao-seedance-2-0-fast-260128": videoPriceTableFast,
@@ -65,9 +66,9 @@ const contextKeySeedanceHasVideo = "doubao_seedance_has_video"
 
 // GetVideoInputRatio 返回指定模型在给定输出分辨率/是否含视频输入下，相对基准价的计费倍率。
 // 优先使用管理端 VideoTokenPrice 配置；缺档或不完整时回退硬编码价表。
-func GetVideoInputRatio(modelName, resolution string, hasVideo bool) (float64, bool) {
+func GetVideoInputRatio(modelName, resolution string, hasVideo bool, modelInputUnitPrice float64) (float64, bool) {
 	res := ratio_setting.NormalizeVideoResolution(resolution)
-	if ratio, ok := ratio_setting.GetConfiguredVideoTokenRatio(modelName, res, hasVideo); ok {
+	if ratio, ok := ratio_setting.GetConfiguredVideoTokenRatio(modelName, res, hasVideo, modelInputUnitPrice); ok {
 		return ratio, true
 	}
 	prices, ok := videoPriceTable[modelName]

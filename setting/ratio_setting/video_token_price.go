@@ -8,9 +8,9 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
-// VideoTokenTierPrice is a relative unit price for one resolution tier.
-// Values share the same display unit as the model's input (ModelRatio) price;
-// only tier/base ratios are used for billing.
+// VideoTokenTierPrice stores independent absolute USD-per-million prices for
+// one resolution tier. Billing converts the selected cell to a multiplier
+// against the model's text input unit price.
 type VideoTokenTierPrice struct {
 	Base      float64 `json:"base"`       // no video input
 	WithVideo float64 `json:"with_video"` // has video input
@@ -75,25 +75,12 @@ func NormalizeVideoResolution(resolution string) string {
 	}
 }
 
-func baseTierPrice(price VideoTokenModelPrice) (VideoTokenTierPrice, bool) {
-	for _, k := range []string{"default", "720p", "480p"} {
-		if tier, ok := price[k]; ok && tier.Base > 0 {
-			return tier, true
-		}
-	}
-	return VideoTokenTierPrice{}, false
-}
-
-// GetConfiguredVideoTokenRatio returns OtherRatio = tierPrice / configuredBase
-// when VideoTokenPrice fully covers this request. ok=false means caller must use
-// hardcoded fallback (incomplete/missing config must not shadow it).
-func GetConfiguredVideoTokenRatio(modelName, resolution string, hasVideo bool) (float64, bool) {
+// GetConfiguredVideoTokenRatio returns OtherRatio = tierPrice / model input
+// unit price. Each resolution/condition cell is independent; an empty cell
+// falls back to the built-in Seedance ratio for that exact tier.
+func GetConfiguredVideoTokenRatio(modelName, resolution string, hasVideo bool, modelInputUnitPrice float64) (float64, bool) {
 	price, ok := videoTokenPriceMap.Get(modelName)
-	if !ok || len(price) == 0 {
-		return 0, false
-	}
-	baseTier, ok := baseTierPrice(price)
-	if !ok || baseTier.Base <= 0 {
+	if !ok || len(price) == 0 || modelInputUnitPrice <= 0 {
 		return 0, false
 	}
 	tier, ok := pickConfiguredTierExact(price, resolution)
@@ -111,21 +98,17 @@ func GetConfiguredVideoTokenRatio(modelName, resolution string, hasVideo bool) (
 	} else if unit <= 0 {
 		return 0, false
 	}
-	return unit / baseTier.Base, true
+	return unit / modelInputUnitPrice, true
 }
 
-// pickConfiguredTierExact requires an explicit tier for the resolved key
-// (default/720p/480p may alias each other). Unknown keys do not invent prices.
+// pickConfiguredTierExact requires an explicit tier for the resolved key.
+// Resolution tiers never alias each other, and unknown keys do not invent prices.
 func pickConfiguredTierExact(price VideoTokenModelPrice, resolution string) (VideoTokenTierPrice, bool) {
 	key := NormalizeVideoResolution(resolution)
 	switch key {
 	case "", "default":
-		for _, k := range []string{"default", "720p", "480p"} {
-			if tier, ok := price[k]; ok && (tier.Base > 0 || tier.WithVideo > 0) {
-				return tier, true
-			}
-		}
-		return VideoTokenTierPrice{}, false
+		tier, ok := price["default"]
+		return tier, ok && (tier.Base > 0 || tier.WithVideo > 0)
 	case "480p", "720p", "1080p", "4k":
 		tier, ok := price[key]
 		if !ok || (tier.Base <= 0 && tier.WithVideo <= 0) {

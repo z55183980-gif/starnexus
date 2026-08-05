@@ -200,6 +200,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
 	}
+	if estimator, ok := adaptor.(channel.TaskPreAuthorizationEstimator); ok {
+		if estimatedQuota, clamp, applicable := estimator.EstimatePreAuthorization(c, info); applicable {
+			info.PriceData.Quota = estimatedQuota
+			noteTaskQuotaClamp(info, clamp)
+		}
+	}
 
 	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {

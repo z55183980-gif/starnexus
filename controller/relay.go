@@ -23,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -738,12 +739,21 @@ func RelayTask(c *gin.Context) {
 		logger.LogInfo(c, retryLogStr)
 	}
 
-	// ── 成功：结算 + 日志 + 插入任务 ──
+	// ── 成功：将预扣转为任务预授权冻结，终态再结算并记录一条日志 ──
 	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+		silentVideoPreAuth := relayInfo.ChannelType == constant.ChannelTypeSora &&
+			ratio_setting.IsSeedanceVideoModel(relayInfo.OriginModelName)
+		var settleErr error
+		consumeLogID := 0
+		if silentVideoPreAuth {
+			settleErr = service.SettleTaskPreAuthorization(relayInfo, result.Quota)
+		} else {
+			settleErr = service.SettleBilling(c, relayInfo, result.Quota)
+			consumeLogID = service.LogTaskConsumption(c, relayInfo)
+		}
+		if settleErr != nil {
 			common.SysError("settle task billing error: " + settleErr.Error())
 		}
-		consumeLogID := service.LogTaskConsumption(c, relayInfo)
 
 		task := model.InitTask(result.Platform, relayInfo)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
@@ -759,6 +769,20 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
+		if silentVideoPreAuth {
+			bc := task.PrivateData.BillingContext
+			bc.PreAuthorization = true
+			bc.PreAuthorizedQuota = result.Quota
+			bc.RequestPath = c.Request.URL.Path
+			bc.QuotaPerUnit = common.QuotaPerUnit
+			bc.VideoTokenBilling = true
+			if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
+				bc.VideoResolution = taskReq.Size
+				if resolution, ok := taskReq.Metadata["resolution"].(string); ok && resolution != "" {
+					bc.VideoResolution = resolution
+				}
+			}
+		}
 		if v, ok := c.Get("doubao_seedance_has_video"); ok {
 			if hasVideo, ok := v.(bool); ok {
 				task.PrivateData.BillingContext.VideoHasInput = &hasVideo
@@ -769,6 +793,9 @@ func RelayTask(c *gin.Context) {
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
+			if silentVideoPreAuth {
+				service.RefundTaskQuota(c, task, "任务创建失败")
+			}
 		}
 	}
 

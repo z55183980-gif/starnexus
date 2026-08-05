@@ -15,13 +15,21 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
 	"github.com/tidwall/sjson"
+)
+
+const (
+	seedanceEstimatedTextTokens  = 500
+	seedanceEstimatedVideoTokens = 250_000
+	contextKeySeedanceHasVideo   = "doubao_seedance_has_video"
 )
 
 // ============================
@@ -39,17 +47,28 @@ type ImageURL struct {
 }
 
 type responseTask struct {
-	ID                 string `json:"id"`
-	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
-	Object             string `json:"object"`
-	Model              string `json:"model"`
-	Status             string `json:"status"`
-	Progress           int    `json:"progress"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at,omitempty"`
-	ExpiresAt          int64  `json:"expires_at,omitempty"`
-	Seconds            string `json:"seconds,omitempty"`
-	Size               string `json:"size,omitempty"`
+	ID          string                 `json:"id"`
+	TaskID      string                 `json:"task_id,omitempty"` //兼容旧接口
+	Object      string                 `json:"object"`
+	Model       string                 `json:"model"`
+	Status      string                 `json:"status"`
+	Progress    int                    `json:"progress"`
+	CreatedAt   int64                  `json:"created_at"`
+	CompletedAt int64                  `json:"completed_at,omitempty"`
+	ExpiresAt   int64                  `json:"expires_at,omitempty"`
+	Seconds     string                 `json:"seconds,omitempty"`
+	Size        string                 `json:"size,omitempty"`
+	Resolution  string                 `json:"resolution,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Usage       *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+		InputTokens      int `json:"input_tokens"`
+		OutputTokens     int `json:"output_tokens"`
+		TextTokens       int `json:"text_tokens"`
+		VideoTokens      int `json:"video_tokens"`
+	} `json:"usage,omitempty"`
 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
 	Error              *struct {
 		Message string `json:"message"`
@@ -105,6 +124,14 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return nil
 	}
+	if ratio_setting.IsSeedanceVideoModel(info.OriginModelName) {
+		c.Set(contextKeySeedanceHasVideo, false)
+		ratio, ok := doubao.GetVideoInputRatio(info.OriginModelName, seedanceRequestResolution(req), false, info.PriceData.ModelRatio*2)
+		if ok && ratio > 0 && ratio != 1 {
+			return map[string]float64{"video_input": ratio}
+		}
+		return nil
+	}
 
 	seconds, _ := strconv.Atoi(req.Seconds)
 	if seconds == 0 {
@@ -129,15 +156,75 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	return ratios
 }
 
+// EstimatePreAuthorization reserves a conservative local token estimate for
+// OpenAI-compatible Seedance video tasks. The final charge always uses the
+// actual upstream usage returned at completion.
+func (a *TaskAdaptor) EstimatePreAuthorization(c *gin.Context, info *relaycommon.RelayInfo) (int, *common.QuotaClamp, bool) {
+	if info == nil || !ratio_setting.IsSeedanceVideoModel(info.OriginModelName) || info.PriceData.UsePrice || info.PriceData.ModelRatio <= 0 {
+		return 0, nil, false
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 0, nil, false
+	}
+	videoRatio := 1.0
+	if ratio, ok := doubao.GetVideoInputRatio(info.OriginModelName, seedanceRequestResolution(req), false, info.PriceData.ModelRatio*2); ok && ratio > 0 {
+		videoRatio = ratio
+	}
+	groupRatio := info.PriceData.GroupRatioInfo.GroupRatio
+	quotaValue := (float64(seedanceEstimatedTextTokens) + float64(seedanceEstimatedVideoTokens)*videoRatio) * info.PriceData.ModelRatio * groupRatio
+	quota, clamp := common.QuotaFromFloatChecked(quotaValue)
+	return quota, clamp, true
+}
+
+func seedanceRequestResolution(req relaycommon.TaskSubmitReq) string {
+	if resolution, ok := req.Metadata["resolution"].(string); ok && strings.TrimSpace(resolution) != "" {
+		return ratio_setting.NormalizeVideoResolution(resolution)
+	}
+	size := strings.ToLower(strings.TrimSpace(req.Size))
+	switch size {
+	case "854x480", "480x854":
+		return "480p"
+	case "1280x720", "720x1280":
+		return "720p"
+	case "1920x1080", "1080x1920", "1792x1024", "1024x1792":
+		return "1080p"
+	case "3840x2160", "2160x3840":
+		return "4k"
+	default:
+		return ratio_setting.NormalizeVideoResolution(size)
+	}
+}
+
 // AdjustBillingOnComplete reconciles the requested/default duration with the
 // duration reported by the upstream. Some OpenAI-compatible Seedance services
 // default to five seconds while the gateway estimates an omitted value as four.
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
-	if task == nil || taskResult == nil || taskResult.DurationSeconds <= 0 {
+	if task == nil || taskResult == nil {
 		return 0
 	}
 	bc := task.PrivateData.BillingContext
-	if bc == nil || bc.OtherRatios == nil {
+	if bc == nil {
+		return 0
+	}
+	if bc.VideoTokenBilling && taskResult.Resolution != "" {
+		ratio, ok := doubao.GetVideoInputRatio(bc.OriginModelName, taskResult.Resolution, false, bc.ModelRatio*2)
+		if !ok || ratio <= 0 {
+			return 0
+		}
+		if bc.OtherRatios == nil {
+			bc.OtherRatios = map[string]float64{}
+		}
+		delete(bc.OtherRatios, "seconds")
+		delete(bc.OtherRatios, "size")
+		if ratio == 1 {
+			delete(bc.OtherRatios, "video_input")
+		} else {
+			bc.OtherRatios["video_input"] = ratio
+		}
+		return 0
+	}
+	if taskResult.DurationSeconds <= 0 || bc.OtherRatios == nil {
 		return 0
 	}
 	estimatedSeconds := bc.OtherRatios["seconds"]
@@ -319,6 +406,33 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		Code:        0,
 		CreatedAt:   normalizeTaskTimestamp(resTask.CreatedAt),
 		CompletedAt: normalizeTaskTimestamp(resTask.CompletedAt),
+		Resolution:  resTask.Resolution,
+	}
+	if taskResult.Resolution == "" {
+		taskResult.Resolution = resTask.Size
+	}
+	if taskResult.Resolution == "" && resTask.Metadata != nil {
+		taskResult.Resolution, _ = resTask.Metadata["resolution"].(string)
+	}
+	if resTask.Usage != nil {
+		taskResult.CompletionTokens = resTask.Usage.VideoTokens
+		if taskResult.CompletionTokens == 0 {
+			taskResult.CompletionTokens = resTask.Usage.CompletionTokens
+		}
+		if taskResult.CompletionTokens == 0 {
+			taskResult.CompletionTokens = resTask.Usage.OutputTokens
+		}
+		taskResult.TotalTokens = resTask.Usage.TotalTokens
+		if taskResult.TotalTokens == 0 {
+			promptTokens := resTask.Usage.TextTokens
+			if promptTokens == 0 {
+				promptTokens = resTask.Usage.PromptTokens
+			}
+			if promptTokens == 0 {
+				promptTokens = resTask.Usage.InputTokens
+			}
+			taskResult.TotalTokens = promptTokens + taskResult.CompletionTokens
+		}
 	}
 
 	switch resTask.Status {

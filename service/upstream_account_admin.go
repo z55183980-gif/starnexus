@@ -70,6 +70,8 @@ type UpstreamAccountPoolView struct {
 	ActiveCount             int64  `json:"active_count"`
 	ReadyCount              int64  `json:"ready_count"`
 	TemporarilyLimitedCount int64  `json:"temporarily_limited_count"`
+	CurrentConcurrency      int    `json:"current_concurrency"`
+	Concurrency             int    `json:"concurrency"`
 	SchedulerAvailable      bool   `json:"scheduler_available"`
 	ChannelCount            int64  `json:"channel_count"`
 	PublishedChannelId      *int   `json:"published_channel_id"`
@@ -119,6 +121,12 @@ type UpstreamAccountPoolMemberView struct {
 type upstreamAccountPoolCountRow struct {
 	PoolId int
 	Count  int64
+}
+
+type upstreamAccountPoolCapacityRow struct {
+	PoolId      int
+	AccountId   int
+	Concurrency int
 }
 
 type upstreamAccountPoolEventCountRow struct {
@@ -598,22 +606,37 @@ func populateUpstreamAccountPoolViews(views []UpstreamAccountPoolView) error {
 		return baseAccountCountQuery().
 			Where("(accounts.auto_pause_on_expired = ? OR accounts.expires_at IS NULL OR accounts.expires_at > ?)", false, now)
 	}
+	readyAccountQuery := func() *gorm.DB {
+		return eligibleAccountCountQuery().
+			Where("(accounts.rate_limit_reset_at IS NULL OR accounts.rate_limit_reset_at <= ?)", now).
+			Where("(accounts.overload_until IS NULL OR accounts.overload_until <= ?)", now).
+			Where("(accounts.temp_unschedulable_until IS NULL OR accounts.temp_unschedulable_until <= ?)", now).
+			Where("accounts.temp_unschedulable_reason NOT IN ?", []string{
+				constant.UpstreamAccountReasonOAuthRefreshPending,
+				constant.UpstreamAccountReasonOAuthRefreshFailed,
+				constant.UpstreamAccountReasonOAuthRefreshPermanent,
+			})
+	}
 	var readyCounts []upstreamAccountPoolCountRow
-	if err := eligibleAccountCountQuery().
-		Where("(accounts.rate_limit_reset_at IS NULL OR accounts.rate_limit_reset_at <= ?)", now).
-		Where("(accounts.overload_until IS NULL OR accounts.overload_until <= ?)", now).
-		Where("(accounts.temp_unschedulable_until IS NULL OR accounts.temp_unschedulable_until <= ?)", now).
-		Where("accounts.temp_unschedulable_reason NOT IN ?", []string{
-			constant.UpstreamAccountReasonOAuthRefreshPending,
-			constant.UpstreamAccountReasonOAuthRefreshFailed,
-			constant.UpstreamAccountReasonOAuthRefreshPermanent,
-		}).
+	if err := readyAccountQuery().
 		Group("pool_members.pool_id").Scan(&readyCounts).Error; err != nil {
 		return err
 	}
 	for _, row := range readyCounts {
 		viewsById[row.PoolId].ReadyCount = row.Count
 	}
+
+	var capacityRows []upstreamAccountPoolCapacityRow
+	if err := readyAccountQuery().
+		Select("pool_members.pool_id AS pool_id, accounts.id AS account_id, accounts.concurrency AS concurrency").
+		Scan(&capacityRows).Error; err != nil {
+		return err
+	}
+	capacityAccountIds := make([]int, 0, len(capacityRows))
+	for _, row := range capacityRows {
+		capacityAccountIds = append(capacityAccountIds, row.AccountId)
+	}
+	applyUpstreamAccountPoolCapacities(viewsById, capacityRows, currentUpstreamAccountLeaseCounts(normalizePositiveIds(capacityAccountIds)))
 
 	var temporarilyLimitedCounts []upstreamAccountPoolCountRow
 	if err := eligibleAccountCountQuery().
@@ -688,6 +711,17 @@ func populateUpstreamAccountPoolViews(views []UpstreamAccountPoolView) error {
 		viewsById[row.PoolId].LastEventAt = &lastEventAt
 	}
 	return nil
+}
+
+func applyUpstreamAccountPoolCapacities(viewsById map[int]*UpstreamAccountPoolView, rows []upstreamAccountPoolCapacityRow, leaseCounts map[int]int) {
+	for _, row := range rows {
+		view := viewsById[row.PoolId]
+		if view == nil || row.Concurrency <= 0 {
+			continue
+		}
+		view.Concurrency += row.Concurrency
+		view.CurrentConcurrency += leaseCounts[row.AccountId]
+	}
 }
 
 func CreateUpstreamAccountPool(pool *model.UpstreamAccountPool) error {

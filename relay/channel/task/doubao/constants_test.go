@@ -14,43 +14,43 @@ func almostEqual(a, b float64) bool {
 }
 
 func TestGetVideoInputRatioDreaminaAliases(t *testing.T) {
-	proBase, ok := GetVideoInputRatio("dreamina-seedance-2-0-260128", "720p", false)
+	proBase, ok := GetVideoInputRatio("dreamina-seedance-2-0-260128", "720p", false, 0)
 	if !ok || !almostEqual(proBase, 1.0) {
 		t.Fatalf("pro base ratio = %v, ok=%v; want 1.0, true", proBase, ok)
 	}
 
-	proWithVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-ep", "", true)
+	proWithVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-ep", "", true, 0)
 	if !ok || !almostEqual(proWithVideo, 28.0/46.0) {
 		t.Fatalf("pro+video = %v, ok=%v; want %v", proWithVideo, ok, 28.0/46.0)
 	}
 
-	pro1080, ok := GetVideoInputRatio("dreamina-seedance-2-0-hc", "1080p", false)
+	pro1080, ok := GetVideoInputRatio("dreamina-seedance-2-0-hc", "1080p", false, 0)
 	if !ok || !almostEqual(pro1080, 51.0/46.0) {
 		t.Fatalf("pro 1080p = %v, ok=%v; want %v", pro1080, ok, 51.0/46.0)
 	}
 
-	pro4kVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-260128", "2K", true)
+	pro4kVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-260128", "2K", true, 0)
 	if !ok || !almostEqual(pro4kVideo, 16.0/46.0) {
 		t.Fatalf("pro 2K+video = %v, ok=%v; want %v", pro4kVideo, ok, 16.0/46.0)
 	}
 
-	fastWithVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-fast-hc", "720p", true)
+	fastWithVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-fast-hc", "720p", true, 0)
 	if !ok || !almostEqual(fastWithVideo, 22.0/37.0) {
 		t.Fatalf("fast+video = %v, ok=%v; want %v", fastWithVideo, ok, 22.0/37.0)
 	}
 
-	miniWithVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-mini-hc", "", true)
+	miniWithVideo, ok := GetVideoInputRatio("dreamina-seedance-2-0-mini-hc", "", true, 0)
 	if !ok || !almostEqual(miniWithVideo, 22.0/37.0) {
 		t.Fatalf("mini+video = %v, ok=%v; want %v", miniWithVideo, ok, 22.0/37.0)
 	}
 
 	// Fast has no 1080p row → fall back to base (ratio 1.0).
-	fast1080, ok := GetVideoInputRatio("dreamina-seedance-2-0-fast-hc", "1080p", false)
+	fast1080, ok := GetVideoInputRatio("dreamina-seedance-2-0-fast-hc", "1080p", false, 0)
 	if !ok || !almostEqual(fast1080, 1.0) {
 		t.Fatalf("fast 1080p fallback = %v, ok=%v; want 1.0", fast1080, ok)
 	}
 
-	if _, ok := GetVideoInputRatio("unknown-model", "720p", false); ok {
+	if _, ok := GetVideoInputRatio("unknown-model", "720p", false, 0); ok {
 		t.Fatal("unknown model should miss price table")
 	}
 }
@@ -68,7 +68,7 @@ func TestGetVideoInputRatioConfigMissFallsBackToHardcoded(t *testing.T) {
 		_ = ratio_setting.UpdateVideoTokenPriceByJSONString("{}")
 	})
 
-	r, ok := GetVideoInputRatio("dreamina-seedance-2-0-260128", "1080p", false)
+	r, ok := GetVideoInputRatio("dreamina-seedance-2-0-260128", "1080p", false, 46)
 	if !ok || !almostEqual(r, 51.0/46.0) {
 		t.Fatalf("incomplete config must use hardcoded 1080p; got %v ok=%v", r, ok)
 	}

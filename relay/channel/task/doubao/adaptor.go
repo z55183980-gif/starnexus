@@ -144,7 +144,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		c.Set(contextKeySeedanceHasVideo, hasVideo)
 	}
 	resolution, _ := req.Metadata["resolution"].(string)
-	ratio, ok := GetVideoInputRatio(info.OriginModelName, resolution, hasVideo)
+	ratio, ok := GetVideoInputRatio(info.OriginModelName, resolution, hasVideo, info.PriceData.ModelRatio*2)
 	if !ok || ratio == 1.0 {
 		return nil
 	}
@@ -169,7 +169,7 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *rela
 	if bc.VideoHasInput != nil {
 		hasVideo = *bc.VideoHasInput
 	}
-	ratio, ok := GetVideoInputRatio(bc.OriginModelName, res, hasVideo)
+	ratio, ok := GetVideoInputRatio(bc.OriginModelName, res, hasVideo, bc.ModelRatio*2)
 	if !ok {
 		return 0
 	}

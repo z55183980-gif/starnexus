@@ -200,6 +200,68 @@ func TestCreateUpstreamAccountPreservesExplicitZeroValues(t *testing.T) {
 	require.Equal(t, constant.UpstreamOAuthRefreshOwnerExternal, stored.OAuthRefreshOwner)
 }
 
+func TestApplyUpstreamAccountPoolCapacitiesAggregatesSharedAccounts(t *testing.T) {
+	first := &UpstreamAccountPoolView{}
+	second := &UpstreamAccountPoolView{}
+	views := map[int]*UpstreamAccountPoolView{1: first, 2: second}
+	rows := []upstreamAccountPoolCapacityRow{
+		{PoolId: 1, AccountId: 10, Concurrency: 10},
+		{PoolId: 1, AccountId: 11, Concurrency: 4},
+		{PoolId: 2, AccountId: 10, Concurrency: 10},
+	}
+
+	applyUpstreamAccountPoolCapacities(views, rows, map[int]int{10: 2, 11: 1})
+
+	require.Equal(t, 14, first.Concurrency)
+	require.Equal(t, 3, first.CurrentConcurrency)
+	require.Equal(t, 10, second.Concurrency)
+	require.Equal(t, 2, second.CurrentConcurrency)
+}
+
+func TestListUpstreamAccountPoolsCapacityIncludesOnlyReadyMembers(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "capacity", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey,
+		Status:         constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	now := common.GetTimestamp()
+	limitedUntil := now + 300
+	accounts := []model.UpstreamAccount{
+		{
+			Name: "ready", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+			Extra: "{}", Concurrency: 10, Priority: 50, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true,
+		},
+		{
+			Name: "disabled", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+			Extra: "{}", Concurrency: 20, Priority: 50, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: false,
+		},
+		{
+			Name: "limited", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+			Extra: "{}", Concurrency: 30, Priority: 50, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, RateLimitResetAt: &limitedUntil,
+		},
+	}
+	require.NoError(t, model.DB.Create(&accounts).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).
+		Where("id = ?", accounts[1].Id).Update("schedulable", false).Error)
+	for _, account := range accounts {
+		require.NoError(t, model.DB.Create(&model.UpstreamAccountPoolMember{
+			PoolId: pool.Id, AccountId: account.Id, Priority: account.Priority, Weight: account.Weight, CreatedAt: now,
+		}).Error)
+	}
+
+	views, err := ListUpstreamAccountPools()
+	require.NoError(t, err)
+	require.Len(t, views, 1)
+	require.EqualValues(t, 1, views[0].ReadyCount)
+	require.Equal(t, 10, views[0].Concurrency)
+	require.Zero(t, views[0].CurrentConcurrency)
+}
+
 func TestUpdateUpstreamAccountCredentialPatchPreservesSecretsAndDeletesFields(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	input := UpstreamAccountCreateInput{

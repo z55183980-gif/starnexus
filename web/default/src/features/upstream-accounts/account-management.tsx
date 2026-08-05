@@ -122,6 +122,7 @@ import {
   AccountSchedulingCell,
   AccountStatusCell,
   AccountUsageCell,
+  CapacityCell,
 } from './account-runtime-cells'
 import { AccountTestDialog } from './account-test-dialog'
 import { AccountTodayStatsCell } from './account-today-stats-cell'
@@ -1184,7 +1185,7 @@ function PoolTableRows(props: PoolTableRowsProps) {
   if (props.isLoading) {
     return Array.from({ length: 3 }, (_, index) => (
       <TableRow key={index}>
-        <TableCell colSpan={7} className='py-5'>
+        <TableCell colSpan={8} className='py-5'>
           <Skeleton className='h-12 w-full' />
         </TableCell>
       </TableRow>
@@ -1197,7 +1198,7 @@ function PoolTableRows(props: PoolTableRowsProps) {
         : t('Failed to load')
     return (
       <TableRow>
-        <TableCell colSpan={7} className='py-8'>
+        <TableCell colSpan={8} className='py-8'>
           <Alert variant='destructive'>
             <AlertDescription className='flex items-center justify-between gap-3'>
               <span>{message}</span>
@@ -1223,7 +1224,7 @@ function PoolTableRows(props: PoolTableRowsProps) {
   if (props.pools.length === 0) {
     return (
       <TableRow>
-        <TableCell colSpan={7} className='py-10'>
+        <TableCell colSpan={8} className='py-10'>
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant='icon'>
@@ -1326,6 +1327,12 @@ function PoolTableRows(props: PoolTableRowsProps) {
               )}
             </div>
           )}
+        </TableCell>
+        <TableCell>
+          <CapacityCell
+            current={poolCount(pool.current_concurrency)}
+            total={poolCount(pool.concurrency)}
+          />
         </TableCell>
         <TableCell>
           {published ? (
@@ -2579,6 +2586,7 @@ export function AccountManagement({
                         </TooltipProvider>
                       </div>
                     </TableHead>
+                    <TableHead>{t('Capacity')}</TableHead>
                     <TableHead>{t('Local channel')}</TableHead>
                     <TableHead>{t('Last 24 hours')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>

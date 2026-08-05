@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -76,6 +77,12 @@ type TaskAdaptor interface {
 
 	FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error)
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
+}
+
+// TaskPreAuthorizationEstimator optionally replaces the legacy per-call task
+// reservation with a channel-specific local token estimate.
+type TaskPreAuthorizationEstimator interface {
+	EstimatePreAuthorization(c *gin.Context, info *relaycommon.RelayInfo) (quota int, clamp *common.QuotaClamp, ok bool)
 }
 
 type OpenAIVideoConverter interface {

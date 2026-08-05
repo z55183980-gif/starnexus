@@ -37,6 +37,8 @@ export interface UpstreamAccountPool {
   active_count: number
   ready_count: number
   temporarily_limited_count: number
+  current_concurrency: number
+  concurrency: number
   scheduler_available: boolean
   channel_count: number
   published_channel_id?: number | null

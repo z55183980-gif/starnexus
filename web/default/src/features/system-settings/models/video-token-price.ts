@@ -17,12 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-export type VideoTokenTierKey =
-  | 'default'
-  | '480p'
-  | '720p'
-  | '1080p'
-  | '4k'
+export type VideoTokenTierKey = 'default' | '480p' | '720p' | '1080p' | '4k'
 
 export type VideoTokenTierPrice = {
   base: string
@@ -55,15 +50,17 @@ function isFastTierModel(modelName: string): boolean {
   return n.includes('fast') || n.includes('mini')
 }
 
-/** Official relative cards (pro / fast) used to seed empty matrices from input USD. */
-const PRO_CARD: Record<VideoTokenTierKey, { base: number; with_video: number }> =
-  {
-    default: { base: 46, with_video: 28 },
-    '480p': { base: 46, with_video: 28 },
-    '720p': { base: 46, with_video: 28 },
-    '1080p': { base: 51, with_video: 31 },
-    '4k': { base: 26, with_video: 16 },
-  }
+/** Seedance cards used once to derive suggested absolute prices from text input USD. */
+const PRO_CARD: Record<
+  VideoTokenTierKey,
+  { base: number; with_video: number }
+> = {
+  default: { base: 46, with_video: 28 },
+  '480p': { base: 46, with_video: 28 },
+  '720p': { base: 46, with_video: 28 },
+  '1080p': { base: 51, with_video: 31 },
+  '4k': { base: 26, with_video: 16 },
+}
 
 const FAST_CARD: Record<
   VideoTokenTierKey,
@@ -149,52 +146,4 @@ export function serializeVideoTokenModelPrice(
     }
   }
   return Object.keys(out).length > 0 ? out : null
-}
-
-/** Scale all matrix cells when the billing base (input / Default) changes. */
-export function scaleVideoTokenModelPrice(
-  price: VideoTokenModelPrice,
-  nextBaseRaw: string
-): VideoTokenModelPrice {
-  const nextBase = parseFloat(nextBaseRaw)
-  const prevBase =
-    parseFloat(price.default.base) ||
-    parseFloat(price['720p'].base) ||
-    parseFloat(price['480p'].base)
-  const result = emptyVideoTokenModelPrice()
-  const fmt = (n: number) => String(Math.round(n * 10000) / 10000)
-
-  if (!Number.isFinite(nextBase) || nextBase <= 0) {
-    for (const key of VIDEO_TOKEN_TIER_KEYS) {
-      result[key] = { ...price[key] }
-    }
-    result.default = { ...result.default, base: nextBaseRaw }
-    result['480p'] = { ...result['480p'], base: nextBaseRaw }
-    result['720p'] = { ...result['720p'], base: nextBaseRaw }
-    return result
-  }
-
-  const scale =
-    Number.isFinite(prevBase) && prevBase > 0 ? nextBase / prevBase : 1
-
-  for (const key of VIDEO_TOKEN_TIER_KEYS) {
-    const withV = parseFloat(price[key].with_video)
-    const baseV = parseFloat(price[key].base)
-    if (key === 'default' || key === '480p' || key === '720p') {
-      result[key] = {
-        base: fmt(nextBase),
-        with_video: Number.isFinite(withV)
-          ? fmt(withV * scale)
-          : price[key].with_video,
-      }
-    } else {
-      result[key] = {
-        base: Number.isFinite(baseV) ? fmt(baseV * scale) : price[key].base,
-        with_video: Number.isFinite(withV)
-          ? fmt(withV * scale)
-          : price[key].with_video,
-      }
-    }
-  }
-  return result
 }

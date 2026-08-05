@@ -88,6 +88,10 @@ func taskIsSubscription(task *model.Task) bool {
 	return task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
 }
 
+func taskUsesPreAuthorization(task *model.Task) bool {
+	return task != nil && task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.PreAuthorization
+}
+
 // taskAdjustFunding 调整任务的资金来源（钱包或订阅），delta > 0 表示扣费，delta < 0 表示退还。
 func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
@@ -129,6 +133,18 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 			other["model_ratio"] = bc.ModelRatio
 		}
 		other["group_ratio"] = bc.GroupRatio
+		if bc.RequestPath != "" {
+			other["request_path"] = bc.RequestPath
+		}
+		if bc.PreAuthorizedQuota > 0 {
+			other["pre_authorized_quota"] = bc.PreAuthorizedQuota
+		}
+		if bc.QuotaPerUnit > 0 {
+			other["quota_per_unit"] = bc.QuotaPerUnit
+		}
+		if bc.VideoResolution != "" {
+			other["video_resolution"] = ratio_setting.NormalizeVideoResolution(bc.VideoResolution)
+		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
 				other[k] = v
@@ -187,6 +203,13 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 
 	// 2. 退还令牌额度
 	taskAdjustTokenQuota(ctx, task, -quota)
+	if taskUsesPreAuthorization(task) {
+		task.Quota = 0
+		if err := task.UpdateBillingSnapshot(); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("persist released task pre-authorization failed task %s: %s", task.TaskID, err.Error()))
+		}
+		return
+	}
 
 	// 3. 记录日志
 	other := taskBillingOther(task)
@@ -222,6 +245,7 @@ func RecalculateTaskQuotaWithOther(ctx context.Context, task *model.Task, actual
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 预扣费准确（%s，%s）",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
+		task.Quota = actualQuota
 		return
 	}
 
@@ -245,6 +269,10 @@ func RecalculateTaskQuotaWithOther(ctx context.Context, task *model.Task, actual
 	task.Quota = actualQuota
 	if err := task.UpdateBillingSnapshot(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("persist task billing snapshot failed task %s: %s", task.TaskID, err.Error()))
+	}
+
+	if taskUsesPreAuthorization(task) {
+		return
 	}
 
 	var logType int
@@ -310,6 +338,10 @@ func RecalculateTaskQuotaByTokenDetails(ctx context.Context, task *model.Task, t
 
 	// 获取模型价格和倍率
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.VideoTokenBilling && bc.ModelRatio > 0 {
+		modelRatio = bc.ModelRatio
+		hasRatioSetting = true
+	}
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
 		return
@@ -336,6 +368,14 @@ func RecalculateTaskQuotaByTokenDetails(ctx context.Context, task *model.Task, t
 	} else {
 		finalGroupRatio = groupRatio
 	}
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.VideoTokenBilling {
+		if bc.ModelRatio > 0 {
+			modelRatio = bc.ModelRatio
+		}
+		if bc.GroupRatio > 0 {
+			finalGroupRatio = bc.GroupRatio
+		}
+	}
 
 	// 计算 OtherRatios 乘积（视频折扣、时长等）
 	otherMultiplier := 1.0
@@ -347,11 +387,42 @@ func RecalculateTaskQuotaByTokenDetails(ctx context.Context, task *model.Task, t
 		}
 	}
 
-	// 计算实际应扣费额度: adjustedTokens * modelRatio * groupRatio * otherMultiplier
+	extraOther := map[string]interface{}{}
+	// 视频 Token 渠道的上游 completion_tokens 是实际视频 Token。清晰度/视频输入
+	// 只影响视频 Token 单价，文本 Token 始终使用模型基础单价。
 	actualQuota, clamp := common.QuotaFromFloatChecked(float64(billingTotalTokens) * modelRatio * finalGroupRatio * otherMultiplier)
+	if bc := task.PrivateData.BillingContext; bc != nil && bc.VideoTokenBilling && completionTokens > 0 {
+		videoMultiplier := 1.0
+		if ratio := bc.OtherRatios["video_input"]; ratio > 0 {
+			videoMultiplier = ratio
+		} else if ratio := bc.OtherRatios["size"]; ratio > 0 {
+			videoMultiplier = ratio
+		}
+		textQuota, textClamp := common.QuotaFromFloatChecked(float64(billingPromptTokens) * modelRatio * finalGroupRatio)
+		videoQuota, videoClamp := common.QuotaFromFloatChecked(float64(billingCompletionTokens) * modelRatio * finalGroupRatio * videoMultiplier)
+		actualQuota = textQuota + videoQuota
+		clamp = textClamp
+		if clamp == nil {
+			clamp = videoClamp
+		}
+		extraOther["video_enabled"] = true
+		extraOther["text_tokens"] = promptTokens
+		extraOther["text_quota"] = textQuota
+		extraOther["video_tokens"] = completionTokens
+		extraOther["video_quota"] = videoQuota
+		extraOther["video_unit_price"] = modelRatio * 2 * videoMultiplier
+		condition := "base"
+		if bc.VideoHasInput != nil && *bc.VideoHasInput {
+			condition = "with_video"
+		}
+		resolution := ratio_setting.NormalizeVideoResolution(bc.VideoResolution)
+		if resolution == "" {
+			resolution = "default"
+		}
+		extraOther["video_price_tier"] = resolution + "_" + condition
+	}
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", billingTotalTokens, modelRatio, finalGroupRatio, otherMultiplier)
-	extraOther := map[string]interface{}{}
 	if tokenPricing := billing_setting.GetEffectiveTokenPricing(tokenPricingCtx); tokenPricing.Enabled {
 		reason = fmt.Sprintf("%s, token定价已应用", reason)
 		extraOther["token_pricing_enabled"] = true
@@ -368,4 +439,77 @@ func RecalculateTaskQuotaByTokenDetails(ctx context.Context, task *model.Task, t
 		extraOther["billing_total_tokens"] = billingTotalTokens
 	}
 	RecalculateTaskQuotaWithOther(ctx, task, actualQuota, reason, extraOther, clamp)
+}
+
+// FinalizeTaskPreAuthorization writes the sole user-visible consumption record
+// after an async task succeeds. Pricing fields are calculated locally; the
+// upstream contributes only output resolution and actual token usage.
+func FinalizeTaskPreAuthorization(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) {
+	if !taskUsesPreAuthorization(task) || taskResult == nil {
+		return
+	}
+	bc := task.PrivateData.BillingContext
+	other := taskBillingOther(task)
+	other["is_task"] = true
+	other["task_id"] = task.TaskID
+	other["actual_quota"] = task.Quota
+
+	promptTokens := taskResult.TotalTokens - taskResult.CompletionTokens
+	if promptTokens < 0 {
+		promptTokens = 0
+	}
+	completionTokens := taskResult.CompletionTokens
+	if bc.VideoTokenBilling && completionTokens > 0 {
+		videoMultiplier := 1.0
+		if ratio := bc.OtherRatios["video_input"]; ratio > 0 {
+			videoMultiplier = ratio
+		} else if ratio := bc.OtherRatios["size"]; ratio > 0 {
+			videoMultiplier = ratio
+		}
+		textQuota, _ := common.QuotaFromFloatChecked(float64(promptTokens) * bc.ModelRatio * bc.GroupRatio)
+		videoQuota, _ := common.QuotaFromFloatChecked(float64(completionTokens) * bc.ModelRatio * bc.GroupRatio * videoMultiplier)
+		other["video_enabled"] = true
+		other["text_tokens"] = promptTokens
+		other["text_quota"] = textQuota
+		other["video_tokens"] = completionTokens
+		other["video_quota"] = videoQuota
+		other["video_unit_price"] = bc.ModelRatio * 2 * videoMultiplier
+		condition := "base"
+		if bc.VideoHasInput != nil && *bc.VideoHasInput {
+			condition = "with_video"
+		}
+		resolution := ratio_setting.NormalizeVideoResolution(bc.VideoResolution)
+		if resolution == "" {
+			resolution = "default"
+		}
+		other["video_price_tier"] = resolution + "_" + condition
+	}
+
+	startTime := task.StartTime
+	if startTime <= 0 {
+		startTime = task.SubmitTime
+	}
+	useTimeSeconds := 0
+	var useTimeMilliseconds *int64
+	if startTime > 0 && task.FinishTime >= startTime {
+		useTimeSeconds = int(task.FinishTime - startTime)
+		ms := int64(useTimeSeconds) * 1000
+		useTimeMilliseconds = &ms
+	}
+	logID := model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+		UserId: task.UserId, LogType: model.LogTypeConsume,
+		Content: fmt.Sprintf("操作 %s", task.Action), ChannelId: task.ChannelId,
+		ModelName: taskModelName(task), Quota: task.Quota, TokenId: task.PrivateData.TokenId,
+		Group: task.Group, PromptTokens: promptTokens, CompletionTokens: completionTokens,
+		UseTimeSeconds: useTimeSeconds, UseTimeMilliseconds: useTimeMilliseconds, Other: other,
+	})
+	if logID <= 0 {
+		return
+	}
+	task.PrivateData.ConsumeLogID = logID
+	if err := task.UpdateBillingSnapshot(); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("persist final task billing log id failed task %s: %s", task.TaskID, err.Error()))
+	}
+	model.UpdateUserUsedQuotaAndRequestCount(task.UserId, task.Quota)
+	model.UpdateChannelUsedQuota(task.ChannelId, task.Quota)
 }

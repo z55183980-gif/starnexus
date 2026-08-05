@@ -1,10 +1,14 @@
 package sora
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 )
 
 func TestParseTaskResultIncludesDurationAndTimestamps(t *testing.T) {
@@ -18,6 +22,20 @@ func TestParseTaskResultIncludesDurationAndTimestamps(t *testing.T) {
 	}
 	if result.CreatedAt != 1_700_000_000 || result.CompletedAt != 1_700_000_123 {
 		t.Fatalf("timestamps = %d/%d, want normalized Unix seconds", result.CreatedAt, result.CompletedAt)
+	}
+}
+
+func TestParseTaskResultIncludesUpstreamResolutionAndVideoTokens(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	result, err := adaptor.ParseTaskResult([]byte(`{"id":"upstream-task","status":"completed","metadata":{"resolution":"720p"},"usage":{"text_tokens":0,"video_tokens":87300}}`))
+	if err != nil {
+		t.Fatalf("ParseTaskResult() error = %v", err)
+	}
+	if result.Resolution != "720p" {
+		t.Fatalf("Resolution = %q, want 720p", result.Resolution)
+	}
+	if result.CompletionTokens != 87_300 || result.TotalTokens != 87_300 {
+		t.Fatalf("tokens = %d/%d, want 87300/87300", result.CompletionTokens, result.TotalTokens)
 	}
 }
 
@@ -54,5 +72,37 @@ func TestAdjustBillingOnCompleteKeepsMatchingDuration(t *testing.T) {
 
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{DurationSeconds: 4}); actualQuota != 0 {
 		t.Fatalf("actual quota = %d, want no adjustment", actualQuota)
+	}
+}
+
+func TestEstimatePreAuthorizationUsesLocalSeedanceTokenEstimate(t *testing.T) {
+	if err := ratio_setting.UpdateVideoTokenPriceByJSONString(`{
+		"dreamina-seedance-2-0-mini-hc": {
+			"default": {"base": 3.5, "with_video": 0.21},
+			"720p": {"base": 3.5, "with_video": 2.1}
+		}
+	}`); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = ratio_setting.UpdateVideoTokenPriceByJSONString("{}")
+	})
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Metadata: map[string]interface{}{"resolution": "720p"},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "dreamina-seedance-2-0-mini-hc",
+		PriceData: types.PriceData{
+			ModelRatio: 1.75,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 0.85,
+			},
+		},
+	}
+	adaptor := &TaskAdaptor{}
+	quota, clamp, ok := adaptor.EstimatePreAuthorization(c, info)
+	if !ok || clamp != nil || quota != 372_618 {
+		t.Fatalf("pre-authorization = %d clamp=%v ok=%v; want 372618 nil true", quota, clamp, ok)
 	}
 }

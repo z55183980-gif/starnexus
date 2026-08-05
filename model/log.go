@@ -432,20 +432,24 @@ func consumeLogAccountCosts(c *gin.Context, params RecordConsumeLogParams) (int,
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   string
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     map[string]interface{}
+	UserId              int
+	LogType             int
+	Content             string
+	ChannelId           int
+	ModelName           string
+	Quota               int
+	TokenId             int
+	Group               string
+	PromptTokens        int
+	CompletionTokens    int
+	UseTimeSeconds      int
+	UseTimeMilliseconds *int64
+	Other               map[string]interface{}
 }
 
-func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
+func RecordTaskBillingLog(params RecordTaskBillingLogParams) int {
 	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
-		return
+		return 0
 	}
 	username, _ := GetUsernameById(params.UserId, false)
 	tokenName := ""
@@ -455,25 +459,36 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		}
 	}
 	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: common.GetTimestamp(),
-		Type:      params.LogType,
-		Content:   params.Content,
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     common.MapToJsonStr(attachNodeNameToLogOther(params.Other)),
+		UserId:           params.UserId,
+		Username:         username,
+		CreatedAt:        common.GetTimestamp(),
+		Type:             params.LogType,
+		Content:          params.Content,
+		PromptTokens:     params.PromptTokens,
+		CompletionTokens: params.CompletionTokens,
+		TokenName:        tokenName,
+		ModelName:        params.ModelName,
+		Quota:            params.Quota,
+		ChannelId:        params.ChannelId,
+		TokenId:          params.TokenId,
+		UseTime:          params.UseTimeSeconds,
+		UseTimeMs:        resolveUseTimeMilliseconds(params.UseTimeSeconds, params.UseTimeMilliseconds),
+		Group:            params.Group,
+		Other:            common.MapToJsonStr(attachNodeNameToLogOther(params.Other)),
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
+		return 0
 	} else {
 		publishBusinessMonitorLog(log)
 	}
+	if params.LogType == LogTypeConsume && common.DataExportEnabled {
+		gopool.Go(func() {
+			LogQuotaData(params.UserId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
+		})
+	}
+	return log.Id
 }
 
 type LogExcludeFilter struct {

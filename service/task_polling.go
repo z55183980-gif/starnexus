@@ -551,7 +551,11 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	}
 
 	if shouldSettle {
+		if taskResult.Resolution != "" && task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.VideoTokenBilling {
+			task.PrivateData.BillingContext.VideoResolution = taskResult.Resolution
+		}
 		settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+		FinalizeTaskPreAuthorization(ctx, task, taskResult)
 	}
 	if shouldRefund {
 		RefundTaskQuota(ctx, task, task.FailReason)
@@ -621,7 +625,13 @@ func truncateBase64(s string) string {
 //  3. 都不满足 → 保持预扣额度不变
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) {
 	// 0. 按次计费的任务不做差额结算
-	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
+	bc := task.PrivateData.BillingContext
+	if bc != nil && bc.VideoTokenBilling && taskResult.TotalTokens > 0 {
+		adaptor.AdjustBillingOnComplete(task, taskResult)
+		RecalculateTaskQuotaByTokenDetails(ctx, task, taskResult.TotalTokens, taskResult.CompletionTokens)
+		return
+	}
+	if bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return
 	}

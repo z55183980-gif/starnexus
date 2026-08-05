@@ -93,3 +93,17 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 	}
 	return nil
 }
+
+// SettleTaskPreAuthorization transfers the already reserved quota from the
+// request-scoped BillingSession to the persisted async task. It intentionally
+// emits no quota notification or user-visible billing record.
+func SettleTaskPreAuthorization(relayInfo *relaycommon.RelayInfo, reservedQuota int) error {
+	if relayInfo.Billing != nil {
+		return relayInfo.Billing.Settle(reservedQuota)
+	}
+	quotaDelta := reservedQuota - relayInfo.FinalPreConsumedQuota
+	if quotaDelta != 0 {
+		return PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, false)
+	}
+	return nil
+}

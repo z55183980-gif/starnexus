@@ -67,14 +67,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { formatPricingNumber } from './pricing-format'
 import { TieredPricingEditor } from './tiered-pricing-editor'
-import { VideoTokenPricingFields } from './video-token-pricing-fields'
 import {
   emptyVideoTokenModelPrice,
   isSeedanceVideoModel,
-  scaleVideoTokenModelPrice,
   seedVideoTokenModelPrice,
   type VideoTokenModelPrice,
 } from './video-token-price'
+import { VideoTokenPricingFields } from './video-token-pricing-fields'
 
 const createModelPricingSchema = (t: (key: string) => string) =>
   z.object({
@@ -569,27 +568,10 @@ export function ModelPricingEditorPanel({
     if (!numericDraftRegex.test(value)) return
     setPromptPrice(value)
     syncLaneRatios(value, lanePrices, laneEnabled)
-    if (
-      showVideoTokenPricing &&
-      (videoTokenTiers.default.base ||
-        videoTokenTiers['720p'].base ||
-        videoTokenTiers['480p'].base)
-    ) {
-      setVideoTokenTiers((prev) => scaleVideoTokenModelPrice(prev, value))
-    }
   }
 
   const handleVideoTokenTiersChange = (next: VideoTokenModelPrice) => {
     setVideoTokenTiers(next)
-    const syncedBase = next.default.base || next['720p'].base
-    if (
-      syncedBase !== promptPrice &&
-      numericDraftRegex.test(syncedBase) &&
-      syncedBase !== ''
-    ) {
-      setPromptPrice(syncedBase)
-      syncLaneRatios(syncedBase, lanePrices, laneEnabled)
-    }
   }
 
   const handleLanePriceChange = (lane: LaneKey, value: string) => {
@@ -863,9 +845,7 @@ export function ModelPricingEditorPanel({
                       />
                       <FieldDescription>
                         {showVideoTokenPricing
-                          ? t(
-                              'USD per 1M tokens. For Seedance this is also the Default/720p base when the video matrix is configured.'
-                            )
+                          ? t('USD per 1M text input tokens.')
                           : t('USD price per 1M input tokens.')}
                       </FieldDescription>
                     </Field>
@@ -900,16 +880,18 @@ export function ModelPricingEditorPanel({
                       <VideoTokenPricingFields
                         value={videoTokenTiers}
                         onChange={handleVideoTokenTiersChange}
-                        onFillRelativeDefaults={() => {
-                          const base =
-                            Number(promptPrice) > 0 ? Number(promptPrice) : 46
-                          handleVideoTokenTiersChange(
-                            seedVideoTokenModelPrice(
-                              activeModelName,
-                              base
-                            )
-                          )
-                        }}
+                        onFillSuggestedPrices={
+                          Number(promptPrice) > 0
+                            ? () => {
+                                handleVideoTokenTiersChange(
+                                  seedVideoTokenModelPrice(
+                                    activeModelName,
+                                    Number(promptPrice)
+                                  )
+                                )
+                              }
+                            : undefined
+                        }
                       />
                     )}
                   </FieldGroup>

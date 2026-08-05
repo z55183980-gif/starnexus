@@ -44,11 +44,7 @@ export interface CommonFilters {
   channel?: string
 }
 
-export type LogExcludeField =
-  | 'model_name'
-  | 'token_name'
-  | 'group'
-  | 'username'
+export type LogExcludeField = 'model_name' | 'token_name' | 'group' | 'username'
 
 export interface LogExcludeFilter {
   field: LogExcludeField
@@ -182,6 +178,17 @@ export interface LogOtherData {
   audio_input_price?: number
   image_generation_call?: boolean
   image_generation_call_price?: number
+  video_enabled?: boolean
+  video_resolution?: string
+  video_price_tier?: string
+  video_unit_price?: number
+  text_tokens?: number
+  text_quota?: number
+  video_tokens?: number
+  video_quota?: number
+  pre_authorized_quota?: number
+  actual_quota?: number
+  quota_per_unit?: number
   is_system_prompt_overwritten?: boolean
   po?: string[]
   billing_source?: string

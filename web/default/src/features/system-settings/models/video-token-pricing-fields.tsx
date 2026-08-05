@@ -24,13 +24,10 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import {
-  scaleVideoTokenModelPrice,
   VIDEO_TOKEN_TIER_KEYS,
   type VideoTokenModelPrice,
   type VideoTokenTierKey,
 } from './video-token-price'
-
-const SHARED_BASE_TIERS: VideoTokenTierKey[] = ['default', '480p', '720p']
 
 const numericDraftRegex = /^(\d+(\.\d*)?|\.\d*)?$/
 
@@ -45,7 +42,7 @@ const TIER_LABEL_KEYS: Record<VideoTokenTierKey, string> = {
 type VideoTokenPricingFieldsProps = {
   value: VideoTokenModelPrice
   onChange: (next: VideoTokenModelPrice) => void
-  onFillRelativeDefaults?: () => void
+  onFillSuggestedPrices?: () => void
 }
 
 export function VideoTokenPricingFields(props: VideoTokenPricingFieldsProps) {
@@ -57,11 +54,6 @@ export function VideoTokenPricingFields(props: VideoTokenPricingFieldsProps) {
     raw: string
   ) => {
     if (!numericDraftRegex.test(raw)) return
-    // Default/480p/720p share the model input base; editing any scales the matrix.
-    if (field === 'base' && SHARED_BASE_TIERS.includes(tier)) {
-      props.onChange(scaleVideoTokenModelPrice(props.value, raw))
-      return
-    }
     props.onChange({
       ...props.value,
       [tier]: {
@@ -85,17 +77,17 @@ export function VideoTokenPricingFields(props: VideoTokenPricingFieldsProps) {
           <div className='text-sm font-medium'>{t('Video token billing')}</div>
           <p className='text-muted-foreground mt-1 text-xs'>
             {t(
-              'Relative unit prices in the same unit as Input price. Default/720p base should match Input. Leave all cells empty to use built-in Seedance ratios.'
+              'Each cell is an independent video token price in USD per 1M tokens. Changing it does not change the text input price.'
             )}
           </p>
         </div>
-        {isEmpty && props.onFillRelativeDefaults && (
+        {props.onFillSuggestedPrices && (
           <button
             type='button'
             className='text-primary shrink-0 text-xs underline-offset-2 hover:underline'
-            onClick={props.onFillRelativeDefaults}
+            onClick={props.onFillSuggestedPrices}
           >
-            {t('Fill relative defaults')}
+            {t(isEmpty ? 'Fill suggested prices' : 'Reset suggested prices')}
           </button>
         )}
       </div>
@@ -131,9 +123,7 @@ export function VideoTokenPricingFields(props: VideoTokenPricingFieldsProps) {
                 inputMode='decimal'
                 value={props.value[tier].with_video}
                 placeholder='0'
-                onChange={(e) =>
-                  updateCell(tier, 'with_video', e.target.value)
-                }
+                onChange={(e) => updateCell(tier, 'with_video', e.target.value)}
               />
               <InputGroupAddon align='inline-end'>/ 1M</InputGroupAddon>
             </InputGroup>
@@ -142,7 +132,10 @@ export function VideoTokenPricingFields(props: VideoTokenPricingFieldsProps) {
       ))}
       <FieldDescription>
         {t(
-          'Leave empty to use built-in Seedance fallback ratios for this model.'
+          'Leave a cell empty to use the built-in Seedance fallback ratio for that tier.'
+        )}{' '}
+        {t(
+          'Suggested prices are calculated once from the current text input price. Applying them overwrites every cell; subsequent edits remain independent.'
         )}
       </FieldDescription>
     </div>

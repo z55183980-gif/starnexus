@@ -745,6 +745,94 @@ func TestApplyTaskResultSuccessSettlesAfterCASWin(t *testing.T) {
 	require.EqualValues(t, 5000, *reloadedLog.UseTimeMs)
 }
 
+func TestApplyTaskResultSoraPreAuthorizationCreatesOneFinalLog(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 26, 26, 26
+	const heldQuota, initialAvailable = 200_000, 800_000
+	const actualVideoTokens = 87_300
+	const expectedQuota = 129_858
+	seedUser(t, userID, initialAvailable)
+	seedToken(t, tokenID, userID, "sk-sora-preauth", initialAvailable)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, heldQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_sora_preauth_success"
+	task.SubmitTime = 100
+	task.Properties.OriginModelName = "sora-video-test"
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelRatio:         1.75,
+		GroupRatio:         0.85,
+		OtherRatios:        map[string]float64{"seconds": 5, "size": 1},
+		OriginModelName:    "sora-video-test",
+		PreAuthorization:   true,
+		PreAuthorizedQuota: heldQuota,
+		RequestPath:        "/v1/videos",
+		QuotaPerUnit:       common.QuotaPerUnit,
+		VideoResolution:    "720p",
+		VideoTokenBilling:  true,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	applied, err := ApplyTaskResult(ctx, &mockAdaptor{adjustReturn: 999_999}, task, &relaycommon.TaskInfo{
+		Status:           model.TaskStatusSuccess,
+		CreatedAt:        100,
+		CompletedAt:      105,
+		Resolution:       "720p",
+		CompletionTokens: actualVideoTokens,
+		TotalTokens:      actualVideoTokens,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, initialAvailable+(heldQuota-expectedQuota), getUserQuota(t, userID))
+	require.Equal(t, initialAvailable+(heldQuota-expectedQuota), getTokenRemainQuota(t, tokenID))
+	require.Equal(t, 1, getUserRequestCount(t, userID))
+	require.EqualValues(t, 1, countLogs(t))
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	require.Equal(t, model.LogTypeConsume, log.Type)
+	require.Equal(t, expectedQuota, log.Quota)
+	require.Equal(t, actualVideoTokens, log.CompletionTokens)
+	require.Equal(t, 5, log.UseTime)
+	other, parseErr := common.StrToMap(log.Other)
+	require.NoError(t, parseErr)
+	require.Equal(t, true, other["video_enabled"])
+	require.Equal(t, float64(actualVideoTokens), other["video_tokens"])
+	require.Equal(t, float64(expectedQuota), other["video_quota"])
+	require.Equal(t, "720p", other["video_resolution"])
+	require.Equal(t, "720p_base", other["video_price_tier"])
+}
+
+func TestApplyTaskResultSoraPreAuthorizationFailureIsSilent(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 27, 27, 27
+	const heldQuota, initialAvailable = 2_500, 10_000
+	seedUser(t, userID, initialAvailable)
+	seedToken(t, tokenID, userID, "sk-sora-preauth-failure", initialAvailable)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, heldQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_sora_preauth_failure"
+	task.PrivateData.BillingContext.PreAuthorization = true
+	task.PrivateData.BillingContext.PreAuthorizedQuota = heldQuota
+	task.PrivateData.BillingContext.VideoTokenBilling = true
+	require.NoError(t, model.DB.Create(task).Error)
+
+	applied, err := ApplyTaskResult(ctx, &mockAdaptor{}, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusFailure,
+		Reason: "upstream failed",
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, initialAvailable+heldQuota, getUserQuota(t, userID))
+	require.Equal(t, initialAvailable+heldQuota, getTokenRemainQuota(t, tokenID))
+	require.Zero(t, countLogs(t))
+}
+
 // ===========================================================================
 // PerCallBilling tests — settleTaskBillingOnComplete
 // ===========================================================================

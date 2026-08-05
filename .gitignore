@@ -5,6 +5,8 @@
 upload
 *.exe
 *.db
+one-api.db.backup-*
+one-api.db.bak-*
 build
 *.db-journal
 logs

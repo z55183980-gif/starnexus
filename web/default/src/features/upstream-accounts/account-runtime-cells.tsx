@@ -15,6 +15,7 @@ import {
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -39,7 +40,6 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
-import { toast } from 'sonner'
 import { Switch } from '@/components/ui/switch'
 import {
   Tooltip,
@@ -272,14 +272,29 @@ export function AccountPlatformCell({ account }: { account: UpstreamAccount }) {
 }
 
 export function AccountCapacityCell({ account }: { account: UpstreamAccount }) {
-  const full = account.current_concurrency >= account.concurrency
-  const active = account.current_concurrency > 0
+  return (
+    <CapacityCell
+      current={account.current_concurrency}
+      total={account.concurrency}
+    />
+  )
+}
+
+export function CapacityCell({
+  current,
+  total,
+}: {
+  current: number
+  total: number
+}) {
+  const full = total > 0 && current >= total
+  const active = current > 0
   return (
     <Badge
       variant={full ? 'destructive' : active ? 'warning' : 'secondary'}
       className='rounded-md font-mono text-[11px]'
     >
-      {account.current_concurrency} / {account.concurrency}
+      {current} / {total}
     </Badge>
   )
 }

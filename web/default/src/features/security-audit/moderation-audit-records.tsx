@@ -56,6 +56,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { CopyButton } from '@/components/copy-button'
 import {
   CONTENT_MODERATION_CATEGORIES,
   CONTENT_MODERATION_CATEGORY_GROUPS,
@@ -379,27 +380,36 @@ export function ModerationAuditRecords({
                         {getDisposalLabel(log, t)}
                       </TableCell>
                       <TableCell>
-                        <HoverCard>
-                          <HoverCardTrigger
-                            render={
-                              <button
-                                type='button'
-                                className='hover:text-foreground max-w-64 cursor-pointer truncate text-left text-sm underline-offset-2 hover:underline'
-                              >
-                                {summarizePrompt(log.prompt)}
-                              </button>
-                            }
+                        <div className='flex items-center gap-1'>
+                          <HoverCard>
+                            <HoverCardTrigger
+                              render={
+                                <button
+                                  type='button'
+                                  className='hover:text-foreground max-w-64 min-w-0 cursor-pointer truncate text-left text-sm underline-offset-2 hover:underline'
+                                >
+                                  {summarizePrompt(log.prompt)}
+                                </button>
+                              }
+                            />
+                            <HoverCardContent
+                              align='end'
+                              side='left'
+                              className='max-h-80 w-[28rem] max-w-[90vw] overflow-y-auto'
+                            >
+                              <pre className='font-sans text-xs leading-5 break-words whitespace-pre-wrap'>
+                                {log.prompt}
+                              </pre>
+                            </HoverCardContent>
+                          </HoverCard>
+                          <CopyButton
+                            value={log.prompt}
+                            className='size-7'
+                            tooltip={t('Copy to clipboard')}
+                            successTooltip={t('Copied!')}
+                            aria-label={t('Copy to clipboard')}
                           />
-                          <HoverCardContent
-                            align='end'
-                            side='left'
-                            className='max-h-80 w-[28rem] max-w-[90vw] overflow-y-auto'
-                          >
-                            <pre className='font-sans text-xs leading-5 break-words whitespace-pre-wrap'>
-                              {log.prompt}
-                            </pre>
-                          </HoverCardContent>
-                        </HoverCard>
+                        </div>
                       </TableCell>
                     </TableRow>
                   )

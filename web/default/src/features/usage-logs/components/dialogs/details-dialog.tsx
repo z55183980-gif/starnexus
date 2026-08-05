@@ -147,6 +147,7 @@ function BillingBreakdown(props: {
   const isPerCall = isPerCallBilling(other.model_price)
   const isClaude = other.claude === true
   const isTieredExpr = other.billing_mode === 'tiered_expr'
+  const isVideoBilling = other.video_enabled === true
   const tieredSummary = getTieredBillingSummary(other)
 
   const rows: Array<{ label: string; value: string }> = []
@@ -179,7 +180,12 @@ function BillingBreakdown(props: {
       })
     }
   } else if (isPerCall) {
-    rows.push({ label: t('Billing Mode'), value: t('Per-call') })
+    rows.push({
+      label: t('Billing Mode'),
+      value: isVideoBilling
+        ? `${t('Per-call')} + ${t('Video')}`
+        : t('Per-call'),
+    })
     if (other.model_price != null) {
       rows.push({
         label: t('Model Price'),
@@ -187,10 +193,15 @@ function BillingBreakdown(props: {
       })
     }
   } else {
-    rows.push({ label: t('Billing Mode'), value: t('Per-token') })
+    rows.push({
+      label: t('Billing Mode'),
+      value: isVideoBilling
+        ? `${t('Per-token')} + ${t('Video')}`
+        : t('Per-token'),
+    })
     if (other.model_ratio != null) {
       rows.push({
-        label: t('Input'),
+        label: isVideoBilling ? t('Text Input') : t('Input'),
         value: `${fmtPrice(baseInputUSD)}/M`,
       })
     }
@@ -198,6 +209,38 @@ function BillingBreakdown(props: {
       rows.push({
         label: t('Output'),
         value: `${fmtPrice(baseInputUSD * other.completion_ratio)}/M`,
+      })
+    }
+  }
+
+  if (isVideoBilling) {
+    const tier = other.video_price_tier || ''
+    const condition = tier.endsWith('_with_video')
+      ? 'with_video'
+      : tier.endsWith('_base')
+        ? 'base'
+        : ''
+    const tierResolution = condition
+      ? tier.slice(0, -(condition.length + 1))
+      : ''
+    const resolution = other.video_resolution || tierResolution
+    if (resolution) {
+      rows.push({
+        label: t('Video Resolution Tier'),
+        value: resolution === 'default' ? t('Default') : resolution,
+      })
+    }
+    if (condition) {
+      rows.push({
+        label: t('Video Price Condition'),
+        value:
+          condition === 'with_video' ? t('With video input') : t('Base price'),
+      })
+    }
+    if (other.video_unit_price != null) {
+      rows.push({
+        label: t('Video Token Price'),
+        value: `${fmtPrice(other.video_unit_price)}/M`,
       })
     }
   }
@@ -210,6 +253,33 @@ function BillingBreakdown(props: {
       label: isUserGR ? t('User Exclusive Ratio') : t('Group Ratio'),
       value: `${formatRatio(effectiveGR)}x`,
     })
+  }
+
+  if (isVideoBilling) {
+    if (other.text_tokens != null) {
+      rows.push({
+        label: t('Actual Text Tokens'),
+        value: other.text_tokens.toLocaleString(),
+      })
+    }
+    if (other.text_quota != null) {
+      rows.push({
+        label: t('Actual Text Cost'),
+        value: formatLogQuota(other.text_quota),
+      })
+    }
+    if (other.video_tokens != null) {
+      rows.push({
+        label: t('Actual Video Tokens'),
+        value: other.video_tokens.toLocaleString(),
+      })
+    }
+    if (other.video_quota != null) {
+      rows.push({
+        label: t('Actual Video Cost'),
+        value: formatLogQuota(other.video_quota),
+      })
+    }
   }
 
   if (!isTieredExpr && isClaude && hasAnyCacheTokens(other)) {
