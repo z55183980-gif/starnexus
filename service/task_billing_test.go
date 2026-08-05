@@ -728,6 +728,9 @@ func TestApplyTaskResultSuccessSettlesAfterCASWin(t *testing.T) {
 	require.Equal(t, initialQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
 	require.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
 	require.Zero(t, getUserRequestCount(t, userID), "completion settlement must not count a second request")
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, actualQuota, reloaded.Quota, "completion settlement must persist the adjusted task quota")
 }
 
 // ===========================================================================

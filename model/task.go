@@ -394,6 +394,19 @@ func (Task *Task) Update() error {
 	return err
 }
 
+// UpdateBillingSnapshot persists only fields changed by asynchronous settlement.
+// The terminal status transition is already protected by UpdateWithStatus; a
+// narrow update here avoids overwriting unrelated concurrent task fields.
+func (t *Task) UpdateBillingSnapshot() error {
+	if t.ID == 0 {
+		return nil
+	}
+	return DB.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
+		"quota":        t.Quota,
+		"private_data": t.PrivateData,
+	}).Error
+}
+
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Returns (true, nil) if this caller won the update, (false, nil) if
 // another process already moved the task out of fromStatus.

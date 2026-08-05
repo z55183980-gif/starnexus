@@ -241,6 +241,9 @@ func RecalculateTaskQuotaWithOther(ctx context.Context, task *model.Task, actual
 	taskAdjustTokenQuota(ctx, task, quotaDelta)
 
 	task.Quota = actualQuota
+	if err := task.UpdateBillingSnapshot(); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("persist task billing snapshot failed task %s: %s", task.TaskID, err.Error()))
+	}
 
 	var logType int
 	var logQuota int
