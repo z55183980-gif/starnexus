@@ -280,6 +280,18 @@ function BillingBreakdown(props: {
         value: formatLogQuota(other.video_quota),
       })
     }
+    if (isAdmin && other.video_token_source) {
+      const sourceLabels: Record<string, string> = {
+        upstream_status: t('Upstream task response'),
+        upstream_log: t('Upstream billing log'),
+        estimated_inference: t('Estimated inference'),
+      }
+      rows.push({
+        label: t('Video Token Source'),
+        value:
+          sourceLabels[other.video_token_source] ?? other.video_token_source,
+      })
+    }
   }
 
   if (!isTieredExpr && isClaude && hasAnyCacheTokens(other)) {

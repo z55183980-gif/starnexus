@@ -534,7 +534,7 @@ func detectVideoFormat(rawBody []byte) string {
 // mapTaskStatusToSimple 将内部 TaskStatus 映射为简化状态字符串
 func mapTaskStatusToSimple(status model.TaskStatus) string {
 	switch status {
-	case model.TaskStatusSuccess:
+	case model.TaskStatusSuccess, model.TaskStatusPendingSettlement:
 		return "succeeded"
 	case model.TaskStatusFailure:
 		return "failed"

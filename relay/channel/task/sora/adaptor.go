@@ -2,6 +2,7 @@ package sora
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -9,6 +10,8 @@ import (
 	"net/textproto"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -27,9 +30,11 @@ import (
 )
 
 const (
-	seedanceEstimatedTextTokens  = 500
-	seedanceEstimatedVideoTokens = 250_000
-	contextKeySeedanceHasVideo   = "doubao_seedance_has_video"
+	seedanceEstimatedTextTokens    = 500
+	seedanceEstimatedVideoTokens   = 250_000
+	contextKeySeedanceHasVideo     = "doubao_seedance_has_video"
+	contextKeyEstimatedTextTokens  = "seedance_estimated_text_tokens"
+	contextKeyEstimatedVideoTokens = "seedance_estimated_video_tokens"
 )
 
 // ============================
@@ -82,9 +87,29 @@ type responseTask struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	ChannelType int
-	apiKey      string
-	baseURL     string
+	ChannelType     int
+	apiKey          string
+	baseURL         string
+	usageMu         sync.Mutex
+	usageCacheUntil time.Time
+	usageCache      map[string]relaycommon.TaskInfo
+}
+
+type tokenLogResponse struct {
+	Success bool       `json:"success"`
+	Data    []tokenLog `json:"data"`
+}
+
+type tokenLog struct {
+	CreatedAt int64           `json:"created_at"`
+	Other     json.RawMessage `json:"other"`
+}
+
+type tokenLogOther struct {
+	TaskID         string `json:"task_id"`
+	TextTokens     int    `json:"text_tokens"`
+	VideoTokens    int    `json:"video_tokens"`
+	VideoPriceTier string `json:"video_price_tier"`
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
@@ -172,6 +197,8 @@ func (a *TaskAdaptor) EstimatePreAuthorization(c *gin.Context, info *relaycommon
 		videoRatio = ratio
 	}
 	groupRatio := info.PriceData.GroupRatioInfo.GroupRatio
+	c.Set(contextKeyEstimatedTextTokens, seedanceEstimatedTextTokens)
+	c.Set(contextKeyEstimatedVideoTokens, seedanceEstimatedVideoTokens)
 	quotaValue := (float64(seedanceEstimatedTextTokens) + float64(seedanceEstimatedVideoTokens)*videoRatio) * info.PriceData.ModelRatio * groupRatio
 	quota, clamp := common.QuotaFromFloatChecked(quotaValue)
 	return quota, clamp, true
@@ -388,6 +415,103 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	return client.Do(req)
 }
 
+// FetchTaskUsage reads hiflowt's API-key-scoped recent billing logs and
+// correlates the terminal usage record by the provider's task ID. Only token
+// counts and the resolution tier are returned; upstream prices are ignored.
+func (a *TaskAdaptor) FetchTaskUsage(baseURL, key, upstreamTaskID, proxy string) (*relaycommon.TaskInfo, bool, error) {
+	a.usageMu.Lock()
+	defer a.usageMu.Unlock()
+
+	now := time.Now()
+	if now.Before(a.usageCacheUntil) {
+		usage, ok := a.usageCache[upstreamTaskID]
+		if !ok {
+			return nil, false, nil
+		}
+		return &usage, true, nil
+	}
+
+	req, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+"/api/log/token", nil)
+	if err != nil {
+		return nil, false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, false, fmt.Errorf("new proxy client for task usage failed: %w", err)
+	}
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, false, fmt.Errorf("fetch task usage log failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, false, fmt.Errorf("read task usage log failed: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, fmt.Errorf("task usage log returned status %d", resp.StatusCode)
+	}
+
+	var payload tokenLogResponse
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return nil, false, fmt.Errorf("decode task usage log failed: %w", err)
+	}
+	if !payload.Success {
+		return nil, false, fmt.Errorf("task usage log response was unsuccessful")
+	}
+
+	cache := make(map[string]relaycommon.TaskInfo)
+	createdAt := make(map[string]int64)
+	for _, entry := range payload.Data {
+		other, ok := parseTokenLogOther(entry.Other)
+		if !ok || other.TaskID == "" || other.VideoTokens <= 0 || entry.CreatedAt < createdAt[other.TaskID] {
+			continue
+		}
+		resolution := resolutionFromVideoPriceTier(other.VideoPriceTier)
+		cache[other.TaskID] = relaycommon.TaskInfo{
+			CompletionTokens: other.VideoTokens,
+			TotalTokens:      other.TextTokens + other.VideoTokens,
+			Resolution:       resolution,
+			UsageSource:      "upstream_log",
+		}
+		createdAt[other.TaskID] = entry.CreatedAt
+	}
+	a.usageCache = cache
+	a.usageCacheUntil = now.Add(5 * time.Second)
+	usage, ok := cache[upstreamTaskID]
+	if !ok {
+		return nil, false, nil
+	}
+	return &usage, true, nil
+}
+
+func parseTokenLogOther(raw json.RawMessage) (tokenLogOther, bool) {
+	var other tokenLogOther
+	var encoded string
+	if err := common.Unmarshal(raw, &encoded); err == nil && encoded != "" {
+		if err := common.UnmarshalJsonStr(encoded, &other); err != nil {
+			return tokenLogOther{}, false
+		}
+		return other, true
+	}
+	if err := common.Unmarshal(raw, &other); err != nil {
+		return tokenLogOther{}, false
+	}
+	return other, true
+}
+
+func resolutionFromVideoPriceTier(tier string) string {
+	tier = strings.ToLower(strings.TrimSpace(tier))
+	for _, suffix := range []string{"_with_video", "_base"} {
+		tier = strings.TrimSuffix(tier, suffix)
+	}
+	return ratio_setting.NormalizeVideoResolution(tier)
+}
+
 func (a *TaskAdaptor) GetModelList() []string {
 	return ModelList
 }
@@ -432,6 +556,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 				promptTokens = resTask.Usage.InputTokens
 			}
 			taskResult.TotalTokens = promptTokens + taskResult.CompletionTokens
+		}
+		if taskResult.TotalTokens > 0 {
+			taskResult.UsageSource = "upstream_status"
 		}
 	}
 

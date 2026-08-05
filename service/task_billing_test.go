@@ -684,6 +684,17 @@ func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.Task
 	return m.adjustReturn
 }
 
+type usageMockAdaptor struct {
+	mockAdaptor
+	usage *relaycommon.TaskInfo
+	found bool
+	err   error
+}
+
+func (m *usageMockAdaptor) FetchTaskUsage(string, string, string, string) (*relaycommon.TaskInfo, bool, error) {
+	return m.usage, m.found, m.err
+}
+
 func TestApplyTaskResultFailureRefundsAfterCASWin(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -831,6 +842,112 @@ func TestApplyTaskResultSoraPreAuthorizationFailureIsSilent(t *testing.T) {
 	require.Equal(t, initialAvailable+heldQuota, getUserQuota(t, userID))
 	require.Equal(t, initialAvailable+heldQuota, getTokenRemainQuota(t, tokenID))
 	require.Zero(t, countLogs(t))
+}
+
+func TestApplyTaskResultVideoUsagePendingThenSettlesFromUpstreamLog(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 28, 28, 28
+	const heldQuota, initialAvailable = 372_618, 800_000
+	const actualVideoTokens, expectedQuota = 40_594, 60_383
+	seedUser(t, userID, initialAvailable)
+	seedToken(t, tokenID, userID, "sk-sora-pending-settlement", initialAvailable)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, heldQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_sora_pending_settlement"
+	task.PrivateData.UpstreamTaskID = "task_upstream_pending_settlement"
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelRatio:           1.75,
+		GroupRatio:           0.85,
+		OriginModelName:      "dreamina-seedance-2-0-mini-hc",
+		PreAuthorization:     true,
+		PreAuthorizedQuota:   heldQuota,
+		VideoResolution:      "480p",
+		VideoTokenBilling:    true,
+		EstimatedTextTokens:  500,
+		EstimatedVideoTokens: 250_000,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	pendingAdaptor := &usageMockAdaptor{}
+	applied, err := ApplyTaskResult(ctx, pendingAdaptor, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, model.TaskStatus(model.TaskStatusPendingSettlement), task.Status)
+	require.Equal(t, model.TaskProgressPendingSettlement, task.Progress)
+	require.Equal(t, heldQuota, task.Quota)
+	require.EqualValues(t, 0, countLogs(t))
+
+	settledAdaptor := &usageMockAdaptor{
+		found: true,
+		usage: &relaycommon.TaskInfo{
+			CompletionTokens: actualVideoTokens,
+			TotalTokens:      actualVideoTokens,
+			Resolution:       "480p",
+			UsageSource:      "upstream_log",
+		},
+	}
+	applied, err = ApplyTaskResult(ctx, settledAdaptor, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, expectedQuota, task.Quota)
+	require.EqualValues(t, 1, countLogs(t))
+	log := getLastLog(t)
+	require.Equal(t, actualVideoTokens, log.CompletionTokens)
+	other, parseErr := common.StrToMap(log.Other)
+	require.NoError(t, parseErr)
+	require.Equal(t, "upstream_log", other["video_token_source"])
+}
+
+func TestApplyTaskResultVideoUsageFallbackUsesEstimatedTokens(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 29, 29, 29
+	const heldQuota, initialAvailable = 372_618, 800_000
+	seedUser(t, userID, initialAvailable)
+	seedToken(t, tokenID, userID, "sk-sora-estimated-fallback", initialAvailable)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, heldQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_sora_estimated_fallback"
+	task.Status = model.TaskStatusPendingSettlement
+	task.Progress = model.TaskProgressPendingSettlement
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelRatio:           1.75,
+		GroupRatio:           0.85,
+		OriginModelName:      "dreamina-seedance-2-0-mini-hc",
+		PreAuthorization:     true,
+		PreAuthorizedQuota:   heldQuota,
+		VideoResolution:      "480p",
+		VideoTokenBilling:    true,
+		EstimatedTextTokens:  500,
+		EstimatedVideoTokens: 250_000,
+		SettlementStartedAt:  time.Now().Add(-videoSettlementFallbackAfter - time.Second).Unix(),
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	applied, err := ApplyTaskResult(ctx, &usageMockAdaptor{}, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, heldQuota, task.Quota)
+	require.EqualValues(t, 1, countLogs(t))
+	log := getLastLog(t)
+	require.Equal(t, 500, log.PromptTokens)
+	require.Equal(t, 250_000, log.CompletionTokens)
+	other, parseErr := common.StrToMap(log.Other)
+	require.NoError(t, parseErr)
+	require.Equal(t, "estimated_inference", other["video_token_source"])
 }
 
 // ===========================================================================

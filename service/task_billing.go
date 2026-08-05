@@ -145,6 +145,9 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 		if bc.VideoResolution != "" {
 			other["video_resolution"] = ratio_setting.NormalizeVideoResolution(bc.VideoResolution)
 		}
+		if bc.SettlementSource != "" {
+			other["video_token_source"] = bc.SettlementSource
+		}
 		if len(bc.OtherRatios) > 0 {
 			for k, v := range bc.OtherRatios {
 				other[k] = v

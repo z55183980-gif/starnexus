@@ -32,6 +32,14 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+// TaskUsageRetriever is implemented only by providers that expose terminal
+// metering separately from their task-status endpoint.
+type TaskUsageRetriever interface {
+	FetchTaskUsage(baseURL, key, upstreamTaskID, proxy string) (*relaycommon.TaskInfo, bool, error)
+}
+
+const videoSettlementFallbackAfter = 10 * time.Minute
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -418,6 +426,9 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 			}
 			if openaiError != nil {
 				taskResult = relaycommon.FailTaskInfo("upstream returned error")
+			} else if isVideoTokenPreAuthorizationTask(task) {
+				logger.LogWarn(ctx, fmt.Sprintf("Task %s returned a transient empty status; keep it pending", taskId))
+				return nil
 			} else {
 				logger.LogError(ctx, fmt.Sprintf("Task %s returned empty status with unrecognized error format", taskId))
 				taskResult = relaycommon.FailTaskInfo("upstream returned unrecognized message")
@@ -451,6 +462,10 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	shouldRefund := false
 	shouldSettle := false
 	quota := task.Quota
+	settlementPending := false
+	if taskResult.Status == string(model.TaskStatusSuccess) && isVideoTokenPreAuthorizationTask(task) {
+		settlementPending = prepareVideoTaskSettlement(ctx, adaptor, task, taskResult, now)
+	}
 
 	task.Status = model.TaskStatus(taskResult.Status)
 	switch taskResult.Status {
@@ -467,7 +482,12 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 			}
 		}
 	case model.TaskStatusSuccess:
-		task.Progress = taskcommon.ProgressComplete
+		if settlementPending {
+			task.Status = model.TaskStatusPendingSettlement
+			task.Progress = model.TaskProgressPendingSettlement
+		} else {
+			task.Progress = taskcommon.ProgressComplete
+		}
 		if task.FinishTime == 0 {
 			task.FinishTime = taskResult.CompletedAt
 			if task.FinishTime == 0 {
@@ -490,7 +510,8 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 			// No URL from adaptor — construct proxy URL using public task ID
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		}
-		shouldSettle = true
+		task.FailReason = ""
+		shouldSettle = !settlementPending
 	case model.TaskStatusFailure:
 		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", task.GetUpstreamTaskID()), task)
 		task.Status = model.TaskStatusFailure
@@ -516,7 +537,7 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	default:
 		return false, fmt.Errorf("unknown task status %s for task %s", taskResult.Status, task.TaskID)
 	}
-	if taskResult.Progress != "" {
+	if taskResult.Progress != "" && !settlementPending {
 		task.Progress = taskResult.Progress
 	}
 
@@ -565,6 +586,78 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	}
 
 	return true, nil
+}
+
+func isVideoTokenPreAuthorizationTask(task *model.Task) bool {
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return false
+	}
+	bc := task.PrivateData.BillingContext
+	return bc.PreAuthorization && bc.VideoTokenBilling
+}
+
+// prepareVideoTaskSettlement enriches a completed Seedance task with the
+// provider's separate metering log. Until that record arrives, the estimated
+// reservation remains held and the task stays eligible for compensation polls.
+func prepareVideoTaskSettlement(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo, now int64) bool {
+	bc := task.PrivateData.BillingContext
+	if taskResult.TotalTokens > 0 {
+		if taskResult.UsageSource == "" {
+			taskResult.UsageSource = "upstream_status"
+		}
+		bc.SettlementSource = taskResult.UsageSource
+		return false
+	}
+
+	if retriever, ok := adaptor.(TaskUsageRetriever); ok {
+		channel, err := model.CacheGetChannel(task.ChannelId)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load channel for task usage settlement failed task %s: %s", task.TaskID, err.Error()))
+		} else {
+			baseURL := constant.ChannelBaseURLs[channel.Type]
+			if channel.GetBaseURL() != "" {
+				baseURL = channel.GetBaseURL()
+			}
+			key := channel.Key
+			if task.PrivateData.Key != "" {
+				key = task.PrivateData.Key
+			}
+			usage, found, fetchErr := retriever.FetchTaskUsage(baseURL, key, task.GetUpstreamTaskID(), channel.GetSetting().Proxy)
+			if fetchErr != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("fetch upstream task usage failed task %s: %s", task.TaskID, fetchErr.Error()))
+			} else if found && usage != nil && usage.TotalTokens > 0 {
+				taskResult.TotalTokens = usage.TotalTokens
+				taskResult.CompletionTokens = usage.CompletionTokens
+				taskResult.Resolution = usage.Resolution
+				taskResult.UsageSource = usage.UsageSource
+				bc.SettlementSource = usage.UsageSource
+				return false
+			}
+		}
+	}
+
+	if bc.SettlementStartedAt == 0 {
+		bc.SettlementStartedAt = now
+	}
+	if now-bc.SettlementStartedAt < int64(videoSettlementFallbackAfter/time.Second) {
+		return true
+	}
+
+	estimatedTextTokens := bc.EstimatedTextTokens
+	if estimatedTextTokens <= 0 {
+		estimatedTextTokens = 500
+	}
+	estimatedVideoTokens := bc.EstimatedVideoTokens
+	if estimatedVideoTokens <= 0 {
+		estimatedVideoTokens = 250_000
+	}
+	taskResult.CompletionTokens = estimatedVideoTokens
+	taskResult.TotalTokens = estimatedTextTokens + estimatedVideoTokens
+	taskResult.Resolution = bc.VideoResolution
+	taskResult.UsageSource = "estimated_inference"
+	bc.SettlementSource = taskResult.UsageSource
+	logger.LogWarn(ctx, fmt.Sprintf("finalize task %s with inferred estimated usage after settlement timeout", task.TaskID))
+	return false
 }
 
 func updateTaskConsumeLogTiming(ctx context.Context, task *model.Task) {

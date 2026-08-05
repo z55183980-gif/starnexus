@@ -23,6 +23,9 @@ func (t TaskStatus) ToVideoStatus() string {
 		status = dto.VideoStatusInProgress
 	case TaskStatusSuccess:
 		status = dto.VideoStatusCompleted
+	case TaskStatusPendingSettlement:
+		// The media is ready; only the asynchronous billing reconciliation remains.
+		status = dto.VideoStatusCompleted
 	case TaskStatusFailure:
 		status = dto.VideoStatusFailed
 	default:
@@ -32,14 +35,17 @@ func (t TaskStatus) ToVideoStatus() string {
 }
 
 const (
-	TaskStatusNotStart   TaskStatus = "NOT_START"
-	TaskStatusSubmitted             = "SUBMITTED"
-	TaskStatusQueued                = "QUEUED"
-	TaskStatusInProgress            = "IN_PROGRESS"
-	TaskStatusFailure               = "FAILURE"
-	TaskStatusSuccess               = "SUCCESS"
-	TaskStatusUnknown               = "UNKNOWN"
+	TaskStatusNotStart          = "NOT_START"
+	TaskStatusSubmitted         = "SUBMITTED"
+	TaskStatusQueued            = "QUEUED"
+	TaskStatusInProgress        = "IN_PROGRESS"
+	TaskStatusFailure           = "FAILURE"
+	TaskStatusSuccess           = "SUCCESS"
+	TaskStatusPendingSettlement = "PENDING_SETTLEMENT"
+	TaskStatusUnknown           = "UNKNOWN"
 )
+
+const TaskProgressPendingSettlement = "settling"
 
 type Task struct {
 	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
@@ -105,18 +111,22 @@ type TaskPrivateData struct {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice         float64            `json:"model_price,omitempty"`       // 模型单价
-	GroupRatio         float64            `json:"group_ratio,omitempty"`       // 分组倍率
-	ModelRatio         float64            `json:"model_ratio,omitempty"`       // 模型倍率
-	OtherRatios        map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
-	OriginModelName    string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
-	PerCallBilling     bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
-	PreAuthorization   bool               `json:"pre_authorization,omitempty"` // 异步任务预授权：终态前仅冻结额度，不记录消费日志
-	PreAuthorizedQuota int                `json:"pre_authorized_quota,omitempty"`
-	RequestPath        string             `json:"request_path,omitempty"`
-	QuotaPerUnit       float64            `json:"quota_per_unit,omitempty"`
-	VideoResolution    string             `json:"video_resolution,omitempty"`
-	VideoTokenBilling  bool               `json:"video_token_billing,omitempty"`
+	ModelPrice           float64            `json:"model_price,omitempty"`       // 模型单价
+	GroupRatio           float64            `json:"group_ratio,omitempty"`       // 分组倍率
+	ModelRatio           float64            `json:"model_ratio,omitempty"`       // 模型倍率
+	OtherRatios          map[string]float64 `json:"other_ratios,omitempty"`      // 附加倍率（时长、分辨率等）
+	OriginModelName      string             `json:"origin_model_name,omitempty"` // 模型名称，必须为OriginModelName
+	PerCallBilling       bool               `json:"per_call_billing,omitempty"`  // 按次计费：跳过轮询阶段的差额结算
+	PreAuthorization     bool               `json:"pre_authorization,omitempty"` // 异步任务预授权：终态前仅冻结额度，不记录消费日志
+	PreAuthorizedQuota   int                `json:"pre_authorized_quota,omitempty"`
+	RequestPath          string             `json:"request_path,omitempty"`
+	QuotaPerUnit         float64            `json:"quota_per_unit,omitempty"`
+	VideoResolution      string             `json:"video_resolution,omitempty"`
+	VideoTokenBilling    bool               `json:"video_token_billing,omitempty"`
+	EstimatedTextTokens  int                `json:"estimated_text_tokens,omitempty"`
+	EstimatedVideoTokens int                `json:"estimated_video_tokens,omitempty"`
+	SettlementStartedAt  int64              `json:"settlement_started_at,omitempty"`
+	SettlementSource     string             `json:"settlement_source,omitempty"`
 	// Seedance-only snapshot for settle-time OtherRatio correction. Other channels leave unset.
 	VideoHasInput *bool `json:"video_has_input,omitempty"`
 }
@@ -292,7 +302,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) ([]
 func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) ([]*Task, error) {
 	var tasks []*Task
 	err := DB.Where("progress != ?", "100%").
-		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
+		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess, TaskStatusPendingSettlement}).
 		Where("submit_time < ?", cutoffUnix).
 		Order("submit_time").
 		Limit(limit).

@@ -835,6 +835,9 @@ type TaskInfo struct {
 	// Resolution is the upstream-reported output resolution when available.
 	// Doubao Seedance settle uses this to correct OtherRatios; other adaptors leave it empty.
 	Resolution string `json:"resolution,omitempty"`
+	// UsageSource records where asynchronous usage came from. It is persisted
+	// only in administrator-visible billing metadata.
+	UsageSource string `json:"usage_source,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

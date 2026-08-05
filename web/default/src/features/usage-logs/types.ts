@@ -185,6 +185,10 @@ export interface LogOtherData {
   text_tokens?: number
   text_quota?: number
   video_tokens?: number
+  video_token_source?:
+    | 'upstream_status'
+    | 'upstream_log'
+    | 'estimated_inference'
   video_quota?: number
   pre_authorized_quota?: number
   actual_quota?: number

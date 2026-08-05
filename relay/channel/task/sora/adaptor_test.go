@@ -1,6 +1,7 @@
 package sora
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -10,6 +11,39 @@ import (
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
+
+func TestFetchTaskUsageFromTokenLog(t *testing.T) {
+	const taskID = "task_upstream_usage"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/log/token" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer upstream-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"success":true,"data":[
+			{"created_at":100,"other":"{\"task_id\":\"other\",\"video_tokens\":999}"},
+			{"created_at":101,"other":"{\"task_id\":\"task_upstream_usage\",\"text_tokens\":0,\"video_tokens\":40594,\"video_price_tier\":\"480p_base\"}"}
+		]}`))
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	usage, found, err := adaptor.FetchTaskUsage(server.URL, "upstream-key", taskID, "")
+	if err != nil {
+		t.Fatalf("FetchTaskUsage() error = %v", err)
+	}
+	if !found || usage == nil {
+		t.Fatal("expected matching task usage")
+	}
+	if usage.CompletionTokens != 40_594 || usage.TotalTokens != 40_594 {
+		t.Fatalf("tokens = %d/%d", usage.CompletionTokens, usage.TotalTokens)
+	}
+	if usage.Resolution != "480p" || usage.UsageSource != "upstream_log" {
+		t.Fatalf("resolution/source = %q/%q", usage.Resolution, usage.UsageSource)
+	}
+}
 
 func TestParseTaskResultIncludesDurationAndTimestamps(t *testing.T) {
 	adaptor := &TaskAdaptor{}

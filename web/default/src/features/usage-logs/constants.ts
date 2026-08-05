@@ -135,6 +135,7 @@ export const MJ_TASK_STATUS = {
   NOT_START: 'NOT_START', // 未启动
   SUBMITTED: 'SUBMITTED', // 队列中
   IN_PROGRESS: 'IN_PROGRESS', // 执行中
+  PENDING_SETTLEMENT: 'PENDING_SETTLEMENT', // 待结算
   SUCCESS: 'SUCCESS', // 成功
   FAILURE: 'FAILURE', // 失败
   MODAL: 'MODAL', // 窗口等待
@@ -178,6 +179,7 @@ export const TASK_STATUS = {
   NOT_START: 'NOT_START', // 未启动
   SUBMITTED: 'SUBMITTED', // 队列中
   IN_PROGRESS: 'IN_PROGRESS', // 执行中
+  PENDING_SETTLEMENT: 'PENDING_SETTLEMENT', // 待结算
   SUCCESS: 'SUCCESS', // 成功
   FAILURE: 'FAILURE', // 失败
   QUEUED: 'QUEUED', // 排队中
@@ -294,6 +296,10 @@ export const TASK_STATUS_MAPPINGS: Record<string, StatusMapping> = {
   [TASK_STATUS.NOT_START]: { label: 'Not Started', variant: 'neutral' },
   [TASK_STATUS.SUBMITTED]: { label: 'Queued', variant: 'yellow' },
   [TASK_STATUS.IN_PROGRESS]: { label: 'In Progress', variant: 'blue' },
+  [TASK_STATUS.PENDING_SETTLEMENT]: {
+    label: 'Pending settlement',
+    variant: 'amber',
+  },
   [TASK_STATUS.FAILURE]: { label: 'Failed', variant: 'red' },
   [TASK_STATUS.QUEUED]: { label: 'Queued', variant: 'orange' },
   [TASK_STATUS.UNKNOWN]: { label: 'Unknown', variant: 'neutral' },

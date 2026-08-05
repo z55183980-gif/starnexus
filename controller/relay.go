@@ -776,6 +776,12 @@ func RelayTask(c *gin.Context) {
 			bc.RequestPath = c.Request.URL.Path
 			bc.QuotaPerUnit = common.QuotaPerUnit
 			bc.VideoTokenBilling = true
+			if estimatedTextTokens, ok := c.Get("seedance_estimated_text_tokens"); ok {
+				bc.EstimatedTextTokens, _ = estimatedTextTokens.(int)
+			}
+			if estimatedVideoTokens, ok := c.Get("seedance_estimated_video_tokens"); ok {
+				bc.EstimatedVideoTokens, _ = estimatedVideoTokens.(int)
+			}
 			if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
 				bc.VideoResolution = taskReq.Size
 				if resolution, ok := taskReq.Metadata["resolution"].(string); ok && resolution != "" {

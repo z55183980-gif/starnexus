@@ -49,7 +49,7 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	if task.Status != model.TaskStatusSuccess {
+	if task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusPendingSettlement {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
 			fmt.Sprintf("Task is not completed yet, current status: %s", task.Status))
 		return
