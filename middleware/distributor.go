@@ -175,17 +175,21 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		var setupErr *types.NewAPIError
-		if channel != nil && channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
-			setupErr = SetupContextForSelectedChannelWithoutAccount(c, channel, modelRequest.Model)
-		} else {
-			setupErr = SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		// Task/video fetch (and similar) intentionally skip channel selection;
+		// handlers resolve the origin channel from the stored task.
+		if channel != nil {
+			var setupErr *types.NewAPIError
+			if channel.CredentialSource == constant.ChannelCredentialSourceAccountPool {
+				setupErr = SetupContextForSelectedChannelWithoutAccount(c, channel, modelRequest.Model)
+			} else {
+				setupErr = SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+			}
+			if setupErr != nil {
+				abortWithOpenAiMessage(c, http.StatusServiceUnavailable, setupErr.Error())
+				return
+			}
+			defer ReleaseUpstreamAccountSelection(c)
 		}
-		if setupErr != nil {
-			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, setupErr.Error())
-			return
-		}
-		defer ReleaseUpstreamAccountSelection(c)
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)

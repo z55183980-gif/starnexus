@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -65,4 +66,37 @@ func TestDistributeRejectsCompactVirtualModelBeforeChannelLookup(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "compact_model_endpoint_mismatch")
 	require.NotContains(t, recorder.Body.String(), "invalid_channel")
+}
+
+func TestGetModelRequestVideoFetchSkipsChannelSelection(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/task_abc", nil)
+
+	request, shouldSelectChannel, err := getModelRequest(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, request)
+	require.False(t, shouldSelectChannel)
+	relayMode, ok := ctx.Get("relay_mode")
+	require.True(t, ok)
+	require.Equal(t, relayconstant.RelayModeVideoFetchByID, relayMode)
+}
+
+func TestDistributeAllowsVideoFetchWithoutChannel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, i18n.Init())
+
+	recorder := httptest.NewRecorder()
+	r := gin.New()
+	r.Use(Distribute())
+	r.GET("/v1/videos/:task_id", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/videos/task_abc", nil)
+	r.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"ok":true`)
+	require.NotContains(t, recorder.Body.String(), "channel is nil")
 }
