@@ -265,6 +265,17 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 			req.Set(name, value)
 		}
 	}
+	// HTTP and the client-WS/SSE bridge need a stable upstream identity even
+	// when the client only supplies prompt_cache_key in the request body.
+	// Native upstream WebSocket connections establish identity at handshake
+	// time and must retain their existing header behavior.
+	if info != nil && !ResponsesUsesNativeWebSocket(c, info) {
+		if promptCacheKey := parsePromptCacheKey(info.Request); promptCacheKey != "" {
+			isolated := isolateCodexSessionHeader(c, promptCacheKey)
+			req.Set("session_id", isolated)
+			req.Set("conversation_id", isolated)
+		}
+	}
 	// Native Responses WS conveys Lite per turn through client_metadata. HTTP
 	// and the client-WS/SSE bridge need the equivalent real request header.
 	if info != nil && info.RelayMode == relayconstant.RelayModeResponses &&
@@ -314,6 +325,28 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	}
 
 	return nil
+}
+
+func parsePromptCacheKey(request dto.Request) string {
+	var raw json.RawMessage
+	switch value := request.(type) {
+	case *dto.OpenAIResponsesRequest:
+		if value != nil {
+			raw = value.PromptCacheKey
+		}
+	}
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var key string
+	if err := common.Unmarshal(raw, &key); err != nil {
+		return ""
+	}
+	key = strings.TrimSpace(key)
+	if strings.ContainsAny(key, "\r\n") {
+		return ""
+	}
+	return key
 }
 
 func applyCodexUserAgent(req *http.Header) {

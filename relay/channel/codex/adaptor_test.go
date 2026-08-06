@@ -112,3 +112,75 @@ func TestSetupRequestHeaderAppliesCodexUserAgent(t *testing.T) {
 		require.Equal(t, "codex_cli_rs/0.100.0 (Ubuntu 22.4.0; x86_64) xterm-256color", headers.Get("User-Agent"))
 	})
 }
+
+func TestSetupRequestHeaderDerivesSessionFromPromptCacheKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyUserId, 7)
+	common.SetContextKey(c, constant.ContextKeyTokenId, 11)
+	info := &relaycommon.RelayInfo{
+		Request:     &dto.OpenAIResponsesRequest{PromptCacheKey: []byte(`"cache-key"`)},
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{ApiKey: `{"access_token":"token","account_id":"account"}`},
+	}
+	headers := make(http.Header)
+	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+	want := isolateCodexSessionHeader(c, "cache-key")
+	require.Equal(t, want, headers.Get("session_id"))
+	require.Equal(t, want, headers.Get("conversation_id"))
+}
+
+func TestSetupRequestHeaderPromptCacheKeyOverridesClientSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("session_id", "client-session")
+	c.Request.Header.Set("conversation_id", "client-conversation")
+	common.SetContextKey(c, constant.ContextKeyUserId, 7)
+	common.SetContextKey(c, constant.ContextKeyTokenId, 11)
+	info := &relaycommon.RelayInfo{
+		Request:     &dto.OpenAIResponsesRequest{PromptCacheKey: []byte(`"cache-key"`)},
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{ApiKey: `{"access_token":"token","account_id":"account"}`},
+	}
+	headers := make(http.Header)
+	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+	want := isolateCodexSessionHeader(c, "cache-key")
+	require.Equal(t, want, headers.Get("session_id"))
+	require.Equal(t, want, headers.Get("conversation_id"))
+}
+
+func TestSetupRequestHeaderIgnoresInvalidPromptCacheKey(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("session_id", "client-session")
+	info := &relaycommon.RelayInfo{
+		Request:     &dto.OpenAIResponsesRequest{PromptCacheKey: []byte(`123`)},
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{ApiKey: `{"access_token":"token","account_id":"account"}`},
+	}
+	headers := make(http.Header)
+	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+	require.Equal(t, isolateCodexSessionHeader(c, "client-session"), headers.Get("session_id"))
+}
+
+func TestSetupRequestHeaderNativeWebSocketDoesNotDerivePromptCacheSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyResponsesWebSocketIngress, true)
+	info := &relaycommon.RelayInfo{
+		Request:   &dto.OpenAIResponsesRequest{PromptCacheKey: []byte(`"cache-key"`)},
+		RelayMode: relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiKey:               `{"access_token":"token","account_id":"account"}`,
+			ChannelOtherSettings: dto.ChannelOtherSettings{ResponsesWebSocketV2Mode: model.UpstreamOpenAIWSModeContextPool},
+		},
+	}
+	headers := make(http.Header)
+	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+	require.Empty(t, headers.Get("session_id"))
+	require.Empty(t, headers.Get("conversation_id"))
+}
