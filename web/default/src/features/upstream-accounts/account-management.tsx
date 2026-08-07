@@ -1510,6 +1510,7 @@ export function AccountManagement({
   const [memberPool, setMemberPool] = useState<UpstreamAccountPool | null>(null)
   const [selectedAccount, setSelectedAccount] =
     useState<UpstreamAccount | null>(null)
+  const [pendingAuthorizeUrl, setPendingAuthorizeUrl] = useState('')
   const [statsAccount, setStatsAccount] = useState<UpstreamAccount | null>(null)
   const [scheduledTestsAccount, setScheduledTestsAccount] =
     useState<UpstreamAccount | null>(null)
@@ -1682,10 +1683,10 @@ export function AccountManagement({
       if (!response.success || !response.data?.authorize_url) {
         throw new Error(response.message || t('Failed to start authorization'))
       }
-      window.open(response.data.authorize_url, '_blank', 'noopener,noreferrer')
+      setPendingAuthorizeUrl(response.data.authorize_url)
       setSelectedAccount(account)
       setAccountDialog(true)
-      toast.success(t('Authorization page opened'))
+      toast.success(t('Authorization URL generated'))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Request failed'))
     } finally {
@@ -2171,6 +2172,7 @@ export function AccountManagement({
                   </DropdownMenu>
                   <Button
                     onClick={() => {
+                      setPendingAuthorizeUrl('')
                       setSelectedAccount(null)
                       setAccountDialog(true)
                     }}
@@ -2353,6 +2355,7 @@ export function AccountManagement({
                               label={t('Edit')}
                               icon={Edit02Icon}
                               onClick={() => {
+                                setPendingAuthorizeUrl('')
                                 setSelectedAccount(account)
                                 setAccountDialog(true)
                               }}
@@ -2623,11 +2626,15 @@ export function AccountManagement({
           <AccountDialog
             key={selectedAccount?.id || 'new'}
             open={accountDialog}
-            onOpenChange={setAccountDialog}
+            onOpenChange={(open) => {
+              setAccountDialog(open)
+              if (!open) setPendingAuthorizeUrl('')
+            }}
             account={selectedAccount}
             pools={pools}
             proxies={proxies}
             onSaved={refresh}
+            initialAuthorizeUrl={pendingAuthorizeUrl}
           />
         )}
         <AccountStatsDialog

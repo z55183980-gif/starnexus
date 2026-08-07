@@ -26,6 +26,7 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { CopyButton } from '@/components/copy-button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -435,6 +436,7 @@ export function AccountDialog({
   pools,
   proxies,
   onSaved,
+  initialAuthorizeUrl = '',
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -442,12 +444,13 @@ export function AccountDialog({
   pools: UpstreamAccountPool[]
   proxies: Array<{ id: number; name: string }>
   onSaved: () => void
+  initialAuthorizeUrl?: string
 }) {
   const { t } = useTranslation()
   const [draft, setDraft] = useState<AccountDraft>(() => accountDraft(account))
   const [step, setStep] = useState(account ? 2 : 1)
   const [busy, setBusy] = useState(false)
-  const [oauthStarted, setOAuthStarted] = useState(false)
+  const [authorizeUrl, setAuthorizeUrl] = useState('')
   const contentRef = useRef<HTMLDivElement>(null)
   const initialCredentialSettingsRef = useRef<CredentialBackedSettings>(
     credentialBackedSettings(accountDraft(account))
@@ -459,8 +462,8 @@ export function AccountDialog({
     setDraft(nextDraft)
     initialCredentialSettingsRef.current = credentialBackedSettings(nextDraft)
     setStep(account ? 2 : 1)
-    setOAuthStarted(false)
-  }, [account, open])
+    setAuthorizeUrl(initialAuthorizeUrl)
+  }, [account, initialAuthorizeUrl, open])
 
   useEffect(() => {
     contentRef.current?.scrollTo({ top: 0 })
@@ -576,9 +579,8 @@ export function AccountDialog({
       if (!response.success || !response.data?.authorize_url) {
         throw new Error(response.message || t('Failed to start authorization'))
       }
-      window.open(response.data.authorize_url, '_blank', 'noopener,noreferrer')
-      setOAuthStarted(true)
-      toast.success(t('Authorization page opened'))
+      setAuthorizeUrl(response.data.authorize_url)
+      toast.success(t('Authorization URL generated'))
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Request failed'))
     } finally {
@@ -1419,24 +1421,49 @@ export function AccountDialog({
                         </FieldLabel>
                         <FieldDescription>
                           {t(
-                            'Open the authorization page, then paste the callback URL or code below.'
+                            'Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.'
                           )}
                         </FieldDescription>
                       </div>
-                      <Button
-                        type='button'
-                        variant='outline'
-                        onClick={startOAuth}
-                        disabled={busy || !draft.starnexusOwnsOAuthRefresh}
-                      >
-                        <HugeiconsIcon icon={Link01Icon} strokeWidth={2} />
-                        {t(
-                          account || oauthStarted
-                            ? 'Open authorization again'
-                            : 'Start authorization'
-                        )}
-                      </Button>
+                      {!authorizeUrl ? (
+                        <Button
+                          type='button'
+                          variant='outline'
+                          onClick={startOAuth}
+                          disabled={busy || !draft.starnexusOwnsOAuthRefresh}
+                        >
+                          <HugeiconsIcon icon={Link01Icon} strokeWidth={2} />
+                          {t('Generate authorization URL')}
+                        </Button>
+                      ) : null}
                     </div>
+                    {authorizeUrl ? (
+                      <div className='space-y-2'>
+                        <div className='flex items-center gap-2'>
+                          <Input
+                            readOnly
+                            value={authorizeUrl}
+                            className='font-mono text-xs'
+                            aria-label={t('Authorization URL')}
+                          />
+                          <CopyButton
+                            value={authorizeUrl}
+                            variant='outline'
+                            tooltip={t('Copy authorization link')}
+                            aria-label={t('Copy authorization link')}
+                          />
+                        </div>
+                        <Button
+                          type='button'
+                          variant='link'
+                          className='h-auto px-0'
+                          onClick={startOAuth}
+                          disabled={busy || !draft.starnexusOwnsOAuthRefresh}
+                        >
+                          {t('Regenerate authorization URL')}
+                        </Button>
+                      </div>
+                    ) : null}
                     <Textarea
                       id='oauth-result'
                       rows={4}
