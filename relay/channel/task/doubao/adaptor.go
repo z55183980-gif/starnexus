@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
@@ -143,12 +144,57 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	if c != nil {
 		c.Set(contextKeySeedanceHasVideo, hasVideo)
 	}
-	resolution, _ := req.Metadata["resolution"].(string)
+	resolution := seedanceRequestResolution(req)
 	ratio, ok := GetVideoInputRatio(info.OriginModelName, resolution, hasVideo, info.PriceData.ModelRatio*2)
 	if !ok || ratio == 1.0 {
 		return nil
 	}
 	return map[string]float64{"video_input": ratio}
+}
+
+// EstimatePreAuthorization reserves a conservative video-token estimate for
+// native Doubao Seedance tasks. Unlike the OpenAI-compatible Sora path, the
+// native API reports video usage only (total_tokens == completion_tokens), so
+// no synthetic text tokens are included in the reservation.
+func (a *TaskAdaptor) EstimatePreAuthorization(c *gin.Context, info *relaycommon.RelayInfo) (int, *common.QuotaClamp, bool) {
+	if info == nil || !ratio_setting.IsSeedanceVideoModel(info.OriginModelName) || info.PriceData.UsePrice || info.PriceData.ModelRatio <= 0 {
+		return 0, nil, false
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		return 0, nil, false
+	}
+	hasVideo := hasVideoInMetadata(req.Metadata)
+	videoRatio := 1.0
+	if ratio, ok := GetVideoInputRatio(info.OriginModelName, seedanceRequestResolution(req), hasVideo, info.PriceData.ModelRatio*2); ok && ratio > 0 {
+		videoRatio = ratio
+	}
+	groupRatio := info.PriceData.GroupRatioInfo.GroupRatio
+	c.Set(contextKeySeedanceHasVideo, hasVideo)
+	c.Set(contextKeyEstimatedTextTokens, 0)
+	c.Set(contextKeyEstimatedVideoTokens, seedanceEstimatedVideoTokens)
+	quotaValue := float64(seedanceEstimatedVideoTokens) * videoRatio * info.PriceData.ModelRatio * groupRatio
+	quota, clamp := common.QuotaFromFloatChecked(quotaValue)
+	return quota, clamp, true
+}
+
+func seedanceRequestResolution(req relaycommon.TaskSubmitReq) string {
+	if resolution, ok := req.Metadata["resolution"].(string); ok && strings.TrimSpace(resolution) != "" {
+		return ratio_setting.NormalizeVideoResolution(resolution)
+	}
+	size := strings.ToLower(strings.TrimSpace(req.Size))
+	switch size {
+	case "854x480", "480x854":
+		return "480p"
+	case "1280x720", "720x1280":
+		return "720p"
+	case "1920x1080", "1080x1920", "1792x1024", "1024x1792":
+		return "1080p"
+	case "3840x2160", "2160x3840":
+		return "4k"
+	default:
+		return ratio_setting.NormalizeVideoResolution(size)
+	}
 }
 
 // AdjustBillingOnComplete updates OtherRatios from upstream-reported resolution, then

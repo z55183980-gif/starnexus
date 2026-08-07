@@ -741,8 +741,15 @@ func RelayTask(c *gin.Context) {
 
 	// ── 成功：将预扣转为任务预授权冻结，终态再结算并记录一条日志 ──
 	if taskErr == nil {
-		silentVideoPreAuth := relayInfo.ChannelType == constant.ChannelTypeSora &&
-			ratio_setting.IsSeedanceVideoModel(relayInfo.OriginModelName)
+		isSeedanceVideoModel := ratio_setting.IsSeedanceVideoModel(relayInfo.OriginModelName)
+		silentVideoPreAuth := relayInfo.ChannelType == constant.ChannelTypeSora && isSeedanceVideoModel
+		// Native DoubaoVideo Seedance tasks expose actual video tokens only when
+		// the asynchronous task completes. Keep their estimated reservation
+		// silent as well, then write one final log from the native usage payload.
+		if relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo &&
+			isSeedanceVideoModel && !relayInfo.PriceData.UsePrice && relayInfo.PriceData.ModelRatio > 0 {
+			silentVideoPreAuth = true
+		}
 		var settleErr error
 		consumeLogID := 0
 		if silentVideoPreAuth {

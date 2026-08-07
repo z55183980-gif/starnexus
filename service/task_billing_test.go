@@ -155,6 +155,13 @@ func getUserRequestCount(t *testing.T, id int) int {
 	return user.RequestCount
 }
 
+func getChannelUsedQuota(t *testing.T, id int) int64 {
+	t.Helper()
+	var channel model.Channel
+	require.NoError(t, model.DB.Select("used_quota").Where("id = ?", id).First(&channel).Error)
+	return channel.UsedQuota
+}
+
 func getTokenRemainQuota(t *testing.T, id int) int {
 	t.Helper()
 	var token model.Token
@@ -814,6 +821,70 @@ func TestApplyTaskResultSoraPreAuthorizationCreatesOneFinalLog(t *testing.T) {
 	require.Equal(t, float64(expectedQuota), other["video_quota"])
 	require.Equal(t, "720p", other["video_resolution"])
 	require.Equal(t, "720p_base", other["video_price_tier"])
+}
+
+func TestApplyTaskResultDoubaoPreAuthorizationCreatesActualTokenLog(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 30, 30, 30
+	const heldQuota, initialAvailable = 875_000, 2_000_000
+	const actualVideoTokens, expectedQuota = 108_900, 381_150
+	seedUser(t, userID, initialAvailable)
+	seedToken(t, tokenID, userID, "sk-doubao-preauth", initialAvailable)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, heldQuota, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_doubao_preauth_success"
+	task.SubmitTime = 100
+	task.Properties.OriginModelName = "dreamina-seedance-2-0-260128"
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelRatio:          3.85,
+		GroupRatio:          1,
+		OtherRatios:         map[string]float64{"video_input": 0.9090909090909091},
+		OriginModelName:     "dreamina-seedance-2-0-260128",
+		PreAuthorization:    true,
+		PreAuthorizedQuota:  heldQuota,
+		RequestPath:         "/v1/videos",
+		QuotaPerUnit:        common.QuotaPerUnit,
+		VideoResolution:     "720p",
+		VideoTokenBilling:   true,
+		EstimatedTextTokens: 0,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	applied, err := ApplyTaskResult(ctx, &mockAdaptor{}, task, &relaycommon.TaskInfo{
+		Status:           model.TaskStatusSuccess,
+		CreatedAt:        100,
+		CompletedAt:      235,
+		Resolution:       "720p",
+		CompletionTokens: actualVideoTokens,
+		TotalTokens:      actualVideoTokens,
+		UsageSource:      "upstream_status",
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, initialAvailable+(heldQuota-expectedQuota), getUserQuota(t, userID))
+	require.Equal(t, initialAvailable+(heldQuota-expectedQuota), getTokenRemainQuota(t, tokenID))
+	require.Equal(t, 1, getUserRequestCount(t, userID))
+	require.EqualValues(t, expectedQuota, getChannelUsedQuota(t, channelID))
+	require.EqualValues(t, 1, countLogs(t), "Doubao pre-authorization must produce one final log without a refund row")
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	require.Equal(t, model.LogTypeConsume, log.Type)
+	require.Equal(t, expectedQuota, log.Quota)
+	require.Zero(t, log.PromptTokens)
+	require.Equal(t, actualVideoTokens, log.CompletionTokens)
+	require.Equal(t, 135, log.UseTime)
+	other, parseErr := common.StrToMap(log.Other)
+	require.NoError(t, parseErr)
+	require.Equal(t, true, other["video_enabled"])
+	require.Equal(t, float64(actualVideoTokens), other["video_tokens"])
+	require.Equal(t, float64(expectedQuota), other["video_quota"])
+	require.Equal(t, "720p", other["video_resolution"])
+	require.Equal(t, "720p_base", other["video_price_tier"])
+	require.Equal(t, "upstream_status", other["video_token_source"])
 }
 
 func TestApplyTaskResultSoraPreAuthorizationFailureIsSilent(t *testing.T) {

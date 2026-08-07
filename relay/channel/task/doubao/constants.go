@@ -62,7 +62,12 @@ var videoPriceTable = map[string]map[videoPriceKey]float64{
 	"dreamina-seedance-2-0-mini-hc":   videoPriceTableFast,
 }
 
-const contextKeySeedanceHasVideo = "doubao_seedance_has_video"
+const (
+	contextKeySeedanceHasVideo     = "doubao_seedance_has_video"
+	contextKeyEstimatedTextTokens  = "seedance_estimated_text_tokens"
+	contextKeyEstimatedVideoTokens = "seedance_estimated_video_tokens"
+	seedanceEstimatedVideoTokens   = 250_000
+)
 
 // GetVideoInputRatio 返回指定模型在给定输出分辨率/是否含视频输入下，相对基准价的计费倍率。
 // 优先使用管理端 VideoTokenPrice 配置；缺档或不完整时回退硬编码价表。
