@@ -5403,6 +5403,7 @@
     "Usage query errors are shown separately. Credential refresh failures may pause scheduling.": "使用量クエリエラーは別に表示されます。認証情報の更新に失敗するとスケジュールが一時停止される場合があります。",
     "Usage range": "使用期間",
     "Usage unavailable": "使用量を取得できません",
+    "Last known usage before account became unavailable": "アカウント失効前に最後に取得した使用量",
     "Usage window": "使用量ウィンドウ",
     "Usage-based": "使用量ベース",
     "USD": "USD",

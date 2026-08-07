@@ -5403,6 +5403,7 @@
     "Usage query errors are shown separately. Credential refresh failures may pause scheduling.": "Lỗi truy vấn mức sử dụng được hiển thị riêng. Lỗi làm mới thông tin xác thực có thể tạm dừng điều phối.",
     "Usage range": "Khoảng thời gian sử dụng",
     "Usage unavailable": "Không thể tải mức sử dụng",
+    "Last known usage before account became unavailable": "Mức sử dụng gần nhất trước khi tài khoản không khả dụng",
     "Usage window": "Cửa sổ sử dụng",
     "Usage-based": "Dựa trên sử dụng",
     "USD": "USD",

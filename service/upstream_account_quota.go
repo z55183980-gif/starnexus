@@ -84,7 +84,10 @@ type UpstreamAccountQuotaUsage struct {
 	RateLimit             *UpstreamAccountRateLimit            `json:"rate_limit,omitempty"`
 	AdditionalRateLimits  []UpstreamAccountAdditionalRateLimit `json:"additional_rate_limits,omitempty"`
 	RateLimitResetCredits *UpstreamAccountResetCredits         `json:"rate_limit_reset_credits,omitempty"`
-	FetchedAt             int64                                `json:"fetched_at"`
+	// Source marks how the payload was produced: "active" (live upstream) or
+	// "cached" (Extra / memory snapshot fallback after upstream failure).
+	Source    string `json:"source,omitempty"`
+	FetchedAt int64  `json:"fetched_at"`
 }
 
 type UpstreamAccountQuotaResetCredit struct {
@@ -148,7 +151,13 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 		}
 		usage, queryErr := queryUpstreamAccountQuota(ctx, &account, options.IncludeCredits, options.Force)
 		if queryErr != nil {
+			if fallback := openAIQuotaUsageFallback(&account, accountId, account.CredentialVersion, options.IncludeCredits, time.Now()); fallback != nil {
+				return fallback, nil
+			}
 			return nil, queryErr
+		}
+		if usage.Source == "" {
+			usage.Source = "active"
 		}
 		upstreamAccountQuotaCache.Store(accountId, upstreamAccountQuotaCacheEntry{
 			usage: *usage, cachedAt: time.Now(), includeCredits: options.IncludeCredits, credentialVersion: account.CredentialVersion,
@@ -156,11 +165,72 @@ func QueryUpstreamAccountQuota(ctx context.Context, accountId int, queryOptions 
 		return usage, nil
 	})
 	if err != nil {
+		if fallback := openAIQuotaUsageFallback(&account, accountId, account.CredentialVersion, options.IncludeCredits, time.Now()); fallback != nil {
+			attachOpenAIWindowStats(&account, fallback, time.Now())
+			return fallback, nil
+		}
 		return nil, err
 	}
 	usage, _ := result.(*UpstreamAccountQuotaUsage)
 	attachOpenAIWindowStats(&account, usage, time.Now())
 	return usage, nil
+}
+
+// openAIQuotaUsageFallback returns the last known Codex windows when a live
+// /wham/usage query fails (expired credentials, network errors, etc.). Preference
+// order matches sub2api: Extra snapshot first, then expired in-memory cache.
+func openAIQuotaUsageFallback(account *model.UpstreamAccount, accountId int, credentialVersion int64, includeCredits bool, now time.Time) *UpstreamAccountQuotaUsage {
+	if usage := openAIQuotaUsageFromExtra(account, now); usage != nil {
+		return usage
+	}
+	if usage := staleUpstreamAccountQuota(accountId, credentialVersion, includeCredits); usage != nil {
+		usage.Source = "cached"
+		return usage
+	}
+	return nil
+}
+
+func openAIQuotaUsageFromExtra(account *model.UpstreamAccount, now time.Time) *UpstreamAccountQuotaUsage {
+	if account == nil {
+		return nil
+	}
+	fiveHour, sevenDay := openAICodexWindowsFromExtra(account.Extra, now)
+	if fiveHour == nil && sevenDay == nil {
+		return nil
+	}
+	fetchedAt := now.Unix()
+	extra := map[string]any{}
+	if strings.TrimSpace(account.Extra) != "" {
+		_ = common.UnmarshalJsonStr(account.Extra, &extra)
+	}
+	if updatedAt := codexExtraResetAt(extra["codex_usage_updated_at"]); updatedAt > 0 {
+		fetchedAt = updatedAt
+	}
+	return &UpstreamAccountQuotaUsage{
+		Source: "cached",
+		RateLimit: &UpstreamAccountRateLimit{
+			Allowed:         true,
+			PrimaryWindow:   fiveHour,
+			SecondaryWindow: sevenDay,
+		},
+		FetchedAt: fetchedAt,
+	}
+}
+
+func staleUpstreamAccountQuota(accountId int, credentialVersion int64, includeCredits bool) *UpstreamAccountQuotaUsage {
+	if accountId <= 0 {
+		return nil
+	}
+	value, ok := upstreamAccountQuotaCache.Load(accountId)
+	if !ok {
+		return nil
+	}
+	entry, ok := value.(upstreamAccountQuotaCacheEntry)
+	if !ok || entry.credentialVersion != credentialVersion || (includeCredits && !entry.includeCredits) {
+		return nil
+	}
+	usage := entry.usage
+	return &usage
 }
 
 func attachOpenAIWindowStats(account *model.UpstreamAccount, usage *UpstreamAccountQuotaUsage, now time.Time) {
@@ -259,6 +329,7 @@ func queryUpstreamAccountQuota(ctx context.Context, account *model.UpstreamAccou
 		}
 	}
 	usage.FetchedAt = time.Now().Unix()
+	usage.Source = "active"
 	return &usage, nil
 }
 

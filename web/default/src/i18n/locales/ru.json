@@ -5403,6 +5403,7 @@
     "Usage query errors are shown separately. Credential refresh failures may pause scheduling.": "Ошибки запроса данных об использовании отображаются отдельно. Сбой обновления учётных данных может приостановить планирование.",
     "Usage range": "Период использования",
     "Usage unavailable": "Данные об использовании недоступны",
+    "Last known usage before account became unavailable": "Последнее известное использование до недоступности аккаунта",
     "Usage window": "Окно использования",
     "Usage-based": "На основе использования",
     "USD": "USD",

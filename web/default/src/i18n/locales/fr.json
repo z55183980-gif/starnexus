@@ -5403,6 +5403,7 @@
     "Usage query errors are shown separately. Credential refresh failures may pause scheduling.": "Les erreurs de lecture de l'utilisation sont affichées séparément. Un échec d'actualisation des identifiants peut suspendre la planification.",
     "Usage range": "Période d'utilisation",
     "Usage unavailable": "Utilisation indisponible",
+    "Last known usage before account became unavailable": "Dernière utilisation connue avant l'indisponibilité du compte",
     "Usage window": "Fenêtre d'utilisation",
     "Usage-based": "Basé sur l'utilisation",
     "USD": "USD",

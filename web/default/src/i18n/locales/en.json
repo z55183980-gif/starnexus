@@ -5403,6 +5403,7 @@
     "Usage query errors are shown separately. Credential refresh failures may pause scheduling.": "Usage query errors are shown separately. Credential refresh failures may pause scheduling.",
     "Usage range": "Usage range",
     "Usage unavailable": "Usage unavailable",
+    "Last known usage before account became unavailable": "Last known usage before account became unavailable",
     "Usage window": "Usage window",
     "Usage-based": "Usage-based",
     "USD": "USD",

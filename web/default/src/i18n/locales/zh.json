@@ -5403,6 +5403,7 @@
     "Usage query errors are shown separately. Credential refresh failures may pause scheduling.": "用量查询错误会单独显示；凭据刷新失败可能暂停调度。",
     "Usage range": "用量范围",
     "Usage unavailable": "用量不可用",
+    "Last known usage before account became unavailable": "账号失效前最后一次成功查询的用量",
     "Usage window": "用量窗口",
     "Usage-based": "基于使用量",
     "USD": "USD",

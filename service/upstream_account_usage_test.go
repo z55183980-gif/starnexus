@@ -1,6 +1,7 @@
 package service
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -37,5 +38,47 @@ func TestBuildAnthropicSetupTokenUsagePreservesExplicitZero(t *testing.T) {
 	}
 	if usage.FiveHour.ResetAfterSeconds != int64((5 * time.Hour).Seconds()) {
 		t.Fatalf("unexpected reset countdown: %+v", usage.FiveHour)
+	}
+}
+
+func TestBuildAnthropicPassiveUsageFromExtra(t *testing.T) {
+	now := time.Date(2026, time.August, 7, 15, 0, 0, 0, time.UTC)
+	start := now.Add(-time.Hour).Unix()
+	end := now.Add(4 * time.Hour).Unix()
+	sampledAt := now.Add(-20 * time.Minute).UTC().Format(time.RFC3339)
+	account := &model.UpstreamAccount{
+		SessionWindowStart: &start,
+		SessionWindowEnd:   &end,
+		Extra: `{
+			"session_window_utilization":0.5,
+			"passive_usage_7d_utilization":0.25,
+			"passive_usage_7d_reset":` + strconv.FormatInt(now.Add(48*time.Hour).Unix(), 10) + `,
+			"passive_usage_7d_oi_utilization":0.1,
+			"passive_usage_7d_oi_reset":` + strconv.FormatInt(now.Add(72*time.Hour).Unix(), 10) + `,
+			"passive_usage_sampled_at":"` + sampledAt + `"
+		}`,
+	}
+	usage := buildAnthropicPassiveUsage(account, now)
+	if usage == nil || usage.Source != "passive" {
+		t.Fatalf("expected passive usage, got %+v", usage)
+	}
+	if usage.FiveHour == nil || usage.FiveHour.UsedPercent != 50 {
+		t.Fatalf("unexpected 5h: %+v", usage.FiveHour)
+	}
+	if usage.SevenDay == nil || usage.SevenDay.UsedPercent != 25 {
+		t.Fatalf("unexpected 7d: %+v", usage.SevenDay)
+	}
+	if usage.SevenDayFable == nil || usage.SevenDayFable.UsedPercent != 10 {
+		t.Fatalf("unexpected 7d F: %+v", usage.SevenDayFable)
+	}
+	if usage.FetchedAt != now.Add(-20*time.Minute).Unix() {
+		t.Fatalf("unexpected fetched_at: %d", usage.FetchedAt)
+	}
+}
+
+func TestBuildAnthropicPassiveUsageReturnsNilWithoutSignal(t *testing.T) {
+	now := time.Now()
+	if usage := buildAnthropicPassiveUsage(&model.UpstreamAccount{Extra: "{}"}, now); usage != nil {
+		t.Fatalf("expected nil without signal, got %+v", usage)
 	}
 }

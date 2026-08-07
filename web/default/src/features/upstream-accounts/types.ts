@@ -195,6 +195,8 @@ export interface UpstreamAccountQuotaUsage {
     available_count: number
     credits?: Array<{ expires_at?: string }>
   } | null
+  /** active = live upstream; cached = Extra / memory fallback after failure */
+  source?: 'active' | 'cached'
   fetched_at: number
 }
 
@@ -204,7 +206,7 @@ export interface UpstreamAccountQuotaResetResult {
 }
 
 export interface UpstreamAccountUsage {
-  source: 'active' | 'estimated'
+  source: 'active' | 'estimated' | 'passive' | 'cached'
   five_hour?: UpstreamAccountRateLimitWindow | null
   seven_day?: UpstreamAccountRateLimitWindow | null
   seven_day_sonnet?: UpstreamAccountRateLimitWindow | null

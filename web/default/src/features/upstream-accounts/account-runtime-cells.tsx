@@ -1038,6 +1038,8 @@ export function AccountUsageCell({
             ? queryError.message
             : t('Failed to fetch usage')
         setError(message)
+        // Keep prior bars when a refresh fails so expired accounts still show
+        // the last known values until a successful replace arrives.
         refreshSchedulingState()
       } finally {
         if (includeCredits) setCreditsLoading(false)
@@ -1054,10 +1056,14 @@ export function AccountUsageCell({
   )
 
   useEffect(() => {
-    if (!supported || !visible) return
-    let active = true
     setUsage(null)
     setAnthropicUsage(null)
+    setError('')
+  }, [account.id])
+
+  useEffect(() => {
+    if (!supported || !visible) return
+    let active = true
     setLoading(true)
     setError('')
     setResetMessage('')
@@ -1073,6 +1079,7 @@ export function AccountUsageCell({
         if (!active) return
         if (isOpenAI) setUsage(data as UpstreamAccountQuotaUsage)
         else setAnthropicUsage(data as UpstreamAccountUsage)
+        setError('')
         setNow(Date.now())
       })
       .catch((queryError) => {
@@ -1099,6 +1106,8 @@ export function AccountUsageCell({
     t,
     visible,
   ])
+
+  const usageSource = isOpenAI ? usage?.source : anthropicUsage?.source
 
   const reset = async () => {
     setResetting(true)
@@ -1194,19 +1203,32 @@ export function AccountUsageCell({
             {t('Estimated from the setup-token session window')}
           </span>
         )}
-        {error && (
+        {(error || usageSource === 'cached' || usageSource === 'passive') && (
           <StatusDetailTooltip
-            label={`${t(
-              'Usage query errors are shown separately. Credential refresh failures may pause scheduling.'
-            )}\n${error}`}
+            label={
+              error
+                ? `${t(
+                    'Usage query errors are shown separately. Credential refresh failures may pause scheduling.'
+                  )}\n${error}`
+                : t('Last known usage before account became unavailable')
+            }
           >
             <span className='inline-flex items-center gap-1'>
-              <Badge variant='warning' className='rounded-md'>
-                {t('Usage unavailable')}
+              <Badge
+                variant={error && !(usage || anthropicUsage) ? 'warning' : 'secondary'}
+                className='rounded-md'
+              >
+                {usage || anthropicUsage || usageSource === 'cached' || usageSource === 'passive'
+                  ? t('Cached')
+                  : t('Usage unavailable')}
               </Badge>
               <HugeiconsIcon
                 icon={InformationCircleIcon}
-                className='size-3.5 text-amber-600'
+                className={
+                  error && !(usage || anthropicUsage)
+                    ? 'size-3.5 text-amber-600'
+                    : 'text-muted-foreground size-3.5'
+                }
                 strokeWidth={2}
               />
             </span>

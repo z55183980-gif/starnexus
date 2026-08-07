@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"golang.org/x/sync/singleflight"
+	"gorm.io/gorm"
 )
 
 const (
@@ -104,7 +105,19 @@ func QueryUpstreamAccountUsage(ctx context.Context, accountId int, force bool) (
 		}
 		usage, queryErr := queryAnthropicOAuthUsage(ctx, &account, true)
 		if queryErr != nil {
+			if fallback := buildAnthropicPassiveUsage(&account, time.Now()); fallback != nil {
+				return fallback, nil
+			}
+			if stale := staleUpstreamAccountUsage(accountId, account.CredentialVersion); stale != nil {
+				return stale, nil
+			}
 			return nil, queryErr
+		}
+		syncAnthropicActiveUsageToPassive(&account, usage)
+		if usage.SevenDayFable == nil {
+			if fable := buildPassiveAnthropicUsageWindow(account.Extra, "passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset", time.Now()); fable != nil {
+				usage.SevenDayFable = fable
+			}
 		}
 		upstreamAccountUsageCache.Store(accountId, upstreamAccountUsageCacheEntry{
 			usage: *usage, credentialVersion: account.CredentialVersion, cachedAt: time.Now(),
@@ -112,6 +125,14 @@ func QueryUpstreamAccountUsage(ctx context.Context, accountId int, force bool) (
 		return usage, nil
 	})
 	if err != nil {
+		if fallback := buildAnthropicPassiveUsage(&account, time.Now()); fallback != nil {
+			attachAnthropicWindowStats(&account, fallback, time.Now())
+			return fallback, nil
+		}
+		if stale := staleUpstreamAccountUsage(accountId, account.CredentialVersion); stale != nil {
+			attachAnthropicWindowStats(&account, stale, time.Now())
+			return stale, nil
+		}
 		return nil, err
 	}
 	usage, _ := result.(*UpstreamAccountUsage)
@@ -131,6 +152,175 @@ func cachedUpstreamAccountUsage(accountId int, credentialVersion int64) *Upstrea
 	}
 	usage := entry.usage
 	return &usage
+}
+
+func staleUpstreamAccountUsage(accountId int, credentialVersion int64) *UpstreamAccountUsage {
+	value, ok := upstreamAccountUsageCache.Load(accountId)
+	if !ok {
+		return nil
+	}
+	entry, ok := value.(upstreamAccountUsageCacheEntry)
+	if !ok || entry.credentialVersion != credentialVersion {
+		return nil
+	}
+	usage := entry.usage
+	if usage.Source == "" || usage.Source == "active" {
+		usage.Source = "cached"
+	}
+	return &usage
+}
+
+// buildAnthropicPassiveUsage reconstructs usage windows from Extra / session_window
+// fields written by prior successful probes (sub2api GetPassiveUsage equivalent).
+func buildAnthropicPassiveUsage(account *model.UpstreamAccount, now time.Time) *UpstreamAccountUsage {
+	if account == nil {
+		return nil
+	}
+	usage := buildAnthropicSetupTokenUsage(account, now)
+	usage.Source = "passive"
+	if sampledAt := anthropicPassiveSampledAt(account.Extra); sampledAt > 0 {
+		usage.FetchedAt = sampledAt
+	}
+	usage.SevenDay = buildPassiveAnthropicUsageWindow(account.Extra, "passive_usage_7d_utilization", "passive_usage_7d_reset", now)
+	usage.SevenDaySonnet = buildPassiveAnthropicUsageWindow(account.Extra, "passive_usage_7d_sonnet_utilization", "passive_usage_7d_sonnet_reset", now)
+	usage.SevenDayFable = buildPassiveAnthropicUsageWindow(account.Extra, "passive_usage_7d_oi_utilization", "passive_usage_7d_oi_reset", now)
+	if usage.FiveHour == nil && usage.SevenDay == nil && usage.SevenDaySonnet == nil && usage.SevenDayFable == nil {
+		return nil
+	}
+	// Setup-token style 5h is always present; only keep it when it carries a real
+	// utilization, reset, or session window. Otherwise require another window.
+	if usage.SevenDay == nil && usage.SevenDaySonnet == nil && usage.SevenDayFable == nil {
+		if usage.FiveHour == nil {
+			return nil
+		}
+		hasSignal := usage.FiveHour.UsedPercent > 0 || usage.FiveHour.ResetAt > 0 ||
+			anthropicHasSessionWindow(account) || anthropicHasSessionUtilization(account.Extra)
+		if !hasSignal {
+			return nil
+		}
+	}
+	return &usage
+}
+
+func anthropicHasSessionWindow(account *model.UpstreamAccount) bool {
+	return account != nil && account.SessionWindowEnd != nil && *account.SessionWindowEnd > 0
+}
+
+func anthropicHasSessionUtilization(rawExtra string) bool {
+	extra := map[string]any{}
+	if strings.TrimSpace(rawExtra) == "" || common.UnmarshalJsonStr(rawExtra, &extra) != nil {
+		return false
+	}
+	_, ok := quotaNumber(extra["session_window_utilization"])
+	return ok
+}
+
+func anthropicPassiveSampledAt(rawExtra string) int64 {
+	extra := map[string]any{}
+	if strings.TrimSpace(rawExtra) == "" || common.UnmarshalJsonStr(rawExtra, &extra) != nil {
+		return 0
+	}
+	return codexExtraResetAt(extra["passive_usage_sampled_at"])
+}
+
+func buildPassiveAnthropicUsageWindow(rawExtra string, utilKey string, resetKey string, now time.Time) *UpstreamAccountUsageWindow {
+	extra := map[string]any{}
+	if strings.TrimSpace(rawExtra) == "" || common.UnmarshalJsonStr(rawExtra, &extra) != nil {
+		return nil
+	}
+	util, hasUtil := quotaNumber(extra[utilKey])
+	resetUnix, hasReset := quotaNumber(extra[resetKey])
+	if !hasUtil && (!hasReset || resetUnix <= 0) {
+		return nil
+	}
+	window := &UpstreamAccountUsageWindow{
+		UsedPercent:        util * 100,
+		LimitWindowSeconds: int64((7 * 24 * time.Hour).Seconds()),
+	}
+	if hasReset && resetUnix > 0 {
+		window.ResetAt = int64(resetUnix)
+		window.ResetAfterSeconds = max(0, int64(resetUnix)-now.Unix())
+		if window.ResetAt <= now.Unix() {
+			window.UsedPercent = 0
+		}
+	}
+	return window
+}
+
+// syncAnthropicActiveUsageToPassive writes successful OAuth usage into Extra so
+// expired / temporarily unreachable accounts can still render last-known bars.
+func syncAnthropicActiveUsageToPassive(account *model.UpstreamAccount, usage *UpstreamAccountUsage) {
+	if account == nil || usage == nil || account.Id <= 0 {
+		return
+	}
+	updates := map[string]any{}
+	if usage.FiveHour != nil {
+		updates["session_window_utilization"] = usage.FiveHour.UsedPercent / 100
+	}
+	if usage.SevenDay != nil {
+		updates["passive_usage_7d_utilization"] = usage.SevenDay.UsedPercent / 100
+		if usage.SevenDay.ResetAt > 0 {
+			updates["passive_usage_7d_reset"] = usage.SevenDay.ResetAt
+		}
+	}
+	if usage.SevenDaySonnet != nil {
+		updates["passive_usage_7d_sonnet_utilization"] = usage.SevenDaySonnet.UsedPercent / 100
+		if usage.SevenDaySonnet.ResetAt > 0 {
+			updates["passive_usage_7d_sonnet_reset"] = usage.SevenDaySonnet.ResetAt
+		}
+	}
+	if usage.SevenDayFable != nil {
+		updates["passive_usage_7d_oi_utilization"] = usage.SevenDayFable.UsedPercent / 100
+		if usage.SevenDayFable.ResetAt > 0 {
+			updates["passive_usage_7d_oi_reset"] = usage.SevenDayFable.ResetAt
+		}
+	}
+	if len(updates) == 0 {
+		return
+	}
+	updates["passive_usage_sampled_at"] = time.Now().UTC().Format(time.RFC3339)
+	persistAnthropicPassiveUsage(account.Id, updates)
+	if usage.FiveHour != nil && usage.FiveHour.ResetAt > 0 {
+		now := time.Now().Unix()
+		end := usage.FiveHour.ResetAt
+		start := end - usage.FiveHour.LimitWindowSeconds
+		if usage.FiveHour.LimitWindowSeconds <= 0 {
+			start = end - int64((5 * time.Hour).Seconds())
+		}
+		_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Updates(map[string]any{
+			"session_window_start":  start,
+			"session_window_end":    end,
+			"session_window_status": "active",
+			"updated_at":            now,
+		}).Error
+		account.SessionWindowStart = &start
+		account.SessionWindowEnd = &end
+		account.SessionWindowStatus = "active"
+	}
+}
+
+func persistAnthropicPassiveUsage(accountId int, updates map[string]any) {
+	if accountId <= 0 || len(updates) == 0 {
+		return
+	}
+	_ = model.DB.Transaction(func(tx *gorm.DB) error {
+		var account model.UpstreamAccount
+		if err := tx.Select("id", "extra").First(&account, accountId).Error; err != nil {
+			return err
+		}
+		extra := map[string]any{}
+		if strings.TrimSpace(account.Extra) != "" {
+			_ = common.UnmarshalJsonStr(account.Extra, &extra)
+		}
+		for key, value := range updates {
+			extra[key] = value
+		}
+		encoded, err := common.Marshal(extra)
+		if err != nil {
+			return err
+		}
+		return tx.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Update("extra", string(encoded)).Error
+	})
 }
 
 func queryAnthropicOAuthUsage(ctx context.Context, account *model.UpstreamAccount, allowRefresh bool) (*UpstreamAccountUsage, error) {
