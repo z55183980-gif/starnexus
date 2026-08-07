@@ -197,6 +197,8 @@ function expiryLabel(value?: number | null) {
 }
 
 export function AccountIdentityCell({ account }: { account: UpstreamAccount }) {
+  const email = account.metadata.email?.trim()
+
   return (
     <div className='min-w-24 space-y-1'>
       <div className='text-muted-foreground font-mono text-xs'>
@@ -208,6 +210,14 @@ export function AccountIdentityCell({ account }: { account: UpstreamAccount }) {
       >
         {account.name}
       </div>
+      {email ? (
+        <div
+          className='text-muted-foreground max-w-36 truncate text-[11px]'
+          title={email}
+        >
+          {email}
+        </div>
+      ) : null}
     </div>
   )
 }
