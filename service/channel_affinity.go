@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"hash/fnv"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -71,6 +73,18 @@ type UpstreamAccountAffinityContext struct {
 	KeySeed        string
 	TTLSeconds     int
 }
+
+// UpstreamAccountAffinityFallbackCandidate is a bounded, opaque request-prefix
+// fingerprint. It is only eligible for account-pool routing after the pool's
+// scheduler config explicitly enables observe or prefix mode.
+type UpstreamAccountAffinityFallbackCandidate struct {
+	KeyFingerprint string
+	KeySeed        string
+	BodyBytes      int64
+	PrefixBytes    int
+}
+
+const upstreamAccountAffinityFallbackPrefixBytes = 64 * 1024
 
 const (
 	cacheTokenRateModeCachedOverPrompt           = "cached_over_prompt"
@@ -468,6 +482,51 @@ func GetUpstreamAccountAffinityContext(c *gin.Context) (UpstreamAccountAffinityC
 	}
 
 	return UpstreamAccountAffinityContext{}, false
+}
+
+func BuildUpstreamAccountAffinityFallbackCandidate(c *gin.Context, modelName string) (UpstreamAccountAffinityFallbackCandidate, bool) {
+	if c == nil || c.Request == nil || c.Request.URL == nil || c.Request.URL.Path != "/v1/responses" {
+		return UpstreamAccountAffinityFallbackCandidate{}, false
+	}
+	userID := common.GetContextKeyInt(c, constant.ContextKeyUserId)
+	tokenID := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+	modelName = strings.TrimSpace(modelName)
+	if userID <= 0 || tokenID <= 0 || modelName == "" {
+		return UpstreamAccountAffinityFallbackCandidate{}, false
+	}
+	if extractChannelAffinityValue(c, operation_setting.ChannelAffinityKeySource{Type: "gjson", Path: "previous_response_id"}) != "" {
+		return UpstreamAccountAffinityFallbackCandidate{}, false
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil || storage.Size() <= 0 {
+		return UpstreamAccountAffinityFallbackCandidate{}, false
+	}
+	current, err := storage.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return UpstreamAccountAffinityFallbackCandidate{}, false
+	}
+	if _, err = storage.Seek(0, io.SeekStart); err != nil {
+		return UpstreamAccountAffinityFallbackCandidate{}, false
+	}
+	prefixSize := int64(upstreamAccountAffinityFallbackPrefixBytes)
+	if storage.Size() < prefixSize {
+		prefixSize = storage.Size()
+	}
+	prefix := make([]byte, int(prefixSize))
+	_, readErr := io.ReadFull(storage, prefix)
+	_, restoreErr := storage.Seek(current, io.SeekStart)
+	if readErr != nil || restoreErr != nil {
+		return UpstreamAccountAffinityFallbackCandidate{}, false
+	}
+	prefixHash := fmt.Sprintf("%x", common.Sha256Raw(prefix))
+	seedMaterial := fmt.Sprintf("account-prefix-v1\x00%d\x00%d\x00%s\x00%s", userID, tokenID, modelName, prefixHash)
+	seed := fmt.Sprintf("%x", common.Sha256Raw([]byte(seedMaterial)))
+	return UpstreamAccountAffinityFallbackCandidate{
+		KeyFingerprint: affinityFingerprint(seed),
+		KeySeed:        seed,
+		BodyBytes:      storage.Size(),
+		PrefixBytes:    len(prefix),
+	}, true
 }
 
 func affinityFingerprint(s string) string {

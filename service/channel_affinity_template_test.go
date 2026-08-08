@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,11 +10,34 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type fallbackCandidateTestStorage struct {
+	*bytes.Reader
+	data []byte
+	disk bool
+}
+
+func (s *fallbackCandidateTestStorage) Close() error           { return nil }
+func (s *fallbackCandidateTestStorage) Bytes() ([]byte, error) { return s.data, nil }
+func (s *fallbackCandidateTestStorage) Size() int64            { return int64(len(s.data)) }
+func (s *fallbackCandidateTestStorage) IsDisk() bool           { return s.disk }
+
+func newFallbackCandidateTestContext(body []byte, disk bool) *gin.Context {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserId, 7)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 11)
+	ctx.Set(common.KeyBodyStorage, &fallbackCandidateTestStorage{
+		Reader: bytes.NewReader(body), data: body, disk: disk,
+	})
+	return ctx
+}
 
 func buildChannelAffinityTemplateContextForTest(meta channelAffinityMeta) *gin.Context {
 	rec := httptest.NewRecorder()
@@ -75,6 +99,46 @@ func TestGetUpstreamAccountAffinityContext_RequiresResponsesSessionKey(t *testin
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"prompt_cache_key":"session-123"}`))
 
 	_, ok := GetUpstreamAccountAffinityContext(ctx)
+	require.False(t, ok)
+}
+
+func TestBuildUpstreamAccountAffinityFallbackCandidateIsBoundedAndStorageAgnostic(t *testing.T) {
+	prefix := bytes.Repeat([]byte("a"), upstreamAccountAffinityFallbackPrefixBytes)
+	body := append(append([]byte(nil), prefix...), bytes.Repeat([]byte("b"), 8192)...)
+
+	memoryCandidate, ok := BuildUpstreamAccountAffinityFallbackCandidate(newFallbackCandidateTestContext(body, false), "gpt-5.6-luna")
+	require.True(t, ok)
+	require.Equal(t, int64(len(body)), memoryCandidate.BodyBytes)
+	require.Equal(t, upstreamAccountAffinityFallbackPrefixBytes, memoryCandidate.PrefixBytes)
+
+	diskCandidate, ok := BuildUpstreamAccountAffinityFallbackCandidate(newFallbackCandidateTestContext(body, true), "gpt-5.6-luna")
+	require.True(t, ok)
+	require.Equal(t, memoryCandidate, diskCandidate)
+
+	samePrefixBody := append(append([]byte(nil), prefix...), bytes.Repeat([]byte("c"), 8192)...)
+	samePrefixCandidate, ok := BuildUpstreamAccountAffinityFallbackCandidate(newFallbackCandidateTestContext(samePrefixBody, false), "gpt-5.6-luna")
+	require.True(t, ok)
+	require.Equal(t, memoryCandidate.KeySeed, samePrefixCandidate.KeySeed)
+
+	differentPrefix := append([]byte("z"), body[1:]...)
+	differentCandidate, ok := BuildUpstreamAccountAffinityFallbackCandidate(newFallbackCandidateTestContext(differentPrefix, false), "gpt-5.6-luna")
+	require.True(t, ok)
+	require.NotEqual(t, memoryCandidate.KeySeed, differentCandidate.KeySeed)
+}
+
+func TestBuildUpstreamAccountAffinityFallbackCandidateRequiresAuthenticatedResponsesRequest(t *testing.T) {
+	ctx := newFallbackCandidateTestContext([]byte(`{"model":"gpt-5.6-luna"}`), false)
+	ctx.Request.URL.Path = "/v1/chat/completions"
+	_, ok := BuildUpstreamAccountAffinityFallbackCandidate(ctx, "gpt-5.6-luna")
+	require.False(t, ok)
+
+	ctx = newFallbackCandidateTestContext([]byte(`{"model":"gpt-5.6-luna"}`), false)
+	common.SetContextKey(ctx, constant.ContextKeyTokenId, 0)
+	_, ok = BuildUpstreamAccountAffinityFallbackCandidate(ctx, "gpt-5.6-luna")
+	require.False(t, ok)
+
+	ctx = newFallbackCandidateTestContext([]byte(`{"model":"gpt-5.6-luna","previous_response_id":"resp_123"}`), false)
+	_, ok = BuildUpstreamAccountAffinityFallbackCandidate(ctx, "gpt-5.6-luna")
 	require.False(t, ok)
 }
 

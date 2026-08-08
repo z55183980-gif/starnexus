@@ -22,17 +22,17 @@ import (
 )
 
 const (
-	responsesHTTPContinuationContextKey   = "responses_http_continuation"
-	responsesHTTPDeliveredContextKey      = "responses_http_delivered_context"
-	responsesHTTPStagedOutputContextKey   = "responses_http_staged_output"
-	responsesHTTPStatusContextKey         = "responses_http_continuation_status"
-	responsesHTTPPersistStatusContextKey  = "responses_http_persist_status"
-	responsesHTTPLocalCacheContextKey     = "responses_http_local_cache_status"
-	responsesHTTPRedisStatusContextKey    = "responses_http_redis_status"
-	responsesHTTPPersistTargetContextKey  = "responses_http_persist_target"
-	responsesHTTPPendingL1ContextKey      = "responses_http_pending_l1"
-	responsesHTTPContinuationTTL          = time.Hour
-	responsesHTTPRedisTimeout             = 500 * time.Millisecond
+	responsesHTTPContinuationContextKey  = "responses_http_continuation"
+	responsesHTTPDeliveredContextKey     = "responses_http_delivered_context"
+	responsesHTTPStagedOutputContextKey  = "responses_http_staged_output"
+	responsesHTTPStatusContextKey        = "responses_http_continuation_status"
+	responsesHTTPPersistStatusContextKey = "responses_http_persist_status"
+	responsesHTTPLocalCacheContextKey    = "responses_http_local_cache_status"
+	responsesHTTPRedisStatusContextKey   = "responses_http_redis_status"
+	responsesHTTPPersistTargetContextKey = "responses_http_persist_target"
+	responsesHTTPPendingL1ContextKey     = "responses_http_pending_l1"
+	responsesHTTPContinuationTTL         = time.Hour
+	responsesHTTPRedisTimeout            = 500 * time.Millisecond
 )
 
 type responsesHTTPContinuationState struct {
@@ -558,6 +558,14 @@ func getResponsesHTTPContinuation(c *gin.Context, responseID string, promoteToL1
 	return state, true
 }
 
+func responsesHTTPRedisWriteContext(c *gin.Context) (context.Context, context.CancelFunc) {
+	baseCtx := context.Background()
+	if c != nil && c.Request != nil {
+		baseCtx = context.WithoutCancel(c.Request.Context())
+	}
+	return context.WithTimeout(baseCtx, responsesHTTPRedisTimeout)
+}
+
 func stashPendingResponsesHTTPL1(c *gin.Context, key string, encoded []byte) {
 	if c == nil || key == "" || len(encoded) == 0 {
 		return
@@ -622,10 +630,7 @@ func putResponsesHTTPContinuation(c *gin.Context, responseID string, state respo
 		setResponsesHTTPRedisStatus(c, "oom_circuit")
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), responsesHTTPRedisTimeout)
-	if c != nil && c.Request != nil {
-		ctx, cancel = context.WithTimeout(c.Request.Context(), responsesHTTPRedisTimeout)
-	}
+	ctx, cancel := responsesHTTPRedisWriteContext(c)
 	defer cancel()
 	if err := common.RDB.Set(ctx, key, encoded, limits.TTL).Err(); err != nil {
 		isOOM := isResponsesHTTPRedisOOMError(err)

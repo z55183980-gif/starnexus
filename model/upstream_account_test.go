@@ -133,4 +133,19 @@ func TestParseUpstreamAccountSchedulerConfig(t *testing.T) {
 	require.ErrorContains(t, err, "unsupported scheduler_config version")
 	_, err = ParseUpstreamAccountSchedulerConfig(`{"top_k":101}`)
 	require.ErrorContains(t, err, "top_k")
+
+	config, err = ParseUpstreamAccountSchedulerConfig(`{"version":2,"session_affinity_enabled":true,"session_affinity_fallback_mode":"observe","session_affinity_fallback_models":["gpt-5.6-luna"],"session_affinity_fallback_min_body_bytes":300000}`)
+	require.NoError(t, err)
+	require.Equal(t, "observe", config.SessionAffinityFallbackMode)
+	require.Equal(t, 300000, config.SessionAffinityFallbackMinBodyBytes)
+	require.True(t, config.MatchesSessionAffinityFallbackModel("gpt-5.6-luna"))
+	require.False(t, config.MatchesSessionAffinityFallbackModel("gpt-5.6-sol"))
+
+	config, err = ParseUpstreamAccountSchedulerConfig(`{"version":2,"session_affinity_fallback_mode":"prefix","session_affinity_fallback_models":["gpt-5.6-*"],"session_affinity_fallback_sample_percent":10}`)
+	require.NoError(t, err)
+	require.True(t, config.MatchesSessionAffinityFallbackModel("gpt-5.6-luna"))
+	_, err = ParseUpstreamAccountSchedulerConfig(`{"session_affinity_fallback_mode":"prefix","session_affinity_fallback_models":["gpt-5.6-luna"]}`)
+	require.ErrorContains(t, err, "sample_percent")
+	_, err = ParseUpstreamAccountSchedulerConfig(`{"session_affinity_fallback_mode":"observe"}`)
+	require.ErrorContains(t, err, "fallback_models")
 }

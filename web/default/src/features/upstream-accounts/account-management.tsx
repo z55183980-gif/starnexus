@@ -359,15 +359,37 @@ type PoolDraft = {
   sessionAffinityTTLSeconds: string
   sessionAffinityWaitMs: string
   sessionAffinityMaxWaiters: string
+  sessionAffinityFallbackMode: 'off' | 'observe' | 'prefix'
+  sessionAffinityFallbackMinBodyBytes: string
+  sessionAffinityFallbackModels: string
+  sessionAffinityFallbackSamplePercent: string
 }
+
+type PoolSchedulerDraft = Pick<
+  PoolDraft,
+  | 'topK'
+  | 'sessionAffinityEnabled'
+  | 'sessionAffinityTTLSeconds'
+  | 'sessionAffinityWaitMs'
+  | 'sessionAffinityMaxWaiters'
+  | 'sessionAffinityFallbackMode'
+  | 'sessionAffinityFallbackMinBodyBytes'
+  | 'sessionAffinityFallbackModels'
+  | 'sessionAffinityFallbackSamplePercent'
+>
 
 const SESSION_AFFINITY_DEFAULTS = {
   ttlSeconds: 3600,
   waitMs: 1500,
   maxWaiters: 3,
+  fallbackMinBodyBytes: 262144,
+  fallbackSamplePercent: 10,
+  fallbackModels: 'gpt-5.6-luna',
 } as const
 
-function poolSchedulerDraft(pool?: UpstreamAccountPool | null) {
+function poolSchedulerDraft(
+  pool?: UpstreamAccountPool | null
+): PoolSchedulerDraft {
   try {
     const parsed = JSON.parse(pool?.scheduler_config || '{}') as {
       top_k?: number
@@ -375,6 +397,10 @@ function poolSchedulerDraft(pool?: UpstreamAccountPool | null) {
       session_affinity_ttl_seconds?: number
       session_affinity_wait_ms?: number
       session_affinity_max_waiters?: number
+      session_affinity_fallback_mode?: 'off' | 'observe' | 'prefix'
+      session_affinity_fallback_min_body_bytes?: number
+      session_affinity_fallback_models?: string[]
+      session_affinity_fallback_sample_percent?: number
     }
     return {
       topK: String(Math.max(0, parsed.top_k ?? 0)),
@@ -390,6 +416,24 @@ function poolSchedulerDraft(pool?: UpstreamAccountPool | null) {
         parsed.session_affinity_max_waiters ??
           SESSION_AFFINITY_DEFAULTS.maxWaiters
       ),
+      sessionAffinityFallbackMode: ['observe', 'prefix'].includes(
+        parsed.session_affinity_fallback_mode ?? ''
+      )
+        ? (parsed.session_affinity_fallback_mode as 'observe' | 'prefix')
+        : 'off',
+      sessionAffinityFallbackMinBodyBytes: String(
+        parsed.session_affinity_fallback_min_body_bytes ??
+          SESSION_AFFINITY_DEFAULTS.fallbackMinBodyBytes
+      ),
+      sessionAffinityFallbackModels: (
+        parsed.session_affinity_fallback_models ?? [
+          SESSION_AFFINITY_DEFAULTS.fallbackModels,
+        ]
+      ).join(', '),
+      sessionAffinityFallbackSamplePercent: String(
+        parsed.session_affinity_fallback_sample_percent ??
+          SESSION_AFFINITY_DEFAULTS.fallbackSamplePercent
+      ),
     }
   } catch {
     return {
@@ -398,6 +442,14 @@ function poolSchedulerDraft(pool?: UpstreamAccountPool | null) {
       sessionAffinityTTLSeconds: String(SESSION_AFFINITY_DEFAULTS.ttlSeconds),
       sessionAffinityWaitMs: String(SESSION_AFFINITY_DEFAULTS.waitMs),
       sessionAffinityMaxWaiters: String(SESSION_AFFINITY_DEFAULTS.maxWaiters),
+      sessionAffinityFallbackMode: 'off' as const,
+      sessionAffinityFallbackMinBodyBytes: String(
+        SESSION_AFFINITY_DEFAULTS.fallbackMinBodyBytes
+      ),
+      sessionAffinityFallbackModels: SESSION_AFFINITY_DEFAULTS.fallbackModels,
+      sessionAffinityFallbackSamplePercent: String(
+        SESSION_AFFINITY_DEFAULTS.fallbackSamplePercent
+      ),
     }
   }
 }
@@ -457,6 +509,17 @@ function PoolDialog({
     { value: 'active', label: t('Active') },
     { value: 'inactive', label: t('Inactive') },
   ]
+  const affinityFallbackModeItems = [
+    { value: 'off', label: t('Disabled') },
+    { value: 'observe', label: t('Observe only') },
+    { value: 'prefix', label: t('Prefix routing') },
+  ]
+  const fallbackEnabled =
+    draft.platform === 'openai' &&
+    draft.sessionAffinityEnabled &&
+    draft.sessionAffinityFallbackMode !== 'off'
+  const fallbackAvailable =
+    draft.platform === 'openai' && draft.sessionAffinityEnabled
   const set = <K extends keyof PoolDraft>(key: K, value: PoolDraft[K]) =>
     setDraft((current) => ({ ...current, [key]: value }))
   const submit = async () => {
@@ -501,6 +564,53 @@ function PoolDialog({
       }
       affinityValues.set(field.key, value)
     }
+    let fallbackMinBodyBytes = Number(
+      draft.sessionAffinityFallbackMinBodyBytes.trim()
+    )
+    if (
+      !Number.isInteger(fallbackMinBodyBytes) ||
+      fallbackMinBodyBytes < 1 ||
+      fallbackMinBodyBytes > 134217728
+    ) {
+      if (fallbackEnabled) {
+        return toast.error(
+          t('Enter a whole number between {{min}} and {{max}} for {{field}}.', {
+            field: t('Minimum fallback body size'),
+            min: 1,
+            max: 134217728,
+          })
+        )
+      }
+      fallbackMinBodyBytes = SESSION_AFFINITY_DEFAULTS.fallbackMinBodyBytes
+    }
+    const fallbackModels = draft.sessionAffinityFallbackModels
+      .split(',')
+      .map((model) => model.trim())
+      .filter(Boolean)
+    if (fallbackEnabled && fallbackModels.length === 0) {
+      return toast.error(t('At least one fallback model is required.'))
+    }
+    let fallbackSamplePercent = Number(
+      draft.sessionAffinityFallbackSamplePercent.trim()
+    )
+    const minimumSamplePercent =
+      draft.sessionAffinityFallbackMode === 'prefix' ? 1 : 0
+    if (
+      !Number.isInteger(fallbackSamplePercent) ||
+      fallbackSamplePercent < minimumSamplePercent ||
+      fallbackSamplePercent > 100
+    ) {
+      if (fallbackEnabled) {
+        return toast.error(
+          t('Enter a whole number between {{min}} and {{max}} for {{field}}.', {
+            field: t('Fallback sample percentage'),
+            min: minimumSamplePercent,
+            max: 100,
+          })
+        )
+      }
+      fallbackSamplePercent = SESSION_AFFINITY_DEFAULTS.fallbackSamplePercent
+    }
     setBusy(true)
     try {
       let schedulerConfig: Record<string, unknown> = {}
@@ -525,6 +635,14 @@ function PoolDialog({
       schedulerConfig.session_affinity_max_waiters = affinityValues.get(
         'sessionAffinityMaxWaiters'
       )
+      schedulerConfig.session_affinity_fallback_mode = fallbackEnabled
+        ? draft.sessionAffinityFallbackMode
+        : 'off'
+      schedulerConfig.session_affinity_fallback_min_body_bytes =
+        fallbackMinBodyBytes
+      schedulerConfig.session_affinity_fallback_models = fallbackModels
+      schedulerConfig.session_affinity_fallback_sample_percent =
+        fallbackSamplePercent
       const payload: UpstreamPoolPayload = {
         name: draft.name.trim(),
         description: draft.description.trim(),
@@ -832,6 +950,107 @@ function PoolDialog({
                   </FieldDescription>
                 </Field>
               </div>
+              <Field data-disabled={!fallbackAvailable || undefined}>
+                <FieldLabel>{t('Request-prefix fallback')}</FieldLabel>
+                <FieldDescription>
+                  {t(
+                    'For large root Responses requests without a stable session key, derive an opaque affinity candidate from a bounded request prefix. Observe mode never changes routing.'
+                  )}
+                </FieldDescription>
+                <Select
+                  items={affinityFallbackModeItems}
+                  value={draft.sessionAffinityFallbackMode}
+                  disabled={!fallbackAvailable}
+                  onValueChange={(value) =>
+                    set(
+                      'sessionAffinityFallbackMode',
+                      value as PoolDraft['sessionAffinityFallbackMode']
+                    )
+                  }
+                >
+                  <SelectTrigger className='w-full'>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {affinityFallbackModeItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <div className='grid gap-4 sm:grid-cols-2'>
+                <Field data-disabled={!fallbackEnabled || undefined}>
+                  <FieldLabel htmlFor='pool-affinity-fallback-min-body'>
+                    {t('Minimum fallback body size')}
+                  </FieldLabel>
+                  <Input
+                    id='pool-affinity-fallback-min-body'
+                    type='number'
+                    min={1}
+                    max={134217728}
+                    step={1}
+                    disabled={!fallbackEnabled}
+                    value={draft.sessionAffinityFallbackMinBodyBytes}
+                    onChange={(event) =>
+                      set(
+                        'sessionAffinityFallbackMinBodyBytes',
+                        event.target.value
+                      )
+                    }
+                  />
+                  <FieldDescription>
+                    {t('Bytes, default 262144 (256 KiB)')}
+                  </FieldDescription>
+                </Field>
+                <Field data-disabled={!fallbackEnabled || undefined}>
+                  <FieldLabel htmlFor='pool-affinity-fallback-sample'>
+                    {t('Fallback sample percentage')}
+                  </FieldLabel>
+                  <Input
+                    id='pool-affinity-fallback-sample'
+                    type='number'
+                    min={draft.sessionAffinityFallbackMode === 'prefix' ? 1 : 0}
+                    max={100}
+                    step={1}
+                    disabled={!fallbackEnabled}
+                    value={draft.sessionAffinityFallbackSamplePercent}
+                    onChange={(event) =>
+                      set(
+                        'sessionAffinityFallbackSamplePercent',
+                        event.target.value
+                      )
+                    }
+                  />
+                  <FieldDescription>
+                    {t(
+                      'Deterministic rollout percentage; used only by Prefix routing.'
+                    )}
+                  </FieldDescription>
+                </Field>
+              </div>
+              <Field data-disabled={!fallbackEnabled || undefined}>
+                <FieldLabel htmlFor='pool-affinity-fallback-models'>
+                  {t('Fallback models')}
+                </FieldLabel>
+                <Input
+                  id='pool-affinity-fallback-models'
+                  disabled={!fallbackEnabled}
+                  value={draft.sessionAffinityFallbackModels}
+                  placeholder='gpt-5.6-luna'
+                  onChange={(event) =>
+                    set('sessionAffinityFallbackModels', event.target.value)
+                  }
+                />
+                <FieldDescription>
+                  {t(
+                    'Comma-separated exact names or trailing-wildcard patterns. Start with gpt-5.6-luna only.'
+                  )}
+                </FieldDescription>
+              </Field>
             </FieldGroup>
           </FieldSet>
         </FieldGroup>

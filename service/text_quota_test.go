@@ -71,6 +71,20 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	require.Equal(t, 1488, chatSummary.Quota)
 }
 
+func TestTextCacheObservationUsesHitMissUnknownStates(t *testing.T) {
+	usage := &dto.Usage{}
+	require.Equal(t, "unknown", textCacheObservation(nil, textQuotaSummary{RawPromptTokens: 100}, nil))
+	require.Equal(t, "unknown", textCacheObservation(usage, textQuotaSummary{}, nil))
+	require.Equal(t, "miss", textCacheObservation(usage, textQuotaSummary{RawPromptTokens: 100}, nil))
+	require.Equal(t, "hit", textCacheObservation(usage, textQuotaSummary{RawPromptTokens: 100, CacheTokens: 80}, nil))
+
+	status := relaycommon.NewStreamStatus()
+	status.SetEndReason(relaycommon.StreamEndReasonClientGone, nil)
+	require.Equal(t, "unknown", textCacheObservation(usage, textQuotaSummary{RawPromptTokens: 100, CacheTokens: 80}, &relaycommon.RelayInfo{
+		IsStream: true, StreamStatus: status,
+	}))
+}
+
 func TestCalculateTextQuotaSummaryRecordsMillisecondDuration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

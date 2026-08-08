@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestResponsesHTTPRedisWriteContextSurvivesRequestCancellation(t *testing.T) {
+	requestCtx, cancelRequest := context.WithCancel(context.Background())
+	ctx := newResponsesHTTPContinuationTestContext(t)
+	ctx.Request = ctx.Request.WithContext(requestCtx)
+	cancelRequest()
+
+	writeCtx, cancelWrite := responsesHTTPRedisWriteContext(ctx)
+	defer cancelWrite()
+	require.NoError(t, writeCtx.Err())
+	require.NotNil(t, writeCtx.Done())
+}
 
 func newResponsesHTTPContinuationTestContext(t *testing.T) *gin.Context {
 	t.Helper()

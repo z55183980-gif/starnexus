@@ -557,6 +557,14 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		accountAffinityKeyFP = accountAffinity.KeyFingerprint
 		accountAffinityTTL = accountAffinity.TTLSeconds
 	}
+	var accountAffinityFallback *service.UpstreamAccountAffinityFallbackCandidate
+	responsesWebSocket := common.GetContextKeyBool(c, constant.ContextKeyResponsesWebSocketIngress)
+	preferredAccountID := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountPreferredId)
+	if !hasAccountAffinity && !responsesWebSocket && preferredAccountID <= 0 {
+		if candidate, ok := service.BuildUpstreamAccountAffinityFallbackCandidate(c, selectionModel); ok {
+			accountAffinityFallback = &candidate
+		}
+	}
 	selection, err := router.Select(c.Request.Context(), service.UpstreamAccountSelectionRequest{
 		PoolId: *channel.UpstreamAccountPoolId, ChannelType: channel.Type,
 		AllowedAccountTypes: localUpstreamAllowedAccountTypes(
@@ -566,18 +574,20 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 		), Model: selectionModel, RequestPath: c.Request.URL.Path, CompactRequest: compactRequest,
 		CodexClient: codexClient, CodexAppServer: codexAppServer,
 		ChannelProxy: "", RequestId: c.GetString(common.RequestIdKey), ExcludedIds: excludedIds,
-		ResponsesWebSocket:    common.GetContextKeyBool(c, constant.ContextKeyResponsesWebSocketIngress),
-		PreferredAccountId:    common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountPreferredId),
-		RequirePreferred:      common.GetContextKeyBool(c, constant.ContextKeyUpstreamAccountPreferredRequired),
-		RequiredWebSocketMode: common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountRequiredWSMode),
-		AccountAffinitySeed:   accountAffinitySeed,
-		AccountAffinityKeyFP:  accountAffinityKeyFP,
-		AccountAffinityTTL:    accountAffinityTTL,
+		ResponsesWebSocket:      responsesWebSocket,
+		PreferredAccountId:      preferredAccountID,
+		RequirePreferred:        common.GetContextKeyBool(c, constant.ContextKeyUpstreamAccountPreferredRequired),
+		RequiredWebSocketMode:   common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountRequiredWSMode),
+		AccountAffinitySeed:     accountAffinitySeed,
+		AccountAffinityKeyFP:    accountAffinityKeyFP,
+		AccountAffinityTTL:      accountAffinityTTL,
+		AccountAffinityFallback: accountAffinityFallback,
 	})
 	if err != nil {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeGetChannelFailed, http.StatusServiceUnavailable)
 	}
 	service.MarkUpstreamAccountAffinitySelection(c, selection.Affinity)
+	service.MarkUpstreamAccountAffinityFallback(c, selection.AffinityFallback)
 	effectiveChannelType, err := localUpstreamChannelType(selection.Account.Platform, selection.Account.Type)
 	if err != nil {
 		_ = selection.Release(context.Background())

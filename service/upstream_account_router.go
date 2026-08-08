@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -36,6 +37,7 @@ type UpstreamAccountSelectionRequest struct {
 	AccountAffinitySeed     string
 	AccountAffinityKeyFP    string
 	AccountAffinityTTL      int
+	AccountAffinityFallback *UpstreamAccountAffinityFallbackCandidate
 	PreferredWaitTimeout    time.Duration
 	PreferredMaxWaiters     int
 	PreferredWaitConfigured bool
@@ -51,16 +53,29 @@ type UpstreamAccountAffinitySelectionInfo struct {
 	Outcome            string
 }
 
+type UpstreamAccountAffinityFallbackInfo struct {
+	Mode           string `json:"mode"`
+	Eligible       bool   `json:"eligible"`
+	Applied        bool   `json:"applied"`
+	Sampled        bool   `json:"sampled"`
+	SamplePercent  int    `json:"sample_percent"`
+	BodyBytes      int64  `json:"body_bytes"`
+	PrefixBytes    int    `json:"prefix_bytes"`
+	KeyFingerprint string `json:"key_fp,omitempty"`
+	Outcome        string `json:"outcome"`
+}
+
 type UpstreamAccountSelection struct {
-	Pool        model.UpstreamAccountPool
-	Account     model.UpstreamAccount
-	Credentials map[string]any
-	MappedModel string
-	ModelMapped bool
-	Proxy       *model.UpstreamProxy
-	ProxyURL    string
-	Lease       *UpstreamAccountLease
-	Affinity    *UpstreamAccountAffinitySelectionInfo
+	Pool             model.UpstreamAccountPool
+	Account          model.UpstreamAccount
+	Credentials      map[string]any
+	MappedModel      string
+	ModelMapped      bool
+	Proxy            *model.UpstreamProxy
+	ProxyURL         string
+	Lease            *UpstreamAccountLease
+	Affinity         *UpstreamAccountAffinitySelectionInfo
+	AffinityFallback *UpstreamAccountAffinityFallbackInfo
 
 	leaseTTL      time.Duration
 	refreshCancel context.CancelFunc
@@ -159,7 +174,7 @@ func GetConfiguredUpstreamAccountRouter() (*UpstreamAccountRouter, error) {
 
 func (router *UpstreamAccountRouter) Select(ctx context.Context, request UpstreamAccountSelectionRequest) (*UpstreamAccountSelection, error) {
 	policy, policyEnabled := router.resolveAccountAffinityPolicy(request)
-	affinity, enabled := router.resolveAccountAffinity(ctx, request, policy, policyEnabled)
+	affinity, enabled, fallbackInfo := router.resolveAccountAffinity(ctx, request, policy, policyEnabled)
 	if policyEnabled && request.PreferredAccountId > 0 && !request.RequirePreferred && !request.ResponsesWebSocket {
 		preferredRequest := request
 		preferredRequest.AccountAffinitySeed = ""
@@ -169,7 +184,7 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 		preferredRequest.PreferredWaitConfigured = true
 		selection, err := router.selectWithoutAccountAffinity(ctx, preferredRequest)
 		if err == nil {
-			return router.finishResponseAccountAffinity(ctx, request, selection, affinity, "response_hit"), nil
+			return attachUpstreamAccountAffinityFallback(router.finishResponseAccountAffinity(ctx, request, selection, affinity, "response_hit"), fallbackInfo), nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -191,7 +206,7 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 			stickyRequest.ExcludedIds = fallbackExclusions
 			selection, stickyErr := router.selectWithoutAccountAffinity(ctx, stickyRequest)
 			if stickyErr == nil {
-				return router.finishResponseAccountAffinity(ctx, request, selection, affinity, "response_fallback_session_hit"), nil
+				return attachUpstreamAccountAffinityFallback(router.finishResponseAccountAffinity(ctx, request, selection, affinity, "response_fallback_session_hit"), fallbackInfo), nil
 			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
@@ -209,10 +224,11 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 		if err != nil {
 			return nil, err
 		}
-		return router.finishResponseAccountAffinity(ctx, request, selection, affinity, "response_fallback"), nil
+		return attachUpstreamAccountAffinityFallback(router.finishResponseAccountAffinity(ctx, request, selection, affinity, "response_fallback"), fallbackInfo), nil
 	}
 	if !enabled {
-		return router.selectWithoutAccountAffinity(ctx, request)
+		selection, err := router.selectWithoutAccountAffinity(ctx, request)
+		return attachUpstreamAccountAffinityFallback(selection, fallbackInfo), err
 	}
 
 	if affinity.CacheHit && request.PreferredAccountId <= 0 {
@@ -226,7 +242,7 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 		selection, err := router.selectWithoutAccountAffinity(ctx, stickyRequest)
 		if err == nil {
 			affinity.Outcome = "sticky_hit"
-			return router.finishAccountAffinity(ctx, request, selection, affinity), nil
+			return attachUpstreamAccountAffinityFallback(router.finishAccountAffinity(ctx, request, selection, affinity), fallbackInfo), nil
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -244,7 +260,7 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 			return nil, err
 		}
 		affinity.Outcome = "sticky_fallback"
-		return router.finishAccountAffinity(ctx, request, selection, affinity), nil
+		return attachUpstreamAccountAffinityFallback(router.finishAccountAffinity(ctx, request, selection, affinity), fallbackInfo), nil
 	}
 
 	plainRequest := request
@@ -258,7 +274,14 @@ func (router *UpstreamAccountRouter) Select(ctx context.Context, request Upstrea
 	} else {
 		affinity.Outcome = "bound_new"
 	}
-	return router.finishAccountAffinity(ctx, request, selection, affinity), nil
+	return attachUpstreamAccountAffinityFallback(router.finishAccountAffinity(ctx, request, selection, affinity), fallbackInfo), nil
+}
+
+func attachUpstreamAccountAffinityFallback(selection *UpstreamAccountSelection, info *UpstreamAccountAffinityFallbackInfo) *UpstreamAccountSelection {
+	if selection != nil {
+		selection.AffinityFallback = info
+	}
+	return selection
 }
 
 type resolvedUpstreamAccountAffinity struct {
@@ -271,9 +294,13 @@ type resolvedUpstreamAccountAffinity struct {
 }
 
 type upstreamAccountAffinityPolicy struct {
-	ttl         time.Duration
-	waitTimeout time.Duration
-	maxWaiters  int
+	ttl                   time.Duration
+	waitTimeout           time.Duration
+	maxWaiters            int
+	fallbackMode          string
+	fallbackMinBodyBytes  int
+	fallbackSamplePercent int
+	fallbackModelAllowed  bool
 }
 
 func (router *UpstreamAccountRouter) resolveAccountAffinityPolicy(request UpstreamAccountSelectionRequest) (upstreamAccountAffinityPolicy, bool) {
@@ -296,20 +323,64 @@ func (router *UpstreamAccountRouter) resolveAccountAffinityPolicy(request Upstre
 		ttlSeconds = 3600
 	}
 	return upstreamAccountAffinityPolicy{
-		ttl:         time.Duration(ttlSeconds) * time.Second,
-		waitTimeout: time.Duration(config.SessionAffinityWaitMs) * time.Millisecond,
-		maxWaiters:  config.SessionAffinityMaxWaiters,
+		ttl:                   time.Duration(ttlSeconds) * time.Second,
+		waitTimeout:           time.Duration(config.SessionAffinityWaitMs) * time.Millisecond,
+		maxWaiters:            config.SessionAffinityMaxWaiters,
+		fallbackMode:          config.SessionAffinityFallbackMode,
+		fallbackMinBodyBytes:  config.SessionAffinityFallbackMinBodyBytes,
+		fallbackSamplePercent: config.SessionAffinityFallbackSamplePercent,
+		fallbackModelAllowed:  config.MatchesSessionAffinityFallbackModel(request.Model),
 	}, true
 }
 
-func (router *UpstreamAccountRouter) resolveAccountAffinity(ctx context.Context, request UpstreamAccountSelectionRequest, policy upstreamAccountAffinityPolicy, policyEnabled bool) (*resolvedUpstreamAccountAffinity, bool) {
-	if !policyEnabled || strings.TrimSpace(request.AccountAffinitySeed) == "" {
-		return nil, false
+func (router *UpstreamAccountRouter) resolveAccountAffinity(ctx context.Context, request UpstreamAccountSelectionRequest, policy upstreamAccountAffinityPolicy, policyEnabled bool) (*resolvedUpstreamAccountAffinity, bool, *UpstreamAccountAffinityFallbackInfo) {
+	seed := strings.TrimSpace(request.AccountAffinitySeed)
+	fingerprint := request.AccountAffinityKeyFP
+	source := "session"
+	var fallbackInfo *UpstreamAccountAffinityFallbackInfo
+	if seed == "" && request.AccountAffinityFallback != nil {
+		candidate := request.AccountAffinityFallback
+		fallbackMode := policy.fallbackMode
+		if fallbackMode == "" {
+			fallbackMode = "off"
+		}
+		fallbackInfo = &UpstreamAccountAffinityFallbackInfo{
+			Mode: fallbackMode, SamplePercent: policy.fallbackSamplePercent,
+			BodyBytes: candidate.BodyBytes, PrefixBytes: candidate.PrefixBytes,
+			KeyFingerprint: candidate.KeyFingerprint,
+		}
+		switch {
+		case !policyEnabled || fallbackMode == "off":
+			fallbackInfo.Outcome = "disabled"
+		case request.PreferredAccountId > 0:
+			fallbackInfo.Outcome = "continuation"
+		case !policy.fallbackModelAllowed:
+			fallbackInfo.Outcome = "model_not_allowed"
+		case candidate.BodyBytes < int64(policy.fallbackMinBodyBytes):
+			fallbackInfo.Outcome = "body_too_small"
+		default:
+			fallbackInfo.Eligible = true
+			if fallbackMode == "observe" {
+				fallbackInfo.Outcome = "observed"
+			} else if !upstreamAccountAffinityFallbackSampled(candidate.KeySeed, policy.fallbackSamplePercent) {
+				fallbackInfo.Outcome = "not_sampled"
+			} else {
+				fallbackInfo.Sampled = true
+				fallbackInfo.Applied = true
+				fallbackInfo.Outcome = "applied"
+				seed = candidate.KeySeed
+				fingerprint = candidate.KeyFingerprint
+				source = "prefix"
+			}
+		}
 	}
-	key := buildUpstreamAccountAffinityKey(request.PoolId, request.Model, request.AccountAffinitySeed)
+	if !policyEnabled || seed == "" {
+		return nil, false, fallbackInfo
+	}
+	key := buildUpstreamAccountAffinityKey(request.PoolId, request.Model, seed)
 	resolved := &resolvedUpstreamAccountAffinity{
 		UpstreamAccountAffinitySelectionInfo: UpstreamAccountAffinitySelectionInfo{
-			Enabled: true, Source: "session", KeyFingerprint: request.AccountAffinityKeyFP,
+			Enabled: true, Source: source, KeyFingerprint: fingerprint,
 		},
 		key: key, ttl: policy.ttl, waitTimeout: policy.waitTimeout, maxWaiters: policy.maxWaiters,
 	}
@@ -317,11 +388,22 @@ func (router *UpstreamAccountRouter) resolveAccountAffinity(ctx context.Context,
 	if getErr != nil {
 		common.SysError(fmt.Sprintf("upstream account affinity cache get failed: pool=%d err=%v", request.PoolId, getErr))
 		resolved.Outcome = "cache_error"
-		return resolved, true
+		return resolved, true, fallbackInfo
 	}
 	resolved.CacheHit = found && accountID > 0
 	resolved.PreferredAccountID = accountID
-	return resolved, true
+	return resolved, true, fallbackInfo
+}
+
+func upstreamAccountAffinityFallbackSampled(seed string, percent int) bool {
+	if percent >= 100 {
+		return true
+	}
+	if percent <= 0 || strings.TrimSpace(seed) == "" {
+		return false
+	}
+	digest := common.Sha256Raw([]byte(seed))
+	return int(binary.BigEndian.Uint64(digest[:8])%100) < percent
 }
 
 func (router *UpstreamAccountRouter) finishResponseAccountAffinity(ctx context.Context, request UpstreamAccountSelectionRequest, selection *UpstreamAccountSelection, affinity *resolvedUpstreamAccountAffinity, outcome string) *UpstreamAccountSelection {

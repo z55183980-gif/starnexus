@@ -575,6 +575,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
 		other["input_tokens_total"] = usage.InputTokens
 	}
+	other["cache_observation"] = textCacheObservation(originUsage, summary, relayInfo)
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
@@ -598,4 +599,17 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
 	})
+}
+
+func textCacheObservation(originUsage *dto.Usage, summary textQuotaSummary, relayInfo *relaycommon.RelayInfo) string {
+	if originUsage == nil || summary.RawPromptTokens <= 0 {
+		return "unknown"
+	}
+	if relayInfo != nil && relayInfo.IsStream && relayInfo.StreamStatus != nil && !relayInfo.StreamStatus.IsNormalEnd() {
+		return "unknown"
+	}
+	if summary.CacheTokens > 0 {
+		return "hit"
+	}
+	return "miss"
 }

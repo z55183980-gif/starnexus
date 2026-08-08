@@ -32,18 +32,22 @@ type UpstreamAccountPool struct {
 func (UpstreamAccountPool) TableName() string { return "upstream_account_pools" }
 
 type UpstreamAccountSchedulerConfig struct {
-	Version                   int                `json:"version"`
-	TopK                      int                `json:"top_k"`
-	Strategy                  string             `json:"strategy,omitempty"`
-	PrioritySource            string             `json:"priority_source,omitempty"`
-	ModelRoutingEnabled       bool               `json:"model_routing_enabled"`
-	DefaultMappedModel        string             `json:"default_mapped_model"`
-	ModelRouting              map[string][]int64 `json:"model_routing"`
-	ModelRoutingIdSpace       string             `json:"model_routing_id_space"`
-	SessionAffinityEnabled    bool               `json:"session_affinity_enabled,omitempty"`
-	SessionAffinityTTLSeconds int                `json:"session_affinity_ttl_seconds,omitempty"`
-	SessionAffinityWaitMs     int                `json:"session_affinity_wait_ms,omitempty"`
-	SessionAffinityMaxWaiters int                `json:"session_affinity_max_waiters,omitempty"`
+	Version                              int                `json:"version"`
+	TopK                                 int                `json:"top_k"`
+	Strategy                             string             `json:"strategy,omitempty"`
+	PrioritySource                       string             `json:"priority_source,omitempty"`
+	ModelRoutingEnabled                  bool               `json:"model_routing_enabled"`
+	DefaultMappedModel                   string             `json:"default_mapped_model"`
+	ModelRouting                         map[string][]int64 `json:"model_routing"`
+	ModelRoutingIdSpace                  string             `json:"model_routing_id_space"`
+	SessionAffinityEnabled               bool               `json:"session_affinity_enabled,omitempty"`
+	SessionAffinityTTLSeconds            int                `json:"session_affinity_ttl_seconds,omitempty"`
+	SessionAffinityWaitMs                int                `json:"session_affinity_wait_ms,omitempty"`
+	SessionAffinityMaxWaiters            int                `json:"session_affinity_max_waiters,omitempty"`
+	SessionAffinityFallbackMode          string             `json:"session_affinity_fallback_mode,omitempty"`
+	SessionAffinityFallbackMinBodyBytes  int                `json:"session_affinity_fallback_min_body_bytes,omitempty"`
+	SessionAffinityFallbackModels        []string           `json:"session_affinity_fallback_models,omitempty"`
+	SessionAffinityFallbackSamplePercent int                `json:"session_affinity_fallback_sample_percent,omitempty"`
 }
 
 func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerConfig, error) {
@@ -55,9 +59,12 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 		return config, errors.New("scheduler_config must be a JSON object")
 	}
 	var affinityFields struct {
-		TTLSeconds *int `json:"session_affinity_ttl_seconds"`
-		WaitMs     *int `json:"session_affinity_wait_ms"`
-		MaxWaiters *int `json:"session_affinity_max_waiters"`
+		TTLSeconds      *int    `json:"session_affinity_ttl_seconds"`
+		WaitMs          *int    `json:"session_affinity_wait_ms"`
+		MaxWaiters      *int    `json:"session_affinity_max_waiters"`
+		FallbackMode    *string `json:"session_affinity_fallback_mode"`
+		FallbackMinBody *int    `json:"session_affinity_fallback_min_body_bytes"`
+		FallbackSample  *int    `json:"session_affinity_fallback_sample_percent"`
 	}
 	if err := common.UnmarshalJsonStr(raw, &affinityFields); err != nil {
 		return config, errors.New("scheduler_config must be a JSON object")
@@ -129,7 +136,55 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 	if config.SessionAffinityMaxWaiters < 0 || config.SessionAffinityMaxWaiters > 1000 {
 		return config, errors.New("scheduler_config session_affinity_max_waiters must be between 0 and 1000")
 	}
+	if affinityFields.FallbackMode == nil {
+		config.SessionAffinityFallbackMode = "off"
+	} else {
+		config.SessionAffinityFallbackMode = strings.ToLower(strings.TrimSpace(config.SessionAffinityFallbackMode))
+	}
+	switch config.SessionAffinityFallbackMode {
+	case "off", "observe", "prefix":
+	default:
+		return config, errors.New("scheduler_config session_affinity_fallback_mode must be off, observe, or prefix")
+	}
+	if affinityFields.FallbackMinBody == nil {
+		config.SessionAffinityFallbackMinBodyBytes = 262144
+	}
+	if config.SessionAffinityFallbackMinBodyBytes < 1 || config.SessionAffinityFallbackMinBodyBytes > 134217728 {
+		return config, errors.New("scheduler_config session_affinity_fallback_min_body_bytes must be between 1 and 134217728")
+	}
+	for i, pattern := range config.SessionAffinityFallbackModels {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			return config, errors.New("scheduler_config session_affinity_fallback_models contains an empty model pattern")
+		}
+		config.SessionAffinityFallbackModels[i] = pattern
+	}
+	if config.SessionAffinityFallbackMode != "off" && len(config.SessionAffinityFallbackModels) == 0 {
+		return config, errors.New("scheduler_config session_affinity_fallback_models is required when fallback is enabled")
+	}
+	if config.SessionAffinityFallbackSamplePercent < 0 || config.SessionAffinityFallbackSamplePercent > 100 {
+		return config, errors.New("scheduler_config session_affinity_fallback_sample_percent must be between 0 and 100")
+	}
+	if config.SessionAffinityFallbackMode == "prefix" && (affinityFields.FallbackSample == nil || config.SessionAffinityFallbackSamplePercent < 1) {
+		return config, errors.New("scheduler_config session_affinity_fallback_sample_percent must be between 1 and 100 in prefix mode")
+	}
 	return config, nil
+}
+
+func (config UpstreamAccountSchedulerConfig) MatchesSessionAffinityFallbackModel(modelName string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	for _, pattern := range config.SessionAffinityFallbackModels {
+		if pattern == modelName {
+			return true
+		}
+		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(modelName, strings.TrimSuffix(pattern, "*")) {
+			return true
+		}
+	}
+	return false
 }
 
 func (config UpstreamAccountSchedulerConfig) RoutingAccountIds(modelName string) []int64 {

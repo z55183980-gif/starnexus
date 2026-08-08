@@ -277,10 +277,107 @@ func TestUpstreamAccountRouterSessionAffinityDisabledIsNoop(t *testing.T) {
 	require.NoError(t, err)
 	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
 		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-sol",
-		RequestPath: "/v1/responses", AccountAffinitySeed: "ignored-session",
+		RequestPath:             "/v1/responses",
+		AccountAffinityFallback: &UpstreamAccountAffinityFallbackCandidate{KeySeed: "ignored-prefix", BodyBytes: 300000, PrefixBytes: 65536},
 	})
 	require.NoError(t, err)
 	require.Nil(t, selection.Affinity)
+	require.Equal(t, "disabled", selection.AffinityFallback.Outcome)
+	require.NoError(t, selection.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterPrefixFallbackObserveDoesNotRoute(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-prefix-observe", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_fallback_mode":"observe","session_affinity_fallback_models":["gpt-5.6-luna"],"session_affinity_fallback_min_body_bytes":1}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccount(t, "affinity-prefix-observe-account", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+	candidate := &UpstreamAccountAffinityFallbackCandidate{KeySeed: "prefix-seed", KeyFingerprint: "12345678", BodyBytes: 300000, PrefixBytes: 65536}
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-luna",
+		RequestPath: "/v1/responses", AccountAffinityFallback: candidate,
+	})
+	require.NoError(t, err)
+	require.Nil(t, selection.Affinity)
+	require.NotNil(t, selection.AffinityFallback)
+	require.True(t, selection.AffinityFallback.Eligible)
+	require.False(t, selection.AffinityFallback.Applied)
+	require.Equal(t, "observed", selection.AffinityFallback.Outcome)
+	require.NoError(t, selection.Lease.Release(context.Background()))
+}
+
+func TestUpstreamAccountRouterPrefixFallbackReusesOAuthAccount(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-prefix-route", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_fallback_mode":"prefix","session_affinity_fallback_models":["gpt-5.6-luna"],"session_affinity_fallback_min_body_bytes":262144,"session_affinity_fallback_sample_percent":100}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccount(t, "affinity-prefix-first", pool.Id, nil)
+	createRouterTestAccount(t, "affinity-prefix-second", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+	request := UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-luna", RequestPath: "/v1/responses",
+		AccountAffinityFallback: &UpstreamAccountAffinityFallbackCandidate{KeySeed: "prefix-seed", KeyFingerprint: "12345678", BodyBytes: 300000, PrefixBytes: 65536},
+	}
+	first, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, "prefix", first.Affinity.Source)
+	require.True(t, first.AffinityFallback.Applied)
+	require.NoError(t, first.Lease.Release(context.Background()))
+
+	second, err := router.Select(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, first.Account.Id, second.Account.Id)
+	require.True(t, second.Affinity.CacheHit)
+	require.Equal(t, "sticky_hit", second.Affinity.Outcome)
+	require.NoError(t, second.Lease.Release(context.Background()))
+}
+
+type failingUpstreamAccountAffinityStore struct{}
+
+func (failingUpstreamAccountAffinityStore) Get(context.Context, string) (int, bool, error) {
+	return 0, false, errors.New("cache unavailable")
+}
+func (failingUpstreamAccountAffinityStore) BindIfAbsent(context.Context, string, int, time.Duration) (int, bool, error) {
+	return 0, false, errors.New("cache unavailable")
+}
+func (failingUpstreamAccountAffinityStore) Replace(context.Context, string, int, int, time.Duration) (bool, error) {
+	return false, errors.New("cache unavailable")
+}
+func (failingUpstreamAccountAffinityStore) AcquireWaiter(context.Context, string, int, time.Duration) (bool, error) {
+	return false, errors.New("cache unavailable")
+}
+func (failingUpstreamAccountAffinityStore) ReleaseWaiter(context.Context, string) error {
+	return errors.New("cache unavailable")
+}
+
+func TestUpstreamAccountRouterPrefixFallbackFailsOpenWhenAffinityCacheUnavailable(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "affinity-prefix-cache-error", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeOAuth, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: `{"version":2,"session_affinity_enabled":true,"session_affinity_fallback_mode":"prefix","session_affinity_fallback_models":["gpt-5.6-luna"],"session_affinity_fallback_sample_percent":100}`,
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	createRouterTestAccount(t, "affinity-prefix-cache-error-account", pool.Id, nil)
+	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
+	require.NoError(t, err)
+	router.affinityStore = failingUpstreamAccountAffinityStore{}
+	selection, err := router.Select(context.Background(), UpstreamAccountSelectionRequest{
+		PoolId: pool.Id, ChannelType: constant.ChannelTypeCodex, Model: "gpt-5.6-luna", RequestPath: "/v1/responses",
+		AccountAffinityFallback: &UpstreamAccountAffinityFallbackCandidate{KeySeed: "prefix-seed", KeyFingerprint: "12345678", BodyBytes: 300000, PrefixBytes: 65536},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selection)
+	require.Equal(t, "cache_error", selection.Affinity.Outcome)
 	require.NoError(t, selection.Lease.Release(context.Background()))
 }
 

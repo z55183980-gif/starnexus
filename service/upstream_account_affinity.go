@@ -18,6 +18,7 @@ import (
 const upstreamAccountAffinityCacheNamespace = "new-api:upstream_account_affinity:v1"
 
 const ginKeyUpstreamAccountAffinityLogInfo = "upstream_account_affinity_log_info"
+const ginKeyUpstreamAccountAffinityFallbackLogInfo = "upstream_account_affinity_fallback_log_info"
 
 type upstreamAccountAffinityStore interface {
 	Get(ctx context.Context, key string) (int, bool, error)
@@ -226,4 +227,26 @@ func AppendUpstreamAccountAffinityAdminInfo(c *gin.Context, adminInfo map[string
 		return
 	}
 	adminInfo["upstream_account_affinity"] = info
+}
+
+func MarkUpstreamAccountAffinityFallback(c *gin.Context, info *UpstreamAccountAffinityFallbackInfo) {
+	if c == nil || info == nil {
+		return
+	}
+	c.Set(ginKeyUpstreamAccountAffinityFallbackLogInfo, info)
+}
+
+func AppendUpstreamAccountAffinityFallbackAdminInfo(c *gin.Context, adminInfo map[string]interface{}) {
+	if c == nil || adminInfo == nil {
+		return
+	}
+	value, ok := c.Get(ginKeyUpstreamAccountAffinityFallbackLogInfo)
+	if !ok {
+		return
+	}
+	info, ok := value.(*UpstreamAccountAffinityFallbackInfo)
+	if !ok || info == nil {
+		return
+	}
+	adminInfo["upstream_account_affinity_fallback"] = info
 }
