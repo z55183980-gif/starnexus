@@ -16,6 +16,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,30 @@ func updateOpenAIImageCount(info *relaycommon.RelayInfo, count int64) {
 		return
 	}
 	info.PriceData.AddOtherRatio("n", float64(count))
+}
+
+func updateOpenAIImageTierPrice(info *relaycommon.RelayInfo, responseBody []byte) {
+	if info == nil || !info.PriceData.UsePrice || !ratio_setting.IsGPTImageModel(info.OriginModelName) {
+		return
+	}
+	selectedTier := ""
+	considerSize := func(size string) {
+		tier := ratio_setting.NormalizeGPTImageTier(size)
+		if size != "" && ratio_setting.GPTImageTierRank(tier) > ratio_setting.GPTImageTierRank(selectedTier) {
+			selectedTier = tier
+		}
+	}
+	considerSize(gjson.GetBytes(responseBody, "size").String())
+	for _, result := range gjson.GetBytes(responseBody, "data.#.size").Array() {
+		considerSize(result.String())
+	}
+	if selectedTier == "" || ratio_setting.GPTImageTierRank(selectedTier) < ratio_setting.GPTImageTierRank(info.PriceData.ImageSizeTier) {
+		return
+	}
+	if price, ok := ratio_setting.GetGPTImagePrice(info.OriginModelName, selectedTier); ok {
+		info.PriceData.ModelPrice = price
+		info.PriceData.ImageSizeTier = selectedTier
+	}
 }
 
 func openAIImageCompletedEventType(info *relaycommon.RelayInfo) string {
@@ -62,6 +87,7 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 
+	updateOpenAIImageTierPrice(info, responseBody)
 	updateOpenAIImageCount(info, gjson.GetBytes(responseBody, "data.#").Int())
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
@@ -115,6 +141,7 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		raw := common.StringToByteSlice(data)
 		lastStreamData = raw
+		updateOpenAIImageTierPrice(info, raw)
 		if isOpenAIImageStreamErrorEvent(raw) {
 			sr.Error(fmt.Errorf("%s", extractOpenAIImageStreamErrorMessage(raw)))
 		}
@@ -231,6 +258,7 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	}
 	normalizeOpenAIImageUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+	updateOpenAIImageTierPrice(info, responseBody)
 
 	imageCount := gjson.GetBytes(responseBody, "data.#").Int()
 	updateOpenAIImageCount(info, imageCount)

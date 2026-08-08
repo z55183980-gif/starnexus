@@ -28,6 +28,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { resetModelRatios } from '../api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { GPTImagePriceSettings } from './gpt-image-price-settings'
 import { GroupRatioForm } from './group-ratio-form'
 import { ModelRatioForm } from './model-ratio-form'
 import { ToolPriceSettings } from './tool-price-settings'
@@ -206,12 +207,18 @@ const groupSchema = z.object({
 
 type ModelFormValues = z.infer<typeof modelSchema>
 type GroupFormValues = z.infer<typeof groupSchema>
-type RatioTabId = 'models' | 'groups' | 'tool-prices' | 'upstream-sync'
+type RatioTabId =
+  | 'models'
+  | 'gpt-image-prices'
+  | 'groups'
+  | 'tool-prices'
+  | 'upstream-sync'
 
 type RatioSettingsCardProps = {
   modelDefaults: ModelFormValues
   groupDefaults: GroupFormValues
   toolPricesDefault: string
+  gptImagePricesDefault?: string
   titleKey?: string
   descriptionKey?: string
   visibleTabs?: RatioTabId[]
@@ -221,6 +228,7 @@ export function RatioSettingsCard({
   modelDefaults,
   groupDefaults,
   toolPricesDefault,
+  gptImagePricesDefault = '{}',
   titleKey = 'Pricing Ratios',
   descriptionKey = 'Configure model, caching, and group ratios used for billing',
   visibleTabs = ['models', 'groups', 'tool-prices', 'upstream-sync'],
@@ -257,9 +265,7 @@ export function RatioSettingsCard({
     AudioCompletionRatio: normalizeJsonString(
       modelDefaults.AudioCompletionRatio
     ),
-    VideoTokenPrice: normalizeJsonString(
-      modelDefaults.VideoTokenPrice || '{}'
-    ),
+    VideoTokenPrice: normalizeJsonString(modelDefaults.VideoTokenPrice || '{}'),
     ExposeRatioEnabled: modelDefaults.ExposeRatioEnabled,
     BillingMode: normalizeJsonString(modelDefaults.BillingMode),
     BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
@@ -454,7 +460,7 @@ export function RatioSettingsCard({
 
   const handleResetRatios = useCallback(() => {
     setConfirmOpen(true)
-  }, [])
+  }, [setConfirmOpen])
 
   const { mutate: resetMutate } = resetMutation
   const handleConfirmReset = useCallback(() => {
@@ -463,6 +469,7 @@ export function RatioSettingsCard({
 
   const tabLabels: Record<RatioTabId, string> = {
     models: 'Model prices',
+    'gpt-image-prices': 'GPT Image prices',
     groups: 'Group ratios',
     'tool-prices': 'Tool prices',
     'upstream-sync': 'Upstream price sync',
@@ -487,6 +494,9 @@ export function RatioSettingsCard({
           isResetting={resetMutation.isPending}
         />
       )
+    }
+    if (tab === 'gpt-image-prices') {
+      return <GPTImagePriceSettings defaultValue={gptImagePricesDefault} />
     }
     if (tab === 'groups') {
       return (

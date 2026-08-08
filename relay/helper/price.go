@@ -86,6 +86,22 @@ func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) types.
 
 func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens int, meta *types.TokenCountMeta) (types.PriceData, error) {
 	modelPrice, usePrice := ratio_setting.GetModelPrice(info.OriginModelName, false)
+	imageSizeTier := ""
+	if meta != nil {
+		imageSizeTier = ratio_setting.NormalizeGPTImageTier(meta.ImageSizeTier)
+	}
+	if ratio_setting.IsGPTImageModel(info.OriginModelName) {
+		var ok bool
+		modelPrice, ok = ratio_setting.GetGPTImagePrice(info.OriginModelName, imageSizeTier)
+		if !ok {
+			return types.PriceData{}, fmt.Errorf(
+				"模型 %s 的 GPT Image %s 分档价格未配置；请在系统设置中配置该模型的 1K、2K、4K 单张价格",
+				info.OriginModelName,
+				imageSizeTier,
+			)
+		}
+		usePrice = true
+	}
 	tokenPricingCtx := tokenPricingContextFromRelayInfo(info)
 	billingPromptTokens := billing_setting.ApplyInputTokenPricingForContext(promptTokens, tokenPricingCtx)
 
@@ -180,6 +196,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		ImageRatio:           imageRatio,
 		AudioRatio:           audioRatio,
 		AudioCompletionRatio: audioCompletionRatio,
+		ImageSizeTier:        imageSizeTier,
 		CacheCreationRatio:   cacheCreationRatio,
 		CacheCreation5mRatio: cacheCreationRatio5m,
 		CacheCreation1hRatio: cacheCreationRatio1h,
@@ -274,6 +291,10 @@ func ModelPriceHelperPerCall(c *gin.Context, info *relaycommon.RelayInfo) (types
 }
 
 func HasModelBillingConfig(modelName string) bool {
+	if ratio_setting.IsGPTImageModel(modelName) {
+		_, ok := ratio_setting.GetGPTImagePrice(modelName, ratio_setting.GPTImageTier1K)
+		return ok
+	}
 	if _, ok := ratio_setting.GetModelPrice(modelName, false); ok {
 		return true
 	}

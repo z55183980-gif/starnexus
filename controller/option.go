@@ -244,6 +244,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "GPTImagePrice":
+		err = ratio_setting.UpdateGPTImagePriceByJSONString(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "GPT Image 分档价格设置失败: " + err.Error(),
+			})
+			return
+		}
 	case "AudioRatio":
 		err = ratio_setting.UpdateAudioRatioByJSONString(option.Value.(string))
 		if err != nil {

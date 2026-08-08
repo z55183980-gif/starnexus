@@ -262,7 +262,7 @@
     "Add Mapping": "マッピングを追加",
     "Add method": "メソッドを追加",
     "Add Mode": "モードを追加",
-    "Add model": "モデル追加",
+    "Add model": "モデルを追加",
     "Add Model": "モデルを追加",
     "Add model pricing": "モデル料金を追加",
     "Add Models": "モデルを追加",
@@ -5772,6 +5772,18 @@
     "Generate authorization URL": "認可 URL を生成",
     "Regenerate authorization URL": "認可 URL を再生成",
     "Authorization URL": "認可 URL",
-    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "認可 URL を生成してコピーし、ブラウザで開いた後、コールバック URL またはコードを下に貼り付けてください。"
+    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "認可 URL を生成してコピーし、ブラウザで開いた後、コールバック URL またはコードを下に貼り付けてください。",
+    "1K price": "1K 価格",
+    "2K price": "2K 価格",
+    "4K price": "4K 価格",
+    "Additional GPT Image model": "追加の GPT Image モデル",
+    "Complete all 1K, 2K, and 4K prices for each enabled model.": "有効にする各モデルについて、1K、2K、4K の価格をすべて入力してください。",
+    "Configure independent USD prices per generated image. The selected 1K, 2K, or 4K price is multiplied by the returned image count and group ratio.": "生成画像1枚ごとの USD 価格を解像度別に設定します。選択された 1K、2K、4K の価格に、返された画像数とグループ倍率が掛けられます。",
+    "GPT Image prices": "GPT Image 価格",
+    "GPT Image prices must be non-negative numbers.": "GPT Image の価格には0以上の数値を指定してください。",
+    "GPT Image resolution pricing": "GPT Image 解像度別価格",
+    "Model name must start with gpt-image-": "モデル名は gpt-image- で始まる必要があります",
+    "Save GPT Image prices": "GPT Image 価格を保存",
+    "{{tier}} price for {{model}}": "{{model}} の {{tier}} 価格"
   }
 }

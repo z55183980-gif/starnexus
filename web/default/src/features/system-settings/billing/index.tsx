@@ -45,6 +45,7 @@ const defaultBillingSettings: BillingSettings = {
   DisplayInCurrencyEnabled: true,
   DisplayTokenStatEnabled: true,
   ModelPrice: '',
+  GPTImagePrice: '{}',
   ModelRatio: '',
   CacheRatio: '',
   CreateCacheRatio: '',

@@ -126,3 +126,54 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 		})
 	}
 }
+
+func TestModelPriceHelperGPTImageUsesConfiguredResolutionTier(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	saved := ratio_setting.GPTImagePrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGPTImagePriceByJSONString(saved))
+	})
+	require.NoError(t, ratio_setting.UpdateGPTImagePriceByJSONString(
+		`{"gpt-image-2":{"1k":0.04,"2k":0.08,"4k":0.16}}`,
+	))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-image-2",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}
+	priceData, err := ModelPriceHelper(ctx, info, 100, &types.TokenCountMeta{
+		ImageSizeTier: "2k",
+		BillingRatios: map[string]float64{"n": 2},
+	})
+
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.Equal(t, 0.08, priceData.ModelPrice)
+	require.Equal(t, 80000, priceData.QuotaToPreConsume)
+	require.Equal(t, 2.0, priceData.OtherRatios["n"])
+}
+
+func TestModelPriceHelperGPTImageRejectsUnconfiguredModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	saved := ratio_setting.GPTImagePrice2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateGPTImagePriceByJSONString(saved))
+	})
+	require.NoError(t, ratio_setting.UpdateGPTImagePriceByJSONString(
+		`{"gpt-image-1":{"1k":0.04,"2k":0.08,"4k":0.16}}`,
+	))
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "default")
+	_, err := ModelPriceHelper(ctx, &relaycommon.RelayInfo{
+		OriginModelName: "gpt-image-2",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}, 100, &types.TokenCountMeta{ImageSizeTier: "4k"})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "4k")
+}

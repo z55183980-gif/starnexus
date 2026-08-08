@@ -5772,6 +5772,18 @@
     "Generate authorization URL": "Tạo URL ủy quyền",
     "Regenerate authorization URL": "Tạo lại URL ủy quyền",
     "Authorization URL": "URL ủy quyền",
-    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Tạo URL ủy quyền, sao chép và mở trong trình duyệt, rồi dán URL gọi lại hoặc mã vào bên dưới."
+    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Tạo URL ủy quyền, sao chép và mở trong trình duyệt, rồi dán URL gọi lại hoặc mã vào bên dưới.",
+    "1K price": "Giá 1K",
+    "2K price": "Giá 2K",
+    "4K price": "Giá 4K",
+    "Additional GPT Image model": "Mô hình GPT Image bổ sung",
+    "Complete all 1K, 2K, and 4K prices for each enabled model.": "Hãy nhập đầy đủ giá 1K, 2K và 4K cho từng mô hình được bật.",
+    "Configure independent USD prices per generated image. The selected 1K, 2K, or 4K price is multiplied by the returned image count and group ratio.": "Cấu hình giá USD độc lập cho mỗi ảnh được tạo. Giá 1K, 2K hoặc 4K đã chọn sẽ được nhân với số ảnh trả về và hệ số nhóm.",
+    "GPT Image prices": "Giá GPT Image",
+    "GPT Image prices must be non-negative numbers.": "Giá GPT Image phải là số không âm.",
+    "GPT Image resolution pricing": "Định giá GPT Image theo độ phân giải",
+    "Model name must start with gpt-image-": "Tên mô hình phải bắt đầu bằng gpt-image-",
+    "Save GPT Image prices": "Lưu giá GPT Image",
+    "{{tier}} price for {{model}}": "Giá {{tier}} cho {{model}}"
   }
 }

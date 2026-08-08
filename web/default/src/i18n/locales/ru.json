@@ -5772,6 +5772,18 @@
     "Generate authorization URL": "Создать URL авторизации",
     "Regenerate authorization URL": "Создать URL авторизации снова",
     "Authorization URL": "URL авторизации",
-    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Создайте URL авторизации, скопируйте и откройте его в браузере, затем вставьте URL обратного вызова или код ниже."
+    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Создайте URL авторизации, скопируйте и откройте его в браузере, затем вставьте URL обратного вызова или код ниже.",
+    "1K price": "Цена 1K",
+    "2K price": "Цена 2K",
+    "4K price": "Цена 4K",
+    "Additional GPT Image model": "Дополнительная модель GPT Image",
+    "Complete all 1K, 2K, and 4K prices for each enabled model.": "Укажите цены 1K, 2K и 4K для каждой включённой модели.",
+    "Configure independent USD prices per generated image. The selected 1K, 2K, or 4K price is multiplied by the returned image count and group ratio.": "Настройте отдельные цены в USD за одно созданное изображение. Выбранная цена 1K, 2K или 4K умножается на количество возвращённых изображений и коэффициент группы.",
+    "GPT Image prices": "Цены GPT Image",
+    "GPT Image prices must be non-negative numbers.": "Цены GPT Image должны быть неотрицательными числами.",
+    "GPT Image resolution pricing": "Цены GPT Image по разрешению",
+    "Model name must start with gpt-image-": "Имя модели должно начинаться с gpt-image-",
+    "Save GPT Image prices": "Сохранить цены GPT Image",
+    "{{tier}} price for {{model}}": "Цена {{tier}} для {{model}}"
   }
 }

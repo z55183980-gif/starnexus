@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -122,4 +123,24 @@ func TestOpenaiImageJSONAsStreamHandlerUsesEditEventType(t *testing.T) {
 	require.Contains(t, body, "event: image_edit.completed")
 	require.Contains(t, body, `"type":"image_edit.completed"`)
 	require.NotContains(t, body, "event: image_generation.completed")
+}
+
+func TestUpdateOpenAIImageTierPriceUsesReturnedSize(t *testing.T) {
+	require.NoError(t, ratio_setting.UpdateGPTImagePriceByJSONString(`{"gpt-image-2":{"1k":0.04,"2k":0.08,"4k":0.16}}`))
+	t.Cleanup(func() { _ = ratio_setting.UpdateGPTImagePriceByJSONString("{}") })
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-image-2",
+		PriceData: types.PriceData{
+			UsePrice:   true,
+			ModelPrice: 0.04,
+		},
+	}
+	updateOpenAIImageTierPrice(info, []byte(`{"size":"3840x2160"}`))
+	require.Equal(t, 0.16, info.PriceData.ModelPrice)
+	require.Equal(t, ratio_setting.GPTImageTier4K, info.PriceData.ImageSizeTier)
+
+	updateOpenAIImageTierPrice(info, []byte(`{"data":[{"size":"1024x1024"},{"size":"2048x2048"}]}`))
+	require.Equal(t, 0.16, info.PriceData.ModelPrice, "a later smaller result must not downgrade the settled tier")
+	require.Equal(t, ratio_setting.GPTImageTier4K, info.PriceData.ImageSizeTier)
 }

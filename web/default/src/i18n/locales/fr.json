@@ -5772,6 +5772,18 @@
     "Generate authorization URL": "Générer l'URL d'autorisation",
     "Regenerate authorization URL": "Régénérer l'URL d'autorisation",
     "Authorization URL": "URL d'autorisation",
-    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Générez l'URL d'autorisation, copiez-la et ouvrez-la dans votre navigateur, puis collez l'URL de rappel ou le code ci-dessous."
+    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Générez l'URL d'autorisation, copiez-la et ouvrez-la dans votre navigateur, puis collez l'URL de rappel ou le code ci-dessous.",
+    "1K price": "Prix 1K",
+    "2K price": "Prix 2K",
+    "4K price": "Prix 4K",
+    "Additional GPT Image model": "Modèle GPT Image supplémentaire",
+    "Complete all 1K, 2K, and 4K prices for each enabled model.": "Renseignez les prix 1K, 2K et 4K pour chaque modèle activé.",
+    "Configure independent USD prices per generated image. The selected 1K, 2K, or 4K price is multiplied by the returned image count and group ratio.": "Configurez des prix indépendants en USD par image générée. Le prix 1K, 2K ou 4K sélectionné est multiplié par le nombre d’images renvoyées et le coefficient du groupe.",
+    "GPT Image prices": "Prix GPT Image",
+    "GPT Image prices must be non-negative numbers.": "Les prix GPT Image doivent être des nombres positifs ou nuls.",
+    "GPT Image resolution pricing": "Tarification GPT Image par résolution",
+    "Model name must start with gpt-image-": "Le nom du modèle doit commencer par gpt-image-",
+    "Save GPT Image prices": "Enregistrer les prix GPT Image",
+    "{{tier}} price for {{model}}": "Prix {{tier}} pour {{model}}"
   }
 }

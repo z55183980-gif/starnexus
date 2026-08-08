@@ -5772,6 +5772,18 @@
     "Generate authorization URL": "生成授权链接",
     "Regenerate authorization URL": "重新生成授权链接",
     "Authorization URL": "授权链接",
-    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "生成授权链接，复制后在浏览器中打开，再将回调地址或授权码粘贴到下方。"
+    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "生成授权链接，复制后在浏览器中打开，再将回调地址或授权码粘贴到下方。",
+    "1K price": "1K 价格",
+    "2K price": "2K 价格",
+    "4K price": "4K 价格",
+    "Additional GPT Image model": "其他 GPT Image 模型",
+    "Complete all 1K, 2K, and 4K prices for each enabled model.": "请为每个启用的模型完整填写 1K、2K 和 4K 价格。",
+    "Configure independent USD prices per generated image. The selected 1K, 2K, or 4K price is multiplied by the returned image count and group ratio.": "为每张生成图片分别配置美元价格。系统会将选中的 1K、2K 或 4K 价格乘以实际返回的图片数量和分组倍率。",
+    "GPT Image prices": "GPT Image 价格",
+    "GPT Image prices must be non-negative numbers.": "GPT Image 价格必须是非负数。",
+    "GPT Image resolution pricing": "GPT Image 分辨率定价",
+    "Model name must start with gpt-image-": "模型名称必须以 gpt-image- 开头",
+    "Save GPT Image prices": "保存 GPT Image 价格",
+    "{{tier}} price for {{model}}": "{{model}} 的 {{tier}} 价格"
   }
 }

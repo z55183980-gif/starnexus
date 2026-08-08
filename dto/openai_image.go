@@ -162,8 +162,38 @@ func (i *ImageRequest) GetTokenCountMeta() *types.TokenCountMeta {
 		CombineText:     i.Prompt,
 		MaxTokens:       1584,
 		ImagePriceRatio: sizeRatio * qualityRatio,
+		ImageSizeTier:   normalizeImageSizeTier(i.Size),
 		BillingRatios:   map[string]float64{"n": float64(imageN)},
 	}
+}
+
+func normalizeImageSizeTier(size string) string {
+	normalized := strings.ToLower(strings.TrimSpace(size))
+	switch normalized {
+	case "1k":
+		return "1k"
+	case "", "auto", "default", "2k":
+		return "2k"
+	case "4k":
+		return "4k"
+	}
+	parts := strings.Split(normalized, "x")
+	if len(parts) != 2 {
+		return ""
+	}
+	width := common.String2Int(strings.TrimSpace(parts[0]))
+	height := common.String2Int(strings.TrimSpace(parts[1]))
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	maxDimension := common.Max(width, height)
+	if maxDimension <= 1024 {
+		return "1k"
+	}
+	if maxDimension <= 2048 {
+		return "2k"
+	}
+	return "4k"
 }
 
 func (i *ImageRequest) IsStream(c *gin.Context) bool {

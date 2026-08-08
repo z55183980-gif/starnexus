@@ -5772,6 +5772,18 @@
     "Generate authorization URL": "Generate authorization URL",
     "Regenerate authorization URL": "Regenerate authorization URL",
     "Authorization URL": "Authorization URL",
-    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below."
+    "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.": "Generate the authorization URL, copy and open it in your browser, then paste the callback URL or code below.",
+    "1K price": "1K price",
+    "2K price": "2K price",
+    "4K price": "4K price",
+    "Additional GPT Image model": "Additional GPT Image model",
+    "Complete all 1K, 2K, and 4K prices for each enabled model.": "Complete all 1K, 2K, and 4K prices for each enabled model.",
+    "Configure independent USD prices per generated image. The selected 1K, 2K, or 4K price is multiplied by the returned image count and group ratio.": "Configure independent USD prices per generated image. The selected 1K, 2K, or 4K price is multiplied by the returned image count and group ratio.",
+    "GPT Image prices": "GPT Image prices",
+    "GPT Image prices must be non-negative numbers.": "GPT Image prices must be non-negative numbers.",
+    "GPT Image resolution pricing": "GPT Image resolution pricing",
+    "Model name must start with gpt-image-": "Model name must start with gpt-image-",
+    "Save GPT Image prices": "Save GPT Image prices",
+    "{{tier}} price for {{model}}": "{{tier}} price for {{model}}"
   }
 }
