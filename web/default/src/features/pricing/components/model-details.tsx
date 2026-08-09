@@ -23,6 +23,7 @@ import { ArrowLeft, Code2, HeartPulse, Info, Timer } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
@@ -62,6 +63,10 @@ import { parseTags } from '../lib/filters'
 import { getAvailableGroups, isTokenBasedModel } from '../lib/model-helpers'
 import { inferModelMetadata } from '../lib/model-metadata'
 import { formatFixedPrice, formatGroupPrice } from '../lib/price'
+import {
+  getSpecialPricingKind,
+  getSpecialPricingTypeLabel,
+} from '../lib/special-price'
 import type {
   Modality,
   ModelCapability,
@@ -74,6 +79,7 @@ import { ModelDetailsApi, ModelDetailsProviderInfo } from './model-details-api'
 import { ModalityIcons } from './model-details-modalities'
 import { ModelDetailsPerformance } from './model-details-performance'
 import { ModelDetailsQuickStats } from './model-details-quick-stats'
+import { SpecialPricingMatrix } from './special-pricing'
 
 // ----------------------------------------------------------------------------
 // Local UI helpers
@@ -276,6 +282,9 @@ function ModelHeader(props: { model: PricingModel }) {
     model.billing_mode === 'tiered_expr' &&
     Boolean(model.billing_expr) &&
     getDynamicPricingTiers(model).length === 0
+  const specialPricingLabel = isDynamicPricingModel(model)
+    ? null
+    : getSpecialPricingTypeLabel(model)
 
   return (
     <header className='pb-4'>
@@ -299,10 +308,18 @@ function ModelHeader(props: { model: PricingModel }) {
         )}
         <span className='text-muted-foreground/30'>·</span>
         <span className='text-muted-foreground/70'>
-          {model.quota_type === QUOTA_TYPE_VALUES.TOKEN
-            ? t('Token-based')
-            : t('Per Request')}
+          {specialPricingLabel
+            ? t(specialPricingLabel)
+            : model.quota_type === QUOTA_TYPE_VALUES.TOKEN
+              ? t('Token-based')
+              : t('Per Request')}
         </span>
+        {specialPricingLabel && (
+          <>
+            <span className='text-muted-foreground/30'>·</span>
+            <Badge variant='outline'>{t('Request-dependent pricing')}</Badge>
+          </>
+        )}
         {model.billing_mode === 'tiered_expr' && model.billing_expr && (
           <>
             <span className='text-muted-foreground/30'>·</span>
@@ -358,6 +375,7 @@ function PriceSection(props: {
     usdExchangeRate: props.usdExchangeRate,
     groupRatioMultiplier: 1,
   })
+  const specialPricingKind = getSpecialPricingKind(props.model)
 
   const primaryPriceTypes: { label: string; type: PriceType }[] = [
     { label: t('Input'), type: 'input' },
@@ -396,6 +414,22 @@ function PriceSection(props: {
         props.model.audio_completion_ratio != null,
     },
   ]
+
+  if (specialPricingKind && !dynamicSummary) {
+    return (
+      <section>
+        <SectionTitle>{t('Base Price')}</SectionTitle>
+        <SpecialPricingMatrix
+          model={props.model}
+          tokenUnit={props.tokenUnit}
+          showRechargePrice={props.showRechargePrice}
+          priceRate={props.priceRate}
+          usdExchangeRate={props.usdExchangeRate}
+          groupRatioMultiplier={1}
+        />
+      </section>
+    )
+  }
 
   if (dynamicSummary) {
     if (dynamicSummary.isSpecialExpression) {
@@ -643,6 +677,43 @@ function GroupPricingSection(props: {
 
   const thClass =
     'text-muted-foreground py-2 text-[10px] font-medium tracking-wider uppercase'
+
+  if (
+    getSpecialPricingKind(props.model) &&
+    !isDynamicPricingModel(props.model)
+  ) {
+    return (
+      <section>
+        <SectionTitle>{t('Pricing by Group')}</SectionTitle>
+        <AutoGroupChain model={props.model} autoGroups={props.autoGroups} />
+        <div className='flex flex-col gap-3'>
+          {availableGroups.map((group) => {
+            const ratio = props.groupRatio[group] || 1
+            return (
+              <div key={group} className='overflow-hidden rounded-lg border'>
+                <div className='bg-muted/20 flex items-center justify-between gap-3 border-b px-3 py-2'>
+                  <GroupBadge group={group} size='sm' />
+                  <span className='text-muted-foreground font-mono text-xs'>
+                    {ratio}x
+                  </span>
+                </div>
+                <div className='p-3'>
+                  <SpecialPricingMatrix
+                    model={props.model}
+                    tokenUnit={props.tokenUnit}
+                    showRechargePrice={showRechargePrice}
+                    priceRate={props.priceRate}
+                    usdExchangeRate={props.usdExchangeRate}
+                    groupRatioMultiplier={ratio}
+                  />
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </section>
+    )
+  }
 
   if (isDynamicPricingModel(props.model)) {
     const dynamicTiers = getDynamicPricingTiers(props.model)

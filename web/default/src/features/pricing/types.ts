@@ -53,6 +53,10 @@ export type PricingModel = {
   billing_mode?: string
   /** Raw expression describing dynamic / tiered billing */
   billing_expr?: string
+  /** GPT Image USD-per-image prices keyed by 1k/2k/4k output tier. */
+  gpt_image_price?: Record<string, number>
+  /** Seedance USD-per-million token prices keyed by output resolution. */
+  video_token_price?: Record<string, VideoTokenTierPrice>
   /** Pricing version returned by backend, useful for cache busting */
   pricing_version?: string
   /**
@@ -69,6 +73,11 @@ export type PricingModel = {
   input_modalities?: Modality[]
   output_modalities?: Modality[]
   capabilities?: ModelCapability[]
+}
+
+export type VideoTokenTierPrice = {
+  base: number
+  with_video: number
 }
 
 /** Input/output modalities supported by a model. */

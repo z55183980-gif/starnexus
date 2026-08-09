@@ -96,6 +96,7 @@ import {
   RoutingNodeNetworkTraffic,
   RoutingNodeResourceOverview,
 } from './node-monitor-view'
+import { NodeAlertsPanel } from './node-alerts-panel'
 
 const emptyNode: RoutingNodeInput = {
   key: '',
@@ -412,6 +413,7 @@ export function NodeRoutingSettingsSection() {
       </SectionPageLayout.Actions>
 
       <SectionPageLayout.Content>
+        <NodeAlertsPanel />
         {nodesQuery.isLoading ? (
           <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4'>
             {Array.from({ length: 4 }).map((_, index) => (

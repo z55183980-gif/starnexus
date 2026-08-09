@@ -102,6 +102,17 @@ export function filterByEndpointType(
  * Get model price for sorting
  */
 function getModelPrice(model: PricingModel): number {
+  const gptImagePrices = Object.values(model.gpt_image_price || {}).filter(
+    (price) => Number.isFinite(price)
+  )
+  if (gptImagePrices.length > 0) return Math.min(...gptImagePrices)
+  const videoPrices = Object.values(model.video_token_price || {}).flatMap(
+    (tier) => [tier.base, tier.with_video]
+  )
+  const validVideoPrices = videoPrices.filter(
+    (price) => Number.isFinite(price) && price > 0
+  )
+  if (validVideoPrices.length > 0) return Math.min(...validVideoPrices)
   return model.quota_type === 0 ? model.model_ratio : model.model_price || 0
 }
 

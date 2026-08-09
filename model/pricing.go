@@ -17,26 +17,28 @@ import (
 )
 
 type Pricing struct {
-	ModelName              string                  `json:"model_name"`
-	Description            string                  `json:"description,omitempty"`
-	Icon                   string                  `json:"icon,omitempty"`
-	Tags                   string                  `json:"tags,omitempty"`
-	VendorID               int                     `json:"vendor_id,omitempty"`
-	QuotaType              int                     `json:"quota_type"`
-	ModelRatio             float64                 `json:"model_ratio"`
-	ModelPrice             float64                 `json:"model_price"`
-	OwnerBy                string                  `json:"owner_by"`
-	CompletionRatio        float64                 `json:"completion_ratio"`
-	CacheRatio             *float64                `json:"cache_ratio,omitempty"`
-	CreateCacheRatio       *float64                `json:"create_cache_ratio,omitempty"`
-	ImageRatio             *float64                `json:"image_ratio,omitempty"`
-	AudioRatio             *float64                `json:"audio_ratio,omitempty"`
-	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"`
-	EnableGroup            []string                `json:"enable_groups"`
-	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
-	BillingMode            string                  `json:"billing_mode,omitempty"`
-	BillingExpr            string                  `json:"billing_expr,omitempty"`
-	PricingVersion         string                  `json:"pricing_version,omitempty"`
+	ModelName              string                             `json:"model_name"`
+	Description            string                             `json:"description,omitempty"`
+	Icon                   string                             `json:"icon,omitempty"`
+	Tags                   string                             `json:"tags,omitempty"`
+	VendorID               int                                `json:"vendor_id,omitempty"`
+	QuotaType              int                                `json:"quota_type"`
+	ModelRatio             float64                            `json:"model_ratio"`
+	ModelPrice             float64                            `json:"model_price"`
+	OwnerBy                string                             `json:"owner_by"`
+	CompletionRatio        float64                            `json:"completion_ratio"`
+	CacheRatio             *float64                           `json:"cache_ratio,omitempty"`
+	CreateCacheRatio       *float64                           `json:"create_cache_ratio,omitempty"`
+	ImageRatio             *float64                           `json:"image_ratio,omitempty"`
+	AudioRatio             *float64                           `json:"audio_ratio,omitempty"`
+	AudioCompletionRatio   *float64                           `json:"audio_completion_ratio,omitempty"`
+	EnableGroup            []string                           `json:"enable_groups"`
+	SupportedEndpointTypes []constant.EndpointType            `json:"supported_endpoint_types"`
+	BillingMode            string                             `json:"billing_mode,omitempty"`
+	BillingExpr            string                             `json:"billing_expr,omitempty"`
+	GPTImagePrice          ratio_setting.GPTImageModelPrice   `json:"gpt_image_price,omitempty"`
+	VideoTokenPrice        ratio_setting.VideoTokenModelPrice `json:"video_token_price,omitempty"`
+	PricingVersion         string                             `json:"pricing_version,omitempty"`
 }
 
 type PricingVendor struct {
@@ -307,15 +309,22 @@ func updatePricing() {
 			pricing.Tags = meta.Tags
 			pricing.VendorID = meta.VendorID
 		}
-		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
-		if findPrice {
-			pricing.ModelPrice = modelPrice
-			pricing.QuotaType = 1
+		if !attachSpecialPricing(&pricing, model) {
+			modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
+			if findPrice {
+				pricing.ModelPrice = modelPrice
+				pricing.QuotaType = 1
+			} else {
+				modelRatio, _, _ := ratio_setting.GetModelRatio(model)
+				pricing.ModelRatio = modelRatio
+				pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
+				pricing.QuotaType = 0
+			}
 		} else {
-			modelRatio, _, _ := ratio_setting.GetModelRatio(model)
-			pricing.ModelRatio = modelRatio
-			pricing.CompletionRatio = ratio_setting.GetCompletionRatio(model)
-			pricing.QuotaType = 0
+			// GPT Image defaults to the 2K/auto tier for older clients that only
+			// understand the legacy fixed-price field.
+			pricing.ModelPrice = pricing.GPTImagePrice[ratio_setting.GPTImageTier2K]
+			pricing.QuotaType = 1
 		}
 		if cacheRatio, ok := ratio_setting.GetCacheRatio(model); ok {
 			pricing.CacheRatio = &cacheRatio
@@ -359,6 +368,34 @@ func updatePricing() {
 	modelEnableGroupsLock.Unlock()
 
 	lastGetPricingTime = time.Now()
+}
+
+func attachSpecialPricing(pricing *Pricing, modelName string) bool {
+	if videoPrice, ok := ratio_setting.GetVideoTokenModelPrice(modelName); ok && len(videoPrice) > 0 {
+		pricing.VideoTokenPrice = make(ratio_setting.VideoTokenModelPrice, len(videoPrice))
+		for tier, price := range videoPrice {
+			pricing.VideoTokenPrice[tier] = price
+		}
+	}
+
+	if !ratio_setting.IsGPTImageModel(modelName) {
+		return false
+	}
+
+	prices := make(ratio_setting.GPTImageModelPrice, 3)
+	for _, tier := range []string{
+		ratio_setting.GPTImageTier1K,
+		ratio_setting.GPTImageTier2K,
+		ratio_setting.GPTImageTier4K,
+	} {
+		price, ok := ratio_setting.GetGPTImagePrice(modelName, tier)
+		if !ok {
+			return false
+		}
+		prices[tier] = price
+	}
+	pricing.GPTImagePrice = prices
+	return true
 }
 
 func getEndpointTypesForAbility(ability AbilityWithChannel) []constant.EndpointType {

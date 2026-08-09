@@ -161,6 +161,16 @@ func UpdateRoutingNode(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if !current.MonitorEnabled {
+		alerts, resolveErr := model.ResolveRoutingNodeAlertsForNode(current.Id, c.GetInt("id"))
+		if resolveErr != nil {
+			common.ApiError(c, resolveErr)
+			return
+		}
+		for i := range alerts {
+			publishRoutingNodeAlert(&alerts[i])
+		}
+	}
 	if routingChanged {
 		service.TriggerUserNodeRoutingReconcile()
 	}

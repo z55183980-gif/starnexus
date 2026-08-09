@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
+	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	openairelay "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -30,6 +33,8 @@ import (
 	"github.com/tidwall/gjson"
 	"gorm.io/gorm"
 )
+
+var responsesWSTestEntityID atomic.Int64
 
 func newResponsesWSTestPair(t *testing.T) (*websocket.Conn, *websocket.Conn, func()) {
 	t.Helper()
@@ -820,6 +825,130 @@ func TestResponsesWSUpstreamFailureReplaysOnceBeforeDownstreamEvents(t *testing.
 	session.wg.Wait()
 }
 
+func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
+	newTurn := func(t *testing.T, event string) (*responsesWebSocketTurn, *types.NewAPIError) {
+		t.Helper()
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
+		turn := &responsesWebSocketTurn{
+			ctx:                ctx,
+			info:               info,
+			accumulator:        openairelay.NewResponsesEventAccumulator(),
+			originalRequest:    &dto.OpenAIResponsesRequest{Model: "gpt-5"},
+			channel:            &model.Channel{Id: 2, CredentialSource: constant.ChannelCredentialSourceAccountPool},
+			upstreamMode:       model.UpstreamOpenAIWSModeContextPool,
+			upstreamEvent:      true,
+			upstreamEventCount: 1,
+			failoverStartedAt:  time.Now(),
+		}
+		turn.setReplayState([]byte(`{"type":"response.create","model":"gpt-5"}`), func() (*websocket.Conn, *http.Response, error) {
+			return nil, nil, errors.New("not called by eligibility check")
+		})
+		_, err := turn.accumulator.Consume(ctx, info, []byte(event))
+		require.NoError(t, err)
+		return turn, responsesWSTerminalAPIError(turn)
+	}
+
+	capacityEvent := `{"type":"response.failed","response":{"id":"resp_capacity","status":"failed","error":{"code":"server_error","message":"Selected model is at capacity. Please try a different model."}}}`
+	overloadEvent := `{"type":"response.failed","response":{"id":"resp_overload","status":"failed","error":{"code":"server_error","message":"Our servers are currently overloaded. Please try again later."}}}`
+
+	t.Run("capacity signature", func(t *testing.T) {
+		turn, apiErr := newTurn(t, capacityEvent)
+		require.Equal(t, 529, apiErr.StatusCode)
+		require.True(t, shouldRetryResponsesWSCapacity(turn, apiErr))
+	})
+	t.Run("observed overload signature", func(t *testing.T) {
+		turn, apiErr := newTurn(t, overloadEvent)
+		require.Equal(t, 529, apiErr.StatusCode)
+		require.True(t, shouldRetryResponsesWSCapacity(turn, apiErr))
+	})
+
+	tests := []struct {
+		name   string
+		event  string
+		mutate func(*responsesWebSocketTurn, *types.NewAPIError)
+	}{
+		{
+			name:  "rate limit",
+			event: `{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"Too many requests"}}}`,
+		},
+		{
+			name:  "generic error even if status is forced to 529",
+			event: `{"type":"response.failed","response":{"error":{"code":"server_error","message":"Internal server error"}}}`,
+			mutate: func(_ *responsesWebSocketTurn, apiErr *types.NewAPIError) {
+				apiErr.StatusCode = 529
+			},
+		},
+		{
+			name:  "terminal error envelope",
+			event: `{"type":"error","error":{"code":"server_error","message":"Selected model is at capacity"}}`,
+		},
+		{
+			name:  "second upstream frame",
+			event: capacityEvent,
+			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
+				turn.upstreamEventCount = 2
+			},
+		},
+		{
+			name:  "reported usage",
+			event: `{"type":"response.failed","response":{"error":{"code":"server_error","message":"Selected model is at capacity"},"usage":{"input_tokens":1,"total_tokens":1}}}`,
+		},
+		{
+			name:  "non account pool channel",
+			event: capacityEvent,
+			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
+				turn.channel.CredentialSource = constant.ChannelCredentialSourceKey
+			},
+		},
+		{
+			name:  "http bridge mode",
+			event: capacityEvent,
+			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
+				turn.upstreamMode = model.UpstreamOpenAIWSModeHTTPBridge
+			},
+		},
+		{
+			name:  "capacity retry already consumed",
+			event: capacityEvent,
+			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
+				turn.capacityRetryCount = 1
+			},
+		},
+		{
+			name:  "another replay already consumed",
+			event: capacityEvent,
+			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
+				turn.replayCount = 1
+			},
+		},
+		{
+			name:  "outside retry window",
+			event: capacityEvent,
+			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
+				turn.failoverStartedAt = time.Now().Add(-responsesWSCapacityRetryMaxAge - time.Second)
+			},
+		},
+		{
+			name:  "missing replay state",
+			event: capacityEvent,
+			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
+				turn.setReplayState(nil, nil)
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			turn, apiErr := newTurn(t, test.event)
+			if test.mutate != nil {
+				test.mutate(turn, apiErr)
+			}
+			require.False(t, shouldRetryResponsesWSCapacity(turn, apiErr))
+		})
+	}
+}
+
 func TestResponsesWSPreviousResponseNotFoundReplaysAsFullCreate(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()
@@ -1315,4 +1444,173 @@ func TestResponsesWSSSERetriesAnotherLocalAccountBeforeVisibleEvent(t *testing.T
 	require.Contains(t, []string{"Bearer local-key-one", "Bearer local-key-two"}, firstAuthorization)
 	require.Contains(t, []string{"Bearer local-key-one", "Bearer local-key-two"}, secondAuthorization)
 	session.close()
+}
+
+func TestResponsesWSCapacityFailureRetriesOnceOnAnotherLocalAccount(t *testing.T) {
+	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+
+	var connections atomic.Int32
+	authorizations := make(chan string, 2)
+	requestBodies := make(chan []byte, 2)
+	serverErrors := make(chan error, 2)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connectionNumber := connections.Add(1)
+		authorizations <- r.Header.Get("Authorization")
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			serverErrors <- err
+			return
+		}
+		defer conn.Close()
+		_, body, err := conn.ReadMessage()
+		if err != nil {
+			serverErrors <- err
+			return
+		}
+		requestBodies <- body
+		if connectionNumber == 1 {
+			err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.failed","response":{"id":"resp_capacity","status":"failed","error":{"code":"server_error","message":"Our servers are currently overloaded. Please try again later."}}}`))
+			if err != nil {
+				serverErrors <- err
+			}
+			return
+		}
+		if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.created","response":{"id":"resp_retried"}}`)); err != nil {
+			serverErrors <- err
+			return
+		}
+		for {
+			if _, _, err = conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	dsn := fmt.Sprintf("file:responses_ws_capacity_retry_%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{}, &model.UpstreamAccountPool{}, &model.UpstreamAccount{},
+		&model.UpstreamAccountPoolMember{}, &model.UpstreamProxy{}, &model.UpstreamAccountEvent{},
+	))
+	originalDB := model.DB
+	model.DB = db
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	t.Cleanup(func() {
+		model.DB = originalDB
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+	})
+	t.Setenv("UPSTREAM_ACCOUNT_ALLOW_LOCAL_LEASES", "true")
+	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	keyringJSON, err := common.Marshal(map[string]string{"1": key})
+	require.NoError(t, err)
+	t.Setenv("UPSTREAM_ACCOUNT_CREDENTIAL_KEYS", string(keyringJSON))
+	t.Setenv("UPSTREAM_ACCOUNT_ACTIVE_KEY_VERSION", "1")
+
+	entityBaseID := int(responsesWSTestEntityID.Add(10)) + 1_000_000
+	pool := model.UpstreamAccountPool{
+		Id:   entityBaseID,
+		Name: "openai-native-ws", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey, Status: constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, service.CreateUpstreamAccountPool(&pool))
+	for index, candidate := range []struct {
+		name string
+		key  string
+	}{{name: "native-account-one", key: "native-key-one"}, {name: "native-account-two", key: "native-key-two"}} {
+		input := service.UpstreamAccountCreateInput{
+			Account: model.UpstreamAccount{
+				Id:   entityBaseID + index + 1,
+				Name: candidate.name, Platform: constant.UpstreamPlatformOpenAI,
+				Type:        constant.UpstreamAccountTypeAPIKey,
+				Extra:       `{"openai_apikey_responses_websockets_v2_mode":"ctx_pool"}`,
+				Concurrency: 1, Priority: 50, Weight: 1,
+				Status: constant.UpstreamStatusActive, Schedulable: true,
+			},
+			Credentials: map[string]any{"api_key": candidate.key, "base_url": upstream.URL},
+			PoolIds:     []int{pool.Id},
+		}
+		require.NoError(t, service.CreateUpstreamAccount(&input))
+	}
+
+	selectedChannel := &model.Channel{
+		Id: entityBaseID + 3, Type: constant.ChannelTypeOpenAI, Name: "native-local-pool",
+		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
+	}
+	baseCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	baseCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	turnCtx, cancel := newResponsesWSTurnContext(baseCtx, "gpt-5")
+	require.Nil(t, middleware.SetupContextForSelectedChannel(turnCtx, selectedChannel, "gpt-5"))
+	initialAccountID := common.GetContextKeyInt(turnCtx, constant.ContextKeyUpstreamAccountId)
+	require.Positive(t, initialAccountID)
+
+	request := &dto.OpenAIResponsesRequest{Model: "gpt-5"}
+	info := relaycommon.GenRelayInfoOpenAI(turnCtx, nil)
+	info.IsStream = true
+	info.RelayMode = relayconstant.RelayModeResponses
+	info.RelayFormat = types.RelayFormatOpenAIResponses
+	info.RequestURLPath = "/v1/responses"
+	prepared, adaptor, apiErr := relay.PrepareResponsesWebSocketRequest(turnCtx, info, request, false)
+	require.Nil(t, apiErr)
+	upstreamConn, resp, err := relaychannel.DoResponsesWssRequest(adaptor, turnCtx, info)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	require.NoError(t, err)
+
+	turn := &responsesWebSocketTurn{
+		ctx: turnCtx, info: info, accumulator: openairelay.NewResponsesEventAccumulator(),
+		originalRequest: request, upstreamMode: model.UpstreamOpenAIWSModeContextPool,
+		channel: selectedChannel, requestDispatched: true, accountID: initialAccountID,
+		failoverStartedAt: time.Now(), cancel: cancel,
+	}
+	turn.setReplayState(prepared, func() (*websocket.Conn, *http.Response, error) {
+		return relaychannel.DoResponsesWssRequest(adaptor, turnCtx, info)
+	})
+	upstreamConnection := newResponsesWSUpstreamConnection(upstreamConn)
+	session := &responsesWebSocketSession{
+		baseCtx: baseCtx, client: clientServer, upstream: upstreamConnection,
+		channel: selectedChannel, activeTurn: turn, lockedAccountID: initialAccountID,
+		lockedWSMode: model.UpstreamOpenAIWSModeContextPool, closed: make(chan struct{}),
+	}
+	go session.readUpstream(upstreamConnection)
+	require.NoError(t, upstreamConn.WriteMessage(websocket.TextMessage, prepared))
+
+	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
+	messageType, downstream, err := clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_retried"}}`, string(downstream))
+	require.Equal(t, int32(2), connections.Load())
+	require.Equal(t, 1, turn.capacityRetryCount)
+	require.Equal(t, 1, turn.replayCount)
+	require.NotEqual(t, initialAccountID, turn.accountID)
+
+	firstAuthorization := <-authorizations
+	secondAuthorization := <-authorizations
+	require.NotEqual(t, firstAuthorization, secondAuthorization)
+	require.Contains(t, []string{"Bearer native-key-one", "Bearer native-key-two"}, firstAuthorization)
+	require.Contains(t, []string{"Bearer native-key-one", "Bearer native-key-two"}, secondAuthorization)
+	firstBody := <-requestBodies
+	secondBody := <-requestBodies
+	require.JSONEq(t, string(firstBody), string(secondBody))
+	select {
+	case serverErr := <-serverErrors:
+		require.NoError(t, serverErr)
+	default:
+	}
+
+	session.mu.Lock()
+	session.activeTurn = nil
+	session.mu.Unlock()
+	session.close()
+	session.wg.Wait()
 }

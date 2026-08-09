@@ -17,6 +17,7 @@ type UserSetting struct {
 	BillingPreference                string  `json:"billing_preference,omitempty"`                   // BillingPreference 扣费策略（订阅/钱包）
 	Language                         string  `json:"language,omitempty"`                             // Language 用户语言偏好 (zh, en)
 	ReadLoginAnnouncementIds         []int   `json:"read_login_announcement_ids,omitempty"`          // 已读的登录弹窗公告 id 列表
+	ReadRoutingNodeAlertEventId      int64   `json:"read_routing_node_alert_event_id,omitempty"`     // 已读的最新节点告警事件 id
 	ContextAutoCompactEnabled        bool    `json:"context_auto_compact_enabled,omitempty"`         // 是否自动压缩超长上下文
 	ContextAutoCompactMode           string  `json:"context_auto_compact_mode,omitempty"`            // 上下文压缩模式
 	ContextAutoCompactTriggerK       int     `json:"context_auto_compact_trigger_k,omitempty"`       // 触发阈值，单位 K tokens

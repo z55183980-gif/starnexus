@@ -7,6 +7,7 @@ published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -105,6 +106,7 @@ export function GPTImagePriceSettings({
 }: GPTImagePriceSettingsProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const queryClient = useQueryClient()
   const [drafts, setDrafts] = useState<PriceDraftMap>(() =>
     parsePrices(defaultValue)
   )
@@ -155,6 +157,7 @@ export function GPTImagePriceSettings({
         key: OPTION_KEY,
         value: JSON.stringify(prices),
       })
+      await queryClient.invalidateQueries({ queryKey: ['pricing'] })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Invalid price'
       if (
@@ -169,7 +172,7 @@ export function GPTImagePriceSettings({
         toast.error(t('Invalid price'))
       }
     }
-  }, [drafts, t, updateOption])
+  }, [drafts, queryClient, t, updateOption])
 
   return (
     <div className='flex flex-col gap-4'>

@@ -31,8 +31,13 @@ import {
 import { parseTags } from '../lib/filters'
 import { isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
+import {
+  getSpecialPricingKind,
+  getSpecialPricingTypeLabel,
+} from '../lib/special-price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelPerfBadge, type ModelPerfBadgeData } from './model-perf-badge'
+import { SpecialPricingSummary } from './special-pricing'
 
 export interface ModelCardProps {
   model: PricingModel
@@ -73,6 +78,12 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         groupRatioMultiplier: getDynamicDisplayGroupRatio(props.model),
       })
     : null
+  const specialPricingKind = isDynamicPricing
+    ? null
+    : getSpecialPricingKind(props.model)
+  const specialPricingTypeLabel = isDynamicPricing
+    ? null
+    : getSpecialPricingTypeLabel(props.model)
 
   const primaryGroup = groups[0]
   const bottomTags = [...endpoints.slice(0, 2), ...tags.slice(0, 2)]
@@ -138,6 +149,14 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
                     {t('Dynamic Pricing')}
                   </span>
                 )
+              ) : specialPricingKind ? (
+                <SpecialPricingSummary
+                  model={props.model}
+                  tokenUnit={tokenUnit}
+                  showRechargePrice={showRechargePrice}
+                  priceRate={priceRate}
+                  usdExchangeRate={usdExchangeRate}
+                />
               ) : isTokenBased ? (
                 <>
                   <span className='text-muted-foreground whitespace-nowrap'>
@@ -235,7 +254,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             </span>
           )}
           <span className='text-muted-foreground text-xs font-medium'>
-            {isTokenBased ? t('Token-based') : t('Per Request')}
+            {specialPricingTypeLabel
+              ? t(specialPricingTypeLabel)
+              : isTokenBased
+                ? t('Token-based')
+                : t('Per Request')}
           </span>
           {isDynamicPricing && (
             <StatusBadge
@@ -254,9 +277,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
               {item}
             </span>
           ))}
-          <span className='text-muted-foreground/50 text-xs'>
-            {tokenUnitLabel}
-          </span>
+          {specialPricingKind !== 'gpt-image' && (
+            <span className='text-muted-foreground/50 text-xs'>
+              {tokenUnitLabel}
+            </span>
+          )}
           {hiddenCount > 0 && (
             <span className='text-muted-foreground/40 text-xs'>
               +{hiddenCount}

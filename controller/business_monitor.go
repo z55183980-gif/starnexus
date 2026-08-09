@@ -77,6 +77,8 @@ func StreamBusinessMonitorLogs(c *gin.Context) {
 					eventName = "business-monitor-alert"
 				case "concurrency":
 					eventName = "business-monitor-concurrency"
+				case "node-alert":
+					eventName = "business-monitor-node-alert"
 				}
 			}
 			if _, err = fmt.Fprintf(c.Writer, "id: %s\nevent: %s\ndata: %s\n\n", message.ID, eventName, payload); err != nil {

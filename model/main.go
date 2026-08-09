@@ -293,6 +293,9 @@ func migrateDB() error {
 		&RoutingNodeMonitorStatus{},
 		&RoutingNodeMonitorNetworkSample{},
 		&RoutingNodeMonitorEnrollment{},
+		&RoutingNodeAlertRule{},
+		&RoutingNodeAlertState{},
+		&RoutingNodeAlertEvent{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
@@ -331,6 +334,9 @@ func migrateDB() error {
 		return err
 	}
 	if err := EnsureDefaultRoutingNodes(); err != nil {
+		return err
+	}
+	if err := EnsureDefaultRoutingNodeAlertRules(); err != nil {
 		return err
 	}
 	if !userConcurrencyColumnExists {
@@ -390,6 +396,9 @@ func migrateDBFast() error {
 		{&RoutingNodeMonitorStatus{}, "RoutingNodeMonitorStatus"},
 		{&RoutingNodeMonitorNetworkSample{}, "RoutingNodeMonitorNetworkSample"},
 		{&RoutingNodeMonitorEnrollment{}, "RoutingNodeMonitorEnrollment"},
+		{&RoutingNodeAlertRule{}, "RoutingNodeAlertRule"},
+		{&RoutingNodeAlertState{}, "RoutingNodeAlertState"},
+		{&RoutingNodeAlertEvent{}, "RoutingNodeAlertEvent"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},
@@ -456,6 +465,9 @@ func migrateDBFast() error {
 		}
 	}
 	if err := EnsureDefaultRoutingNodes(); err != nil {
+		return err
+	}
+	if err := EnsureDefaultRoutingNodeAlertRules(); err != nil {
 		return err
 	}
 	if !userConcurrencyColumnExists {

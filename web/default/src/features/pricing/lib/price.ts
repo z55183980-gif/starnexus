@@ -55,7 +55,7 @@ export function stripTrailingZeros(formatted: string): string {
 /**
  * Find minimum group ratio from enabled groups
  */
-function getMinGroupRatio(
+export function getMinGroupRatio(
   enableGroups: string[],
   groupRatio: Record<string, number>
 ): number {
@@ -147,7 +147,7 @@ function hasRatio(value: number | null | undefined): boolean {
  *    - formatCurrencyFromUSD(0.571) → 0.571 × 7 = ¥4 ✓
  *    - Normal price: ¥7, Recharge price: ¥4 (cheaper!)
  */
-function applyRechargeRate(
+export function applyRechargeRate(
   price: number,
   showWithRecharge: boolean,
   priceRate: number,
@@ -155,6 +155,36 @@ function applyRechargeRate(
 ): number {
   if (!showWithRecharge) return price
   return (price * priceRate) / usdExchangeRate
+}
+
+export function getModelMinGroupRatio(model: PricingModel): number {
+  return getMinGroupRatio(
+    Array.isArray(model.enable_groups) ? model.enable_groups : [],
+    model.group_ratio || {}
+  )
+}
+
+/** Format an absolute USD price used by request-dependent pricing tables. */
+export function formatDirectPrice(
+  priceInUSD: number,
+  groupRatio = 1,
+  tokenUnit: TokenUnit | null = null,
+  showWithRecharge = false,
+  priceRate = 1,
+  usdExchangeRate = 1
+): string {
+  const adjusted = applyRechargeRate(
+    priceInUSD * groupRatio,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+  const price = tokenUnit ? adjusted / TOKEN_UNIT_DIVISORS[tokenUnit] : adjusted
+  return formatCurrencyFromUSD(price, {
+    digitsLarge: 4,
+    digitsSmall: 6,
+    abbreviate: false,
+  })
 }
 
 /**

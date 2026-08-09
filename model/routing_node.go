@@ -52,6 +52,7 @@ type RoutingNodeWithCount struct {
 	BindingCount      int64                     `json:"binding_count"`
 	MonitorConfigured bool                      `json:"monitor_configured"`
 	MonitorStatus     *RoutingNodeMonitorStatus `json:"monitor_status,omitempty"`
+	AlertSummary      *RoutingNodeAlertSummary  `json:"alert_summary,omitempty"`
 }
 
 type RoutingNodeBoundUser struct {
@@ -103,6 +104,9 @@ func ListRoutingNodes(includeDisabled bool) ([]RoutingNodeWithCount, error) {
 		})
 	}
 	if err := attachRoutingNodeMonitorStatuses(result); err != nil {
+		return nil, err
+	}
+	if err := attachRoutingNodeAlertSummaries(result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -232,6 +236,14 @@ func DeleteRoutingNode(id int) error {
 		}
 		if err := tx.Where("node_id = ?", node.Id).Delete(&RoutingNodeMonitorNetworkSample{}).Error; err != nil {
 			return err
+		}
+		if tx.Migrator().HasTable(&RoutingNodeAlertState{}) {
+			if err := tx.Where("node_id = ?", node.Id).Delete(&RoutingNodeAlertEvent{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("node_id = ?", node.Id).Delete(&RoutingNodeAlertState{}).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Delete(&node).Error
 	})

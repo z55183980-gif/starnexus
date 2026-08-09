@@ -202,7 +202,7 @@ func SubmitRoutingNodeMonitorReport(token string, report *RoutingNodeMonitorRepo
 		return err
 	}
 	now := common.GetTimestamp()
-	return model.SaveRoutingNodeMonitorStatus(&model.RoutingNodeMonitorStatus{
+	status := &model.RoutingNodeMonitorStatus{
 		NodeId:                          node.Id,
 		NodeName:                        strings.TrimSpace(report.NodeName),
 		CPUUsage:                        report.CPUUsage,
@@ -237,7 +237,16 @@ func SubmitRoutingNodeMonitorReport(token string, report *RoutingNodeMonitorRepo
 		AppVersion:                      strings.TrimSpace(report.AppVersion),
 		ReportedAt:                      now,
 		UpdatedAt:                       now,
-	})
+	}
+	if err := model.SaveRoutingNodeMonitorStatus(status); err != nil {
+		return err
+	}
+	if common.IsMasterNode {
+		if err := evaluateRoutingNodeMonitorAlerts(node, status); err != nil {
+			common.SysLog("routing node alert evaluation failed: " + err.Error())
+		}
+	}
+	return nil
 }
 
 func validateRoutingNodeMonitorReport(report *RoutingNodeMonitorReport) error {

@@ -42,6 +42,9 @@ import {
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { type SidebarData } from '@/components/layout/types'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
+import { useRoutingNodeAlertUnread } from '@/features/node-routing/use-routing-node-alert-unread'
 
 /**
  * Root navigation groups for the application sidebar.
@@ -51,6 +54,10 @@ import { type SidebarData } from '@/components/layout/types'
  */
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const { unreadCount } = useRoutingNodeAlertUnread(
+    userRole === ROLE.SUPER_ADMIN
+  )
 
   return {
     navGroups: [
@@ -176,6 +183,8 @@ export function useSidebarData(): SidebarData {
             url: '/routing-management',
             icon: Route,
             rootOnly: true,
+            unread: unreadCount > 0,
+            unreadLabel: t('Unread node alerts'),
           },
           {
             title: t('Channels'),

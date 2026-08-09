@@ -1,12 +1,110 @@
 import { api } from '@/lib/api'
 import type {
   RoutingNode,
+  RoutingNodeAlertEvent,
+  RoutingNodeAlertRule,
+  RoutingNodeAlertState,
+  RoutingNodeAlertUnreadSummary,
   RoutingNodeBoundUsersResponse,
   RoutingNodeInput,
   RoutingNodeMonitorEnrollment,
   RoutingNodeMonitorSharedEnrollment,
   RoutingNodesResponse,
 } from './types'
+
+interface RoutingNodeAlertResponse {
+  success: boolean
+  message?: string
+  data?: RoutingNodeAlertState
+}
+
+interface RoutingNodeAlertUnreadResponse {
+  success: boolean
+  message?: string
+  data?: RoutingNodeAlertUnreadSummary
+}
+
+export async function getRoutingNodeAlertUnreadSummary(): Promise<RoutingNodeAlertUnreadResponse> {
+  const res = await api.get('/api/node-routing/alerts/unread', {
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
+  return res.data
+}
+
+export async function markRoutingNodeAlertsRead(): Promise<RoutingNodeAlertUnreadResponse> {
+  const res = await api.post(
+    '/api/node-routing/alerts/read',
+    undefined,
+    { skipBusinessError: true, skipErrorHandler: true } as Record<
+      string,
+      unknown
+    >
+  )
+  return res.data
+}
+
+export async function getRoutingNodeAlerts(params?: {
+  status?: string
+  severity?: string
+  node_id?: number
+  limit?: number
+}): Promise<{ success: boolean; message?: string; data?: RoutingNodeAlertState[] }> {
+  const res = await api.get('/api/node-routing/alerts', { params })
+  return res.data
+}
+
+export async function getRoutingNodeAlertRules(): Promise<{
+  success: boolean
+  message?: string
+  data?: RoutingNodeAlertRule[]
+}> {
+  const res = await api.get('/api/node-routing/alert-rules')
+  return res.data
+}
+
+export async function getRoutingNodeAlertEvents(
+  id: number,
+  limit = 50
+): Promise<{ success: boolean; message?: string; data?: RoutingNodeAlertEvent[] }> {
+  const res = await api.get(`/api/node-routing/alerts/${id}/events`, {
+    params: { limit },
+  })
+  return res.data
+}
+
+export async function acknowledgeRoutingNodeAlert(
+  id: number
+): Promise<RoutingNodeAlertResponse> {
+  const res = await api.post(
+    `/api/node-routing/alerts/${id}/acknowledge`,
+    undefined,
+    { skipBusinessError: true, skipErrorHandler: true } as Record<string, unknown>
+  )
+  return res.data
+}
+
+export async function silenceRoutingNodeAlert(
+  id: number,
+  seconds: number
+): Promise<RoutingNodeAlertResponse> {
+  const res = await api.post(
+    `/api/node-routing/alerts/${id}/silence`,
+    { seconds },
+    { skipBusinessError: true, skipErrorHandler: true } as Record<string, unknown>
+  )
+  return res.data
+}
+
+export async function resolveRoutingNodeAlert(
+  id: number
+): Promise<RoutingNodeAlertResponse> {
+  const res = await api.post(
+    `/api/node-routing/alerts/${id}/resolve`,
+    undefined,
+    { skipBusinessError: true, skipErrorHandler: true } as Record<string, unknown>
+  )
+  return res.data
+}
 
 export async function getRoutingNodes(
   includeDisabled = false

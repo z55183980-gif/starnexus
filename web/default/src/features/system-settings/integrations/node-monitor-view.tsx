@@ -107,6 +107,12 @@ function getRoutingNodeMonitorState(node: RoutingNode): MonitorState {
 
 export function RoutingNodeMonitorBadge({ node }: { node: RoutingNode }) {
   const { t } = useTranslation()
+  if (node.alert_summary?.critical_count) {
+    return <Badge variant='destructive'>{t('Critical alert')}</Badge>
+  }
+  if (node.alert_summary?.warning_count) {
+    return <Badge variant='warning'>{t('Warning alert')}</Badge>
+  }
   const state = getRoutingNodeMonitorState(node)
   const config = {
     disabled: { label: t('Monitoring disabled'), variant: 'secondary' },

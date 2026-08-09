@@ -10,9 +10,87 @@ export interface RoutingNode {
   monitor_enabled: boolean
   monitor_configured: boolean
   monitor_status?: RoutingNodeMonitorStatus
+  alert_summary?: RoutingNodeAlertSummary
   binding_count: number
   created_at: number
   updated_at: number
+}
+
+export interface RoutingNodeAlertSummary {
+  health_state: 'healthy' | 'warning' | 'critical'
+  active_count: number
+  warning_count: number
+  critical_count: number
+  silenced_count: number
+  highest_severity: '' | 'warning' | 'critical'
+}
+
+export type RoutingNodeAlertStatus =
+  | 'normal'
+  | 'firing'
+  | 'acknowledged'
+  | 'resolved'
+
+export type RoutingNodeAlertSeverity = 'warning' | 'critical'
+
+export interface RoutingNodeAlertState {
+  id: number
+  node_id: number
+  node_key: string
+  node_name: string
+  rule_key: string
+  metric: string
+  status: RoutingNodeAlertStatus
+  severity: RoutingNodeAlertSeverity
+  current_value: number
+  peak_value: number
+  warning_threshold: number
+  critical_threshold: number
+  consecutive_breaches: number
+  consecutive_recoveries: number
+  first_seen_at: number
+  last_seen_at: number
+  triggered_at: number
+  resolved_at: number
+  acknowledged_by: number
+  acknowledged_at: number
+  silenced_until: number
+  occurrence_count: number
+  created_at: number
+  updated_at: number
+}
+
+export interface RoutingNodeAlertRule {
+  id: number
+  key: string
+  name: string
+  metric: string
+  warning_threshold: number
+  critical_threshold: number
+  recovery_threshold: number
+  trigger_count: number
+  recovery_count: number
+  enabled: boolean
+  sort: number
+}
+
+export interface RoutingNodeAlertEvent {
+  id: number
+  state_id: number
+  node_id: number
+  rule_key: string
+  event_type: string
+  severity: RoutingNodeAlertSeverity
+  value: number
+  threshold: number
+  actor_id: number
+  created_at: number
+}
+
+export interface RoutingNodeAlertUnreadSummary {
+  unread_count: number
+  latest_event_id: number
+  last_read_event_id: number
 }
 
 export interface RoutingNodeInput {

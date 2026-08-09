@@ -38,6 +38,7 @@ import {
   SidebarGroup,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -117,6 +118,19 @@ function NavBadge({ children }: { children: ReactNode }) {
   return <Badge className='px-1 py-0 text-xs'>{children}</Badge>
 }
 
+function NavUnreadDot({ label }: { label: string }) {
+  return (
+    <SidebarMenuBadge aria-label={label} title={label}>
+      <Badge
+        variant='destructive'
+        className='bg-destructive text-destructive-foreground size-2 rounded-full p-0'
+      >
+        <span className='sr-only'>{label}</span>
+      </Badge>
+    </SidebarMenuBadge>
+  )
+}
+
 /**
  * Sidebar menu link item
  */
@@ -133,6 +147,9 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
         <span>{item.title}</span>
         {item.badge && <NavBadge>{item.badge}</NavBadge>}
       </SidebarMenuButton>
+      {item.unread && (
+        <NavUnreadDot label={item.unreadLabel || item.title} />
+      )}
     </SidebarMenuItem>
   )
 }

@@ -420,8 +420,9 @@ export function RatioSettingsCard({
         const apiKey = apiKeyMap[key as string] || (key as string)
         await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
       }
+      await queryClient.invalidateQueries({ queryKey: ['pricing'] })
     },
-    [updateOption]
+    [queryClient, updateOption]
   )
 
   const saveGroupRatios = useCallback(

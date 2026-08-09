@@ -39,7 +39,12 @@ import {
   formatRequestPrice,
   stripTrailingZeros,
 } from '../lib/price'
+import {
+  getSpecialPricingKind,
+  getSpecialPricingTypeLabel,
+} from '../lib/special-price'
 import type { PricingModel, TokenUnit } from '../types'
+import { SpecialPricingSummary } from './special-pricing'
 
 // ----------------------------------------------------------------------------
 // Pricing Table Columns
@@ -139,10 +144,20 @@ export function usePricingColumns(
       meta: { label: t('Type') },
       header: t('Type'),
       cell: ({ row }) => {
+        const isDynamicPricing =
+          row.original.billing_mode === 'tiered_expr' &&
+          Boolean(row.original.billing_expr)
+        const specialLabel = isDynamicPricing
+          ? null
+          : getSpecialPricingTypeLabel(row.original)
         const isTokenBased = row.original.quota_type === QUOTA_TYPE_VALUES.TOKEN
         return (
           <span className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
-            {isTokenBased ? t('Token') : t('Request')}
+            {specialLabel
+              ? t(specialLabel)
+              : isTokenBased
+                ? t('Token')
+                : t('Request')}
           </span>
         )
       },
@@ -212,6 +227,20 @@ export function usePricingColumns(
                     count: dynamicSummary.tierCount,
                   })}`}
               </div>
+            </div>
+          )
+        }
+
+        if (getSpecialPricingKind(model)) {
+          return (
+            <div className='flex min-w-[220px] flex-wrap items-baseline gap-x-3 gap-y-1 text-xs'>
+              <SpecialPricingSummary
+                model={model}
+                tokenUnit={tokenUnit}
+                showRechargePrice={showRechargePrice}
+                priceRate={priceRate}
+                usdExchangeRate={usdExchangeRate}
+              />
             </div>
           )
         }
@@ -317,6 +346,10 @@ export function usePricingColumns(
               </div>
             </div>
           )
+        }
+
+        if (getSpecialPricingKind(model)) {
+          return <span className='text-muted-foreground/30 text-xs'>—</span>
         }
 
         const isTokenBased = isTokenBasedModel(model)
