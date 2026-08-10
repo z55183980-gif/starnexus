@@ -42,6 +42,7 @@ type UpstreamAccountView struct {
 type UpstreamAccountMetadata struct {
 	Email                      string                        `json:"email,omitempty"`
 	PlanType                   string                        `json:"plan_type,omitempty"`
+	SubscriptionExpiresAt      string                        `json:"subscription_expires_at,omitempty"`
 	PrivacyMode                string                        `json:"privacy_mode,omitempty"`
 	CompactMode                string                        `json:"compact_mode,omitempty"`
 	CompactSupported           bool                          `json:"compact_supported"`
@@ -1768,6 +1769,7 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 		metadata.VertexLocation = upstreamCredentialMapString(credentials, "location")
 		metadata.Email = upstreamCredentialMapString(credentials, "email")
 		metadata.PlanType = upstreamCredentialMapString(credentials, "plan_type")
+		metadata.SubscriptionExpiresAt = upstreamCredentialMapString(credentials, "subscription_expires_at")
 		if metadata.PlanType == "" {
 			metadata.PlanType = upstreamCredentialMapString(credentials, "plan")
 		}

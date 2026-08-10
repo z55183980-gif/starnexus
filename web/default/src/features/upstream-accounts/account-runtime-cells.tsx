@@ -197,7 +197,25 @@ function expiryLabel(value?: number | null) {
 }
 
 export function AccountIdentityCell({ account }: { account: UpstreamAccount }) {
+  const { t } = useTranslation()
   const email = account.metadata.email?.trim()
+  const subscriptionExpiresAt = account.metadata.subscription_expires_at?.trim()
+  const subscriptionExpiry = subscriptionExpiresAt
+    ? new Date(subscriptionExpiresAt)
+    : null
+  const formattedSubscriptionExpiry =
+    subscriptionExpiry && !Number.isNaN(subscriptionExpiry.getTime())
+      ? subscriptionExpiry.toLocaleDateString()
+      : ''
+  const subscriptionDaysRemaining = subscriptionExpiry
+    ? Math.ceil((subscriptionExpiry.getTime() - Date.now()) / 86_400_000)
+    : null
+  const subscriptionExpiryVariant =
+    subscriptionDaysRemaining !== null && subscriptionDaysRemaining <= 3
+      ? 'destructive'
+      : subscriptionDaysRemaining !== null && subscriptionDaysRemaining <= 7
+        ? 'warning'
+        : 'success'
 
   return (
     <div className='min-w-24 space-y-1'>
@@ -217,6 +235,15 @@ export function AccountIdentityCell({ account }: { account: UpstreamAccount }) {
         >
           {email}
         </div>
+      ) : null}
+      {formattedSubscriptionExpiry ? (
+        <Badge
+          variant={subscriptionExpiryVariant}
+          className='h-auto rounded-md px-1.5 py-0 text-[10px]'
+          title={subscriptionExpiresAt}
+        >
+          {t('Subscription expires {{date}}', { date: formattedSubscriptionExpiry })}
+        </Badge>
       ) : null}
     </div>
   )

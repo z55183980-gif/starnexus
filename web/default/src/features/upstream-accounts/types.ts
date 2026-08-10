@@ -117,6 +117,7 @@ export interface UpstreamAccount {
   metadata: {
     email?: string
     plan_type?: string
+    subscription_expires_at?: string
     privacy_mode?: string
     compact_mode?: string
     compact_supported: boolean

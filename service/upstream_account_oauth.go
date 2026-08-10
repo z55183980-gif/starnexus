@@ -232,6 +232,7 @@ func CompleteUpstreamAccountOAuth(ctx context.Context, input UpstreamOAuthComple
 			"last_refresh": time.Now().Format(time.RFC3339), "expired": tokenResult.ExpiresAt.Format(time.RFC3339),
 		}
 		expiresAt = tokenResult.ExpiresAt.Unix()
+		enrichUpstreamOpenAICredentials(ctx, credentials, proxyURL)
 	case constant.UpstreamPlatformAnthropic:
 		tokenResult, exchangeErr := ExchangeClaudeAuthorizationCodeWithProxy(ctx, code, verifier, state, proxyURL)
 		if exchangeErr != nil {
@@ -345,6 +346,7 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 			}
 		}
 		expiresAt = result.ExpiresAt.Unix()
+		enrichUpstreamOpenAICredentials(ctx, credentials, proxyURL)
 	case constant.UpstreamPlatformAnthropic:
 		result, refreshErr := RefreshClaudeOAuthTokenWithProxy(ctx, refreshToken, proxyURL)
 		if refreshErr != nil {
