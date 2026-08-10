@@ -28,6 +28,7 @@ func recordResponsesWSNativeFailure(turn *responsesWebSocketTurn, apiErr *types.
 	proxyID := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamProxyId)
 	service.ApplyUpstreamAccountError(accountID, proxyID, apiErr)
 	recordUpstreamRequestEvent(turn.ctx, "request_error", "error", service.UpstreamAccountErrorSummary(apiErr))
+	recordRelayErrorLog(turn.ctx, apiErr)
 }
 
 func responsesWSTerminalAPIError(turn *responsesWebSocketTurn) *types.NewAPIError {

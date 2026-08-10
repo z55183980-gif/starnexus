@@ -432,7 +432,6 @@ func RelayResponsesWebSocket(c *gin.Context) {
 					_ = resp.Body.Close()
 				}
 				apiErr := types.NewErrorWithStatusCode(dialErr, types.ErrorCodeDoRequestFailed, status, types.ErrOptionWithSkipRetry())
-				recordResponsesWSNativeFailure(turn, apiErr)
 				processChannelError(turn.ctx, *types.NewChannelError(selectedChannel.Id, selectedChannel.Type, selectedChannel.Name, selectedChannel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), selectedChannel.GetAutoBan()), apiErr)
 				session.clearChannel(selectedChannel)
 				session.sendTurnFailure(turn, apiErr)

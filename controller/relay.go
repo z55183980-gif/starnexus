@@ -506,6 +506,13 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
+	recordRelayErrorLog(c, err)
+}
+
+func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
+	if c == nil || err == nil {
+		return
+	}
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {
 		// 保存错误日志到mysql中
 		userId := c.GetInt("id")
@@ -546,7 +553,6 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		useTimeSeconds := int(elapsed / time.Second)
 		model.RecordErrorLog(c, userId, channelId, modelName, tokenName, err.MaskSensitiveErrorWithStatusCode(), tokenId, useTimeSeconds, elapsed.Milliseconds(), common.GetContextKeyBool(c, constant.ContextKeyIsStream), userGroup, other)
 	}
-
 }
 
 func recordUpstreamRequestEvent(c *gin.Context, eventType string, result string, message string) {
