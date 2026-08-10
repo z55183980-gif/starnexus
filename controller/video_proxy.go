@@ -54,6 +54,16 @@ func VideoProxy(c *gin.Context) {
 			fmt.Sprintf("Task is not completed yet, current status: %s", task.Status))
 		return
 	}
+	if task.ResultFile != "" {
+		file, info, cacheErr := service.OpenVideoResultCache(task.ResultFile)
+		if cacheErr == nil {
+			defer file.Close()
+			c.Header("Cache-Control", "private, max-age=86400")
+			http.ServeContent(c.Writer, c.Request, task.TaskID, info.ModTime(), file)
+			return
+		}
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Cached video unavailable for task %s; falling back to upstream", taskID))
+	}
 
 	channel, err := model.CacheGetChannel(task.ChannelId)
 	if err != nil {
@@ -88,6 +98,9 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy request")
 		return
 	}
+	if rangeHeader := c.GetHeader("Range"); rangeHeader != "" {
+		req.Header.Set("Range", rangeHeader)
+	}
 
 	switch channel.Type {
 	case constant.ChannelTypeGemini:
@@ -115,8 +128,8 @@ func VideoProxy(c *gin.Context) {
 		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
 		req.Header.Set("Authorization", "Bearer "+channel.Key)
 	default:
-		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
-		videoURL = task.GetResultURL()
+		// Prefer the private provider URL; older tasks stored it in ResultURL.
+		videoURL = task.GetUpstreamResultURL()
 	}
 
 	videoURL = strings.TrimSpace(videoURL)
@@ -162,20 +175,27 @@ func VideoProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
 		videoProxyError(c, http.StatusBadGateway, "server_error",
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
 		return
 	}
 
+	allowedResponseHeaders := map[string]bool{
+		"Content-Type": true, "Content-Length": true, "Content-Range": true,
+		"Accept-Ranges": true, "Content-Disposition": true, "Etag": true, "Last-Modified": true,
+	}
 	for key, values := range resp.Header {
+		if !allowedResponseHeaders[http.CanonicalHeaderKey(key)] {
+			continue
+		}
 		for _, value := range values {
 			c.Writer.Header().Add(key, value)
 		}
 	}
 
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+	c.Writer.Header().Set("Cache-Control", "private, max-age=86400")
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
@@ -209,7 +229,7 @@ func writeVideoDataURL(c *gin.Context, dataURL string) error {
 	}
 
 	c.Writer.Header().Set("Content-Type", mimeType)
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+	c.Writer.Header().Set("Cache-Control", "private, max-age=86400")
 	c.Writer.WriteHeader(http.StatusOK)
 	_, err = c.Writer.Write(videoBytes)
 	return err

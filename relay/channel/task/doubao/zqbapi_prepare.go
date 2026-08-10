@@ -1,11 +1,13 @@
 package doubao
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -14,6 +16,28 @@ import (
 
 func (a *TaskAdaptor) prepareZQBAPIImages(c *gin.Context, info *relaycommon.RelayInfo, body *requestPayload) error {
 	if body == nil || info == nil {
+		return nil
+	}
+	materialMode := dto.ZQBAPIMaterialModeFacePreflight
+	autoNormalize := true
+	if info.ChannelSetting.ZQBAPI != nil {
+		info.ChannelSetting.ZQBAPI.Normalize()
+		materialMode = info.ChannelSetting.ZQBAPI.MaterialMode
+		if info.ChannelSetting.ZQBAPI.AutoNormalize != nil {
+			autoNormalize = *info.ChannelSetting.ZQBAPI.AutoNormalize
+		}
+	}
+	if materialMode == dto.ZQBAPIMaterialModeOff {
+		return nil
+	}
+	if materialMode == dto.ZQBAPIMaterialModeRetryOnly {
+		if zqbapiRequestCanRetry(body) {
+			payload, marshalErr := common.Marshal(body)
+			if marshalErr != nil {
+				return fmt.Errorf("marshal ZQBAPI retry payload: %w", marshalErr)
+			}
+			c.Set(string(constant.ContextKeyZQBAPIRetryPayload), payload)
+		}
 		return nil
 	}
 	var materialConfig *zqbapiMaterialConfig
@@ -28,19 +52,27 @@ func (a *TaskAdaptor) prepareZQBAPIImages(c *gin.Context, info *relaycommon.Rela
 		}
 		inspection, err := inspectZQBAPIImage(c, source)
 		if err != nil {
+			var buildErr *zqbapiBuildError
+			if errors.As(err, &buildErr) && buildErr.Kind == zqbapiErrorInvalidImage {
+				return fmt.Errorf("inspect ZQBAPI image content[%d]: %w", index, err)
+			}
 			// Detection is an optimization. Preserve the original URL and let the
 			// provider be the final authority; its real-person error can retry once.
 			logger.LogWarn(c, fmt.Sprintf("ZQBAPI local face detection skipped content[%d]: %v", index, err))
 			continue
 		}
-		if !inspection.HasFace {
+		if inspection.Normalized && !autoNormalize {
+			return newZQBAPIBuildError(zqbapiErrorInvalidImage, "normalize", fmt.Errorf("content[%d] requires image normalization but auto normalization is disabled", index))
+		}
+		if materialMode != dto.ZQBAPIMaterialModeAlways && !inspection.HasFace {
 			continue
 		}
 		if materialConfig == nil {
-			loaded, err := loadZQBAPIMaterialConfig(info.ChannelSetting.Proxy)
-			if err != nil {
-				return err
+			loaded, loadErr := loadZQBAPIMaterialConfig(info.ChannelSetting)
+			if loadErr != nil {
+				return loadErr
 			}
+			loaded.ChannelID = info.ChannelId
 			materialConfig = &loaded
 		}
 		assetURL, err := prepareZQBAPIAsset(c.Request.Context(), *materialConfig, source, inspection)

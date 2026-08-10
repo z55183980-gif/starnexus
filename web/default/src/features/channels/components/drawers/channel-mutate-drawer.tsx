@@ -257,6 +257,12 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.thinking_to_content ||
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
+    (values.type === 61 &&
+      (values.zqbapi_material_mode !== 'face_preflight' ||
+        values.zqbapi_group_id?.trim() ||
+        values.zqbapi_project_name?.trim() ||
+        values.zqbapi_asset_group_type !== 'virtual' ||
+        values.zqbapi_auto_normalize === false)) ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -3684,6 +3690,160 @@ export function ChannelMutateDrawer({
                         />
                       )}
                     </div>
+
+                    {currentType === 61 && (
+                      <div className='flex flex-col gap-4 rounded-lg border p-4'>
+                        <SubHeading title={t('ZQBAPI material settings')} />
+
+                        <FormField
+                          control={form.control}
+                          name='zqbapi_material_mode'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {t('Automatic material mode')}
+                              </FormLabel>
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    <SelectItem value='off'>
+                                      {t('Disabled')}
+                                    </SelectItem>
+                                    <SelectItem value='retry_only'>
+                                      {t('Only after upstream rejection')}
+                                    </SelectItem>
+                                    <SelectItem value='face_preflight'>
+                                      {t('Local face preflight')}
+                                    </SelectItem>
+                                    <SelectItem value='always'>
+                                      {t('Always create material')}
+                                    </SelectItem>
+                                  </SelectGroup>
+                                </SelectContent>
+                              </Select>
+                              <FormDescription>
+                                {t(
+                                  'Controls when image references are converted into ZQBAPI material assets.'
+                                )}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <div className='grid gap-4 md:grid-cols-2'>
+                          <FormField
+                            control={form.control}
+                            name='zqbapi_group_id'
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>{t('Material Group ID')}</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder='group-xxxxxxxx'
+                                    {...field}
+                                  />
+                                </FormControl>
+                                <FormDescription>
+                                  {t(
+                                    'Leave empty to use the server environment default.'
+                                  )}
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+
+                          <FormField
+                            control={form.control}
+                            name='zqbapi_project_name'
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>{t('Material project')}</FormLabel>
+                                <FormControl>
+                                  <Input placeholder='default' {...field} />
+                                </FormControl>
+                                <FormDescription>
+                                  {t(
+                                    'Leave empty to use the server environment default.'
+                                  )}
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+
+                        <FormField
+                          control={form.control}
+                          name='zqbapi_asset_group_type'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('Material group type')}</FormLabel>
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    <SelectItem value='virtual'>
+                                      {t('Virtual person')}
+                                    </SelectItem>
+                                    <SelectItem value='real'>
+                                      {t('Real person')}
+                                    </SelectItem>
+                                  </SelectGroup>
+                                </SelectContent>
+                              </Select>
+                              <FormDescription>
+                                {t(
+                                  'A real-person group must contain material for only one authorized person.'
+                                )}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name='zqbapi_auto_normalize'
+                          render={({ field }) => (
+                            <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                              <div className='flex flex-col gap-1'>
+                                <FormLabel>
+                                  {t('Normalize images automatically')}
+                                </FormLabel>
+                                <FormDescription>
+                                  {t(
+                                    'Resize and re-encode images to satisfy material API limits before upload.'
+                                  )}
+                                </FormDescription>
+                              </div>
+                              <FormControl>
+                                <Switch
+                                  checked={field.value}
+                                  onCheckedChange={field.onChange}
+                                />
+                              </FormControl>
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    )}
 
                     {!isLocalChannel && (
                       <FormField

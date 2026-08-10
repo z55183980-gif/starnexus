@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay"
+	doubaotask "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -81,6 +83,9 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 
 func testChannel(channel *model.Channel, testModel string, endpointType string, isStream bool) testResult {
 	tik := time.Now()
+	if channel != nil && channel.Type == constant.ChannelTypeZQBAPI {
+		return testZQBAPIChannel(channel)
+	}
 	var unsupportedTestChannelTypes = []int{
 		constant.ChannelTypeMidjourney,
 		constant.ChannelTypeMidjourneyPlus,
@@ -88,7 +93,6 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		constant.ChannelTypeKling,
 		constant.ChannelTypeJimeng,
 		constant.ChannelTypeDoubaoVideo,
-		constant.ChannelTypeZQBAPI,
 		constant.ChannelTypeVidu,
 	}
 	if lo.Contains(unsupportedTestChannelTypes, channel.Type) {
@@ -527,6 +531,52 @@ func testChannel(channel *model.Channel, testModel string, endpointType string, 
 		localErr:    nil,
 		newAPIError: nil,
 	}
+}
+
+func testZQBAPIChannel(channel *model.Channel) testResult {
+	if channel == nil {
+		return testResult{localErr: errors.New("ZQBAPI channel is nil")}
+	}
+	setting := channel.GetSetting()
+	if err := doubaotask.ValidateZQBAPIMaterialConfiguration(setting); err != nil {
+		return testResult{localErr: err}
+	}
+	baseURL := strings.TrimRight(channel.GetBaseURL(), "/")
+	if baseURL == "" {
+		baseURL = strings.TrimRight(constant.ChannelBaseURLs[constant.ChannelTypeZQBAPI], "/")
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 || strings.TrimSpace(keys[0]) == "" {
+		return testResult{localErr: errors.New("ZQBAPI channel key is empty")}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/models", nil)
+	if err != nil {
+		return testResult{localErr: err}
+	}
+	request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(keys[0]))
+	request.Header.Set("Accept", "application/json")
+	client, err := service.GetHttpClientWithProxy(setting.Proxy)
+	if err != nil {
+		return testResult{localErr: err}
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return testResult{localErr: fmt.Errorf("ZQBAPI model endpoint check failed: %w", err)}
+	}
+	defer response.Body.Close()
+	responseBody, readErr := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	if readErr != nil {
+		return testResult{localErr: readErr}
+	}
+	if len(responseBody) > 1<<20 {
+		return testResult{localErr: errors.New("ZQBAPI model endpoint response exceeds 1MB")}
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return testResult{localErr: fmt.Errorf("ZQBAPI model endpoint returned HTTP %d: %s", response.StatusCode, common.MaskSensitiveInfo(strings.TrimSpace(string(responseBody))))}
+	}
+	return testResult{}
 }
 
 func attachTestBillingRequestInput(info *relaycommon.RelayInfo, request dto.Request) error {

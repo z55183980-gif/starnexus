@@ -54,6 +54,8 @@ type TaskFailureRecoverer interface {
 
 const videoSettlementFallbackAfter = 10 * time.Minute
 
+const zqbapiRecoveryLeaseTimeout = 2 * time.Minute
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -136,6 +138,9 @@ func runTaskPollingIterationSafely(ctx context.Context) {
 
 func runTaskPollingIteration(ctx context.Context) error {
 	common.SysLog("任务进度轮询开始")
+	if err := sweepStaleRetryingTasks(ctx); err != nil {
+		return err
+	}
 	if err := sweepTimedOutTasks(ctx); err != nil {
 		return err
 	}
@@ -177,6 +182,37 @@ func runTaskPollingIteration(ctx context.Context) error {
 		}
 	}
 	common.SysLog("任务进度轮询完成")
+	return nil
+}
+
+func sweepStaleRetryingTasks(ctx context.Context) error {
+	cutoff := time.Now().Add(-zqbapiRecoveryLeaseTimeout).Unix()
+	tasks, err := model.GetStaleRetryingTasks(cutoff, 100)
+	if err != nil {
+		return fmt.Errorf("query stale retrying tasks: %w", err)
+	}
+	now := time.Now().Unix()
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		reason := "ZQBAPI automatic recovery was interrupted; the task was stopped to prevent a duplicate upstream submission"
+		task.Status = model.TaskStatusFailure
+		task.Progress = taskcommon.ProgressComplete
+		task.FinishTime = now
+		task.FailReason = reason
+		task.PrivateData.ZQBAPIRetryPayload = ""
+		task.PrivateData.ZQBAPIRecoveryStartedAt = 0
+		task.PrivateData.ZQBAPIRecoveryFromStatus = ""
+		won, updateErr := task.UpdateWithStatus(model.TaskStatusRetrying)
+		if updateErr != nil {
+			logger.LogError(ctx, fmt.Sprintf("fail stale retrying task %s: %v", task.TaskID, updateErr))
+			continue
+		}
+		if won && task.Quota != 0 {
+			RefundTaskQuota(ctx, task, reason)
+		}
+	}
 	return nil
 }
 
@@ -407,14 +443,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
+		"context": ctx,
 	}, proxy)
 	if err != nil {
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
 	if err != nil {
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
+	}
+	if len(responseBody) > 2<<20 {
+		return fmt.Errorf("task response exceeds 2MB for task %s", taskId)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		return fmt.Errorf("upstream task query returned transient HTTP %d for task %s", resp.StatusCode, taskId)
 	}
 
 	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
@@ -480,6 +523,8 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 	previousPrivateData := task.PrivateData
 	task.Status = model.TaskStatusRetrying
 	task.PrivateData.ZQBAPIRetryCount++
+	task.PrivateData.ZQBAPIRecoveryStartedAt = time.Now().Unix()
+	task.PrivateData.ZQBAPIRecoveryFromStatus = string(snapshot.Status)
 	task.Progress = taskcommon.ProgressInProgress
 	won, err := task.UpdateWithStatus(snapshot.Status)
 	if err != nil {
@@ -500,12 +545,27 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 		task.FinishTime = snapshot.FinishTime
 		task.FailReason = snapshot.FailReason
 		task.PrivateData = previousPrivateData
-		task.PrivateData.ZQBAPIRetryCount = 1
+		temporary := false
+		if recoveryErr != nil {
+			var temporaryError interface{ Temporary() bool }
+			temporary = errors.As(recoveryErr, &temporaryError) && temporaryError.Temporary()
+		}
+		if temporary {
+			// The original provider task is already terminal, but materialization
+			// can safely be retried because no replacement generation was posted.
+			task.PrivateData.ZQBAPIRetryCount = 0
+		} else {
+			task.PrivateData.ZQBAPIRetryCount = 1
+		}
 		_, restoreErr := task.UpdateWithStatus(model.TaskStatusRetrying)
 		if restoreErr != nil {
 			return false, fmt.Errorf("restore task %s after recovery failure: %w", task.TaskID, restoreErr)
 		}
 		if recoveryErr != nil {
+			if temporary {
+				logger.LogWarn(ctx, fmt.Sprintf("Task %s ZQBAPI material recovery is temporarily unavailable; retry on next poll: %s", task.TaskID, recoveryErr.Error()))
+				return true, nil
+			}
 			return false, recoveryErr
 		}
 		return false, errors.New("automatic recovery returned an empty upstream task ID")
@@ -513,6 +573,8 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 
 	task.PrivateData.UpstreamTaskID = recovery.UpstreamTaskID
 	task.PrivateData.ZQBAPIRetryPayload = ""
+	task.PrivateData.ZQBAPIRecoveryStartedAt = 0
+	task.PrivateData.ZQBAPIRecoveryFromStatus = ""
 	task.Data = append(task.Data[:0], recovery.TaskData...)
 	task.FailReason = ""
 	task.Progress = taskcommon.ProgressQueued
@@ -572,6 +634,9 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 			}
 		}
 	case model.TaskStatusSuccess:
+		task.PrivateData.ZQBAPIRetryPayload = ""
+		task.PrivateData.ZQBAPIRecoveryStartedAt = 0
+		task.PrivateData.ZQBAPIRecoveryFromStatus = ""
 		if settlementPending {
 			task.Status = model.TaskStatusPendingSettlement
 			task.Progress = model.TaskProgressPendingSettlement
@@ -594,8 +659,16 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 			// data: URI (e.g. Vertex base64 encoded video) — keep in Data, not in ResultURL
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
 		} else if taskResult.Url != "" {
-			// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
-			task.PrivateData.ResultURL = taskResult.Url
+			// ZQBAPI signed result URLs are kept private behind the authenticated
+			// content proxy. This also gives the optional result archive one stable
+			// public URL independent of provider URL expiry.
+			if channel, channelErr := model.CacheGetChannel(task.ChannelId); channelErr == nil && channel.Type == constant.ChannelTypeZQBAPI {
+				task.PrivateData.UpstreamResultURL = taskResult.Url
+				task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+			} else {
+				// Direct upstream URL (e.g. Kling, Ali, Doubao, etc.)
+				task.PrivateData.ResultURL = taskResult.Url
+			}
 		} else {
 			// No URL from adaptor — construct proxy URL using public task ID
 			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
@@ -603,6 +676,9 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		task.FailReason = ""
 		shouldSettle = !settlementPending
 	case model.TaskStatusFailure:
+		task.PrivateData.ZQBAPIRetryPayload = ""
+		task.PrivateData.ZQBAPIRecoveryStartedAt = 0
+		task.PrivateData.ZQBAPIRecoveryFromStatus = ""
 		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", task.GetUpstreamTaskID()), task)
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
@@ -673,6 +749,9 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	}
 	if isDone {
 		updateTaskConsumeLogTiming(ctx, task)
+		if task.Status == model.TaskStatusSuccess {
+			archiveZQBAPIVideoResultAsync(task)
+		}
 	}
 
 	return true, nil

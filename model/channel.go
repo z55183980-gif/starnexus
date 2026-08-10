@@ -952,6 +952,11 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
+	if channel.Type == constant.ChannelTypeZQBAPI && channelParams.ZQBAPI != nil {
+		if err := channelParams.ZQBAPI.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

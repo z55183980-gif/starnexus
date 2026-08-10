@@ -79,6 +79,16 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+// TaskBuildError lets provider-specific request preparation classify failures
+// without teaching the generic task relay about individual providers. Local
+// build errors are never retried by the channel failover loop.
+type TaskBuildError interface {
+	error
+	TaskErrorCode() string
+	TaskHTTPStatus() int
+	TaskLocalError() bool
+}
+
 // TaskPreAuthorizationEstimator optionally replaces the legacy per-call task
 // reservation with a channel-specific local token estimate.
 type TaskPreAuthorizationEstimator interface {

@@ -134,6 +134,7 @@ func main() {
 	service.StartUserNodeRoutingReconcileTask()
 	service.StartRoutingNodeMonitorReporter()
 	service.StartRoutingNodeAlertEvaluator()
+	service.StartZQBAPIHousekeepingTask()
 
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {

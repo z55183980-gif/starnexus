@@ -81,6 +81,13 @@ const channelFormBaseSchema = z.object({
   pass_through_body_enabled: z.boolean().optional(),
   system_prompt: z.string().optional(),
   system_prompt_override: z.boolean().optional(),
+  zqbapi_material_mode: z
+    .enum(['off', 'retry_only', 'face_preflight', 'always'])
+    .optional(),
+  zqbapi_group_id: z.string().optional(),
+  zqbapi_project_name: z.string().optional(),
+  zqbapi_asset_group_type: z.enum(['virtual', 'real']).optional(),
+  zqbapi_auto_normalize: z.boolean().optional(),
   // Type-specific settings (stored in settings JSON)
   is_enterprise_account: z.boolean().optional(), // OpenRouter specific
   vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -216,6 +223,11 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
+  zqbapi_material_mode: 'face_preflight',
+  zqbapi_group_id: '',
+  zqbapi_project_name: '',
+  zqbapi_asset_group_type: 'virtual',
+  zqbapi_auto_normalize: true,
 }
 
 export function getChannelCreateDefaultValues(
@@ -267,6 +279,11 @@ export function transformChannelToFormDefaults(
     pass_through_body_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
+    zqbapi_material_mode: 'face_preflight' as const,
+    zqbapi_group_id: '',
+    zqbapi_project_name: '',
+    zqbapi_asset_group_type: 'virtual' as const,
+    zqbapi_auto_normalize: true,
   }
 
   if (channel.setting) {
@@ -281,6 +298,11 @@ export function transformChannelToFormDefaults(
           : parsed.pass_through_body_enabled || false,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
+        zqbapi_material_mode: parsed.zqbapi?.material_mode || 'face_preflight',
+        zqbapi_group_id: parsed.zqbapi?.group_id || '',
+        zqbapi_project_name: parsed.zqbapi?.project_name || '',
+        zqbapi_asset_group_type: parsed.zqbapi?.asset_group_type || 'virtual',
+        zqbapi_auto_normalize: parsed.zqbapi?.auto_normalize !== false,
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -414,7 +436,7 @@ export function transformChannelToFormDefaults(
  */
 function buildSettingJSON(formData: ChannelFormValues): string {
   const useAccountPool = formData.credential_source === 'local_account_pool'
-  const settingObj = {
+  const settingObj: Record<string, unknown> = {
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
     proxy: useAccountPool ? '' : formData.proxy || '',
@@ -423,6 +445,15 @@ function buildSettingJSON(formData: ChannelFormValues): string {
       : formData.pass_through_body_enabled || false,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
+  }
+  if (formData.type === 61) {
+    settingObj.zqbapi = {
+      material_mode: formData.zqbapi_material_mode || 'face_preflight',
+      group_id: formData.zqbapi_group_id?.trim() || '',
+      project_name: formData.zqbapi_project_name?.trim() || '',
+      asset_group_type: formData.zqbapi_asset_group_type || 'virtual',
+      auto_normalize: formData.zqbapi_auto_normalize !== false,
+    }
   }
   return JSON.stringify(settingObj)
 }

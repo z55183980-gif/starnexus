@@ -218,6 +218,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	// 8. 构建请求体
 	requestBody, err := adaptor.BuildRequestBody(c, info)
 	if err != nil {
+		var buildErr channel.TaskBuildError
+		if errors.As(err, &buildErr) {
+			if buildErr.TaskLocalError() {
+				return nil, service.TaskErrorWrapperLocal(err, buildErr.TaskErrorCode(), buildErr.TaskHTTPStatus())
+			}
+			return nil, service.TaskErrorWrapper(err, buildErr.TaskErrorCode(), buildErr.TaskHTTPStatus())
+		}
 		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
 	}
 
@@ -453,16 +460,24 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 		return nil, nil
 	}
 
-	resp, err := adaptor.FetchTask(baseURL, channelModel.Key, map[string]any{
+	key := channelModel.Key
+	if task.PrivateData.Key != "" {
+		key = task.PrivateData.Key
+	}
+	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
+		"context": ctx,
 	}, proxy)
 	if err != nil || resp == nil {
 		return nil, nil
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
 	if err != nil {
+		return nil, nil
+	}
+	if len(body) > 2<<20 || resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 		return nil, nil
 	}
 
@@ -471,6 +486,11 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 		return nil, nil
 	}
 	if shouldIgnoreEmptyRealtimeTaskStatus(task, ti.Status) {
+		return nil, nil
+	}
+	if recovered, recoveryErr := service.TryRecoverFailedVideoTask(ctx, adaptor, channelModel, task, ti, body); recoveryErr != nil {
+		return nil, recoveryErr
+	} else if recovered {
 		return nil, nil
 	}
 
@@ -510,7 +530,7 @@ func shouldIgnoreEmptyRealtimeTaskStatus(task *model.Task, status string) bool {
 
 func supportsRealtimeTaskFetch(channelType int) bool {
 	switch channelType {
-	case constant.ChannelTypeVertexAi, constant.ChannelTypeGemini, constant.ChannelTypeSora:
+	case constant.ChannelTypeVertexAi, constant.ChannelTypeGemini, constant.ChannelTypeSora, constant.ChannelTypeZQBAPI:
 		return true
 	default:
 		return false

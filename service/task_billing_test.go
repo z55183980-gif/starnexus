@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -705,6 +707,7 @@ func (m *usageMockAdaptor) FetchTaskUsage(string, string, string, string) (*rela
 type recoveryMockAdaptor struct {
 	mockAdaptor
 	recoverCalls int
+	recoverErr   error
 }
 
 func (m *recoveryMockAdaptor) ShouldRecoverFailedTask(*model.Task, []byte) bool {
@@ -713,8 +716,16 @@ func (m *recoveryMockAdaptor) ShouldRecoverFailedTask(*model.Task, []byte) bool 
 
 func (m *recoveryMockAdaptor) RecoverFailedTask(context.Context, *model.Channel, *model.Task, []byte) (*TaskFailureRecovery, error) {
 	m.recoverCalls++
+	if m.recoverErr != nil {
+		return nil, m.recoverErr
+	}
 	return &TaskFailureRecovery{UpstreamTaskID: "upstream-retry-1", TaskData: []byte(`{"id":"upstream-retry-1"}`)}, nil
 }
+
+type temporaryRecoveryError struct{ message string }
+
+func (e temporaryRecoveryError) Error() string   { return e.message }
+func (e temporaryRecoveryError) Temporary() bool { return true }
 
 func TestTryRecoverFailedVideoTaskResubmitsOnlyOnce(t *testing.T) {
 	truncate(t)
@@ -748,6 +759,63 @@ func TestTryRecoverFailedVideoTaskResubmitsOnlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, recovered)
 	require.Equal(t, 1, adaptor.recoverCalls)
+}
+
+func TestTryRecoverFailedVideoTaskKeepsTemporaryMaterialFailurePending(t *testing.T) {
+	truncate(t)
+	const channelID = 64
+	seedChannel(t, channelID)
+	task := makeTask(64, channelID, 0, 0, BillingSourceWallet, 0)
+	task.PrivateData.ZQBAPIRetryPayload = `{"model":"seedance","content":[]}`
+	retryPayload := task.PrivateData.ZQBAPIRetryPayload
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &recoveryMockAdaptor{recoverErr: temporaryRecoveryError{message: "material API rate limited"}}
+	recovered, err := TryRecoverFailedVideoTask(
+		context.Background(), adaptor, &model.Channel{Id: channelID}, task,
+		&relaycommon.TaskInfo{Status: model.TaskStatusFailure}, nil,
+	)
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.Equal(t, model.TaskStatusInProgress, string(task.Status))
+	require.Zero(t, task.PrivateData.ZQBAPIRetryCount)
+	require.Equal(t, retryPayload, task.PrivateData.ZQBAPIRetryPayload)
+
+	recovered, err = TryRecoverFailedVideoTask(
+		context.Background(), adaptor, &model.Channel{Id: channelID}, task,
+		&relaycommon.TaskInfo{Status: model.TaskStatusFailure}, nil,
+	)
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.Equal(t, 2, adaptor.recoverCalls)
+}
+
+func TestSweepStaleRetryingTaskRefundsExactlyOnce(t *testing.T) {
+	truncate(t)
+	const userID, tokenID, channelID = 65, 65, 65
+	const initialQuota, heldQuota, tokenRemain = 10_000, 2_000, 5_000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-stale-recovery", tokenRemain)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, heldQuota, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusRetrying
+	task.Progress = "50%"
+	task.PrivateData.ZQBAPIRecoveryStartedAt = time.Now().Add(-10 * time.Minute).Unix()
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Model(task).UpdateColumn("updated_at", time.Now().Add(-10*time.Minute).Unix()).Error)
+
+	require.NoError(t, sweepStaleRetryingTasks(context.Background()))
+	require.Equal(t, initialQuota+heldQuota, getUserQuota(t, userID))
+	require.Equal(t, tokenRemain+heldQuota, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, 1, countLogs(t))
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatusFailure, string(reloaded.Status))
+	require.Empty(t, reloaded.PrivateData.ZQBAPIRetryPayload)
+
+	require.NoError(t, sweepStaleRetryingTasks(context.Background()))
+	require.Equal(t, initialQuota+heldQuota, getUserQuota(t, userID))
+	require.EqualValues(t, 1, countLogs(t))
 }
 
 func TestApplyTaskResultFailureRefundsAfterCASWin(t *testing.T) {
@@ -809,6 +877,27 @@ func TestApplyTaskResultSuccessSettlesAfterCASWin(t *testing.T) {
 	require.Equal(t, 5, reloadedLog.UseTime)
 	require.NotNil(t, reloadedLog.UseTimeMs)
 	require.EqualValues(t, 5000, *reloadedLog.UseTimeMs)
+}
+
+func TestApplyTaskResultZQBAPIUsesStableContentProxy(t *testing.T) {
+	truncate(t)
+	const userID, channelID = 66, 66
+	seedUser(t, userID, 10_000)
+	seedChannel(t, channelID)
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channelID).Update("type", constant.ChannelTypeZQBAPI).Error)
+	task := makeTask(userID, channelID, 0, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_zqbapi_stable_result"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	upstreamURL := "https://signed.example.com/video.mp4?expires=1"
+	applied, err := ApplyTaskResult(context.Background(), &mockAdaptor{}, task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+		Url:    upstreamURL,
+	}, nil)
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, upstreamURL, task.PrivateData.UpstreamResultURL)
+	require.Equal(t, taskcommon.BuildProxyURL(task.TaskID), task.PrivateData.ResultURL)
 }
 
 func TestApplyTaskResultSoraPreAuthorizationCreatesOneFinalLog(t *testing.T) {

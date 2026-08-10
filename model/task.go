@@ -69,7 +69,10 @@ type Task struct {
 	Username   string                `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
-	Data        json.RawMessage `json:"data" gorm:"type:json"`
+	// ResultFile contains only a generated cache file name. The configured
+	// cache root remains server-side and must be shared by serving nodes.
+	ResultFile string          `json:"-" gorm:"type:varchar(255)"`
+	Data       json.RawMessage `json:"data" gorm:"type:json"`
 }
 
 func (t *Task) SetData(data any) {
@@ -99,10 +102,11 @@ func (m Properties) Value() (driver.Value, error) {
 }
 
 type TaskPrivateData struct {
-	Key            string `json:"key,omitempty"`
-	UpstreamTaskID string `json:"upstream_task_id,omitempty"` // 上游真实 task ID
-	ResultURL      string `json:"result_url,omitempty"`       // 任务成功后的结果 URL（视频地址等）
-	ConsumeLogID   int    `json:"consume_log_id,omitempty"`   // 提交时的消费日志，用于回写异步总耗时
+	Key               string `json:"key,omitempty"`
+	UpstreamTaskID    string `json:"upstream_task_id,omitempty"`    // 上游真实 task ID
+	ResultURL         string `json:"result_url,omitempty"`          // 任务成功后的结果 URL（视频地址等）
+	UpstreamResultURL string `json:"upstream_result_url,omitempty"` // 内容代理/归档使用的上游 URL
+	ConsumeLogID      int    `json:"consume_log_id,omitempty"`      // 提交时的消费日志，用于回写异步总耗时
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource  string              `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -110,8 +114,10 @@ type TaskPrivateData struct {
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
 	// ZQBAPI retry data contains only the provider request and public image URLs.
 	// It is private because prompts and source URLs must not be returned to users.
-	ZQBAPIRetryPayload string `json:"zqbapi_retry_payload,omitempty"`
-	ZQBAPIRetryCount   int    `json:"zqbapi_retry_count,omitempty"`
+	ZQBAPIRetryPayload       string `json:"zqbapi_retry_payload,omitempty"`
+	ZQBAPIRetryCount         int    `json:"zqbapi_retry_count,omitempty"`
+	ZQBAPIRecoveryStartedAt  int64  `json:"zqbapi_recovery_started_at,omitempty"`
+	ZQBAPIRecoveryFromStatus string `json:"zqbapi_recovery_from_status,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
@@ -152,6 +158,15 @@ func (t *Task) GetResultURL() string {
 		return t.PrivateData.ResultURL
 	}
 	return t.FailReason
+}
+
+// GetUpstreamResultURL returns the actual provider URL used by the
+// authenticated content proxy. Older tasks stored that URL in ResultURL.
+func (t *Task) GetUpstreamResultURL() string {
+	if t.PrivateData.UpstreamResultURL != "" {
+		return t.PrivateData.UpstreamResultURL
+	}
+	return t.GetResultURL()
 }
 
 // GenerateTaskID 生成对外暴露的 task_xxxx 格式 ID
@@ -331,6 +346,17 @@ func GetAllUnFinishSyncTasks(limit int) ([]*Task, error) {
 	return tasks, nil
 }
 
+func GetStaleRetryingTasks(cutoffUnix int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var tasks []*Task
+	err := DB.Where("status = ?", TaskStatusRetrying).
+		Where("updated_at < ?", cutoffUnix).
+		Order("updated_at").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
 func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
@@ -416,6 +442,15 @@ func (Task *Task) Update() error {
 	var err error
 	err = DB.Save(Task).Error
 	return err
+}
+
+// UpdateTaskResultFile persists the optional shared-cache reference without
+// overwriting task status, billing context, or other concurrent updates.
+func UpdateTaskResultFile(taskID int64, resultFile string) error {
+	if DB == nil || taskID == 0 {
+		return nil
+	}
+	return DB.Model(&Task{}).Where("id = ?", taskID).Update("result_file", resultFile).Error
 }
 
 // UpdateBillingSnapshot persists only fields changed by asynchronous settlement.

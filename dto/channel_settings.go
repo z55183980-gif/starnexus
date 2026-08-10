@@ -11,13 +11,63 @@ import (
 )
 
 type ChannelSettings struct {
-	ForceFormat                   bool   `json:"force_format,omitempty"`
-	ThinkingToContent             bool   `json:"thinking_to_content,omitempty"`
-	Proxy                         string `json:"proxy"`
-	PassThroughBodyEnabled        bool   `json:"pass_through_body_enabled,omitempty"`
-	AccountPassThroughBodyEnabled bool   `json:"-"`
-	SystemPrompt                  string `json:"system_prompt,omitempty"`
-	SystemPromptOverride          bool   `json:"system_prompt_override,omitempty"`
+	ForceFormat                   bool                   `json:"force_format,omitempty"`
+	ThinkingToContent             bool                   `json:"thinking_to_content,omitempty"`
+	Proxy                         string                 `json:"proxy"`
+	PassThroughBodyEnabled        bool                   `json:"pass_through_body_enabled,omitempty"`
+	AccountPassThroughBodyEnabled bool                   `json:"-"`
+	SystemPrompt                  string                 `json:"system_prompt,omitempty"`
+	SystemPromptOverride          bool                   `json:"system_prompt_override,omitempty"`
+	ZQBAPI                        *ZQBAPIChannelSettings `json:"zqbapi,omitempty"`
+}
+
+const (
+	ZQBAPIMaterialModeOff           = "off"
+	ZQBAPIMaterialModeRetryOnly     = "retry_only"
+	ZQBAPIMaterialModeFacePreflight = "face_preflight"
+	ZQBAPIMaterialModeAlways        = "always"
+)
+
+type ZQBAPIChannelSettings struct {
+	MaterialMode   string `json:"material_mode,omitempty"`
+	GroupID        string `json:"group_id,omitempty"`
+	ProjectName    string `json:"project_name,omitempty"`
+	AssetGroupType string `json:"asset_group_type,omitempty"`
+	AutoNormalize  *bool  `json:"auto_normalize,omitempty"`
+}
+
+func (s *ZQBAPIChannelSettings) Normalize() {
+	if s == nil {
+		return
+	}
+	s.MaterialMode = strings.ToLower(strings.TrimSpace(s.MaterialMode))
+	if s.MaterialMode == "" {
+		s.MaterialMode = ZQBAPIMaterialModeFacePreflight
+	}
+	s.GroupID = strings.TrimSpace(s.GroupID)
+	s.ProjectName = strings.TrimSpace(s.ProjectName)
+	s.AssetGroupType = strings.ToLower(strings.TrimSpace(s.AssetGroupType))
+	if s.AssetGroupType == "" {
+		s.AssetGroupType = "virtual"
+	}
+}
+
+func (s *ZQBAPIChannelSettings) Validate() error {
+	if s == nil {
+		return nil
+	}
+	s.Normalize()
+	switch s.MaterialMode {
+	case ZQBAPIMaterialModeOff, ZQBAPIMaterialModeRetryOnly, ZQBAPIMaterialModeFacePreflight, ZQBAPIMaterialModeAlways:
+	default:
+		return fmt.Errorf("invalid ZQBAPI material mode: %s", s.MaterialMode)
+	}
+	switch s.AssetGroupType {
+	case "virtual", "real":
+	default:
+		return fmt.Errorf("invalid ZQBAPI asset group type: %s", s.AssetGroupType)
+	}
+	return nil
 }
 
 // ShouldPassThroughBody reports whether the request format is owned by either

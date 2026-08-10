@@ -50,10 +50,11 @@ func (a *TaskAdaptor) RecoverFailedTask(ctx context.Context, channelModel *model
 	if baseURL == "" {
 		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeZQBAPI]
 	}
-	config, err := loadZQBAPIMaterialConfig(channelModel.GetSetting().Proxy)
+	config, err := loadZQBAPIMaterialConfig(channelModel.GetSetting())
 	if err != nil {
 		return nil, err
 	}
+	config.ChannelID = channelModel.Id
 
 	preparedCount := 0
 	for index := range requestBody.Content {
