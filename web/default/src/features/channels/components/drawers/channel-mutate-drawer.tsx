@@ -784,6 +784,14 @@ export function ChannelMutateDrawer({
       }
     }
 
+    // Type 61 (ZQBAPI) - use the ZQB production endpoint by default.
+    if (currentType === 61) {
+      const currentBaseUrlValue = form.getValues('base_url')
+      if (!currentBaseUrlValue || currentBaseUrlValue === '') {
+        form.setValue('base_url', 'https://ai.zqgame.com')
+      }
+    }
+
     // Type 18 (Xunfei) - set default other (version)
     if (currentType === 18) {
       const currentOther = form.getValues('other')

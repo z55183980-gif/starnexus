@@ -91,7 +91,7 @@ type responseTask struct {
 		} `json:"tool_usage"`
 	} `json:"usage"`
 	Error struct {
-		Code    string `json:"code"`
+		Code    any    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
 	CreatedAt int64 `json:"created_at"`
@@ -291,6 +291,11 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	} else {
 		info.UpstreamModelName = body.Model
 	}
+	if a.ChannelType == constant.ChannelTypeZQBAPI {
+		if err := a.prepareZQBAPIImages(c, info, body); err != nil {
+			return nil, err
+		}
+	}
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -412,6 +417,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	taskResult := relaycommon.TaskInfo{
 		Code: 0,
 	}
+	if strings.TrimSpace(resTask.Status) == "" && strings.TrimSpace(resTask.Error.Message) != "" {
+		taskResult.Status = model.TaskStatusFailure
+		taskResult.Progress = "100%"
+		taskResult.Reason = resTask.Error.Message
+		return &taskResult, nil
+	}
 
 	// Map Doubao status to internal status
 	switch resTask.Status {
@@ -458,10 +469,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
-	if dResp.Status == "failed" {
+	if dResp.Status == "failed" || (originTask.Status == model.TaskStatusFailure && dResp.Error.Message != "") {
 		openAIVideo.Error = &dto.OpenAIVideoError{
 			Message: dResp.Error.Message,
-			Code:    dResp.Error.Code,
+			Code:    fmt.Sprint(dResp.Error.Code),
 		}
 	}
 

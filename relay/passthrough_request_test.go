@@ -55,7 +55,7 @@ func TestPreparePassthroughRequestBodyAppliesAccountMappingAndChannelPolicy(t *t
 
 func TestPreparePassthroughRequestBodyKeepsExplicitChannelBypass(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	raw := `{"model":"public-model","service_tier":"priority","input":[{"type":"reasoning","id":"item_explicit_bypass"},{"role":"system","content":"preserve exactly"}]}`
+	raw := `{"model":"public-model","service_tier":"priority","input":[{"type":"reasoning","id":"item_explicit_bypass"},{"type":"message","id":"item_explicit_message","role":"assistant","content":"preserve id"},{"role":"system","content":"preserve exactly"}]}`
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(raw))
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
@@ -84,6 +84,7 @@ func TestPrepareAccountPassthroughRepairsCodexInvalidLocalItems(t *testing.T) {
 			{"type":"reasoning","id":"item_local_reasoning"},
 			{"type":"item_reference","id":"item_local_reference"},
 			{"type":"reasoning","id":"rs_valid","encrypted_content":"valid"},
+			{"type":"message","id":"item_invalid_message","role":"assistant","content":"keep message"},
 			{"type":"message","role":"user","content":{"id":"item_nested"}},
 			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"lookup","arguments":"{}"},
 			{"type":"function_call_output","call_id":"call_1","output":"ok"}
@@ -108,11 +109,13 @@ func TestPrepareAccountPassthroughRepairsCodexInvalidLocalItems(t *testing.T) {
 	data, err := io.ReadAll(body)
 	require.NoError(t, err)
 	require.True(t, gjson.GetBytes(data, "stream").Bool())
-	require.Equal(t, int64(4), gjson.GetBytes(data, "input.#").Int())
+	require.Equal(t, int64(5), gjson.GetBytes(data, "input.#").Int())
 	require.False(t, gjson.GetBytes(data, `input.#(id=="item_local_reasoning")`).Exists())
 	require.False(t, gjson.GetBytes(data, `input.#(id=="item_local_reference")`).Exists())
 	require.Equal(t, "rs_valid", gjson.GetBytes(data, "input.0.id").String())
-	require.Equal(t, "item_nested", gjson.GetBytes(data, "input.1.content.id").String())
+	require.False(t, gjson.GetBytes(data, "input.1.id").Exists())
+	require.Equal(t, "keep message", gjson.GetBytes(data, "input.1.content").String())
+	require.Equal(t, "item_nested", gjson.GetBytes(data, "input.2.content.id").String())
 	require.True(t, gjson.GetBytes(data, "custom_zero").Exists())
 	require.Zero(t, gjson.GetBytes(data, "custom_zero").Int())
 	require.True(t, gjson.GetBytes(data, "custom_false").Exists())
@@ -121,6 +124,8 @@ func TestPrepareAccountPassthroughRepairsCodexInvalidLocalItems(t *testing.T) {
 	require.True(t, exists)
 	require.Equal(t, 1, repairInfo.(map[string]interface{})["dropped_reasoning_items"])
 	require.Equal(t, 1, repairInfo.(map[string]interface{})["dropped_item_references"])
+	require.Equal(t, 1, repairInfo.(map[string]interface{})["invalid_message_ids_removed"])
+	require.Equal(t, false, repairInfo.(map[string]interface{})["upstream_validation_retry"])
 }
 
 func TestPrepareAccountPassthroughRejectsCodexRepairWithOrphanToolOutput(t *testing.T) {

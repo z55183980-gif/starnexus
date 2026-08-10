@@ -674,6 +674,13 @@ const EditChannelModal = (props) => {
             base_url: 'https://ark.cn-beijing.volces.com',
           }));
           break;
+        case 61:
+          localModels = getChannelModels(value);
+          setInputs((prevInputs) => ({
+            ...prevInputs,
+            base_url: 'https://ai.zqgame.com',
+          }));
+          break;
         default:
           localModels = getChannelModels(value);
           break;
@@ -972,6 +979,14 @@ const EditChannelModal = (props) => {
           (typeof data.base_url === 'string' && data.base_url.trim() === ''))
       ) {
         data.base_url = 'https://ark.cn-beijing.volces.com';
+      }
+
+      if (
+        data.type === 61 &&
+        (!data.base_url ||
+          (typeof data.base_url === 'string' && data.base_url.trim() === ''))
+      ) {
+        data.base_url = 'https://ai.zqgame.com';
       }
 
       initialBaseUrlRef.current = data.base_url || '';

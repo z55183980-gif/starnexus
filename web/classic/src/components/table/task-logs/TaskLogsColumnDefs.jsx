@@ -195,6 +195,7 @@ const renderStatus = (type, t) => {
         </Tag>
       );
     case 'IN_PROGRESS':
+    case 'RETRYING':
       return (
         <Tag color='blue' shape='circle' prefixIcon={<Play size={14} />}>
           {t('执行中')}

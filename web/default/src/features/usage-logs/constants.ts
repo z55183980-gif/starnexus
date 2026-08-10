@@ -179,6 +179,7 @@ export const TASK_STATUS = {
   NOT_START: 'NOT_START', // 未启动
   SUBMITTED: 'SUBMITTED', // 队列中
   IN_PROGRESS: 'IN_PROGRESS', // 执行中
+  RETRYING: 'RETRYING', // 自动修复并重试
   PENDING_SETTLEMENT: 'PENDING_SETTLEMENT', // 待结算
   SUCCESS: 'SUCCESS', // 成功
   FAILURE: 'FAILURE', // 失败
@@ -296,6 +297,7 @@ export const TASK_STATUS_MAPPINGS: Record<string, StatusMapping> = {
   [TASK_STATUS.NOT_START]: { label: 'Not Started', variant: 'neutral' },
   [TASK_STATUS.SUBMITTED]: { label: 'Queued', variant: 'yellow' },
   [TASK_STATUS.IN_PROGRESS]: { label: 'In Progress', variant: 'blue' },
+  [TASK_STATUS.RETRYING]: { label: 'In Progress', variant: 'blue' },
   [TASK_STATUS.PENDING_SETTLEMENT]: {
     label: 'Pending settlement',
     variant: 'amber',

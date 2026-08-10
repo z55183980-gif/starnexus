@@ -272,15 +272,36 @@ func TestRepairCodexInvalidLocalReasoningItemsIsTopLevelAndNarrow(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, 1, result.DroppedReasoningItems)
 	require.Zero(t, result.DroppedItemReferences)
+	require.Equal(t, 1, result.RemovedMessageIDs)
 	require.Equal(t, 2, result.FirstDroppedIndex)
+	require.Equal(t, 3, result.FirstRemovedIndex)
 	require.Equal(t, 5, result.RemainingItems)
 	require.False(t, result.HasOrphanToolOutput)
 	require.Equal(t, int64(5), gjson.GetBytes(repaired, "#").Int())
 	require.Equal(t, "item_nested", gjson.GetBytes(repaired, "0.content.id").String())
 	require.Equal(t, "rs_valid", gjson.GetBytes(repaired, "1.id").String())
-	require.Equal(t, "item_message", gjson.GetBytes(repaired, "2.id").String())
+	require.False(t, gjson.GetBytes(repaired, "2.id").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(repaired, "2.content").String())
 	require.Equal(t, "item_call", gjson.GetBytes(repaired, "3.id").String())
 	require.Equal(t, "item_tool_payload", gjson.GetBytes(repaired, "4.output.id").String())
+}
+
+func TestRepairCodexMessageIDsKeepsValidPrefixAndArrayShape(t *testing.T) {
+	t.Parallel()
+	input := json.RawMessage(`[
+		{"type":"message","id":"item_invalid","role":"assistant","content":"strip id only"},
+		{"type":"message","id":"msg_valid","role":"assistant","content":"keep id"},
+		{"type":"function_call","id":"item_call","call_id":"call_1","name":"lookup","arguments":"{}"}
+	]`)
+
+	repaired, result, err := repairCodexInvalidLocalItemIDs(input)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.RemovedMessageIDs)
+	require.Equal(t, int64(3), gjson.GetBytes(repaired, "#").Int())
+	require.False(t, gjson.GetBytes(repaired, "0.id").Exists())
+	require.Equal(t, "strip id only", gjson.GetBytes(repaired, "0.content").String())
+	require.Equal(t, "msg_valid", gjson.GetBytes(repaired, "1.id").String())
+	require.Equal(t, "item_call", gjson.GetBytes(repaired, "2.id").String())
 }
 
 func TestCodexResponsesRepairsInvalidItemReferenceWithPairedToolContext(t *testing.T) {

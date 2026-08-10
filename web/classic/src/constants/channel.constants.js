@@ -175,6 +175,11 @@ export const CHANNEL_OPTIONS = [
     label: '豆包视频',
   },
   {
+    value: 61,
+    color: 'blue',
+    label: 'ZQBAPI',
+  },
+  {
     value: 55,
     color: 'green',
     label: 'Sora',

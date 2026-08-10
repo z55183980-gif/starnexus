@@ -8,12 +8,16 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+
+	"github.com/tidwall/sjson"
 )
 
 type codexInputRepairResult struct {
 	DroppedReasoningItems int
 	DroppedItemReferences int
+	RemovedMessageIDs     int
 	FirstDroppedIndex     int
+	FirstRemovedIndex     int
 	RemainingItems        int
 	HasOrphanToolOutput   bool
 }
@@ -22,20 +26,25 @@ func (r codexInputRepairResult) DroppedItems() int {
 	return r.DroppedReasoningItems + r.DroppedItemReferences
 }
 
-// repairCodexInvalidLocalItemIDs removes only top-level Responses items that
-// carry the known client-local item_ prefix where ChatGPT's Codex backend
-// requires a provider-issued reasoning ID. It intentionally does not rewrite
-// IDs, inspect nested tool payloads, or touch other item types.
+func (r codexInputRepairResult) Modified() bool {
+	return r.DroppedItems() > 0 || r.RemovedMessageIDs > 0
+}
+
+// repairCodexInvalidLocalItemIDs removes known invalid top-level local items
+// and strips only invalid top-level message IDs. It does not rewrite IDs or
+// inspect nested tool payloads.
 func repairCodexInvalidLocalItemIDs(raw json.RawMessage) (json.RawMessage, codexInputRepairResult, error) {
-	result := codexInputRepairResult{FirstDroppedIndex: -1}
+	result := codexInputRepairResult{FirstDroppedIndex: -1, FirstRemovedIndex: -1}
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return raw, result, nil
 	}
 
 	var items []json.RawMessage
+	inputIsArray := false
 	switch trimmed[0] {
 	case '[':
+		inputIsArray = true
 		if err := common.Unmarshal(trimmed, &items); err != nil {
 			return nil, result, fmt.Errorf("repair Codex Responses input: %w", err)
 		}
@@ -50,6 +59,21 @@ func repairCodexInvalidLocalItemIDs(raw json.RawMessage) (json.RawMessage, codex
 		itemType, itemID, err := codexResponsesItemTypeAndID(item)
 		if err != nil {
 			return nil, result, fmt.Errorf("repair Codex Responses input item %d: %w", index, err)
+		}
+		// Codex requires message IDs to use its provider-issued msg prefix. Drop
+		// only the invalid ID before the first upstream request; keep the message
+		// and its array position unchanged.
+		if inputIsArray && itemType == "message" && itemID != "" && !strings.HasPrefix(itemID, "msg") {
+			repairedItem, err := sjson.DeleteBytes(item, "id")
+			if err != nil {
+				return nil, result, fmt.Errorf("repair Codex Responses message item %d: %w", index, err)
+			}
+			filtered = append(filtered, repairedItem)
+			result.RemovedMessageIDs++
+			if result.FirstRemovedIndex < 0 {
+				result.FirstRemovedIndex = index
+			}
+			continue
 		}
 		if !strings.HasPrefix(itemID, "item_") || (itemType != "reasoning" && itemType != "item_reference") {
 			filtered = append(filtered, item)
@@ -66,7 +90,7 @@ func repairCodexInvalidLocalItemIDs(raw json.RawMessage) (json.RawMessage, codex
 	}
 
 	result.RemainingItems = len(filtered)
-	if result.DroppedItems() == 0 {
+	if !result.Modified() {
 		return raw, result, nil
 	}
 	if result.DroppedItemReferences > 0 {

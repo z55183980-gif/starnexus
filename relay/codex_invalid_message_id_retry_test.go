@@ -62,6 +62,36 @@ func TestTryRepairCodexInvalidMessageIDForRetry(t *testing.T) {
 	require.False(t, TryRepairCodexInvalidMessageIDForRetry(ctx, info, apiErr))
 }
 
+func TestTryRepairCodexInvalidMessageIDForRetryMapsPostRepairIndex(t *testing.T) {
+	t.Parallel()
+	items := make([]map[string]interface{}, 0, 21)
+	for i := 0; i < 19; i++ {
+		items = append(items, map[string]interface{}{
+			"type": "reasoning",
+			"id":   "item_local_reasoning",
+		})
+	}
+	items = append(items,
+		map[string]interface{}{"type": "message", "role": "user", "content": "earlier"},
+		map[string]interface{}{
+			"type":    "message",
+			"id":      "item_rejected_message",
+			"role":    "assistant",
+			"content": "kept",
+		},
+	)
+	input, err := common.Marshal(items)
+	require.NoError(t, err)
+	request := &dto.OpenAIResponsesRequest{Input: input}
+	ctx, info := codexInvalidMessageIDTestContext(t, request)
+	apiErr := codexInvalidMessageIDTestError("Invalid 'input[1].id': 'item_rejected_message'. Expected an ID that begins with 'msg'.")
+
+	require.True(t, TryRepairCodexInvalidMessageIDForRetry(ctx, info, apiErr))
+	require.Equal(t, "item_local_reasoning", gjson.GetBytes(request.Input, "18.id").String())
+	require.False(t, gjson.GetBytes(request.Input, "20.id").Exists())
+	require.Equal(t, "kept", gjson.GetBytes(request.Input, "20.content").String())
+}
+
 func TestTryRepairCodexInvalidMessageIDForRetryRejectsNearMatches(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {

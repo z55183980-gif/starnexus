@@ -24,10 +24,10 @@ const codexInvalidMessageIDRetryContextKey = "codex_invalid_message_id_retry_app
 
 var codexInvalidMessageIDErrorPattern = regexp.MustCompile(`^Invalid 'input\[(\d+)\]\.id': '([^']+)'\. Expected an ID that begins with 'msg'\.$`)
 
-// TryRepairCodexInvalidMessageIDForRetry applies a single, reactive repair
-// only after the Codex Responses backend has rejected one exact top-level
-// message ID. It deliberately does not pre-normalize requests that upstream
-// would otherwise accept.
+// TryRepairCodexInvalidMessageIDForRetry is a one-shot fallback for an exact
+// upstream message-ID rejection. The ordinary Codex path strips these IDs
+// before sending; this fallback also accounts for earlier length-changing
+// input repair before applying an upstream input[N] index.
 func TryRepairCodexInvalidMessageIDForRetry(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
 	if c == nil || info == nil || apiErr == nil ||
 		apiErr.StatusCode != http.StatusBadRequest ||
@@ -65,14 +65,18 @@ func TryRepairCodexInvalidMessageIDForRetry(c *gin.Context, info *relaycommon.Re
 	}
 
 	var items []json.RawMessage
-	if common.Unmarshal(trimmedInput, &items) != nil || index >= len(items) {
+	if common.Unmarshal(trimmedInput, &items) != nil {
+		return false
+	}
+	targetIndex, ok := codexOriginalInputIndexForOutbound(items, index)
+	if !ok {
 		return false
 	}
 	var target struct {
 		Type string `json:"type"`
 		ID   string `json:"id"`
 	}
-	if common.Unmarshal(items[index], &target) != nil || target.Type != "message" || target.ID != rejectedID {
+	if common.Unmarshal(items[targetIndex], &target) != nil || target.Type != "message" || target.ID != rejectedID {
 		return false
 	}
 
@@ -84,12 +88,12 @@ func TryRepairCodexInvalidMessageIDForRetry(c *gin.Context, info *relaycommon.Re
 		return false
 	}
 	for itemIndex, item := range items {
-		if itemIndex != index && bytes.Contains(item, encodedID) {
+		if itemIndex != targetIndex && bytes.Contains(item, encodedID) {
 			return false
 		}
 	}
 
-	repairedInput, err := sjson.DeleteBytes(request.Input, fmt.Sprintf("%d.id", index))
+	repairedInput, err := sjson.DeleteBytes(request.Input, fmt.Sprintf("%d.id", targetIndex))
 	if err != nil {
 		return false
 	}
@@ -105,8 +109,35 @@ func TryRepairCodexInvalidMessageIDForRetry(c *gin.Context, info *relaycommon.Re
 		}
 	}
 	repairInfo["invalid_message_ids_removed"] = 1
-	repairInfo["first_removed_index"] = index
+	repairInfo["first_removed_index"] = targetIndex
 	repairInfo["upstream_validation_retry"] = true
 	c.Set("codex_input_repair_admin_info", repairInfo)
 	return true
+}
+
+// codexOriginalInputIndexForOutbound replays the only existing repair that
+// changes input length so an upstream input[N] index can be resolved safely.
+func codexOriginalInputIndexForOutbound(items []json.RawMessage, upstreamIndex int) (int, bool) {
+	if upstreamIndex < 0 {
+		return 0, false
+	}
+	outboundIndex := 0
+	for originalIndex, item := range items {
+		var envelope struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}
+		if common.Unmarshal(item, &envelope) != nil {
+			return 0, false
+		}
+		if strings.HasPrefix(envelope.ID, "item_") &&
+			(envelope.Type == "reasoning" || envelope.Type == "item_reference") {
+			continue
+		}
+		if outboundIndex == upstreamIndex {
+			return originalIndex, true
+		}
+		outboundIndex++
+	}
+	return 0, false
 }

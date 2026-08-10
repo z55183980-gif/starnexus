@@ -752,7 +752,7 @@ func RelayTask(c *gin.Context) {
 		// Native DoubaoVideo Seedance tasks expose actual video tokens only when
 		// the asynchronous task completes. Keep their estimated reservation
 		// silent as well, then write one final log from the native usage payload.
-		if relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo &&
+		if (relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo || relayInfo.ChannelType == constant.ChannelTypeZQBAPI) &&
 			isSeedanceVideoModel && !relayInfo.PriceData.UsePrice && relayInfo.PriceData.ModelRatio > 0 {
 			silentVideoPreAuth = true
 		}
@@ -774,6 +774,13 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.BillingSource = relayInfo.BillingSource
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
+		if relayInfo.ChannelType == constant.ChannelTypeZQBAPI {
+			if payload, exists := c.Get(string(constant.ContextKeyZQBAPIRetryPayload)); exists {
+				if data, ok := payload.([]byte); ok && len(data) > 0 {
+					task.PrivateData.ZQBAPIRetryPayload = string(data)
+				}
+			}
+		}
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,
 			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,

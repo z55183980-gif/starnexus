@@ -19,7 +19,7 @@ func (t TaskStatus) ToVideoStatus() string {
 	switch t {
 	case TaskStatusQueued, TaskStatusSubmitted:
 		status = dto.VideoStatusQueued
-	case TaskStatusInProgress:
+	case TaskStatusInProgress, TaskStatusRetrying:
 		status = dto.VideoStatusInProgress
 	case TaskStatusSuccess:
 		status = dto.VideoStatusCompleted
@@ -42,6 +42,7 @@ const (
 	TaskStatusFailure           = "FAILURE"
 	TaskStatusSuccess           = "SUCCESS"
 	TaskStatusPendingSettlement = "PENDING_SETTLEMENT"
+	TaskStatusRetrying          = "RETRYING"
 	TaskStatusUnknown           = "UNKNOWN"
 )
 
@@ -107,6 +108,10 @@ type TaskPrivateData struct {
 	SubscriptionId int                 `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
 	TokenId        int                 `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	BillingContext *TaskBillingContext `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
+	// ZQBAPI retry data contains only the provider request and public image URLs.
+	// It is private because prompts and source URLs must not be returned to users.
+	ZQBAPIRetryPayload string `json:"zqbapi_retry_payload,omitempty"`
+	ZQBAPIRetryCount   int    `json:"zqbapi_retry_count,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
@@ -317,7 +322,9 @@ func GetAllUnFinishSyncTasks(limit int) ([]*Task, error) {
 	var tasks []*Task
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Where("status != ?", TaskStatusFailure).Where("status != ?", TaskStatusSuccess).Limit(limit).Order("id").Find(&tasks).Error
+	err = DB.Where("progress != ?", "100%").
+		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess, TaskStatusRetrying}).
+		Limit(limit).Order("id").Find(&tasks).Error
 	if err != nil {
 		return nil, err
 	}

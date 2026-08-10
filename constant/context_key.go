@@ -82,6 +82,9 @@ const (
 
 	// ContextKeyFileSourcesToCleanup stores file sources that need cleanup when request ends
 	ContextKeyFileSourcesToCleanup ContextKey = "file_sources_to_cleanup"
+	// ContextKeyZQBAPIRetryPayload stores the sanitized upstream video request
+	// needed for one automatic real-person material retry.
+	ContextKeyZQBAPIRetryPayload ContextKey = "zqbapi_retry_payload"
 
 	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
 	// It is not returned to end users, but can be persisted into consume/error logs for debugging.

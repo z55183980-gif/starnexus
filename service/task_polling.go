@@ -38,6 +38,20 @@ type TaskUsageRetriever interface {
 	FetchTaskUsage(baseURL, key, upstreamTaskID, proxy string) (*relaycommon.TaskInfo, bool, error)
 }
 
+// TaskFailureRecovery describes a replacement upstream task created while
+// preserving the same public task and billing reservation.
+type TaskFailureRecovery struct {
+	UpstreamTaskID string
+	TaskData       []byte
+}
+
+// TaskFailureRecoverer is implemented by channels that can repair a provider
+// rejection and resubmit once without exposing a new public task.
+type TaskFailureRecoverer interface {
+	ShouldRecoverFailedTask(task *model.Task, responseBody []byte) bool
+	RecoverFailedTask(ctx context.Context, channel *model.Channel, task *model.Task, responseBody []byte) (*TaskFailureRecovery, error)
+}
+
 const videoSettlementFallbackAfter = 10 * time.Minute
 
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
@@ -356,7 +370,9 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
+		ChannelType:    cacheGetChannel.Type,
 		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
+		ChannelSetting: cacheGetChannel.GetSetting(),
 	}
 	info.ApiKey = cacheGetChannel.Key
 	adaptor.Init(info)
@@ -417,6 +433,11 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
 		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
 	}
+	if recovered, recoveryErr := TryRecoverFailedVideoTask(ctx, adaptor, ch, task, taskResult, responseBody); recoveryErr != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("Task %s automatic recovery failed: %s", task.TaskID, recoveryErr.Error()))
+	} else if recovered {
+		return nil
+	}
 	if taskResult.Status == "" {
 		errorResult := &dto.GeneralErrorResponse{}
 		if err = common.Unmarshal(responseBody, errorResult); err == nil {
@@ -440,6 +461,75 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	_, err = ApplyTaskResult(ctx, adaptor, task, taskResult, responseBody)
 	return err
+}
+
+// TryRecoverFailedVideoTask gives a channel one chance to replace a rejected
+// upstream task. A status-changing CAS makes the retry safe across pollers.
+func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, task *model.Task, taskResult *relaycommon.TaskInfo, responseBody []byte) (bool, error) {
+	if taskResult == nil || taskResult.Status != string(model.TaskStatusFailure) || task == nil || ch == nil {
+		return false, nil
+	}
+	recoverer, ok := adaptor.(TaskFailureRecoverer)
+	if !ok || !recoverer.ShouldRecoverFailedTask(task, responseBody) {
+		return false, nil
+	}
+	snapshot := task.Snapshot()
+	if task.PrivateData.ZQBAPIRetryCount > 0 {
+		return false, nil
+	}
+	previousPrivateData := task.PrivateData
+	task.Status = model.TaskStatusRetrying
+	task.PrivateData.ZQBAPIRetryCount++
+	task.Progress = taskcommon.ProgressInProgress
+	won, err := task.UpdateWithStatus(snapshot.Status)
+	if err != nil {
+		return false, fmt.Errorf("claim automatic recovery for task %s: %w", task.TaskID, err)
+	}
+	if !won {
+		if err := model.DB.First(task, task.ID).Error; err != nil {
+			return false, fmt.Errorf("reload task %s after recovery claim CAS loss: %w", task.TaskID, err)
+		}
+		return task.Status == model.TaskStatusRetrying || task.PrivateData.ZQBAPIRetryCount > 0, nil
+	}
+
+	recovery, recoveryErr := recoverer.RecoverFailedTask(ctx, ch, task, responseBody)
+	if recoveryErr != nil || recovery == nil || recovery.UpstreamTaskID == "" {
+		task.Status = snapshot.Status
+		task.Progress = snapshot.Progress
+		task.StartTime = snapshot.StartTime
+		task.FinishTime = snapshot.FinishTime
+		task.FailReason = snapshot.FailReason
+		task.PrivateData = previousPrivateData
+		task.PrivateData.ZQBAPIRetryCount = 1
+		_, restoreErr := task.UpdateWithStatus(model.TaskStatusRetrying)
+		if restoreErr != nil {
+			return false, fmt.Errorf("restore task %s after recovery failure: %w", task.TaskID, restoreErr)
+		}
+		if recoveryErr != nil {
+			return false, recoveryErr
+		}
+		return false, errors.New("automatic recovery returned an empty upstream task ID")
+	}
+
+	task.PrivateData.UpstreamTaskID = recovery.UpstreamTaskID
+	task.PrivateData.ZQBAPIRetryPayload = ""
+	task.Data = append(task.Data[:0], recovery.TaskData...)
+	task.FailReason = ""
+	task.Progress = taskcommon.ProgressQueued
+	task.StartTime = 0
+	task.Status = model.TaskStatusSubmitted
+	won, err = task.UpdateWithStatus(model.TaskStatusRetrying)
+	if err != nil {
+		return false, fmt.Errorf("persist automatic recovery for task %s: %w", task.TaskID, err)
+	}
+	if !won {
+		if err := model.DB.First(task, task.ID).Error; err != nil {
+			return false, fmt.Errorf("reload task %s after recovery CAS loss: %w", task.TaskID, err)
+		}
+		return task.PrivateData.ZQBAPIRetryCount > 0, nil
+	}
+	logger.LogInfo(ctx, fmt.Sprintf("Task %s automatically resubmitted after ZQBAPI real-person materialization", task.TaskID))
+	return true, nil
 }
 
 // ApplyTaskResult is the single terminal-state transition path for background

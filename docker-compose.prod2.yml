@@ -1,4 +1,4 @@
-# Production slave application nodes (currently verified on S3 and S4): app only.
+# Production slave application nodes (currently verified on S2, S3, and S4): app only.
 #
 # PostgreSQL and Redis are external services on DB6 (67.230.183.84).
 # The application uses PgBouncer on 6432 and Redis on 6379/1.

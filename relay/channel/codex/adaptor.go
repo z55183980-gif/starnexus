@@ -121,15 +121,22 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 
 func applyCodexInputRepair(c *gin.Context, input json.RawMessage) (json.RawMessage, error) {
 	repairedInput, repairResult, err := repairCodexInvalidLocalItemIDs(input)
-	if err != nil || repairResult.DroppedItems() == 0 {
+	if err != nil || !repairResult.Modified() {
 		return repairedInput, err
 	}
 	if c != nil {
-		c.Set("codex_input_repair_admin_info", map[string]interface{}{
-			"dropped_reasoning_items": repairResult.DroppedReasoningItems,
-			"dropped_item_references": repairResult.DroppedItemReferences,
-			"first_dropped_index":     repairResult.FirstDroppedIndex,
-		})
+		repairInfo := map[string]interface{}{}
+		if repairResult.DroppedItems() > 0 {
+			repairInfo["dropped_reasoning_items"] = repairResult.DroppedReasoningItems
+			repairInfo["dropped_item_references"] = repairResult.DroppedItemReferences
+			repairInfo["first_dropped_index"] = repairResult.FirstDroppedIndex
+		}
+		if repairResult.RemovedMessageIDs > 0 {
+			repairInfo["invalid_message_ids_removed"] = repairResult.RemovedMessageIDs
+			repairInfo["first_removed_index"] = repairResult.FirstRemovedIndex
+			repairInfo["upstream_validation_retry"] = false
+		}
+		c.Set("codex_input_repair_admin_info", repairInfo)
 	}
 	if repairResult.RemainingItems == 0 {
 		return nil, types.NewErrorWithStatusCode(

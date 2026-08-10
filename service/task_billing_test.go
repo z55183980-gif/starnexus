@@ -702,6 +702,54 @@ func (m *usageMockAdaptor) FetchTaskUsage(string, string, string, string) (*rela
 	return m.usage, m.found, m.err
 }
 
+type recoveryMockAdaptor struct {
+	mockAdaptor
+	recoverCalls int
+}
+
+func (m *recoveryMockAdaptor) ShouldRecoverFailedTask(*model.Task, []byte) bool {
+	return true
+}
+
+func (m *recoveryMockAdaptor) RecoverFailedTask(context.Context, *model.Channel, *model.Task, []byte) (*TaskFailureRecovery, error) {
+	m.recoverCalls++
+	return &TaskFailureRecovery{UpstreamTaskID: "upstream-retry-1", TaskData: []byte(`{"id":"upstream-retry-1"}`)}, nil
+}
+
+func TestTryRecoverFailedVideoTaskResubmitsOnlyOnce(t *testing.T) {
+	truncate(t)
+	const channelID = 63
+	seedChannel(t, channelID)
+	task := makeTask(63, channelID, 0, 0, BillingSourceWallet, 0)
+	task.PrivateData.ZQBAPIRetryPayload = `{"model":"seedance","content":[]}`
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &recoveryMockAdaptor{}
+	recovered, err := TryRecoverFailedVideoTask(
+		context.Background(),
+		adaptor,
+		&model.Channel{Id: channelID},
+		task,
+		&relaycommon.TaskInfo{Status: model.TaskStatusFailure},
+		[]byte(`{"error":{"message":"may contain real person"}}`),
+	)
+	require.NoError(t, err)
+	require.True(t, recovered)
+	require.Equal(t, 1, adaptor.recoverCalls)
+	require.Equal(t, model.TaskStatusSubmitted, string(task.Status))
+	require.Equal(t, "upstream-retry-1", task.PrivateData.UpstreamTaskID)
+	require.Equal(t, 1, task.PrivateData.ZQBAPIRetryCount)
+	require.Empty(t, task.PrivateData.ZQBAPIRetryPayload)
+
+	recovered, err = TryRecoverFailedVideoTask(
+		context.Background(), adaptor, &model.Channel{Id: channelID}, task,
+		&relaycommon.TaskInfo{Status: model.TaskStatusFailure}, nil,
+	)
+	require.NoError(t, err)
+	require.False(t, recovered)
+	require.Equal(t, 1, adaptor.recoverCalls)
+}
+
 func TestApplyTaskResultFailureRefundsAfterCASWin(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
