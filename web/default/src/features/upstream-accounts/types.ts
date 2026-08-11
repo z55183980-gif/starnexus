@@ -63,6 +63,7 @@ export interface UpstreamAccountPoolCapabilities {
   proxy_configured_account_count: number
   published_channel_id?: number | null
   published_groups: string[]
+  published_models: string[]
 }
 
 export interface UpstreamAccountPoolPublishResult {

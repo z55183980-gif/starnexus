@@ -113,6 +113,107 @@ func TestReplaceUpstreamOAuthCredentialRecoversAccount(t *testing.T) {
 	require.Equal(t, "new-access", decoded["access_token"])
 }
 
+func TestCreateManagedOAuthAccountDerivesMissingExpiryFromCredential(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	expiresAt := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "managed-expiry", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+			Extra: "{}", Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true, OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
+		},
+		Credentials: map[string]any{
+			"access_token": "access", "refresh_token": "refresh", "account_id": "acct",
+			"expired": expiresAt.Format(time.RFC3339),
+		},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	var stored model.UpstreamAccount
+	require.NoError(t, model.DB.First(&stored, input.Account.Id).Error)
+	require.NotNil(t, stored.ExpiresAt)
+	require.Equal(t, expiresAt.Unix(), *stored.ExpiresAt)
+}
+
+func TestUpstreamAccountMetadataFallsBackToCodexJWTIdentity(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	token := codexTestJWT(t, map[string]any{
+		"https://api.openai.com/profile": map[string]any{"email": "jwt@example.com"},
+		codexJWTClaimPath: map[string]any{
+			"chatgpt_account_id": "acct-jwt",
+			"chatgpt_plan_type":  "pro",
+		},
+		"exp": float64(time.Now().Add(time.Hour).Unix()),
+	})
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "jwt-metadata", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+			Extra: "{}", Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true, OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
+		},
+		Credentials: map[string]any{"access_token": token, "refresh_token": "refresh", "account_id": "acct-jwt"},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	view, err := GetUpstreamAccount(input.Account.Id)
+	require.NoError(t, err)
+	require.Equal(t, "jwt@example.com", view.Metadata.Email)
+	require.Equal(t, "pro", view.Metadata.PlanType)
+}
+
+func TestUpdateManagedOAuthAccountRestoresClearedCredentialExpiry(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	expiresAt := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "managed-update-expiry", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+			Extra: "{}", Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true, OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
+		},
+		Credentials: map[string]any{
+			"access_token": "access", "refresh_token": "refresh", "account_id": "acct",
+			"expired": expiresAt.Format(time.RFC3339),
+		},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", input.Account.Id).Update("expires_at", nil).Error)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.First(&account, input.Account.Id).Error)
+	account.Name = "managed-update-expiry-renamed"
+	require.NoError(t, UpdateUpstreamAccount(&UpstreamAccountUpdateInput{Account: account}))
+
+	require.NoError(t, model.DB.First(&account, input.Account.Id).Error)
+	require.NotNil(t, account.ExpiresAt)
+	require.Equal(t, expiresAt.Unix(), *account.ExpiresAt)
+}
+
+func TestRestoreMissingManagedOAuthExpirations(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	expiresAt := time.Now().Add(4 * time.Hour).UTC().Truncate(time.Second)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "managed-backfill-expiry", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth,
+			Extra: "{}", Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true, OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
+		},
+		Credentials: map[string]any{
+			"access_token": "access", "refresh_token": "refresh", "account_id": "acct",
+			"expired": expiresAt.Format(time.RFC3339),
+		},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", input.Account.Id).Update("expires_at", nil).Error)
+
+	restored, err := restoreMissingManagedOAuthExpirations()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, restored)
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.First(&account, input.Account.Id).Error)
+	require.NotNil(t, account.ExpiresAt)
+	require.Equal(t, expiresAt.Unix(), *account.ExpiresAt)
+}
+
 func TestShouldRefreshUpstreamOAuthAccount(t *testing.T) {
 	expiresAt := int64(200)
 	account := &model.UpstreamAccount{

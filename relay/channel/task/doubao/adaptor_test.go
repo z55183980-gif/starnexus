@@ -419,6 +419,39 @@ func TestZQBAPIOpenAIVideoDeleteUsesNativeTaskEndpoint(t *testing.T) {
 	}
 }
 
+func TestZQBAPIOpenAIVideoSubmitResponseIsDeferred(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Set("task_request", relaycommon.TaskSubmitReq{Prompt: "test prompt"})
+	c.Set(zqbapiOpenAIVideoContextKey, zqbapiOpenAIVideoContext{Seconds: "4", Size: "720x1280"})
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"upstream-task"}`)),
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "dreamina-seedance-2-0-260128",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	}
+	taskID, _, taskErr := (&TaskAdaptor{ChannelType: constant.ChannelTypeZQBAPI}).DoResponse(c, resp, info)
+	if taskErr != nil {
+		t.Fatal(taskErr)
+	}
+	if taskID != "upstream-task" {
+		t.Fatalf("taskID = %q", taskID)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Fatalf("response was written before persistence: %s", recorder.Body.String())
+	}
+	value, exists := c.Get(string(constant.ContextKeyZQBAPIOpenAIVideoResponse))
+	responseBody, ok := value.([]byte)
+	if !exists || !ok || !bytes.Contains(responseBody, []byte(`"id":"task_public"`)) {
+		t.Fatalf("deferred response missing or invalid: %q", responseBody)
+	}
+}
+
 func TestConvertToOpenAIVideoAddsZQBAPIFieldsOnlyForZQBAPI(t *testing.T) {
 	data := []byte(`{"status":"running","duration":5,"resolution":"720p","ratio":"9:16"}`)
 	zqbapiTask := &model.Task{
@@ -469,6 +502,18 @@ func TestConvertToOpenAIVideoAddsZQBAPIFieldsOnlyForZQBAPI(t *testing.T) {
 	}
 	if bytes.Contains(converted, []byte(`"seconds"`)) || bytes.Contains(converted, []byte(`"size"`)) || bytes.Contains(converted, []byte(`"remixed_from_video_id"`)) {
 		t.Fatalf("ZQBAPI fields leaked into another channel: %s", converted)
+	}
+}
+
+func TestZQBAPIPublicVideoFailureDoesNotExposeProviderMessage(t *testing.T) {
+	message, code := zqbapiPublicVideoFailure(`The parameter content[1].image_url is invalid: resource download failed at https://provider.example/file`)
+	if code != "reference_image_download_failed" || strings.Contains(message, "provider.example") || strings.Contains(message, "content[1]") {
+		t.Fatalf("message=%q code=%q", message, code)
+	}
+
+	message, code = zqbapiPublicVideoFailure("unrecognized provider stack trace")
+	if message != "Video generation failed." || code != "video_generation_failed" {
+		t.Fatalf("fallback message=%q code=%q", message, code)
 	}
 }
 

@@ -85,6 +85,12 @@ const (
 	// ContextKeyZQBAPIRetryPayload stores the sanitized upstream video request
 	// needed for one automatic real-person material retry.
 	ContextKeyZQBAPIRetryPayload ContextKey = "zqbapi_retry_payload"
+	// ContextKeyZQBAPIOpenAIVideoResponse stores a successful compatibility
+	// response until the controller has durably inserted the local task.
+	ContextKeyZQBAPIOpenAIVideoResponse ContextKey = "zqbapi_openai_video_response"
+	// ContextKeyZQBAPIOpenAIVideoRequest marks only channel type 61 requests
+	// that entered the OpenAI Videos compatibility path.
+	ContextKeyZQBAPIOpenAIVideoRequest ContextKey = "zqbapi_openai_video_request"
 
 	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
 	// It is not returned to end users, but can be persisted into consume/error logs for debugging.

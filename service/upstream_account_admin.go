@@ -95,6 +95,7 @@ type UpstreamAccountPoolCapabilities struct {
 	ProxyConfiguredAccountCount int      `json:"proxy_configured_account_count"`
 	PublishedChannelId          *int     `json:"published_channel_id"`
 	PublishedGroups             []string `json:"published_groups"`
+	PublishedModels             []string `json:"published_models"`
 }
 
 type UpstreamAccountPoolPublishResult struct {
@@ -241,6 +242,7 @@ func getUpstreamAccountPoolCapabilities(db *gorm.DB, id int) (*UpstreamAccountPo
 		AccountCount:    len(accounts),
 		Models:          []string{},
 		PublishedGroups: []string{},
+		PublishedModels: []string{},
 	}
 	models := make(map[string]struct{})
 	now := common.GetTimestamp()
@@ -308,6 +310,7 @@ func getUpstreamAccountPoolCapabilities(db *gorm.DB, id int) (*UpstreamAccountPo
 		channelId := published.Id
 		capabilities.PublishedChannelId = &channelId
 		capabilities.PublishedGroups = published.GetGroups()
+		capabilities.PublishedModels = published.GetModels()
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -326,7 +329,7 @@ func addPublishedAccountModel(models map[string]struct{}, rawModel string, hasWi
 	models[modelName] = struct{}{}
 }
 
-func PublishUpstreamAccountPoolChannel(id int, groups []string) (*UpstreamAccountPoolPublishResult, error) {
+func PublishUpstreamAccountPoolChannel(id int, groups []string, requestedModels ...[]string) (*UpstreamAccountPoolPublishResult, error) {
 	normalizedGroups, err := normalizePublishedChannelGroups(groups)
 	if err != nil {
 		return nil, err
@@ -353,14 +356,21 @@ func PublishUpstreamAccountPoolChannel(id int, groups []string) (*UpstreamAccoun
 		if len(capabilities.Models) == 0 {
 			return errors.New("account pool has no concrete account models to publish")
 		}
+		publishedModels := capabilities.Models
+		if len(requestedModels) > 0 {
+			publishedModels, err = normalizePublishedChannelModels(requestedModels[0], capabilities.Models)
+			if err != nil {
+				return err
+			}
+		}
 
-		channel, created, err := upsertPublishedAccountPoolChannel(tx, pool, capabilities.Models, normalizedGroups)
+		channel, created, err := upsertPublishedAccountPoolChannel(tx, pool, publishedModels, normalizedGroups)
 		if err != nil {
 			return err
 		}
 		result.ChannelId = channel.Id
 		result.Created = created
-		result.Models = append([]string(nil), capabilities.Models...)
+		result.Models = append([]string(nil), publishedModels...)
 		channelsChanged = true
 		return nil
 	})
@@ -371,6 +381,58 @@ func PublishUpstreamAccountPoolChannel(id int, groups []string) (*UpstreamAccoun
 		refreshPublishedAccountPoolChannelCaches()
 	}
 	return result, nil
+}
+
+func normalizePublishedChannelModels(models []string, availableModels []string) ([]string, error) {
+	if len(models) == 0 {
+		return nil, errors.New("at least one channel model is required")
+	}
+	available := make(map[string]struct{}, len(availableModels))
+	for _, modelName := range availableModels {
+		available[modelName] = struct{}{}
+	}
+	selected := make(map[string]struct{}, len(models))
+	for _, rawModel := range models {
+		modelName := strings.TrimSpace(rawModel)
+		if modelName == "" {
+			continue
+		}
+		if strings.Contains(modelName, ",") {
+			return nil, errors.New("channel model names cannot contain commas")
+		}
+		if _, ok := available[modelName]; !ok {
+			return nil, fmt.Errorf("model %q is not available from this account pool", modelName)
+		}
+		selected[modelName] = struct{}{}
+	}
+	if len(selected) == 0 {
+		return nil, errors.New("at least one channel model is required")
+	}
+	normalized := make([]string, 0, len(selected))
+	for _, modelName := range availableModels {
+		if _, ok := selected[modelName]; ok {
+			normalized = append(normalized, modelName)
+		}
+	}
+	return normalized, nil
+}
+
+func intersectPublishedChannelModels(selectedModels []string, availableModels []string) []string {
+	available := make(map[string]struct{}, len(availableModels))
+	for _, modelName := range availableModels {
+		available[modelName] = struct{}{}
+	}
+	selected := make(map[string]struct{}, len(selectedModels))
+	for _, modelName := range selectedModels {
+		selected[modelName] = struct{}{}
+	}
+	models := make([]string, 0, len(selected))
+	for _, modelName := range availableModels {
+		if _, ok := selected[modelName]; ok {
+			models = append(models, modelName)
+		}
+	}
+	return models
 }
 
 func UnpublishUpstreamAccountPoolChannel(id int) error {
@@ -532,12 +594,13 @@ func syncPublishedAccountPoolChannelsTx(tx *gorm.DB, poolIds []int) (bool, error
 		if pool.Platform == constant.UpstreamPlatformAnthropic {
 			channelType = constant.ChannelTypeAnthropic
 		}
-		updates := publishedAccountPoolChannelUpdates(pool, channelType, strings.Join(capabilities.Models, ","))
-		if pool.Status != constant.UpstreamStatusActive || capabilities.SchedulableAccountCount == 0 || len(capabilities.Models) == 0 || len(channels) > 1 {
-			updates["status"] = common.ChannelStatusAutoDisabled
-		}
 		for i := range channels {
 			channel := &channels[i]
+			publishedModels := intersectPublishedChannelModels(channel.GetModels(), capabilities.Models)
+			updates := publishedAccountPoolChannelUpdates(pool, channelType, strings.Join(publishedModels, ","))
+			if pool.Status != constant.UpstreamStatusActive || capabilities.SchedulableAccountCount == 0 || len(publishedModels) == 0 || len(channels) > 1 {
+				updates["status"] = common.ChannelStatusAutoDisabled
+			}
 			if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
 				return false, err
 			}
@@ -1031,6 +1094,7 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 	if input == nil {
 		return errors.New("upstream account input is required")
 	}
+	restoreManagedOAuthExpiry(&input.Account, input.Credentials)
 	if err := model.ValidateUpstreamAccount(&input.Account); err != nil {
 		return err
 	}
@@ -1173,6 +1237,20 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			}
 			credentialsToStore = &merged
 		}
+		if input.Account.ExpiresAt == nil &&
+			input.Account.OAuthRefreshOwner == constant.UpstreamOAuthRefreshOwnerStarNexus &&
+			isRefreshableUpstreamOAuthAccount(input.Account.Platform, input.Account.Type) {
+			credentialsForExpiry := credentialsToStore
+			if credentialsForExpiry == nil {
+				currentCredentials, decryptErr := DecryptUpstreamAccountCredentials(&current)
+				if decryptErr == nil {
+					credentialsForExpiry = &currentCredentials
+				}
+			}
+			if credentialsForExpiry != nil {
+				restoreManagedOAuthExpiry(&input.Account, *credentialsForExpiry)
+			}
+		}
 		existingPoolIds, err := listUpstreamAccountPoolIds(tx, current.Id)
 		if err != nil {
 			return err
@@ -1227,6 +1305,17 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 		refreshPublishedAccountPoolChannelCaches()
 	}
 	return err
+}
+
+func restoreManagedOAuthExpiry(account *model.UpstreamAccount, credentials map[string]any) {
+	if account == nil || account.ExpiresAt != nil ||
+		account.OAuthRefreshOwner != constant.UpstreamOAuthRefreshOwnerStarNexus ||
+		!isRefreshableUpstreamOAuthAccount(account.Platform, account.Type) {
+		return
+	}
+	if expiresAt, ok := upstreamOAuthCredentialExpiry(credentials); ok {
+		account.ExpiresAt = &expiresAt
+	}
 }
 
 func DeleteUpstreamAccount(id int) error {
@@ -1784,6 +1873,19 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 			}
 			if metadata.PrivacyMode == "" {
 				metadata.PrivacyMode = upstreamCredentialMapString(nested, "privacy_mode")
+			}
+		}
+		if account.Platform == constant.UpstreamPlatformOpenAI && account.Type == constant.UpstreamAccountTypeOAuth {
+			if identity, ok := ExtractCodexOAuthIdentityFromJWT(upstreamCredentialMapString(credentials, "access_token")); ok {
+				if metadata.Email == "" {
+					metadata.Email = identity.Email
+				}
+				if metadata.PlanType == "" {
+					metadata.PlanType = identity.PlanType
+				}
+				if metadata.SubscriptionExpiresAt == "" {
+					metadata.SubscriptionExpiresAt = identity.SubscriptionExpiresAt
+				}
 			}
 		}
 	} else {

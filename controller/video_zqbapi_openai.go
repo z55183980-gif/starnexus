@@ -35,12 +35,7 @@ func zqbapiVideoPlatform() constant.TaskPlatform {
 }
 
 func zqbapiOpenAIVideoError(c *gin.Context, status int, code, param, message string) {
-	c.JSON(status, gin.H{"error": gin.H{
-		"message": message,
-		"type":    "invalid_request_error",
-		"param":   param,
-		"code":    code,
-	}})
+	writeOpenAIVideoError(c, status, code, param, message)
 }
 
 // ListZQBAPIOpenAIVideos exposes only ZQBAPI-backed tasks. Other provider
@@ -73,7 +68,7 @@ func ListZQBAPIOpenAIVideos(c *gin.Context) {
 			return
 		}
 		if !exists || cursor == nil || cursor.Platform != zqbapiVideoPlatform() || !cursor.Properties.OpenAIVideo {
-			zqbapiOpenAIVideoError(c, http.StatusBadRequest, "invalid_after", "after", "after must identify one of your ZQBAPI videos")
+			zqbapiOpenAIVideoError(c, http.StatusBadRequest, "invalid_after", "after", "after must identify one of your videos")
 			return
 		}
 		afterID = cursor.ID

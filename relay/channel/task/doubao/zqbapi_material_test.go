@@ -169,6 +169,21 @@ func TestNormalizeZQBAPISmallImage(t *testing.T) {
 	}
 }
 
+func TestNormalizeZQBAPIImageToMaterialLongSideLimit(t *testing.T) {
+	img := image.NewNRGBA(image.Rect(0, 0, 4000, 2000))
+	data, mimeType, normalizedImage, normalized, err := normalizeZQBAPIImage([]byte("source"), "image/png", img, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !normalized || mimeType == "" || len(data) == 0 {
+		t.Fatalf("normalized=%v mime=%q bytes=%d", normalized, mimeType, len(data))
+	}
+	bounds := normalizedImage.Bounds()
+	if bounds.Dx() != 3840 || bounds.Dy() != 1920 {
+		t.Fatalf("normalized dimensions = %dx%d, want 3840x1920", bounds.Dx(), bounds.Dy())
+	}
+}
+
 func TestValidateZQBAPIImageRejectsUnsupportedRatio(t *testing.T) {
 	if err := validateZQBAPIImageConfig(300, 1000); err == nil {
 		t.Fatal("expected unsupported aspect ratio error")

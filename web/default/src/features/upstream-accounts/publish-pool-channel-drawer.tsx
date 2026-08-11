@@ -43,6 +43,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { MultiSelect } from '@/components/multi-select'
 import {
   FIELD_DESCRIPTIONS,
@@ -113,6 +114,7 @@ export function PublishPoolChannelDrawer({
   const queryClient = useQueryClient()
   const initializedPoolId = useRef<number | null>(null)
   const [groups, setGroups] = useState<string[]>([])
+  const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
   const [submitError, setSubmitError] = useState('')
 
@@ -139,6 +141,10 @@ export function PublishPoolChannelDrawer({
   const publishedGroups = useMemo(
     () => stringList(capabilities?.published_groups),
     [capabilities?.published_groups]
+  )
+  const publishedModels = useMemo(
+    () => stringList(capabilities?.published_models),
+    [capabilities?.published_models]
   )
   const availableGroups = useMemo(
     () => stringList(groupsQuery.data),
@@ -168,9 +174,23 @@ export function PublishPoolChannelDrawer({
     }
     if (!capabilities || initializedPoolId.current === pool.id) return
     setGroups(publishedGroups.length > 0 ? publishedGroups : ['default'])
+    const publishedModelSet = new Set(publishedModels)
+    setSelectedModels(
+      isPublished
+        ? capabilityModels.filter((model) => publishedModelSet.has(model))
+        : capabilityModels
+    )
     setSubmitError('')
     initializedPoolId.current = pool.id
-  }, [capabilities, open, pool.id, publishedGroups])
+  }, [
+    capabilities,
+    capabilityModels,
+    isPublished,
+    open,
+    pool.id,
+    publishedGroups,
+    publishedModels,
+  ])
 
   const groupOptions = useMemo(() => {
     const options = new Set([...availableGroups, ...groups])
@@ -182,11 +202,15 @@ export function PublishPoolChannelDrawer({
       setSubmitError(t('At least one group is required'))
       return
     }
+    if (selectedModels.length === 0) {
+      setSubmitError(t('At least one model is required'))
+      return
+    }
     setSaving(true)
     setSubmitError('')
     try {
       const result = requireResponseData(
-        await publishUpstreamPoolChannel(pool.id, groups)
+        await publishUpstreamPoolChannel(pool.id, groups, selectedModels)
       )
       toast.success(
         t(
@@ -220,6 +244,7 @@ export function PublishPoolChannelDrawer({
     !loading &&
     !loadError &&
     capabilityModels.length > 0 &&
+    selectedModels.length > 0 &&
     groups.length > 0 &&
     !saving
   const retryLoading = () => {
@@ -305,15 +330,7 @@ export function PublishPoolChannelDrawer({
                       </Badge>
                     )}
                   </div>
-                  {capabilityModels.length > 0 ? (
-                    <div className='mt-2 flex max-h-40 flex-wrap gap-1 overflow-y-auto'>
-                      {capabilityModels.map((model) => (
-                        <Badge key={model} variant='outline'>
-                          {model}
-                        </Badge>
-                      ))}
-                    </div>
-                  ) : (
+                  {capabilityModels.length === 0 && (
                     <Alert variant='destructive' className='mt-2'>
                       <AlertDescription>
                         {t('No concrete account models found in this pool')}
@@ -324,6 +341,47 @@ export function PublishPoolChannelDrawer({
               </Item>
 
               <FieldGroup>
+                {capabilityModels.length > 0 && (
+                  <Field data-invalid={selectedModels.length === 0 || undefined}>
+                    <FieldLabel>
+                      {t('Models *')}
+                      <span className='text-muted-foreground font-normal'>
+                        {selectedModels.length}/{capabilityModels.length}
+                      </span>
+                    </FieldLabel>
+                    <ToggleGroup
+                      value={selectedModels}
+                      onValueChange={(models) => {
+                        setSelectedModels(
+                          capabilityModels.filter((model) =>
+                            models.includes(model)
+                          )
+                        )
+                        setSubmitError('')
+                      }}
+                      variant='outline'
+                      size='sm'
+                      spacing={1}
+                      aria-label={t('Models *')}
+                      className='max-h-44 w-full flex-wrap justify-start overflow-y-auto rounded-lg border p-2'
+                    >
+                      {capabilityModels.map((model) => (
+                        <ToggleGroupItem
+                          key={model}
+                          value={model}
+                          className='text-muted-foreground data-pressed:border-primary data-pressed:bg-primary data-pressed:text-primary-foreground rounded-md border'
+                        >
+                          {model}
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
+                    <FieldDescription>
+                      {t(
+                        'Only selected models are exposed by the local channel. Gray models remain available to re-enable.'
+                      )}
+                    </FieldDescription>
+                  </Field>
+                )}
                 <Field data-invalid={groups.length === 0 || undefined}>
                   <FieldLabel>{t('Groups *')}</FieldLabel>
                   <MultiSelect

@@ -72,11 +72,12 @@ export async function listAvailableChannelGroups(): Promise<
 
 export async function publishUpstreamPoolChannel(
   id: number,
-  groups: string[]
+  groups: string[],
+  models: string[]
 ): Promise<ApiResponse<UpstreamAccountPoolPublishResult>> {
   const response = await api.post(
     `/api/upstream/account-pools/${id}/publish`,
-    { groups },
+    { groups, models },
     localFeedbackApiConfig
   )
   return response.data

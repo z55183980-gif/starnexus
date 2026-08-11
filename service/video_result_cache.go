@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -30,7 +31,15 @@ const (
 	videoResultCacheDefaultRetentionDays = 7
 	videoResultCacheDownloadTimeout      = 15 * time.Minute
 	videoResultCacheCleanupInterval      = 24 * time.Hour
+	videoResultCacheRepairInterval       = 5 * time.Minute
+	videoResultCacheRepairBatchSize      = 100
+	videoResultCacheRepairMaxTasks       = 1000
 	videoResultCachePrefix               = "zqbapi-"
+)
+
+var (
+	videoResultArchiveInFlight sync.Map
+	videoResultArchiveSlots    = make(chan struct{}, 4)
 )
 
 func videoResultCacheRoot() (string, bool, error) {
@@ -65,7 +74,7 @@ func videoResultCacheRetention() time.Duration {
 }
 
 func archiveZQBAPIVideoResultAsync(task *model.Task) {
-	if task == nil || task.ResultFile != "" || strings.TrimSpace(task.PrivateData.UpstreamResultURL) == "" {
+	if task == nil || strings.TrimSpace(task.PrivateData.UpstreamResultURL) == "" {
 		return
 	}
 	if _, enabled, err := videoResultCacheRoot(); err != nil {
@@ -74,8 +83,28 @@ func archiveZQBAPIVideoResultAsync(task *model.Task) {
 	} else if !enabled {
 		return
 	}
+	if task.ResultFile != "" {
+		if file, _, openErr := OpenVideoResultCache(task.ResultFile); openErr == nil {
+			_ = file.Close()
+			return
+		}
+	}
+	inFlightKey := task.TaskID
+	if inFlightKey == "" {
+		inFlightKey = strconv.FormatInt(task.ID, 10)
+	}
+	if _, loaded := videoResultArchiveInFlight.LoadOrStore(inFlightKey, struct{}{}); loaded {
+		return
+	}
 	taskCopy := *task
 	gopool.Go(func() {
+		defer videoResultArchiveInFlight.Delete(inFlightKey)
+		select {
+		case videoResultArchiveSlots <- struct{}{}:
+			defer func() { <-videoResultArchiveSlots }()
+		default:
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), videoResultCacheDownloadTimeout)
 		defer cancel()
 		channel, err := model.CacheGetChannel(taskCopy.ChannelId)
@@ -220,7 +249,7 @@ func OpenVideoResultCache(fileName string) (*os.File, os.FileInfo, error) {
 		return nil, nil, err
 	}
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
 		_ = file.Close()
 		if err != nil {
 			return nil, nil, err
@@ -259,6 +288,50 @@ func StartZQBAPIHousekeepingTask() {
 			runZQBAPIHousekeeping(context.Background())
 		}
 	})
+	gopool.Go(func() {
+		repairZQBAPIVideoResultCache(context.Background())
+		ticker := time.NewTicker(videoResultCacheRepairInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			repairZQBAPIVideoResultCache(context.Background())
+		}
+	})
+}
+
+// repairZQBAPIVideoResultCache lets every application node build the same
+// deterministic local copy. ResultFile may already be populated by another
+// node; archiveZQBAPIVideoResultAsync still verifies this node's filesystem.
+func repairZQBAPIVideoResultCache(ctx context.Context) {
+	if _, enabled, err := videoResultCacheRoot(); err != nil || !enabled {
+		return
+	}
+	updatedAfter := time.Now().Add(-videoResultCacheRetention()).Unix()
+	platform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
+	beforeID := int64(0)
+	scanned := 0
+	for scanned < videoResultCacheRepairMaxTasks {
+		tasks, err := model.ListRecentTaskResultsForArchive(platform, beforeID, updatedAfter, videoResultCacheRepairBatchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("scan video result archive candidates failed: %v", err))
+			return
+		}
+		if len(tasks) == 0 {
+			return
+		}
+		for _, task := range tasks {
+			if task == nil {
+				continue
+			}
+			beforeID = task.ID
+			scanned++
+			if task.Properties.OpenAIVideo && strings.TrimSpace(task.PrivateData.UpstreamResultURL) != "" {
+				archiveZQBAPIVideoResultAsync(task)
+			}
+		}
+		if len(tasks) < videoResultCacheRepairBatchSize {
+			return
+		}
+	}
 }
 
 func runZQBAPIHousekeeping(ctx context.Context) {

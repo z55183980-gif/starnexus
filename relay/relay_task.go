@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -27,6 +28,8 @@ type TaskSubmitResult struct {
 	TaskData       []byte
 	Platform       constant.TaskPlatform
 	Quota          int
+	ResponseStatus int
+	ResponseBody   []byte
 	//PerCallPrice   types.PriceData
 }
 
@@ -242,6 +245,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
+		if info.ChannelType == constant.ChannelTypeZQBAPI && c.GetBool(string(constant.ContextKeyZQBAPIOpenAIVideoRequest)) {
+			return nil, zqbapiOpenAIVideoSubmitError(c, resp)
+		}
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
@@ -271,12 +277,55 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	return &TaskSubmitResult{
+	result := &TaskSubmitResult{
 		UpstreamTaskID: upstreamTaskID,
 		TaskData:       taskData,
 		Platform:       platform,
 		Quota:          finalQuota,
-	}, nil
+	}
+	if value, exists := c.Get(string(constant.ContextKeyZQBAPIOpenAIVideoResponse)); exists {
+		if responseBody, ok := value.([]byte); ok && len(responseBody) > 0 {
+			result.ResponseStatus = http.StatusOK
+			result.ResponseBody = append([]byte(nil), responseBody...)
+		}
+	}
+	return result, nil
+}
+
+func zqbapiOpenAIVideoSubmitError(c *gin.Context, resp *http.Response) *dto.TaskError {
+	const maxErrorBodyBytes = int64(1 << 20)
+	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
+	_ = resp.Body.Close()
+	if len(responseBody) > int(maxErrorBodyBytes) {
+		responseBody = responseBody[:maxErrorBodyBytes]
+	}
+	internalErr := fmt.Errorf("video upstream submit returned HTTP %d", resp.StatusCode)
+	if readErr != nil {
+		internalErr = fmt.Errorf("video upstream submit returned HTTP %d and error body could not be read: %w", resp.StatusCode, readErr)
+	} else if len(responseBody) > 0 {
+		internalErr = fmt.Errorf("video upstream submit returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	logger.LogError(c.Request.Context(), internalErr.Error())
+
+	publicStatus := resp.StatusCode
+	publicCode := "video_request_rejected"
+	publicMessage := "The video request was rejected. Check the prompt and reference image."
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		publicStatus = http.StatusBadGateway
+		publicCode = "video_service_authentication_failed"
+		publicMessage = "The video service could not authorize this request."
+	case resp.StatusCode == http.StatusTooManyRequests:
+		publicCode = "rate_limit_exceeded"
+		publicMessage = "The video service is temporarily busy. Please retry later."
+	case resp.StatusCode >= http.StatusInternalServerError:
+		publicStatus = http.StatusBadGateway
+		publicCode = "video_service_error"
+		publicMessage = "The video service is temporarily unavailable. Please retry later."
+	}
+	taskErr := service.TaskErrorWrapper(internalErr, publicCode, publicStatus)
+	taskErr.Message = publicMessage
+	return taskErr
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。
@@ -405,8 +454,15 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 	isZQBAPI := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
+	if isZQBAPI && originTask.Properties.OpenAIVideo {
+		c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoRequest), true)
+	}
 	if isOpenAIVideoAPI && isZQBAPI && !originTask.Properties.OpenAIVideo {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("video_not_found"), "video_not_found", http.StatusNotFound)
+		return
+	}
+	if !isOpenAIVideoAPI && isZQBAPI && originTask.Properties.OpenAIVideo {
+		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusNotFound)
 		return
 	}
 

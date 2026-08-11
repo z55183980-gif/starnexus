@@ -27,12 +27,13 @@ const (
 	zqbapiFaceImageMaxSide      = 640
 	zqbapiFaceScore             = 5.0
 	zqbapiImageMinDimension     = 300
-	zqbapiImageMaxDimension     = 6000
 	zqbapiImageNormalizeMinSide = 512
-	zqbapiImageNormalizeMaxSide = 4096
+	// The material endpoint rejects images whose long side exceeds 3840.
+	// Keep the normalized output at or below that exact inclusive limit.
+	zqbapiImageNormalizeMaxSide = 3840
 	zqbapiImageMaxBytes         = 30 * 1024 * 1024
 	zqbapiImageDecodeMaxPixels  = 64_000_000
-	zqbapiImageNormalizationV2  = "v2"
+	zqbapiImageNormalizationV3  = "v3"
 )
 
 // facefinder is the Pigo face cascade distributed under the MIT license.
@@ -103,7 +104,7 @@ func inspectZQBAPIImage(c *gin.Context, input string) (*zqbapiImageInspection, e
 		Height:               normalizedBounds.Dy(),
 		Size:                 len(normalizedData),
 		Normalized:           normalized,
-		NormalizationVersion: zqbapiImageNormalizationV2,
+		NormalizationVersion: zqbapiImageNormalizationV3,
 	}
 
 	detectionImage := resizeZQBAPIImage(normalizedImage, zqbapiFaceImageMaxSide)
@@ -169,7 +170,7 @@ func normalizeZQBAPIImage(data []byte, mimeType string, img image.Image, forceEn
 	bounds := img.Bounds()
 	width, height := bounds.Dx(), bounds.Dy()
 	needsResize := width <= zqbapiImageMinDimension || height <= zqbapiImageMinDimension ||
-		width >= zqbapiImageMaxDimension || height >= zqbapiImageMaxDimension
+		width > zqbapiImageNormalizeMaxSide || height > zqbapiImageNormalizeMaxSide
 	needsEncode := forceEncode || needsResize || len(data) >= zqbapiImageMaxBytes
 	if !needsEncode {
 		return data, normalizeZQBAPIMIME(mimeType), img, false, nil
@@ -181,7 +182,7 @@ func normalizeZQBAPIImage(data []byte, mimeType string, img image.Image, forceEn
 		targetWidth = max(1, int(math.Round(float64(width)*scale)))
 		targetHeight = max(1, int(math.Round(float64(height)*scale)))
 	}
-	if targetWidth >= zqbapiImageMaxDimension || targetHeight >= zqbapiImageMaxDimension {
+	if targetWidth > zqbapiImageNormalizeMaxSide || targetHeight > zqbapiImageNormalizeMaxSide {
 		scale := math.Min(float64(zqbapiImageNormalizeMaxSide)/float64(targetWidth), float64(zqbapiImageNormalizeMaxSide)/float64(targetHeight))
 		targetWidth = max(1, int(math.Round(float64(targetWidth)*scale)))
 		targetHeight = max(1, int(math.Round(float64(targetHeight)*scale)))
@@ -211,7 +212,7 @@ func normalizeZQBAPIImage(data []byte, mimeType string, img image.Image, forceEn
 		return nil, "", nil, false, fmt.Errorf("normalized image size %d bytes exceeds the 30MB material limit", output.Len())
 	}
 	if targetWidth <= zqbapiImageMinDimension || targetHeight <= zqbapiImageMinDimension ||
-		targetWidth >= zqbapiImageMaxDimension || targetHeight >= zqbapiImageMaxDimension {
+		targetWidth > zqbapiImageNormalizeMaxSide || targetHeight > zqbapiImageNormalizeMaxSide {
 		return nil, "", nil, false, fmt.Errorf("normalized image dimensions remain unsupported: %dx%d", targetWidth, targetHeight)
 	}
 	return output.Bytes(), outputMIME, normalizedImage, true, nil

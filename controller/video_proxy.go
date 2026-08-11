@@ -56,7 +56,7 @@ func VideoProxy(c *gin.Context) {
 	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI)) {
 		variant := strings.ToLower(strings.TrimSpace(c.DefaultQuery("variant", "video")))
 		if variant != "video" {
-			videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "ZQBAPI supports only variant=video")
+			videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "only variant=video is supported")
 			return
 		}
 	}

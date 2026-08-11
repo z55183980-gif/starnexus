@@ -231,8 +231,10 @@ func CompleteUpstreamAccountOAuth(ctx context.Context, input UpstreamOAuthComple
 			"account_id": accountExternalId, "email": email, "type": "codex",
 			"last_refresh": time.Now().Format(time.RFC3339), "expired": tokenResult.ExpiresAt.Format(time.RFC3339),
 		}
+		applyCodexTokenResponseMetadata(credentials, tokenResult)
 		expiresAt = tokenResult.ExpiresAt.Unix()
 		enrichUpstreamOpenAICredentials(ctx, credentials, proxyURL)
+		email = upstreamCredentialMapString(credentials, "email")
 	case constant.UpstreamPlatformAnthropic:
 		tokenResult, exchangeErr := ExchangeClaudeAuthorizationCodeWithProxy(ctx, code, verifier, state, proxyURL)
 		if exchangeErr != nil {
@@ -267,14 +269,11 @@ func CompleteUpstreamAccountOAuth(ctx context.Context, input UpstreamOAuthComple
 		accountInput := UpstreamAccountCreateInput{
 			Account: model.UpstreamAccount{
 				Name: name, Platform: platform, Type: accountType,
-				Extra: "{}", ProxyId: input.ProxyId, Concurrency: 1, Priority: 50, Weight: 1,
+				Extra: "{}", ProxyId: session.ProxyId, Concurrency: 1, Priority: 50, Weight: 1,
 				Status: constant.UpstreamStatusActive, Schedulable: true, ExpiresAt: &expiresAt, AutoPauseOnExpired: true,
 				OAuthRefreshOwner: constant.UpstreamOAuthRefreshOwnerStarNexus,
 			},
 			Credentials: credentials, PoolIds: input.PoolIds,
-		}
-		if accountInput.Account.ProxyId == nil {
-			accountInput.Account.ProxyId = session.ProxyId
 		}
 		if err := CreateUpstreamAccount(&accountInput); err != nil {
 			return nil, err
@@ -332,7 +331,10 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 			return nil, refreshErr
 		}
 		credentials["access_token"] = result.AccessToken
-		credentials["refresh_token"] = result.RefreshToken
+		if result.RefreshToken != "" {
+			credentials["refresh_token"] = result.RefreshToken
+		}
+		applyCodexTokenResponseMetadata(credentials, result)
 		credentials["last_refresh"] = time.Now().Format(time.RFC3339)
 		credentials["expired"] = result.ExpiresAt.Format(time.RFC3339)
 		if upstreamCredentialMapString(credentials, "account_id") == "" {
@@ -369,6 +371,21 @@ func refreshUpstreamOAuthAccountUnlocked(ctx context.Context, accountId int) (*U
 	}
 	recordUpstreamAccountEvent(account.Id, 0, "oauth_refresh", "success", "credential refreshed", nil)
 	return GetUpstreamAccount(account.Id)
+}
+
+func applyCodexTokenResponseMetadata(credentials map[string]any, result *CodexOAuthTokenResult) {
+	if credentials == nil || result == nil {
+		return
+	}
+	if result.IDToken != "" {
+		credentials["id_token"] = result.IDToken
+	}
+	if result.TokenType != "" {
+		credentials["token_type"] = result.TokenType
+	}
+	if result.Scope != "" {
+		credentials["scope"] = result.Scope
+	}
 }
 
 func replaceUpstreamOAuthCredential(accountId int, credentials map[string]any, expiresAt int64, proxyId *int) error {

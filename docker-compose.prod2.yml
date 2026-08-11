@@ -41,6 +41,7 @@ services:
       CRYPTO_SECRET: ${CRYPTO_SECRET}
       TRUSTED_REDIRECT_DOMAINS: ${TRUSTED_REDIRECT_DOMAINS:-xingyuapi.com}
       SYNC_FREQUENCY: ${SYNC_FREQUENCY:-60}
+      VIDEO_RESULT_CACHE_DIR: ${VIDEO_RESULT_CACHE_DIR:-/data/video-results}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://localhost:3000/api/status | grep -o '\"success\":\\s*true' || exit 1"]
       interval: 30s

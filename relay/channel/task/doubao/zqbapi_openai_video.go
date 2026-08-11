@@ -79,6 +79,7 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 	if info.TaskRelayInfo == nil {
 		info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
 	}
+	c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoRequest), true)
 	var body zqbapiOpenAIVideoRequest
 	if err := common.UnmarshalBodyReusable(c, &body); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
@@ -86,7 +87,7 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 	if field, err := unsupportedZQBAPIOpenAIMediaField(c); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	} else if field != "" {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("field %q is not supported by the ZQBAPI OpenAI Videos compatibility endpoint", field), "unsupported_input", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(fmt.Errorf("field %q is not supported by the OpenAI Videos compatibility endpoint", field), "unsupported_input", http.StatusBadRequest)
 	}
 
 	req := relaycommon.TaskSubmitReq{
@@ -124,7 +125,7 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
 		if secondsSet && (seconds < 4 || seconds > 15) {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and 15 seconds for ZQBAPI"), "invalid_duration", http.StatusBadRequest)
+			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and 15 seconds for this video model"), "invalid_duration", http.StatusBadRequest)
 		}
 	}
 
@@ -239,7 +240,7 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 		req.Size = zqbapiOpenAIDefaultSize
 	}
 	if _, _, ok := zqbapiOpenAISizeToProvider(req.Size); !ok {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported size %q for ZQBAPI", req.Size), "unsupported_size", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported size %q", req.Size), "unsupported_size", http.StatusBadRequest)
 	}
 	effectiveModel := strings.TrimSpace(info.UpstreamModelName)
 	if effectiveModel == "" {
@@ -249,10 +250,10 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 		effectiveModel = strings.TrimSpace(info.OriginModelName)
 	}
 	if isZQBAPILimitedResolutionModel(effectiveModel) && isZQBAPIOpenAIHighResolution(req.Size) {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("size %q is not supported by ZQBAPI model %q", req.Size, effectiveModel), "unsupported_size", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(fmt.Errorf("size %q is not supported by video model %q", req.Size, effectiveModel), "unsupported_size", http.StatusBadRequest)
 	}
 	if lastFrameDeclared && !supportsZQBAPIFirstLastFrames(effectiveModel) {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("first_frame/last_frame is not supported by ZQBAPI model %q", effectiveModel), "unsupported_input", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(fmt.Errorf("first_frame/last_frame is not supported by video model %q", effectiveModel), "unsupported_input", http.StatusBadRequest)
 	}
 	ctx.Seconds = req.Seconds
 	ctx.Size = req.Size
@@ -350,7 +351,7 @@ func parseZQBAPIOpenAIReference(raw json.RawMessage, field string) (string, bool
 		return "", true, fmt.Errorf("%s must contain exactly one of image_url or file_id", field)
 	}
 	if fileID != "" {
-		return "", true, fmt.Errorf("%s.file_id is not supported by ZQBAPI", field)
+		return "", true, fmt.Errorf("%s.file_id is not supported by this video endpoint", field)
 	}
 	if imageURL == "" {
 		return "", true, fmt.Errorf("%s.image_url is required", field)
@@ -371,7 +372,7 @@ func extractZQBAPIOpenAIReferenceFiles(c *gin.Context) (map[string]string, error
 			continue
 		}
 		if len(files) != 1 {
-			return nil, fmt.Errorf("ZQBAPI supports one %s file", field)
+			return nil, fmt.Errorf("only one %s file is supported", field)
 		}
 		value, fileErr := encodeZQBAPIOpenAIReferenceFile(files[0], field)
 		if fileErr != nil {
@@ -402,9 +403,11 @@ func encodeZQBAPIOpenAIReferenceFile(fileHeader *multipart.FileHeader, field str
 	if err != nil {
 		return "", fmt.Errorf("%s is not a supported image: %w", field, err)
 	}
-	if config.Width < zqbapiImageMinDimension || config.Height < zqbapiImageMinDimension ||
-		config.Width >= zqbapiImageMaxDimension || config.Height >= zqbapiImageMaxDimension {
-		return "", fmt.Errorf("%s dimensions must be between %d and %d pixels", field, zqbapiImageMinDimension, zqbapiImageMaxDimension-1)
+	// Dimension, aspect-ratio and decoded-pixel validation is intentionally
+	// centralized in inspectZQBAPIImage. This makes multipart files follow the
+	// same resize/normalization path as URL and data-URL references.
+	if config.Width <= 0 || config.Height <= 0 {
+		return "", fmt.Errorf("%s dimensions are invalid", field)
 	}
 	mimeType := fileHeader.Header.Get("Content-Type")
 	if mimeType == "" || mimeType == "application/octet-stream" {
@@ -493,7 +496,7 @@ func zqbapiOpenAIRemixParameters(userID int, taskID string) (int, string, error)
 		return 0, "", fmt.Errorf("get remix origin task: %w", err)
 	}
 	if !exists || originTask == nil || originTask.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI)) || !originTask.Properties.OpenAIVideo {
-		return 0, "", fmt.Errorf("remix origin must be a ZQBAPI OpenAI video")
+		return 0, "", fmt.Errorf("remix origin must be an OpenAI Videos video")
 	}
 	seconds, _ := strconv.Atoi(strings.TrimSpace(originTask.Properties.VideoSeconds))
 	size := strings.TrimSpace(originTask.Properties.VideoSize)
@@ -529,6 +532,22 @@ func getZQBAPIOpenAIVideoContext(c *gin.Context) (zqbapiOpenAIVideoContext, bool
 	}
 	ctx, ok := value.(zqbapiOpenAIVideoContext)
 	return ctx, ok
+}
+
+func zqbapiPublicVideoFailure(message string) (string, string) {
+	lowerMessage := strings.ToLower(message)
+	switch {
+	case strings.Contains(lowerMessage, "real person"):
+		return "The input image may contain a real person and could not be processed.", "reference_image_person_not_supported"
+	case strings.Contains(lowerMessage, "3840") || strings.Contains(lowerMessage, "resolution") || strings.Contains(lowerMessage, "volume"):
+		return "The reference image exceeds the supported dimensions. Resize it and try again.", "reference_image_dimensions_invalid"
+	case strings.Contains(lowerMessage, "resource download failed") || strings.Contains(lowerMessage, "image_url"):
+		return "The reference image could not be downloaded. Use a stable public URL or upload the file directly.", "reference_image_download_failed"
+	case strings.Contains(lowerMessage, "safety") || strings.Contains(lowerMessage, "sensitive") || strings.Contains(lowerMessage, "policy"):
+		return "The video request could not be completed because of a content policy restriction.", "content_policy_violation"
+	default:
+		return "Video generation failed.", "video_generation_failed"
+	}
 }
 
 // ApplyZQBAPIOpenAIVideoTaskProperties persists only non-sensitive compatibility

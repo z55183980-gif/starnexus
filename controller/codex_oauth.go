@@ -193,6 +193,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	email, _ := service.ExtractEmailFromJWT(tokenRes.AccessToken)
 
 	key := codex.OAuthKey{
+		IDToken:      tokenRes.IDToken,
 		AccessToken:  tokenRes.AccessToken,
 		RefreshToken: tokenRes.RefreshToken,
 		AccountID:    accountID,

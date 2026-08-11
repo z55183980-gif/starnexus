@@ -319,10 +319,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err == nil {
 			imageCount, videoCount := countZQBAPIMedia(body.Content)
 			if videoCtx.ReferenceDeclared && imageCount == 0 {
-				err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", fmt.Errorf("input_reference was declared but no image reached the ZQBAPI payload"))
+				err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", fmt.Errorf("input_reference was declared but no image reached the provider payload"))
 			}
 			if info.Action == constant.TaskActionRemix && videoCount == 0 {
-				err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", fmt.Errorf("remix origin was not included in the ZQBAPI payload"))
+				err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", fmt.Errorf("remix origin was not included in the provider payload"))
 			}
 		}
 	} else {
@@ -395,6 +395,18 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		}
 	}
 
+	if a.ChannelType == constant.ChannelTypeZQBAPI {
+		if _, ok := getZQBAPIOpenAIVideoContext(c); ok {
+			responseData, marshalErr := common.Marshal(ov)
+			if marshalErr != nil {
+				return "", nil, service.TaskErrorWrapper(marshalErr, "marshal_response_failed", http.StatusInternalServerError)
+			}
+			// The controller writes this response only after the local task row is
+			// durable, preventing successful-but-unqueryable public task IDs.
+			c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoResponse), responseData)
+			return dResp.ID, responseBody, nil
+		}
+	}
 	c.JSON(http.StatusOK, ov)
 	return dResp.ID, responseBody, nil
 }
@@ -523,7 +535,7 @@ func (a *TaskAdaptor) convertToZQBAPIOpenAIRequestPayload(req *relaycommon.TaskS
 	if req.Size != "" {
 		resolution, ratio, ok := zqbapiOpenAISizeToProvider(req.Size)
 		if !ok {
-			return nil, fmt.Errorf("unsupported size %q for ZQBAPI", req.Size)
+			return nil, fmt.Errorf("unsupported size %q", req.Size)
 		}
 		r.Resolution = resolution
 		r.Ratio = ratio
@@ -658,16 +670,10 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		if message == "" {
 			message = "Video generation failed"
 		}
-		code := strings.TrimSpace(fmt.Sprint(dResp.Error.Code))
-		if code == "" || code == "<nil>" {
-			code = strings.TrimSpace(dResp.Status)
-		}
-		if code == "" {
-			code = "video_generation_failed"
-		}
+		publicMessage, publicCode := zqbapiPublicVideoFailure(message)
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: message,
-			Code:    code,
+			Message: publicMessage,
+			Code:    publicCode,
 		}
 	}
 

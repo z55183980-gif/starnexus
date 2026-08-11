@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +29,17 @@ const (
 type CodexOAuthTokenResult struct {
 	AccessToken  string
 	RefreshToken string
+	IDToken      string
+	TokenType    string
+	Scope        string
 	ExpiresAt    time.Time
+}
+
+type CodexOAuthIdentity struct {
+	AccountID             string
+	Email                 string
+	PlanType              string
+	SubscriptionExpiresAt string
 }
 
 type CodexOAuthAuthorizationFlow struct {
@@ -116,6 +127,9 @@ func refreshCodexOAuthToken(
 	var payload struct {
 		AccessToken      string `json:"access_token"`
 		RefreshToken     string `json:"refresh_token"`
+		IDToken          string `json:"id_token"`
+		TokenType        string `json:"token_type"`
+		Scope            string `json:"scope"`
 		ExpiresIn        int    `json:"expires_in"`
 		Error            any    `json:"error"`
 		ErrorDescription string `json:"error_description"`
@@ -134,13 +148,16 @@ func refreshCodexOAuthToken(
 		}
 	}
 
-	if strings.TrimSpace(payload.AccessToken) == "" || strings.TrimSpace(payload.RefreshToken) == "" || payload.ExpiresIn <= 0 {
+	if strings.TrimSpace(payload.AccessToken) == "" || payload.ExpiresIn <= 0 {
 		return nil, errors.New("codex oauth refresh response missing fields")
 	}
 
 	return &CodexOAuthTokenResult{
 		AccessToken:  strings.TrimSpace(payload.AccessToken),
 		RefreshToken: strings.TrimSpace(payload.RefreshToken),
+		IDToken:      strings.TrimSpace(payload.IDToken),
+		TokenType:    strings.TrimSpace(payload.TokenType),
+		Scope:        strings.TrimSpace(payload.Scope),
 		ExpiresAt:    time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second),
 	}, nil
 }
@@ -186,6 +203,9 @@ func exchangeCodexAuthorizationCode(
 	var payload struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
 	if err := common.DecodeJson(resp.Body, &payload); err != nil {
@@ -200,6 +220,9 @@ func exchangeCodexAuthorizationCode(
 	return &CodexOAuthTokenResult{
 		AccessToken:  strings.TrimSpace(payload.AccessToken),
 		RefreshToken: strings.TrimSpace(payload.RefreshToken),
+		IDToken:      strings.TrimSpace(payload.IDToken),
+		TokenType:    strings.TrimSpace(payload.TokenType),
+		Scope:        strings.TrimSpace(payload.Scope),
 		ExpiresAt:    time.Now().Add(time.Duration(payload.ExpiresIn) * time.Second),
 	}, nil
 }
@@ -260,51 +283,82 @@ func generatePKCEPair() (verifier string, challenge string, err error) {
 }
 
 func ExtractCodexAccountIDFromJWT(token string) (string, bool) {
-	claims, ok := decodeJWTClaims(token)
-	if !ok {
-		return "", false
-	}
-	raw, ok := claims[codexJWTClaimPath]
-	if !ok {
-		return "", false
-	}
-	obj, ok := raw.(map[string]any)
-	if !ok {
-		return "", false
-	}
-	v, ok := obj["chatgpt_account_id"]
-	if !ok {
-		return "", false
-	}
-	s, ok := v.(string)
-	if !ok {
-		return "", false
-	}
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", false
-	}
-	return s, true
+	identity, ok := ExtractCodexOAuthIdentityFromJWT(token)
+	return identity.AccountID, ok && identity.AccountID != ""
 }
 
 func ExtractEmailFromJWT(token string) (string, bool) {
+	identity, ok := ExtractCodexOAuthIdentityFromJWT(token)
+	return identity.Email, ok && identity.Email != ""
+}
+
+func ExtractCodexOAuthIdentityFromJWT(token string) (CodexOAuthIdentity, bool) {
 	claims, ok := decodeJWTClaims(token)
 	if !ok {
-		return "", false
+		return CodexOAuthIdentity{}, false
 	}
-	v, ok := claims["email"]
+	identity := CodexOAuthIdentity{Email: jwtClaimString(claims, "email")}
+	if profile, _ := claims["https://api.openai.com/profile"].(map[string]any); identity.Email == "" {
+		identity.Email = jwtClaimString(profile, "email")
+	}
+	if auth, _ := claims[codexJWTClaimPath].(map[string]any); auth != nil {
+		identity.AccountID = jwtClaimString(auth, "chatgpt_account_id")
+		identity.PlanType = jwtClaimString(auth, "chatgpt_plan_type", "plan_type")
+		for _, key := range []string{"chatgpt_subscription_active_until", "chatgpt_subscription_expires_at", "subscription_expires_at"} {
+			candidate := jwtClaimString(auth, key)
+			if validRFC3339(candidate) {
+				identity.SubscriptionExpiresAt = candidate
+				break
+			}
+		}
+	}
+	return identity, true
+}
+
+func jwtClaimString(claims map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, _ := claims[key].(string)
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func upstreamOAuthCredentialExpiry(credentials map[string]any) (int64, bool) {
+	for _, key := range []string{"expired", "expires_at"} {
+		if value, ok := oauthExpiryValue(credentials[key]); ok {
+			return value, true
+		}
+	}
+	claims, ok := decodeJWTClaims(upstreamCredentialMapString(credentials, "access_token"))
 	if !ok {
-		return "", false
+		return 0, false
 	}
-	s, ok := v.(string)
-	if !ok {
-		return "", false
+	return oauthExpiryValue(claims["exp"])
+}
+
+func oauthExpiryValue(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int64:
+		return typed, typed > 0
+	case int:
+		return int64(typed), typed > 0
+	case float64:
+		return int64(typed), typed > 0
+	case string:
+		raw := strings.TrimSpace(typed)
+		if raw == "" {
+			return 0, false
+		}
+		if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return parsed, parsed > 0
+		}
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			return parsed.Unix(), true
+		}
 	}
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", false
-	}
-	return s, true
+	return 0, false
 }
 
 func decodeJWTClaims(token string) (map[string]any, bool) {

@@ -87,6 +87,11 @@ func runUpstreamAccountOAuthRefreshOnce() {
 		timeoutSeconds = 1
 	}
 	refreshTimeout := time.Duration(timeoutSeconds) * time.Second
+	if restored, err := restoreMissingManagedOAuthExpirations(); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("upstream account OAuth expiry restoration failed: %v", err))
+	} else if restored > 0 {
+		logger.LogInfo(context.Background(), fmt.Sprintf("upstream account OAuth expiry restored: accounts=%d", restored))
+	}
 
 	lastId := 0
 	for {
@@ -132,6 +137,47 @@ func runUpstreamAccountOAuthRefreshOnce() {
 		}
 		if len(accounts) < upstreamOAuthRefreshBatchSize {
 			return
+		}
+	}
+}
+
+func restoreMissingManagedOAuthExpirations() (int64, error) {
+	var restored int64
+	lastId := 0
+	for {
+		var accounts []model.UpstreamAccount
+		if err := model.DB.
+			Where("id > ? AND oauth_refresh_owner = ? AND expires_at IS NULL", lastId, constant.UpstreamOAuthRefreshOwnerStarNexus).
+			Where("(platform = ? AND type = ?) OR (platform = ? AND type IN ?)",
+				constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth,
+				constant.UpstreamPlatformAnthropic, []string{constant.UpstreamAccountTypeOAuth, constant.UpstreamAccountTypeSetupToken}).
+			Order("id ASC").Limit(upstreamOAuthRefreshBatchSize).Find(&accounts).Error; err != nil {
+			return restored, err
+		}
+		if len(accounts) == 0 {
+			return restored, nil
+		}
+		for i := range accounts {
+			account := &accounts[i]
+			lastId = account.Id
+			credentials, err := DecryptUpstreamAccountCredentials(account)
+			if err != nil {
+				continue
+			}
+			expiresAt, ok := upstreamOAuthCredentialExpiry(credentials)
+			if !ok {
+				continue
+			}
+			result := model.DB.Model(&model.UpstreamAccount{}).
+				Where("id = ? AND expires_at IS NULL", account.Id).
+				Updates(map[string]any{"expires_at": expiresAt, "updated_at": common.GetTimestamp()})
+			if result.Error != nil {
+				return restored, result.Error
+			}
+			restored += result.RowsAffected
+		}
+		if len(accounts) < upstreamOAuthRefreshBatchSize {
+			return restored, nil
 		}
 	}
 }

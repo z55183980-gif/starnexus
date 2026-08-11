@@ -647,7 +647,7 @@ func RelayNotFound(c *gin.Context) {
 func RelayTaskFetch(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+		respondTaskError(c, &dto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -662,7 +662,7 @@ func RelayTaskFetch(c *gin.Context) {
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+		respondTaskError(c, &dto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -824,9 +824,20 @@ func RelayTask(c *gin.Context) {
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
+			if len(result.ResponseBody) > 0 {
+				service.RefundTaskQuota(c, task, "任务创建失败")
+				respondTaskError(c, service.TaskErrorWrapperLocal(errors.New("video task could not be persisted"), "task_persistence_failed", http.StatusInternalServerError))
+				return
+			}
 			if silentVideoPreAuth {
 				service.RefundTaskQuota(c, task, "任务创建失败")
 			}
+		} else if len(result.ResponseBody) > 0 {
+			status := result.ResponseStatus
+			if status == 0 {
+				status = http.StatusOK
+			}
+			c.Data(status, "application/json; charset=utf-8", result.ResponseBody)
 		}
 	}
 
@@ -837,8 +848,30 @@ func RelayTask(c *gin.Context) {
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
+	if taskErr == nil {
+		return
+	}
+	isOpenAIVideoRequest := isZQBAPIOpenAIVideoPublicRequest(c)
 	if taskErr.StatusCode == http.StatusTooManyRequests {
-		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+		if isOpenAIVideoRequest {
+			taskErr.Message = "The video service is temporarily busy. Please retry later."
+		} else {
+			taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+		}
+	} else if isOpenAIVideoRequest {
+		taskErr.Message = sanitizePublicErrorMessage(taskErr.Message)
+	}
+	if isOpenAIVideoRequest {
+		message := taskErr.Message
+		if taskErr.StatusCode >= http.StatusInternalServerError {
+			switch taskErr.Code {
+			case "video_service_error", "video_service_authentication_failed", "task_persistence_failed":
+			default:
+				message = "The video request could not be completed because of an internal error."
+			}
+		}
+		writeOpenAIVideoError(c, taskErr.StatusCode, taskErr.Code, "", message)
+		return
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
 }

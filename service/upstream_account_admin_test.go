@@ -443,10 +443,10 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 	}
 	require.NoError(t, CreateUpstreamAccount(&accountInput))
 
-	created, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"test3", "default", "test3"})
+	created, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"test3", "default", "test3"}, []string{"model-a"})
 	require.NoError(t, err)
 	require.True(t, created.Created)
-	require.Equal(t, []string{"model-a", "model-b"}, created.Models)
+	require.Equal(t, []string{"model-a"}, created.Models)
 	require.Equal(t, []string{"test3", "default"}, created.Groups)
 
 	var channel model.Channel
@@ -456,7 +456,7 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 	require.Equal(t, constant.ChannelCredentialSourceAccountPool, channel.CredentialSource)
 	require.NotNil(t, channel.UpstreamAccountPoolId)
 	require.Equal(t, pool.Id, *channel.UpstreamAccountPoolId)
-	require.Equal(t, "model-a,model-b", channel.Models)
+	require.Equal(t, "model-a", channel.Models)
 	require.Equal(t, "test3,default", channel.Group)
 	require.Empty(t, channel.Key)
 	require.Nil(t, channel.BaseURL)
@@ -470,15 +470,19 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 	require.Equal(t, channel.Id, *publishedView.PublishedChannelId)
 	require.NotNil(t, publishedView.PublishedChannelStatus)
 	require.Equal(t, common.ChannelStatusEnabled, *publishedView.PublishedChannelStatus)
-	require.Equal(t, 2, publishedView.PublishedModelCount)
+	require.Equal(t, 1, publishedView.PublishedModelCount)
+	capabilities, err := GetUpstreamAccountPoolCapabilities(pool.Id)
+	require.NoError(t, err)
+	require.Equal(t, []string{"model-a", "model-b"}, capabilities.Models)
+	require.Equal(t, []string{"model-a"}, capabilities.PublishedModels)
 
 	var abilities []model.Ability
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Order("model ASC").Find(&abilities).Error)
-	require.Len(t, abilities, 4)
+	require.Len(t, abilities, 2)
 
 	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).
 		Update("status", common.ChannelStatusManuallyDisabled).Error)
-	updated, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"vip"})
+	updated, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"vip"}, []string{"model-b"})
 	require.NoError(t, err)
 	require.False(t, updated.Created)
 	require.Equal(t, channel.Id, updated.ChannelId)
@@ -489,13 +493,14 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 	require.EqualValues(t, 1, channelCount)
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
 	require.Equal(t, "vip", channel.Group)
+	require.Equal(t, "model-b", channel.Models)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, channel.Status)
 	publishedView, err = GetUpstreamAccountPool(pool.Id)
 	require.NoError(t, err)
 	require.NotNil(t, publishedView.PublishedChannelStatus)
 	require.Equal(t, common.ChannelStatusManuallyDisabled, *publishedView.PublishedChannelStatus)
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
-	require.Len(t, abilities, 2)
+	require.Len(t, abilities, 1)
 
 	var account model.UpstreamAccount
 	require.NoError(t, model.DB.First(&account, accountInput.Account.Id).Error)
@@ -509,10 +514,17 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 		Account: account, Credentials: &updatedCredentials,
 	}))
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
-	require.Equal(t, "model-c", channel.Models)
+	require.Empty(t, channel.Models)
+	require.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
-	require.Len(t, abilities, 1)
-	require.Equal(t, "model-c", abilities[0].Model)
+	require.Empty(t, abilities)
+
+	republished, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"vip"}, []string{"model-c"})
+	require.NoError(t, err)
+	require.False(t, republished.Created)
+	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
+	require.Equal(t, "model-c", channel.Models)
+	require.Equal(t, common.ChannelStatusEnabled, channel.Status)
 
 	require.NoError(t, DeleteUpstreamAccount(account.Id))
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
@@ -548,6 +560,35 @@ func TestPublishUpstreamAccountPoolChannelRequiresConcreteModels(t *testing.T) {
 	require.NoError(t, CreateUpstreamAccount(&input))
 	_, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"default"})
 	require.ErrorContains(t, err, "no concrete account models")
+}
+
+func TestPublishUpstreamAccountPoolChannelRejectsInvalidModelSelection(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "model-selection", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey,
+		Status:         constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "model-selection-account", Platform: constant.UpstreamPlatformOpenAI,
+			Type: constant.UpstreamAccountTypeAPIKey, Extra: "{}", Concurrency: 1,
+			Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{
+			"api_key":       "secret",
+			"model_mapping": map[string]any{"model-a": "upstream-a"},
+		},
+		PoolIds: []int{pool.Id},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+
+	_, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"default"}, []string{})
+	require.ErrorContains(t, err, "at least one channel model")
+	_, err = PublishUpstreamAccountPoolChannel(pool.Id, []string{"default"}, []string{"unknown-model"})
+	require.ErrorContains(t, err, "not available from this account pool")
 }
 
 func TestUpdateUpstreamAccountPreservesExistingPoolMemberOverrides(t *testing.T) {

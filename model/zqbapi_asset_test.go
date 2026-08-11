@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
@@ -81,5 +82,31 @@ func TestUpdateTaskResultFileOnlyChangesDedicatedColumn(t *testing.T) {
 	}
 	if got.ResultFile != "zqbapi-result.mp4" || got.PrivateData.ResultURL != task.PrivateData.ResultURL {
 		t.Fatalf("unexpected task after cache update: %+v", got)
+	}
+}
+
+func TestListRecentTaskResultsForArchiveUsesPortableStableCursor(t *testing.T) {
+	setupZQBAPIRegistryTestDB(t)
+	platform := constant.TaskPlatform("61")
+	now := time.Now().Unix()
+	tasks := []*Task{
+		{TaskID: "older", Platform: platform, Status: TaskStatusSuccess, UpdatedAt: now - 10},
+		{TaskID: "newer", Platform: platform, Status: TaskStatusPendingSettlement, UpdatedAt: now},
+		{TaskID: "failed", Platform: platform, Status: TaskStatusFailure, UpdatedAt: now},
+		{TaskID: "other-platform", Platform: constant.TaskPlatform("1"), Status: TaskStatusSuccess, UpdatedAt: now},
+	}
+	for _, task := range tasks {
+		if err := DB.Create(task).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	first, err := ListRecentTaskResultsForArchive(platform, 0, now-60, 1)
+	if err != nil || len(first) != 1 || first[0].TaskID != "newer" {
+		t.Fatalf("first=%v err=%v", first, err)
+	}
+	second, err := ListRecentTaskResultsForArchive(platform, first[0].ID, now-60, 10)
+	if err != nil || len(second) != 1 || second[0].TaskID != "older" {
+		t.Fatalf("second=%v err=%v", second, err)
 	}
 }

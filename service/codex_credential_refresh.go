@@ -67,10 +67,7 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		return nil, nil, err
 	}
 
-	oauthKey.AccessToken = res.AccessToken
-	oauthKey.RefreshToken = res.RefreshToken
-	oauthKey.LastRefresh = time.Now().Format(time.RFC3339)
-	oauthKey.Expired = res.ExpiresAt.Format(time.RFC3339)
+	applyCodexChannelTokenRefresh(oauthKey, res)
 	if strings.TrimSpace(oauthKey.Type) == "" {
 		oauthKey.Type = "codex"
 	}
@@ -101,4 +98,19 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 	}
 
 	return oauthKey, ch, nil
+}
+
+func applyCodexChannelTokenRefresh(oauthKey *CodexOAuthKey, result *CodexOAuthTokenResult) {
+	if oauthKey == nil || result == nil {
+		return
+	}
+	oauthKey.AccessToken = result.AccessToken
+	if result.RefreshToken != "" {
+		oauthKey.RefreshToken = result.RefreshToken
+	}
+	if result.IDToken != "" {
+		oauthKey.IDToken = result.IDToken
+	}
+	oauthKey.LastRefresh = time.Now().Format(time.RFC3339)
+	oauthKey.Expired = result.ExpiresAt.Format(time.RFC3339)
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 )
 
 const upstreamAccountSubscriptionBodyLimit = 1 << 20
@@ -28,19 +30,27 @@ type chatGPTAccountSubscriptionInfo struct {
 // used by sub2api. accounts/check is preferred; subscriptions is a fallback for
 // Plus accounts whose entitlement no longer includes expires_at.
 func fetchChatGPTAccountSubscriptionInfo(ctx context.Context, accessToken, proxyURL, accountID string) *chatGPTAccountSubscriptionInfo {
+	info, _ := fetchChatGPTAccountSubscriptionInfoDetailed(ctx, accessToken, proxyURL, accountID)
+	return info
+}
+
+func fetchChatGPTAccountSubscriptionInfoDetailed(ctx context.Context, accessToken, proxyURL, accountID string) (*chatGPTAccountSubscriptionInfo, error) {
 	if strings.TrimSpace(accessToken) == "" {
-		return nil
+		return nil, errors.New("OpenAI subscription metadata requires an access token")
 	}
 	client, err := NewProxyHttpClient(proxyURL)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	info := fetchChatGPTAccountsCheck(ctx, client, accessToken, accountID)
+	info, accountsErr := fetchChatGPTAccountsCheck(ctx, client, accessToken, accountID)
 	if info == nil {
 		info = &chatGPTAccountSubscriptionInfo{}
 	}
+	var subscriptionErr error
 	if info.ExpiresAt == "" && strings.TrimSpace(accountID) != "" {
-		if plan, expiresAt := fetchChatGPTSubscription(ctx, client, accessToken, accountID); expiresAt != "" {
+		if plan, expiresAt, err := fetchChatGPTSubscription(ctx, client, accessToken, accountID); err != nil {
+			subscriptionErr = err
+		} else if expiresAt != "" {
 			info.ExpiresAt = expiresAt
 			if info.PlanType == "" {
 				info.PlanType = plan
@@ -48,21 +58,21 @@ func fetchChatGPTAccountSubscriptionInfo(ctx context.Context, accessToken, proxy
 		}
 	}
 	if info.PlanType == "" && info.ExpiresAt == "" {
-		return nil
+		return nil, errors.Join(accountsErr, subscriptionErr)
 	}
-	return info
+	return info, errors.Join(accountsErr, subscriptionErr)
 }
 
-func fetchChatGPTAccountsCheck(ctx context.Context, client *http.Client, accessToken, accountID string) *chatGPTAccountSubscriptionInfo {
+func fetchChatGPTAccountsCheck(ctx context.Context, client *http.Client, accessToken, accountID string) (*chatGPTAccountSubscriptionInfo, error) {
 	var result struct {
 		Accounts map[string]map[string]any `json:"accounts"`
 	}
 	if err := requestChatGPTSubscriptionJSON(ctx, client, accessToken, chatGPTAccountsCheckURL, &result); err != nil {
-		return nil
+		return nil, err
 	}
 	now := time.Now()
 	if account := result.Accounts[strings.TrimSpace(accountID)]; usableChatGPTAccount(account, now) {
-		return extractChatGPTAccountSubscription(account)
+		return extractChatGPTAccountSubscription(account), nil
 	}
 	var defaultInfo, paidInfo, anyInfo *chatGPTAccountSubscriptionInfo
 	for _, account := range result.Accounts {
@@ -86,28 +96,28 @@ func fetchChatGPTAccountsCheck(ctx context.Context, client *http.Client, accessT
 		}
 	}
 	if defaultInfo != nil {
-		return defaultInfo
+		return defaultInfo, nil
 	}
 	if paidInfo != nil {
-		return paidInfo
+		return paidInfo, nil
 	}
-	return anyInfo
+	return anyInfo, nil
 }
 
-func fetchChatGPTSubscription(ctx context.Context, client *http.Client, accessToken, accountID string) (string, string) {
+func fetchChatGPTSubscription(ctx context.Context, client *http.Client, accessToken, accountID string) (string, string, error) {
 	var result struct {
 		PlanType    string `json:"plan_type"`
 		ActiveUntil string `json:"active_until"`
 	}
 	endpoint := chatGPTSubscriptionsURL + "?account_id=" + url.QueryEscape(accountID)
 	if err := requestChatGPTSubscriptionJSON(ctx, client, accessToken, endpoint, &result); err != nil {
-		return "", ""
+		return "", "", err
 	}
 	expiresAt := strings.TrimSpace(result.ActiveUntil)
 	if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
-		return "", ""
+		return "", "", errors.New("ChatGPT subscription response contains an invalid active_until")
 	}
-	return strings.TrimSpace(result.PlanType), expiresAt
+	return strings.TrimSpace(result.PlanType), expiresAt, nil
 }
 
 func requestChatGPTSubscriptionJSON(ctx context.Context, client *http.Client, accessToken, url string, target any) error {
@@ -127,7 +137,7 @@ func requestChatGPTSubscriptionJSON(ctx context.Context, client *http.Client, ac
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return errors.New("ChatGPT subscription endpoint returned a non-success status")
+		return fmt.Errorf("ChatGPT subscription endpoint returned status %d", response.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, upstreamAccountSubscriptionBodyLimit))
 	if err != nil {
@@ -195,11 +205,26 @@ func validRFC3339(value string) bool {
 }
 
 func enrichUpstreamOpenAICredentials(ctx context.Context, credentials map[string]any, proxyURL string) {
+	identity, identityOK := ExtractCodexOAuthIdentityFromJWT(upstreamCredentialMapString(credentials, "access_token"))
+	if identityOK {
+		if identity.Email != "" {
+			credentials["email"] = identity.Email
+		}
+		if identity.PlanType != "" {
+			credentials["plan_type"] = identity.PlanType
+		}
+		if identity.SubscriptionExpiresAt != "" {
+			credentials["subscription_expires_at"] = identity.SubscriptionExpiresAt
+		}
+	}
 	accountID := upstreamCredentialMapString(credentials, "account_id")
 	if accountID == "" {
 		accountID = upstreamCredentialMapString(credentials, "chatgpt_account_id")
 	}
-	info := fetchChatGPTAccountSubscriptionInfo(ctx, upstreamCredentialMapString(credentials, "access_token"), proxyURL, accountID)
+	info, err := fetchChatGPTAccountSubscriptionInfoDetailed(ctx, upstreamCredentialMapString(credentials, "access_token"), proxyURL, accountID)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("OpenAI subscription metadata enrichment failed: account_id_present=%t error=%v", accountID != "", err))
+	}
 	if info == nil {
 		return
 	}

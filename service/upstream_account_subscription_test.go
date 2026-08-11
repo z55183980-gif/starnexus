@@ -60,6 +60,30 @@ func TestFetchChatGPTAccountSubscriptionInfoRejectsInvalidFallbackDate(t *testin
 	require.Empty(t, info.ExpiresAt)
 }
 
+func TestEnrichUpstreamOpenAICredentialsKeepsJWTMetadataWhenWebEndpointsRejectToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+	setChatGPTSubscriptionURLsForTest(t, server.URL+"/check", server.URL+"/subscriptions")
+
+	credentials := map[string]any{
+		"access_token": codexTestJWT(t, map[string]any{
+			"https://api.openai.com/profile": map[string]any{"email": "oauth@example.com"},
+			codexJWTClaimPath: map[string]any{
+				"chatgpt_account_id": "acct-oauth",
+				"chatgpt_plan_type":  "pro",
+			},
+		}),
+		"account_id": "acct-oauth",
+	}
+
+	enrichUpstreamOpenAICredentials(context.Background(), credentials, "")
+	require.Equal(t, "oauth@example.com", credentials["email"])
+	require.Equal(t, "pro", credentials["plan_type"])
+	require.NotContains(t, credentials, "subscription_expires_at")
+}
+
 func setChatGPTSubscriptionURLsForTest(t *testing.T, accountsURL, subscriptionsURL string) {
 	originalAccountsURL := chatGPTAccountsCheckURL
 	originalSubscriptionsURL := chatGPTSubscriptionsURL

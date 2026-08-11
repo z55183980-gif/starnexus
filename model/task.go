@@ -493,6 +493,33 @@ func ListUserOpenAIVideoTasksByPlatformCursor(userID int, platform constant.Task
 	return matched, hasMore, nil
 }
 
+// ListRecentTaskResultsForArchive returns a bounded, stable batch for the
+// per-node video result repair worker. JSON-backed compatibility properties
+// are deliberately filtered by the caller to keep this query portable across
+// SQLite, MySQL and PostgreSQL.
+func ListRecentTaskResultsForArchive(platform constant.TaskPlatform, beforeID, updatedAfter int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	query := DB.Where(
+		"platform = ? AND updated_at >= ? AND status IN ?",
+		platform,
+		updatedAfter,
+		[]TaskStatus{TaskStatusSuccess, TaskStatusPendingSettlement},
+	)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
+	var tasks []*Task
+	if err := query.Order("id desc").Limit(limit).Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
 func DeleteUserTaskByID(userID int, id int64, platform constant.TaskPlatform) error {
 	return DB.Where("id = ? AND user_id = ? AND platform = ?", id, userID, platform).Delete(&Task{}).Error
 }

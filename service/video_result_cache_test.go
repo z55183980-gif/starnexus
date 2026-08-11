@@ -25,6 +25,13 @@ func TestOpenVideoResultCacheRestrictsFilesToGeneratedNames(t *testing.T) {
 	if _, _, err := OpenVideoResultCache("../secret"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("path traversal error = %v", err)
 	}
+	emptyName := videoResultCachePrefix + "empty.mp4"
+	if err := os.WriteFile(filepath.Join(root, emptyName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := OpenVideoResultCache(emptyName); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty cache error = %v", err)
+	}
 }
 
 func TestVideoResultExtensionUsesSafeAllowlist(t *testing.T) {

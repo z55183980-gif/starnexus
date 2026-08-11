@@ -139,13 +139,20 @@ func PublishUpstreamAccountPoolChannel(c *gin.Context) {
 		return
 	}
 	var request struct {
-		Groups []string `json:"groups"`
+		Groups []string  `json:"groups"`
+		Models *[]string `json:"models"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	result, err := service.PublishUpstreamAccountPoolChannel(id, request.Groups)
+	var result *service.UpstreamAccountPoolPublishResult
+	var err error
+	if request.Models == nil {
+		result, err = service.PublishUpstreamAccountPoolChannel(id, request.Groups)
+	} else {
+		result, err = service.PublishUpstreamAccountPoolChannel(id, request.Groups, *request.Models)
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

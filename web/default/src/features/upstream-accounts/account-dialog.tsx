@@ -1109,6 +1109,10 @@ export function AccountDialog({
             throw new Error(oauthResponse.message || t('Save failed'))
           }
           accountId = oauthResponse.data.id
+          // OAuth completion persists the credential's real expiry. Do not
+          // overwrite it with an empty or stale form value in the follow-up
+          // account settings update.
+          delete payload.expires_at
         }
         if (!accountId) throw new Error(t('Save failed'))
         const response = await updateUpstreamAccount(accountId, payload)
