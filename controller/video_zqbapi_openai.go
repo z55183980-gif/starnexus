@@ -1,10 +1,13 @@
 package controller
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -14,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -68,14 +72,14 @@ func ListZQBAPIOpenAIVideos(c *gin.Context) {
 			zqbapiOpenAIVideoError(c, http.StatusInternalServerError, "server_error", "after", "Failed to list videos")
 			return
 		}
-		if !exists || cursor == nil || cursor.Platform != zqbapiVideoPlatform() {
+		if !exists || cursor == nil || cursor.Platform != zqbapiVideoPlatform() || !cursor.Properties.OpenAIVideo {
 			zqbapiOpenAIVideoError(c, http.StatusBadRequest, "invalid_after", "after", "after must identify one of your ZQBAPI videos")
 			return
 		}
 		afterID = cursor.ID
 	}
 
-	tasks, hasMore, err := model.ListUserTasksByPlatformCursor(userID, zqbapiVideoPlatform(), afterID, limit, order == "asc")
+	tasks, hasMore, err := model.ListUserOpenAIVideoTasksByPlatformCursor(userID, zqbapiVideoPlatform(), afterID, limit, order == "asc")
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to list ZQBAPI videos: %v", err))
 		zqbapiOpenAIVideoError(c, http.StatusInternalServerError, "server_error", "", "Failed to list videos")
@@ -102,7 +106,7 @@ func ListZQBAPIOpenAIVideos(c *gin.Context) {
 }
 
 func convertZQBAPITaskToOpenAIVideo(task *model.Task) (*dto.OpenAIVideo, error) {
-	if task == nil || task.Platform != zqbapiVideoPlatform() {
+	if task == nil || task.Platform != zqbapiVideoPlatform() || !task.Properties.OpenAIVideo {
 		return nil, fmt.Errorf("task is not a ZQBAPI video")
 	}
 	adaptor := relay.GetTaskAdaptor(task.Platform)
@@ -118,6 +122,7 @@ func convertZQBAPITaskToOpenAIVideo(task *model.Task) (*dto.OpenAIVideo, error) 
 	if err := common.Unmarshal(data, &video); err != nil {
 		return nil, err
 	}
+	video.StandardFields = true
 	return &video, nil
 }
 
@@ -130,12 +135,59 @@ func DeleteZQBAPIOpenAIVideo(c *gin.Context) {
 		zqbapiOpenAIVideoError(c, http.StatusInternalServerError, "server_error", "video_id", "Failed to delete video")
 		return
 	}
-	if !exists || task == nil || task.Platform != zqbapiVideoPlatform() {
+	if !exists || task == nil || task.Platform != zqbapiVideoPlatform() || !task.Properties.OpenAIVideo {
 		zqbapiOpenAIVideoError(c, http.StatusNotFound, "video_not_found", "video_id", "Video not found")
 		return
 	}
 	if task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailure {
 		zqbapiOpenAIVideoError(c, http.StatusConflict, "video_not_terminal", "video_id", "Only completed or failed videos can be deleted")
+		return
+	}
+
+	channelModel, err := model.GetChannelById(task.ChannelId, true)
+	if err != nil || channelModel == nil || channelModel.Type != constant.ChannelTypeZQBAPI {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve ZQBAPI channel for video %s: %v", taskID, err))
+		zqbapiOpenAIVideoError(c, http.StatusBadGateway, "upstream_delete_failed", "video_id", "Failed to resolve the upstream video channel")
+		return
+	}
+	adaptor := relay.GetTaskAdaptor(zqbapiVideoPlatform())
+	deleter, ok := adaptor.(channel.OpenAIVideoDeleter)
+	if !ok {
+		zqbapiOpenAIVideoError(c, http.StatusNotImplemented, "upstream_delete_not_supported", "video_id", "Upstream video deletion is unavailable")
+		return
+	}
+	key := strings.TrimSpace(task.PrivateData.Key)
+	if key == "" {
+		var keyErr *types.NewAPIError
+		key, _, keyErr = channelModel.GetNextEnabledKey()
+		if keyErr != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to select ZQBAPI key for video deletion %s: %v", taskID, keyErr))
+			zqbapiOpenAIVideoError(c, http.StatusBadGateway, "upstream_delete_failed", "video_id", "Failed to authorize upstream video deletion")
+			return
+		}
+	}
+	baseURL := channelModel.GetBaseURL()
+	if baseURL == "" {
+		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeZQBAPI]
+	}
+	deleteCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	resp, err := deleter.DeleteOpenAIVideo(deleteCtx, baseURL, key, task.GetUpstreamTaskID(), channelModel.GetSetting().Proxy)
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to delete upstream ZQBAPI video %s: %v", taskID, err))
+		zqbapiOpenAIVideoError(c, http.StatusBadGateway, "upstream_delete_failed", "video_id", "Failed to delete the upstream video")
+		return
+	}
+	defer resp.Body.Close()
+	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	if readErr != nil || len(responseBody) > 1<<20 {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to read upstream ZQBAPI delete response for %s: %v", taskID, readErr))
+		zqbapiOpenAIVideoError(c, http.StatusBadGateway, "upstream_delete_failed", "video_id", "Invalid upstream deletion response")
+		return
+	}
+	if (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) && resp.StatusCode != http.StatusNotFound {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream ZQBAPI deletion failed for %s: status=%d body=%s", taskID, resp.StatusCode, strings.TrimSpace(string(responseBody))))
+		zqbapiOpenAIVideoError(c, http.StatusBadGateway, "upstream_delete_failed", "video_id", "The upstream video could not be deleted")
 		return
 	}
 

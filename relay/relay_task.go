@@ -104,6 +104,14 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		info.ChannelType = ch.Type
 		info.ApiKey = key
 	}
+	if ch.Type == constant.ChannelTypeZQBAPI && originTask.Properties.OpenAIVideo && strings.TrimSpace(originTask.PrivateData.Key) != "" {
+		originKey := strings.TrimSpace(originTask.PrivateData.Key)
+		common.SetContextKey(c, constant.ContextKeyChannelKey, originKey)
+		info.ApiKey = originKey
+		if info.ChannelMeta != nil {
+			info.ChannelMeta.ApiKey = originKey
+		}
+	}
 
 	// 提取 remix 参数（时长、分辨率 → OtherRatios）
 	if info.Action == constant.TaskActionRemix {
@@ -396,6 +404,11 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isZQBAPI := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
+	if isOpenAIVideoAPI && isZQBAPI && !originTask.Properties.OpenAIVideo {
+		taskResp = service.TaskErrorWrapperLocal(errors.New("video_not_found"), "video_not_found", http.StatusNotFound)
+		return
+	}
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	realtimeResp, realtimeErr := tryRealtimeFetch(c.Request.Context(), originTask, isOpenAIVideoAPI)

@@ -147,6 +147,9 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 	}
 
 	switch {
+	case isUpstreamOverloadError(apiErr):
+		updates["overload_until"] = now + int64(upstreamAccountOverloadCooldown.Seconds())
+		updates["temp_unschedulable_reason"] = "upstream_overloaded"
 	case apiErr.StatusCode == 401:
 		if !loadAccount() {
 			return UpstreamAccountErrorNotHandled
@@ -187,9 +190,6 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 			updates["session_window_end"] = *windowEnd
 			updates["session_window_status"] = "rejected"
 		}
-	case apiErr.StatusCode == 529:
-		updates["overload_until"] = now + int64(upstreamAccountOverloadCooldown.Seconds())
-		updates["temp_unschedulable_reason"] = "upstream_overloaded"
 	case apiErr.StatusCode == 408 || isUpstreamTransportError(apiErr):
 		disposition = UpstreamAccountErrorRetryTransport
 		updates = nil
@@ -297,6 +297,35 @@ func canRefreshUpstreamAuthentication(account *model.UpstreamAccount) bool {
 	}
 	credentials, err := DecryptUpstreamAccountCredentials(account)
 	return err == nil && upstreamCredentialMapString(credentials, "refresh_token") != ""
+}
+
+// isUpstreamOverloadError recognizes capacity failures embedded in OpenAI
+// Responses terminal events. Those events are transported over an otherwise
+// successful SSE response and are therefore wrapped locally as HTTP 500. Treat
+// only explicit upstream overload signatures as account-scoped so ordinary
+// server errors remain non-account-scoped and are not retried within the pool.
+func isUpstreamOverloadError(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	if apiErr.StatusCode == 529 {
+		return true
+	}
+
+	openAIError := apiErr.ToOpenAIError()
+	code := strings.ToLower(strings.TrimSpace(fmt.Sprint(openAIError.Code)))
+	message := strings.ToLower(strings.TrimSpace(openAIError.Message + " " + apiErr.Error()))
+	if upstreamCode, upstreamMessage := upstreamErrorDetails(apiErr); upstreamCode != "" || upstreamMessage != "" {
+		code += " " + strings.ToLower(strings.TrimSpace(upstreamCode))
+		message += " " + strings.ToLower(strings.TrimSpace(upstreamMessage))
+	}
+
+	if strings.Contains(code, "server_is_overloaded") {
+		return true
+	}
+	return strings.Contains(message, "servers are currently overloaded") ||
+		strings.Contains(message, "server is currently overloaded") ||
+		strings.Contains(message, "selected model is at capacity")
 }
 
 func isPermanentUpstreamAuthenticationError(apiErr *types.NewAPIError) bool {

@@ -3,6 +3,8 @@ package dto
 import (
 	"strconv"
 	"strings"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 const (
@@ -23,11 +25,41 @@ type OpenAIVideo struct {
 	CreatedAt          int64             `json:"created_at"`
 	CompletedAt        int64             `json:"completed_at,omitempty"`
 	ExpiresAt          int64             `json:"expires_at,omitempty"`
+	Prompt             string            `json:"prompt,omitempty"`
 	Seconds            string            `json:"seconds,omitempty"`
 	Size               string            `json:"size,omitempty"`
 	RemixedFromVideoID string            `json:"remixed_from_video_id,omitempty"`
 	Error              *OpenAIVideoError `json:"error,omitempty"`
 	Metadata           map[string]any    `json:"metadata,omitempty"`
+	StandardFields     bool              `json:"-"`
+}
+
+func (m OpenAIVideo) MarshalJSON() ([]byte, error) {
+	type openAIVideoAlias OpenAIVideo
+	data, err := common.Marshal(openAIVideoAlias(m))
+	if err != nil || !m.StandardFields {
+		return data, err
+	}
+	var object map[string]any
+	if err := common.Unmarshal(data, &object); err != nil {
+		return nil, err
+	}
+	if m.CompletedAt == 0 {
+		object["completed_at"] = nil
+	}
+	if m.ExpiresAt == 0 {
+		object["expires_at"] = nil
+	}
+	if m.Error == nil {
+		object["error"] = nil
+	}
+	if strings.TrimSpace(m.Prompt) == "" {
+		object["prompt"] = nil
+	}
+	if strings.TrimSpace(m.RemixedFromVideoID) == "" {
+		object["remixed_from_video_id"] = nil
+	}
+	return common.Marshal(object)
 }
 
 func (m *OpenAIVideo) SetProgressStr(progress string) {

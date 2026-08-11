@@ -2,6 +2,7 @@ package doubao
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"image"
 	"image/color"
@@ -153,7 +154,7 @@ func TestZQBAPIOpenAIVideoMapsInputReferenceAfterMetadata(t *testing.T) {
 		"model":"dreamina-seedance-2-0-260128",
 		"prompt":"animate this image",
 		"input_reference":{"image_url":"https://example.com/reference.png"},
-		"seconds":"5",
+		"seconds":"8",
 		"size":"1280x720",
 		"metadata":{"content":[]}
 	}`))
@@ -170,7 +171,11 @@ func TestZQBAPIOpenAIVideoMapsInputReferenceAfterMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := adaptor.convertToZQBAPIOpenAIRequestPayload(&req, "")
+	videoCtx, ok := getZQBAPIOpenAIVideoContext(c)
+	if !ok {
+		t.Fatal("ZQBAPI OpenAI video context is missing")
+	}
+	payload, err := adaptor.convertToZQBAPIOpenAIRequestPayload(&req, "", videoCtx.FrameReferences)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,8 +186,120 @@ func TestZQBAPIOpenAIVideoMapsInputReferenceAfterMetadata(t *testing.T) {
 	if payload.Content[0].ImageURL == nil || payload.Content[0].ImageURL.URL != "https://example.com/reference.png" {
 		t.Fatalf("reference image missing from payload: %+v", payload.Content)
 	}
-	if payload.Duration == nil || int(*payload.Duration) != 5 || payload.Resolution != "720p" || payload.Ratio != "16:9" {
+	if payload.Content[0].Role != "first_frame" {
+		t.Fatalf("input_reference role = %q, want first_frame", payload.Content[0].Role)
+	}
+	if payload.Duration == nil || int(*payload.Duration) != 8 || payload.Resolution != "720p" || payload.Ratio != "16:9" {
 		t.Fatalf("duration/size mapping failed: duration=%v resolution=%q ratio=%q", payload.Duration, payload.Resolution, payload.Ratio)
+	}
+}
+
+func TestZQBAPIOpenAIVideoAppliesOpenAIDefaults(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-260128",
+		"prompt":"a paper boat on a river"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeZQBAPI}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Seconds != "4" || req.Duration != 4 || req.Size != "720x1280" {
+		t.Fatalf("defaults = seconds:%q duration:%d size:%q", req.Seconds, req.Duration, req.Size)
+	}
+}
+
+func TestZQBAPIOpenAIVideoMapsFirstAndLastFrames(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-260128",
+		"prompt":"transition naturally",
+		"first_frame":{"image_url":"https://example.com/first.png"},
+		"last_frame":"https://example.com/last.png"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeZQBAPI}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoCtx, ok := getZQBAPIOpenAIVideoContext(c)
+	if !ok {
+		t.Fatal("ZQBAPI OpenAI video context is missing")
+	}
+	payload, err := adaptor.convertToZQBAPIOpenAIRequestPayload(&req, "", videoCtx.FrameReferences)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Content) != 3 || payload.Content[0].Role != "first_frame" || payload.Content[1].Role != "last_frame" {
+		t.Fatalf("first/last frame roles were not preserved: %+v", payload.Content)
+	}
+}
+
+func TestZQBAPIOpenAIVideoRejectsNonOpenAISeconds(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-260128",
+		"prompt":"test",
+		"seconds":"5"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeZQBAPI}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr == nil || taskErr.Code != "invalid_seconds" {
+		t.Fatalf("seconds=5 must fail with invalid_seconds, got %+v", taskErr)
+	}
+}
+
+func TestZQBAPIOpenAIVideoRejectsHighResolutionForFastModel(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-fast-hc",
+		"prompt":"test",
+		"size":"1792x1024"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeZQBAPI}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr == nil || taskErr.Code != "unsupported_size" {
+		t.Fatalf("Fast 1080p must fail with unsupported_size, got %+v", taskErr)
+	}
+}
+
+func TestZQBAPIOpenAIVideoRejectsUnsupportedMediaFields(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"dreamina-seedance-2-0-260128",
+		"prompt":"test",
+		"content":[{"type":"image_url","image_url":{"url":"https://example.com/ignored.png"}}]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeZQBAPI}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr == nil || taskErr.Code != "unsupported_input" {
+		t.Fatalf("unsupported media field must fail closed, got %+v", taskErr)
 	}
 }
 
@@ -221,12 +338,9 @@ func TestZQBAPIOpenAIVideoAcceptsMultipartInputReference(t *testing.T) {
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		t.Fatalf("validation failed: %+v", taskErr)
 	}
-	req, err := relaycommon.GetTaskRequest(c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(req.Images) != 1 || !strings.HasPrefix(req.Images[0], "data:image/png;base64,") {
-		t.Fatalf("multipart reference was not converted to an image data URL: %#v", req.Images)
+	videoCtx, ok := getZQBAPIOpenAIVideoContext(c)
+	if !ok || len(videoCtx.FrameReferences) != 1 || !strings.HasPrefix(videoCtx.FrameReferences[0].URL, "data:image/png;base64,") || videoCtx.FrameReferences[0].Role != "first_frame" {
+		t.Fatalf("multipart reference was not converted to a first-frame data URL: %#v", videoCtx.FrameReferences)
 	}
 }
 
@@ -248,13 +362,60 @@ func TestZQBAPIOpenAIVideoRejectsUnsupportedFileID(t *testing.T) {
 
 func TestZQBAPIOpenAIVideoRemixAddsOriginVideo(t *testing.T) {
 	req := relaycommon.TaskSubmitReq{Prompt: "make it brighter"}
-	payload, err := (&TaskAdaptor{}).convertToZQBAPIOpenAIRequestPayload(&req, "https://example.com/origin.mp4")
+	payload, err := (&TaskAdaptor{}).convertToZQBAPIOpenAIRequestPayload(&req, "https://example.com/origin.mp4", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	images, videos := countZQBAPIMedia(payload.Content)
 	if images != 0 || videos != 1 {
 		t.Fatalf("media counts = images:%d videos:%d", images, videos)
+	}
+	if payload.Content[0].Role != "reference_video" {
+		t.Fatalf("remix source role = %q, want reference_video", payload.Content[0].Role)
+	}
+}
+
+func TestParseTaskResultMapsZQBAPITerminalStatuses(t *testing.T) {
+	for _, status := range []string{"expired", "cancelled", "canceled"} {
+		t.Run(status, func(t *testing.T) {
+			result, err := (&TaskAdaptor{ChannelType: constant.ChannelTypeZQBAPI}).ParseTaskResult([]byte(`{"status":"` + status + `"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != string(model.TaskStatusFailure) || result.Progress != "100%" || !strings.Contains(result.Reason, status) {
+				t.Fatalf("terminal mapping = %+v", result)
+			}
+		})
+	}
+	result, err := (&TaskAdaptor{ChannelType: constant.ChannelTypeDoubaoVideo}).ParseTaskResult([]byte(`{"status":"expired"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != string(model.TaskStatusInProgress) || result.Progress != "30%" {
+		t.Fatalf("non-ZQBAPI status mapping changed: %+v", result)
+	}
+}
+
+func TestZQBAPIOpenAIVideoDeleteUsesNativeTaskEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/v3/contents/generations/tasks/upstream-1" {
+			t.Fatalf("delete request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer secret" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	resp, err := (&TaskAdaptor{}).DeleteOpenAIVideo(context.Background(), server.URL, "secret", "upstream-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status = %d", resp.StatusCode)
 	}
 }
 
@@ -268,6 +429,8 @@ func TestConvertToOpenAIVideoAddsZQBAPIFieldsOnlyForZQBAPI(t *testing.T) {
 		Data:      data,
 		Properties: model.Properties{
 			OriginModelName:    "dreamina-seedance-2-0-260128",
+			OpenAIVideo:        true,
+			VideoPrompt:        "stored prompt",
 			RemixedFromVideoID: "task_origin",
 		},
 	}
@@ -275,11 +438,24 @@ func TestConvertToOpenAIVideoAddsZQBAPIFieldsOnlyForZQBAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(converted, []byte(`"completed_at"`)) {
-		t.Fatalf("in-progress ZQBAPI video must not have completed_at: %s", converted)
+	if !bytes.Contains(converted, []byte(`"completed_at":null`)) || !bytes.Contains(converted, []byte(`"expires_at":null`)) || !bytes.Contains(converted, []byte(`"error":null`)) {
+		t.Fatalf("in-progress ZQBAPI video must include nullable standard fields: %s", converted)
 	}
 	if !bytes.Contains(converted, []byte(`"seconds":"5"`)) || !bytes.Contains(converted, []byte(`"size":"720x1280"`)) || !bytes.Contains(converted, []byte(`"remixed_from_video_id":"task_origin"`)) {
 		t.Fatalf("ZQBAPI compatibility fields missing: %s", converted)
+	}
+	if !bytes.Contains(converted, []byte(`"prompt":"stored prompt"`)) || bytes.Contains(converted, []byte(`"task_id"`)) || bytes.Contains(converted, []byte(`"metadata"`)) {
+		t.Fatalf("ZQBAPI standard response fields are incorrect: %s", converted)
+	}
+
+	nativeZQBAPI := *zqbapiTask
+	nativeZQBAPI.Properties.OpenAIVideo = false
+	converted, err = (&TaskAdaptor{}).ConvertToOpenAIVideo(&nativeZQBAPI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(converted, []byte(`"task_id":"task_zqbapi"`)) || !bytes.Contains(converted, []byte(`"metadata"`)) || bytes.Contains(converted, []byte(`"completed_at":null`)) {
+		t.Fatalf("native ZQBAPI converter behavior changed: %s", converted)
 	}
 
 	otherTask := *zqbapiTask

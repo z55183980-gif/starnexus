@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,10 +24,21 @@ import (
 
 const zqbapiOpenAIVideoContextKey = "zqbapi_openai_video_context"
 
+const (
+	zqbapiOpenAIDefaultSeconds = 4
+	zqbapiOpenAIDefaultSize    = "720x1280"
+)
+
+type zqbapiOpenAIFrameReference struct {
+	URL  string
+	Role string
+}
+
 type zqbapiOpenAIVideoContext struct {
 	ReferenceDeclared bool
 	ReferenceSource   string
 	ReferenceCount    int
+	FrameReferences   []zqbapiOpenAIFrameReference
 	Seconds           string
 	Size              string
 	RemixedFromID     string
@@ -42,6 +54,8 @@ type zqbapiOpenAIVideoRequest struct {
 	Seconds        json.RawMessage `json:"seconds,omitempty"`
 	Duration       json.RawMessage `json:"duration,omitempty"`
 	InputReference json.RawMessage `json:"input_reference,omitempty"`
+	FirstFrame     json.RawMessage `json:"first_frame,omitempty"`
+	LastFrame      json.RawMessage `json:"last_frame,omitempty"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
 }
 
@@ -68,6 +82,11 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 	var body zqbapiOpenAIVideoRequest
 	if err := common.UnmarshalBodyReusable(c, &body); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if field, err := unsupportedZQBAPIOpenAIMediaField(c); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	} else if field != "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("field %q is not supported by the ZQBAPI OpenAI Videos compatibility endpoint", field), "unsupported_input", http.StatusBadRequest)
 	}
 
 	req := relaycommon.TaskSubmitReq{
@@ -96,15 +115,17 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_seconds", http.StatusBadRequest)
 	}
+	if secondsSet && seconds != 4 && seconds != 8 && seconds != 12 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("seconds must be one of 4, 8, or 12"), "invalid_seconds", http.StatusBadRequest)
+	}
 	if !secondsSet {
 		seconds, secondsSet, err = parseZQBAPIOpenAIPositiveInt(body.Duration, "duration")
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_duration", http.StatusBadRequest)
 		}
-	}
-	if secondsSet {
-		req.Seconds = strconv.Itoa(seconds)
-		req.Duration = seconds
+		if secondsSet && (seconds < 4 || seconds > 15) {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and 15 seconds for ZQBAPI"), "invalid_duration", http.StatusBadRequest)
+		}
 	}
 
 	ctx := zqbapiOpenAIVideoContext{
@@ -117,7 +138,7 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 		ctx.ReferenceSource = "image"
 	}
 
-	referenceURL, referenceDeclared, err := parseZQBAPIOpenAIReference(body.InputReference)
+	referenceURL, referenceDeclared, err := parseZQBAPIOpenAIReference(body.InputReference, "input_reference")
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_input_reference", http.StatusBadRequest)
 	}
@@ -125,36 +146,70 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 		ctx.ReferenceDeclared = true
 		ctx.ReferenceSource = "input_reference"
 		if referenceURL != "" {
-			req.Images = append(req.Images, referenceURL)
+			ctx.FrameReferences = append(ctx.FrameReferences, zqbapiOpenAIFrameReference{URL: referenceURL, Role: "first_frame"})
 			ctx.ReferenceCount++
 		}
+	}
+	firstFrameURL, firstFrameDeclared, err := parseZQBAPIOpenAIReference(body.FirstFrame, "first_frame")
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_first_frame", http.StatusBadRequest)
+	}
+	lastFrameURL, lastFrameDeclared, err := parseZQBAPIOpenAIReference(body.LastFrame, "last_frame")
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_last_frame", http.StatusBadRequest)
 	}
 
 	if strings.HasPrefix(strings.ToLower(c.GetHeader("Content-Type")), "multipart/form-data") {
-		fileReference, fileDeclared, fileErr := extractZQBAPIOpenAIReferenceFile(c)
+		fileReferences, fileErr := extractZQBAPIOpenAIReferenceFiles(c)
 		if fileErr != nil {
 			return service.TaskErrorWrapperLocal(fileErr, "invalid_input_reference", http.StatusBadRequest)
 		}
-		if fileDeclared {
+		if fileReference := fileReferences["input_reference"]; fileReference != "" {
 			if referenceDeclared {
 				return service.TaskErrorWrapperLocal(fmt.Errorf("input_reference must be provided only once"), "invalid_input_reference", http.StatusBadRequest)
 			}
+			referenceDeclared = true
 			ctx.ReferenceDeclared = true
 			ctx.ReferenceSource = "multipart"
-			ctx.ReferenceCount++
-			req.Images = append(req.Images, fileReference)
+			ctx.FrameReferences = append(ctx.FrameReferences, zqbapiOpenAIFrameReference{URL: fileReference, Role: "first_frame"})
+		}
+		if fileReference := fileReferences["first_frame"]; fileReference != "" {
+			if firstFrameDeclared {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("first_frame must be provided only once"), "invalid_first_frame", http.StatusBadRequest)
+			}
+			firstFrameDeclared = true
+			firstFrameURL = fileReference
+		}
+		if fileReference := fileReferences["last_frame"]; fileReference != "" {
+			if lastFrameDeclared {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("last_frame must be provided only once"), "invalid_last_frame", http.StatusBadRequest)
+			}
+			lastFrameDeclared = true
+			lastFrameURL = fileReference
 		}
 	}
+	if referenceDeclared && firstFrameDeclared {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("input_reference and first_frame cannot be used together"), "invalid_first_frame", http.StatusBadRequest)
+	}
+	if lastFrameDeclared && !firstFrameDeclared {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("last_frame requires first_frame"), "invalid_last_frame", http.StatusBadRequest)
+	}
+	if (firstFrameDeclared || lastFrameDeclared) && len(req.Images) > 0 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("first_frame/last_frame cannot be mixed with image or images"), "invalid_first_frame", http.StatusBadRequest)
+	}
+	if firstFrameDeclared {
+		ctx.ReferenceDeclared = true
+		ctx.ReferenceSource = "first_last_frame"
+		ctx.FrameReferences = append(ctx.FrameReferences, zqbapiOpenAIFrameReference{URL: firstFrameURL, Role: "first_frame"})
+	}
+	if lastFrameDeclared {
+		ctx.FrameReferences = append(ctx.FrameReferences, zqbapiOpenAIFrameReference{URL: lastFrameURL, Role: "last_frame"})
+	}
 	req.Images = deduplicateZQBAPIVideoSources(req.Images)
-	ctx.ReferenceCount = len(req.Images)
+	ctx.ReferenceCount = len(req.Images) + len(ctx.FrameReferences)
 
 	if strings.TrimSpace(req.Prompt) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
-	}
-	if req.Size != "" {
-		if _, _, ok := zqbapiOpenAISizeToProvider(req.Size); !ok {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported size %q for ZQBAPI", req.Size), "unsupported_size", http.StatusBadRequest)
-		}
 	}
 
 	action := constant.TaskActionGenerate
@@ -164,12 +219,61 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 		if ctx.ReferenceDeclared {
 			return service.TaskErrorWrapperLocal(fmt.Errorf("input_reference is not supported for remix"), "invalid_input_reference", http.StatusBadRequest)
 		}
+		originSeconds, originSize, originErr := zqbapiOpenAIRemixParameters(info.UserId, info.OriginTaskID)
+		if originErr != nil {
+			return service.TaskErrorWrapperLocal(originErr, "invalid_video", http.StatusBadRequest)
+		}
+		if !secondsSet {
+			seconds, secondsSet = originSeconds, originSeconds > 0
+		}
+		if req.Size == "" {
+			req.Size = originSize
+		}
 	}
+	if !secondsSet {
+		seconds = zqbapiOpenAIDefaultSeconds
+	}
+	req.Seconds = strconv.Itoa(seconds)
+	req.Duration = seconds
+	if req.Size == "" {
+		req.Size = zqbapiOpenAIDefaultSize
+	}
+	if _, _, ok := zqbapiOpenAISizeToProvider(req.Size); !ok {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported size %q for ZQBAPI", req.Size), "unsupported_size", http.StatusBadRequest)
+	}
+	effectiveModel := strings.TrimSpace(info.UpstreamModelName)
+	if effectiveModel == "" {
+		effectiveModel = strings.TrimSpace(req.Model)
+	}
+	if effectiveModel == "" {
+		effectiveModel = strings.TrimSpace(info.OriginModelName)
+	}
+	if isZQBAPILimitedResolutionModel(effectiveModel) && isZQBAPIOpenAIHighResolution(req.Size) {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("size %q is not supported by ZQBAPI model %q", req.Size, effectiveModel), "unsupported_size", http.StatusBadRequest)
+	}
+	if lastFrameDeclared && !supportsZQBAPIFirstLastFrames(effectiveModel) {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("first_frame/last_frame is not supported by ZQBAPI model %q", effectiveModel), "unsupported_input", http.StatusBadRequest)
+	}
+	ctx.Seconds = req.Seconds
+	ctx.Size = req.Size
 
 	info.Action = action
 	c.Set("task_request", req)
 	c.Set(zqbapiOpenAIVideoContextKey, ctx)
 	return nil
+}
+
+func unsupportedZQBAPIOpenAIMediaField(c *gin.Context) (string, error) {
+	var fields map[string]json.RawMessage
+	if err := common.UnmarshalBodyReusable(c, &fields); err != nil {
+		return "", err
+	}
+	for _, field := range []string{"content", "image_url", "reference_image", "reference_images", "video", "videos", "audio", "audios"} {
+		if _, exists := fields[field]; exists {
+			return field, nil
+		}
+	}
+	return "", nil
 }
 
 func parseZQBAPIOpenAIMetadata(raw json.RawMessage) (map[string]interface{}, error) {
@@ -217,7 +321,7 @@ func parseZQBAPIOpenAIPositiveInt(raw json.RawMessage, field string) (int, bool,
 	return value, true, nil
 }
 
-func parseZQBAPIOpenAIReference(raw json.RawMessage) (string, bool, error) {
+func parseZQBAPIOpenAIReference(raw json.RawMessage, field string) (string, bool, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return "", false, nil
@@ -226,13 +330,13 @@ func parseZQBAPIOpenAIReference(raw json.RawMessage) (string, bool, error) {
 	if err := common.Unmarshal(trimmed, &legacy); err == nil {
 		legacy = strings.TrimSpace(legacy)
 		if legacy == "" {
-			return "", true, fmt.Errorf("input_reference cannot be empty")
+			return "", true, fmt.Errorf("%s cannot be empty", field)
 		}
 		return legacy, true, nil
 	}
 	var object zqbapiOpenAIReferenceObject
 	if err := common.Unmarshal(trimmed, &object); err != nil {
-		return "", true, fmt.Errorf("input_reference must contain image_url or file_id")
+		return "", true, fmt.Errorf("%s must contain image_url or file_id", field)
 	}
 	imageURL := ""
 	fileID := ""
@@ -243,53 +347,64 @@ func parseZQBAPIOpenAIReference(raw json.RawMessage) (string, bool, error) {
 		fileID = strings.TrimSpace(*object.FileID)
 	}
 	if imageURL != "" && fileID != "" {
-		return "", true, fmt.Errorf("input_reference must contain exactly one of image_url or file_id")
+		return "", true, fmt.Errorf("%s must contain exactly one of image_url or file_id", field)
 	}
 	if fileID != "" {
-		return "", true, fmt.Errorf("input_reference.file_id is not supported by ZQBAPI")
+		return "", true, fmt.Errorf("%s.file_id is not supported by ZQBAPI", field)
 	}
 	if imageURL == "" {
-		return "", true, fmt.Errorf("input_reference.image_url is required")
+		return "", true, fmt.Errorf("%s.image_url is required", field)
 	}
 	return imageURL, true, nil
 }
 
-func extractZQBAPIOpenAIReferenceFile(c *gin.Context) (string, bool, error) {
+func extractZQBAPIOpenAIReferenceFiles(c *gin.Context) (map[string]string, error) {
 	form, err := common.ParseMultipartFormReusable(c)
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
 	defer form.RemoveAll()
-	files := form.File["input_reference"]
-	if len(files) == 0 {
-		return "", false, nil
+	result := make(map[string]string)
+	for _, field := range []string{"input_reference", "first_frame", "last_frame"} {
+		files := form.File[field]
+		if len(files) == 0 {
+			continue
+		}
+		if len(files) != 1 {
+			return nil, fmt.Errorf("ZQBAPI supports one %s file", field)
+		}
+		value, fileErr := encodeZQBAPIOpenAIReferenceFile(files[0], field)
+		if fileErr != nil {
+			return nil, fileErr
+		}
+		result[field] = value
 	}
-	if len(files) != 1 {
-		return "", true, fmt.Errorf("ZQBAPI supports one input_reference file")
-	}
-	fileHeader := files[0]
+	return result, nil
+}
+
+func encodeZQBAPIOpenAIReferenceFile(fileHeader *multipart.FileHeader, field string) (string, error) {
 	if fileHeader.Size <= 0 || fileHeader.Size > zqbapiImageMaxBytes {
-		return "", true, fmt.Errorf("input_reference file must be between 1 byte and %d MB", zqbapiImageMaxBytes/(1024*1024))
+		return "", fmt.Errorf("%s file must be between 1 byte and %d MB", field, zqbapiImageMaxBytes/(1024*1024))
 	}
 	file, err := fileHeader.Open()
 	if err != nil {
-		return "", true, fmt.Errorf("open input_reference file: %w", err)
+		return "", fmt.Errorf("open %s file: %w", field, err)
 	}
 	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, zqbapiImageMaxBytes+1))
 	if err != nil {
-		return "", true, fmt.Errorf("read input_reference file: %w", err)
+		return "", fmt.Errorf("read %s file: %w", field, err)
 	}
 	if len(data) == 0 || len(data) > zqbapiImageMaxBytes {
-		return "", true, fmt.Errorf("input_reference file must be between 1 byte and %d MB", zqbapiImageMaxBytes/(1024*1024))
+		return "", fmt.Errorf("%s file must be between 1 byte and %d MB", field, zqbapiImageMaxBytes/(1024*1024))
 	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return "", true, fmt.Errorf("input_reference is not a supported image: %w", err)
+		return "", fmt.Errorf("%s is not a supported image: %w", field, err)
 	}
 	if config.Width < zqbapiImageMinDimension || config.Height < zqbapiImageMinDimension ||
 		config.Width >= zqbapiImageMaxDimension || config.Height >= zqbapiImageMaxDimension {
-		return "", true, fmt.Errorf("input_reference dimensions must be between %d and %d pixels", zqbapiImageMinDimension, zqbapiImageMaxDimension-1)
+		return "", fmt.Errorf("%s dimensions must be between %d and %d pixels", field, zqbapiImageMinDimension, zqbapiImageMaxDimension-1)
 	}
 	mimeType := fileHeader.Header.Get("Content-Type")
 	if mimeType == "" || mimeType == "application/octet-stream" {
@@ -301,9 +416,9 @@ func extractZQBAPIOpenAIReferenceFile(c *gin.Context) (string, bool, error) {
 	case "png", "gif", "webp":
 		mimeType = "image/" + strings.ToLower(format)
 	default:
-		return "", true, fmt.Errorf("unsupported input_reference image format %q", format)
+		return "", fmt.Errorf("unsupported %s image format %q", field, format)
 	}
-	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data), true, nil
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 func deduplicateZQBAPIVideoSources(sources []string) []string {
@@ -355,6 +470,55 @@ func zqbapiProviderSizeToOpenAI(resolution, ratio string) string {
 	}
 }
 
+func isZQBAPIOpenAIHighResolution(size string) bool {
+	size = strings.ToLower(strings.TrimSpace(size))
+	return size == "1792x1024" || size == "1024x1792"
+}
+
+func isZQBAPILimitedResolutionModel(modelName string) bool {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	return strings.Contains(modelName, "seedance-2-0-fast") || strings.Contains(modelName, "seedance-2-0-mini")
+}
+
+func supportsZQBAPIFirstLastFrames(modelName string) bool {
+	modelName = strings.ToLower(strings.TrimSpace(modelName))
+	return strings.Contains(modelName, "seedance-2-0") ||
+		strings.Contains(modelName, "seedance-1-5-pro") ||
+		strings.Contains(modelName, "seedance-1-0-pro")
+}
+
+func zqbapiOpenAIRemixParameters(userID int, taskID string) (int, string, error) {
+	originTask, exists, err := model.GetByTaskId(userID, taskID)
+	if err != nil {
+		return 0, "", fmt.Errorf("get remix origin task: %w", err)
+	}
+	if !exists || originTask == nil || originTask.Platform != constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI)) || !originTask.Properties.OpenAIVideo {
+		return 0, "", fmt.Errorf("remix origin must be a ZQBAPI OpenAI video")
+	}
+	seconds, _ := strconv.Atoi(strings.TrimSpace(originTask.Properties.VideoSeconds))
+	size := strings.TrimSpace(originTask.Properties.VideoSize)
+	if seconds > 0 && size != "" {
+		return seconds, size, nil
+	}
+	var provider responseTask
+	if len(originTask.Data) > 0 {
+		_ = common.Unmarshal(originTask.Data, &provider)
+	}
+	if seconds <= 0 {
+		seconds = provider.Duration
+	}
+	if size == "" {
+		size = zqbapiProviderSizeToOpenAI(provider.Resolution, provider.Ratio)
+	}
+	if seconds <= 0 {
+		seconds = zqbapiOpenAIDefaultSeconds
+	}
+	if size == "" {
+		size = zqbapiOpenAIDefaultSize
+	}
+	return seconds, size, nil
+}
+
 func getZQBAPIOpenAIVideoContext(c *gin.Context) (zqbapiOpenAIVideoContext, bool) {
 	if c == nil {
 		return zqbapiOpenAIVideoContext{}, false
@@ -378,6 +542,9 @@ func ApplyZQBAPIOpenAIVideoTaskProperties(c *gin.Context, task *model.Task) {
 		return
 	}
 	task.Properties.OpenAIVideo = true
+	if req, err := relaycommon.GetTaskRequest(c); err == nil {
+		task.Properties.VideoPrompt = req.Prompt
+	}
 	task.Properties.VideoSeconds = ctx.Seconds
 	task.Properties.VideoSize = ctx.Size
 	task.Properties.RemixedFromVideoID = ctx.RemixedFromID

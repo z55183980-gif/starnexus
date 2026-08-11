@@ -312,7 +312,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				return nil, newZQBAPIBuildError(zqbapiErrorInvalidVideo, "remix", fmt.Errorf("origin video URL is empty"))
 			}
 		}
-		body, err = a.convertToZQBAPIOpenAIRequestPayload(&req, originVideoURL)
+		body, err = a.convertToZQBAPIOpenAIRequestPayload(&req, originVideoURL, videoCtx.FrameReferences)
 		if err != nil {
 			err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", err)
 		}
@@ -384,6 +384,11 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.Model = info.OriginModelName
 	if a.ChannelType == constant.ChannelTypeZQBAPI {
 		if videoCtx, ok := getZQBAPIOpenAIVideoContext(c); ok {
+			ov.TaskID = ""
+			ov.StandardFields = true
+			if taskReq, reqErr := relaycommon.GetTaskRequest(c); reqErr == nil {
+				ov.Prompt = taskReq.Prompt
+			}
 			ov.Seconds = videoCtx.Seconds
 			ov.Size = videoCtx.Size
 			ov.RemixedFromVideoID = videoCtx.RemixedFromID
@@ -417,6 +422,25 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	req.Header.Set("Authorization", "Bearer "+key)
 
 	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	return client.Do(req)
+}
+
+func (a *TaskAdaptor) DeleteOpenAIVideo(ctx context.Context, baseURL, key, upstreamTaskID, proxy string) (*http.Response, error) {
+	upstreamTaskID = strings.TrimSpace(upstreamTaskID)
+	if upstreamTaskID == "" {
+		return nil, fmt.Errorf("upstream task id is required")
+	}
+	uri := fmt.Sprintf("%s/api/v3/contents/generations/tasks/%s", strings.TrimRight(baseURL, "/"), upstreamTaskID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, uri, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	client, err := service.NewProxyHttpClient(proxy)
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
@@ -467,7 +491,7 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	return &r, nil
 }
 
-func (a *TaskAdaptor) convertToZQBAPIOpenAIRequestPayload(req *relaycommon.TaskSubmitReq, originVideoURL string) (*requestPayload, error) {
+func (a *TaskAdaptor) convertToZQBAPIOpenAIRequestPayload(req *relaycommon.TaskSubmitReq, originVideoURL string, frameReferences []zqbapiOpenAIFrameReference) (*requestPayload, error) {
 	r := requestPayload{Model: req.Model, Content: []ContentItem{}}
 	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
 		return nil, errors.Wrap(err, "unmarshal metadata failed")
@@ -477,11 +501,20 @@ func (a *TaskAdaptor) convertToZQBAPIOpenAIRequestPayload(req *relaycommon.TaskS
 	// erase a declared reference, remix source, size, duration, or prompt.
 	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
 	if originVideoURL != "" {
-		r.Content = append(r.Content, ContentItem{Type: "video_url", VideoURL: &MediaURL{URL: originVideoURL}})
+		r.Content = append(r.Content, ContentItem{Type: "video_url", VideoURL: &MediaURL{URL: originVideoURL}, Role: "reference_video"})
 	}
 	for _, imageURL := range req.Images {
 		if imageURL = strings.TrimSpace(imageURL); imageURL != "" {
 			r.Content = append(r.Content, ContentItem{Type: "image_url", ImageURL: &MediaURL{URL: imageURL}})
+		}
+	}
+	for _, reference := range frameReferences {
+		if reference.URL = strings.TrimSpace(reference.URL); reference.URL != "" {
+			r.Content = append(r.Content, ContentItem{
+				Type:     "image_url",
+				ImageURL: &MediaURL{URL: reference.URL},
+				Role:     reference.Role,
+			})
 		}
 	}
 	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
@@ -547,6 +580,18 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
 		taskResult.Reason = resTask.Error.Message
+	case "expired", "cancelled", "canceled":
+		if a.ChannelType == constant.ChannelTypeZQBAPI {
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Progress = "100%"
+			taskResult.Reason = resTask.Error.Message
+			if strings.TrimSpace(taskResult.Reason) == "" {
+				taskResult.Reason = fmt.Sprintf("upstream video task %s", resTask.Status)
+			}
+		} else {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "30%"
+		}
 	default:
 		// Unknown status, treat as processing
 		taskResult.Status = model.TaskStatusInProgress
@@ -567,12 +612,20 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.TaskID = originTask.TaskID
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
-	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
 	isZQBAPI := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
+	isZQBAPIOpenAI := isZQBAPI && originTask.Properties.OpenAIVideo
+	if !isZQBAPIOpenAI {
+		openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
+	}
 	if isZQBAPI {
+		if isZQBAPIOpenAI {
+			openAIVideo.TaskID = ""
+			openAIVideo.StandardFields = true
+			openAIVideo.Prompt = originTask.Properties.VideoPrompt
+		}
 		if originTask.Status == model.TaskStatusSuccess || originTask.Status == model.TaskStatusFailure || originTask.Status == model.TaskStatusPendingSettlement {
 			openAIVideo.CompletedAt = originTask.FinishTime
 			if openAIVideo.CompletedAt == 0 {
@@ -593,10 +646,28 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		openAIVideo.CompletedAt = originTask.UpdatedAt
 	}
 
-	if dResp.Status == "failed" || (originTask.Status == model.TaskStatusFailure && dResp.Error.Message != "") {
+	isFailedResponse := dResp.Status == "failed" || (originTask.Status == model.TaskStatusFailure && dResp.Error.Message != "")
+	if isZQBAPIOpenAI && (dResp.Status == "expired" || dResp.Status == "cancelled" || dResp.Status == "canceled" || originTask.Status == model.TaskStatusFailure) {
+		isFailedResponse = true
+	}
+	if isFailedResponse {
+		message := strings.TrimSpace(dResp.Error.Message)
+		if message == "" {
+			message = strings.TrimSpace(originTask.FailReason)
+		}
+		if message == "" {
+			message = "Video generation failed"
+		}
+		code := strings.TrimSpace(fmt.Sprint(dResp.Error.Code))
+		if code == "" || code == "<nil>" {
+			code = strings.TrimSpace(dResp.Status)
+		}
+		if code == "" {
+			code = "video_generation_failed"
+		}
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: dResp.Error.Message,
-			Code:    fmt.Sprint(dResp.Error.Code),
+			Message: message,
+			Code:    code,
 		}
 	}
 

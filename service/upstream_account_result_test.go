@@ -120,6 +120,57 @@ func TestApplyUpstreamAccountErrorUsesOverloadCooldown(t *testing.T) {
 	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
 }
 
+func TestApplyUpstreamAccountErrorRecognizesOpenAIOverloadWrappedAs500(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "openai-overloaded-account")
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Our servers are currently overloaded. Please try again later.",
+		Type:    "server_error",
+		Code:    "server_is_overloaded",
+	}, http.StatusInternalServerError)
+
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.OverloadUntil)
+	require.InDelta(t, before+int64(upstreamAccountOverloadCooldown.Seconds()), *updated.OverloadUntil, 1)
+	require.Equal(t, "upstream_overloaded", updated.TempUnschedulableReason)
+	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
+}
+
+func TestApplyUpstreamAccountErrorRecognizesCapacityMessageWrappedAs500(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "openai-capacity-account")
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Selected model is at capacity. Please try a different model.",
+		Type:    "server_error",
+		Code:    "server_error",
+	}, http.StatusInternalServerError)
+
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.OverloadUntil)
+}
+
+func TestApplyUpstreamAccountErrorDoesNotRetryOrdinary500(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "ordinary-server-error-account")
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Internal server error",
+		Type:    "server_error",
+		Code:    "server_error",
+	}, http.StatusInternalServerError)
+
+	disposition := ApplyUpstreamAccountError(account.Id, 0, apiErr)
+	require.False(t, disposition.RetryWithinPool())
+	var unchanged model.UpstreamAccount
+	require.NoError(t, model.DB.First(&unchanged, account.Id).Error)
+	require.Nil(t, unchanged.OverloadUntil)
+	require.Empty(t, unchanged.TempUnschedulableReason)
+}
+
 func TestApplyUpstreamAccountErrorMatchesTempUnschedulableRules(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	account := createRouterTestAccountWithoutPool(t, "temp-unsched-rule-account")

@@ -777,6 +777,9 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.TokenId = relayInfo.TokenId
 		if relayInfo.ChannelType == constant.ChannelTypeZQBAPI {
 			taskdoubao.ApplyZQBAPIOpenAIVideoTaskProperties(c, task)
+			if task.Properties.OpenAIVideo {
+				task.PrivateData.Key = relayInfo.ApiKey
+			}
 			if payload, exists := c.Get(string(constant.ContextKeyZQBAPIRetryPayload)); exists {
 				if data, ok := payload.([]byte); ok && len(data) > 0 {
 					task.PrivateData.ZQBAPIRetryPayload = string(data)

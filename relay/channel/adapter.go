@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"context"
 	"io"
 	"net/http"
 
@@ -97,4 +98,8 @@ type TaskPreAuthorizationEstimator interface {
 
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
+}
+
+type OpenAIVideoDeleter interface {
+	DeleteOpenAIVideo(ctx context.Context, baseURL, key, upstreamTaskID, proxy string) (*http.Response, error)
 }

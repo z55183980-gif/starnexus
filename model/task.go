@@ -89,6 +89,7 @@ type Properties struct {
 	UpstreamModelName  string `json:"upstream_model_name,omitempty"`
 	OriginModelName    string `json:"origin_model_name,omitempty"`
 	OpenAIVideo        bool   `json:"openai_video,omitempty"`
+	VideoPrompt        string `json:"video_prompt,omitempty"`
 	VideoSeconds       string `json:"video_seconds,omitempty"`
 	VideoSize          string `json:"video_size,omitempty"`
 	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
@@ -435,6 +436,61 @@ func ListUserTasksByPlatformCursor(userID int, platform constant.TaskPlatform, a
 		tasks = tasks[:limit]
 	}
 	return tasks, hasMore, nil
+}
+
+// ListUserOpenAIVideoTasksByPlatformCursor keeps the OpenAI compatibility
+// collection isolated without relying on database-specific JSON operators.
+// Properties is decoded by GORM and filtered in Go so SQLite, MySQL and
+// PostgreSQL retain identical behavior.
+func ListUserOpenAIVideoTasksByPlatformCursor(userID int, platform constant.TaskPlatform, afterID int64, limit int, ascending bool) ([]*Task, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	const batchSize = 100
+	cursor := afterID
+	matched := make([]*Task, 0, limit+1)
+	for len(matched) <= limit {
+		query := DB.Where("user_id = ? AND platform = ?", userID, platform)
+		order := "id desc"
+		if ascending {
+			order = "id asc"
+			if cursor > 0 {
+				query = query.Where("id > ?", cursor)
+			}
+		} else if cursor > 0 {
+			query = query.Where("id < ?", cursor)
+		}
+
+		var batch []*Task
+		if err := query.Order(order).Limit(batchSize).Find(&batch).Error; err != nil {
+			return nil, false, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, task := range batch {
+			cursor = task.ID
+			if task.Properties.OpenAIVideo {
+				matched = append(matched, task)
+				if len(matched) > limit {
+					break
+				}
+			}
+		}
+		if len(matched) > limit || len(batch) < batchSize {
+			break
+		}
+	}
+
+	hasMore := len(matched) > limit
+	if hasMore {
+		matched = matched[:limit]
+	}
+	return matched, hasMore, nil
 }
 
 func DeleteUserTaskByID(userID int, id int64, platform constant.TaskPlatform) error {

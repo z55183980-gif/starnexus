@@ -49,6 +49,10 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI)) && !task.Properties.OpenAIVideo {
+		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Video not found")
+		return
+	}
 	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI)) {
 		variant := strings.ToLower(strings.TrimSpace(c.DefaultQuery("variant", "video")))
 		if variant != "video" {
