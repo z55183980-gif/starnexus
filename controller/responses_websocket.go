@@ -72,6 +72,11 @@ type responsesWSFailedError struct {
 	Message string `json:"message"`
 }
 
+type responsesWSBufferedFrame struct {
+	messageType int
+	data        []byte
+}
+
 var responsesWSRequestJSONFields = responseRequestJSONFieldNames()
 
 type responsesWebSocketTurn struct {
@@ -93,6 +98,9 @@ type responsesWebSocketTurn struct {
 	requestDispatched      bool
 	upstreamEvent          bool
 	upstreamEventCount     int
+	capacitySafeEventCount int
+	capacityRetryBlocked   bool
+	capacityPrelude        []responsesWSBufferedFrame
 	replayCount            int
 	capacityRetryCount     int
 	accountFailovers       int
@@ -185,6 +193,34 @@ func (t *responsesWebSocketTurn) clearReplayState() {
 	t.replayMu.Unlock()
 }
 
+func (t *responsesWebSocketTurn) bufferCapacityPrelude(messageType int, data []byte) {
+	if t == nil {
+		return
+	}
+	t.capacityPrelude = append(t.capacityPrelude, responsesWSBufferedFrame{
+		messageType: messageType,
+		data:        append([]byte(nil), data...),
+	})
+}
+
+func (t *responsesWebSocketTurn) takeCapacityPrelude() []responsesWSBufferedFrame {
+	if t == nil || len(t.capacityPrelude) == 0 {
+		return nil
+	}
+	frames := t.capacityPrelude
+	t.capacityPrelude = nil
+	return frames
+}
+
+func (t *responsesWebSocketTurn) resetCapacityPrelude() {
+	if t == nil {
+		return
+	}
+	t.capacityPrelude = nil
+	t.capacitySafeEventCount = 0
+	t.capacityRetryBlocked = false
+}
+
 type responsesWSUpstreamConnection struct {
 	conn      *websocket.Conn
 	identity  string
@@ -219,6 +255,7 @@ func (t *responsesWebSocketTurn) finish(success bool) {
 		// The replay decision is finished with the turn. Drop retained request and
 		// adaptor state before quota settlement and concurrency release.
 		t.clearReplayState()
+		t.resetCapacityPrelude()
 		usage := t.accumulator.Usage(t.info)
 		if success || usage.TotalTokens > 0 {
 			service.PostTextConsumeQuota(t.ctx, t.info, usage, nil)
@@ -809,6 +846,9 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 		var recoveryAPIError *types.NewAPIError
 		var retryCapacity bool
 		var capacityAPIError *types.NewAPIError
+		var holdCurrentFrame bool
+		var pendingPrelude []responsesWSBufferedFrame
+		var retryPrelude []responsesWSBufferedFrame
 		// Serialize state transition and downstream delivery with sendError. This
 		// prevents a heartbeat failure from writing an error before a frame that
 		// has already been accepted by this reader.
@@ -829,11 +869,29 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 				} else {
 					turn.upstreamEvent = true
 					turn.upstreamEventCount++
+					safePrelude := isResponsesWSCapacitySafePrelude(event)
+					if safePrelude {
+						turn.capacitySafeEventCount++
+						if shouldHoldResponsesWSCapacityPrelude(turn, event) {
+							turn.bufferCapacityPrelude(messageType, data)
+							holdCurrentFrame = true
+						}
+					}
 					var terminalErr *types.NewAPIError
 					capacityRetryEligible := false
 					if event != nil && turn.accumulator.Terminal() && !turn.accumulator.Successful() {
 						terminalErr = responsesWSTerminalAPIError(turn)
 						capacityRetryEligible = shouldRetryResponsesWSCapacity(turn, terminalErr)
+					}
+					if event != nil && !safePrelude {
+						if !turn.accumulator.Terminal() {
+							turn.capacityRetryBlocked = true
+						}
+						if capacityRetryEligible {
+							retryPrelude = turn.takeCapacityPrelude()
+						} else {
+							pendingPrelude = turn.takeCapacityPrelude()
+						}
 					}
 					if openairelay.IsResponsesFirstFrameEvent(event) && !capacityRetryEligible {
 						turn.info.SetFirstResponseTime()
@@ -846,6 +904,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 							turn.accumulator = openairelay.NewResponsesEventAccumulator()
 							turn.upstreamEvent = false
 							turn.upstreamEventCount = 0
+							turn.resetCapacityPrelude()
 							s.upstream = nil
 							s.channel = nil
 							recoverPreviousResponse = true
@@ -869,6 +928,9 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 					}
 				}
 			}
+		} else if turn != nil {
+			turn.capacityRetryBlocked = true
+			pendingPrelude = turn.takeCapacityPrelude()
 		}
 		if finished != nil {
 			if successful && finished.channel != nil {
@@ -904,6 +966,11 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 			s.mu.Unlock()
 			if !clientGone && s.client != nil {
 				s.clientWriteMu.Lock()
+				for _, frame := range retryPrelude {
+					if err := s.client.WriteMessage(frame.messageType, frame.data); err != nil {
+						break
+					}
+				}
 				_ = s.client.WriteMessage(messageType, data)
 				s.clientWriteMu.Unlock()
 			}
@@ -940,7 +1007,14 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 		}
 		var writeErr error
 		if !clientGone && s.client != nil {
-			writeErr = s.client.WriteMessage(messageType, data)
+			for _, frame := range pendingPrelude {
+				if writeErr = s.client.WriteMessage(frame.messageType, frame.data); writeErr != nil {
+					break
+				}
+			}
+			if writeErr == nil && !holdCurrentFrame {
+				writeErr = s.client.WriteMessage(messageType, data)
+			}
 		}
 		s.clientWriteMu.Unlock()
 		if writeErr != nil {
@@ -976,14 +1050,44 @@ func shouldRetryResponsesWSCapacity(turn *responsesWebSocketTurn, apiErr *types.
 		!responsesWSModeUsesUpstreamWebSocket(turn.upstreamMode) {
 		return false
 	}
-	// Keep this retry deliberately narrower than the general replay path: the
-	// capacity failure must be the first and only upstream frame, and the failed
-	// attempt must not report any billable usage.
-	if turn.upstreamEventCount != 1 || turn.capacityRetryCount != 0 || turn.replayCount != 0 ||
+	// Capacity retry is safe while the upstream has emitted only transport or
+	// response lifecycle prelude frames. Response-specific lifecycle frames are
+	// held from the client until real output arrives, so a failed attempt can be
+	// replaced without exposing conflicting response IDs.
+	if turn.capacityRetryBlocked || turn.upstreamEventCount != turn.capacitySafeEventCount+1 ||
+		turn.replayCount != turn.capacityRetryCount ||
+		!service.ShouldRetryUpstreamAccount(turn.accountFailovers, time.Time{}) ||
 		turn.accumulator.Usage(turn.info).TotalTokens != 0 || !turn.replayStateAvailable() {
 		return false
 	}
 	return turn.failoverStartedAt.IsZero() || time.Since(turn.failoverStartedAt) <= responsesWSCapacityRetryMaxAge
+}
+
+func isResponsesWSCapacitySafePrelude(event *dto.ResponsesStreamResponse) bool {
+	if event == nil {
+		return false
+	}
+	switch strings.TrimSpace(event.Type) {
+	case "responsesapi.websocket_timing", "response.created", "response.in_progress":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldHoldResponsesWSCapacityPrelude(turn *responsesWebSocketTurn, event *dto.ResponsesStreamResponse) bool {
+	if turn == nil || event == nil || turn.channel == nil || turn.originalRequest == nil {
+		return false
+	}
+	eventType := strings.TrimSpace(event.Type)
+	if eventType != "response.created" && eventType != "response.in_progress" {
+		return false
+	}
+	return turn.channel.CredentialSource == appconstant.ChannelCredentialSourceAccountPool &&
+		responsesWSModeUsesUpstreamWebSocket(turn.upstreamMode) &&
+		turn.replayCount == turn.capacityRetryCount &&
+		service.ShouldRetryUpstreamAccount(turn.accountFailovers, time.Time{}) &&
+		turn.replayStateAvailable()
 }
 
 func (s *responsesWebSocketSession) retryResponsesWSCapacityTurn(turn *responsesWebSocketTurn) bool {
@@ -1031,6 +1135,7 @@ func (s *responsesWebSocketSession) retryResponsesWSCapacityTurn(turn *responses
 	turn.accumulator = openairelay.NewResponsesEventAccumulator()
 	turn.upstreamEvent = false
 	turn.upstreamEventCount = 0
+	turn.resetCapacityPrelude()
 	turn.requestDispatched = false
 	turn.accountFailovers++
 	turn.info.StreamStatus = relaycommon.NewStreamStatus()
@@ -1074,7 +1179,7 @@ func (s *responsesWebSocketSession) retryResponsesWSCapacityTurn(turn *responses
 		s.handleUpstreamFailure(replacement, err)
 		return true
 	}
-	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket capacity failure retried once on account #%d -> #%d", failedAccountID, replacementAccountID))
+	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket capacity failure retry #%d on account #%d -> #%d", turn.capacityRetryCount, failedAccountID, replacementAccountID))
 	return true
 }
 
