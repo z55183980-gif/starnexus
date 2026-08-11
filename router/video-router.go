@@ -13,6 +13,8 @@ func SetVideoRouter(router *gin.Engine) {
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
 	videoProxyRouter.Use(middleware.TokenOrUserAuth())
 	{
+		videoProxyRouter.GET("/videos", controller.ListZQBAPIOpenAIVideos)
+		videoProxyRouter.DELETE("/videos/:task_id", controller.DeleteZQBAPIOpenAIVideo)
 		videoProxyRouter.GET("/videos/:task_id/content", middleware.RelayConcurrency(), controller.VideoProxy)
 	}
 

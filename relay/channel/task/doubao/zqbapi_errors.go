@@ -16,6 +16,7 @@ const (
 	zqbapiErrorMaterialRateLimit zqbapiErrorKind = "material_rate_limited"
 	zqbapiErrorMaterialTransient zqbapiErrorKind = "material_transient"
 	zqbapiErrorMaterialConfig    zqbapiErrorKind = "material_not_configured"
+	zqbapiErrorInvalidVideo      zqbapiErrorKind = "invalid_video_request"
 )
 
 type zqbapiBuildError struct {
@@ -65,6 +66,8 @@ func (e *zqbapiBuildError) TaskHTTPStatus() int {
 		return http.StatusBadGateway
 	}
 	switch e.Kind {
+	case zqbapiErrorInvalidVideo:
+		return http.StatusBadRequest
 	case zqbapiErrorInvalidImage, zqbapiErrorMaterialRejected:
 		return http.StatusUnprocessableEntity
 	case zqbapiErrorMaterialRateLimit:

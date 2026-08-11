@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -118,6 +119,9 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
+	if a.ChannelType == constant.ChannelTypeZQBAPI && isZQBAPIOpenAIVideoRequest(c) {
+		return validateZQBAPIOpenAIVideoRequest(c, info)
+	}
 	// Accept only POST /v1/video/generations as "generate" action.
 	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
 }
@@ -142,6 +146,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 		return nil
 	}
 	hasVideo := hasVideoInMetadata(req.Metadata)
+	if a.ChannelType == constant.ChannelTypeZQBAPI && info.Action == constant.TaskActionRemix {
+		hasVideo = true
+	}
 	if c != nil {
 		c.Set(contextKeySeedanceHasVideo, hasVideo)
 	}
@@ -166,6 +173,9 @@ func (a *TaskAdaptor) EstimatePreAuthorization(c *gin.Context, info *relaycommon
 		return 0, nil, false
 	}
 	hasVideo := hasVideoInMetadata(req.Metadata)
+	if a.ChannelType == constant.ChannelTypeZQBAPI && info.Action == constant.TaskActionRemix {
+		hasVideo = true
+	}
 	videoRatio := 1.0
 	if ratio, ok := GetVideoInputRatio(info.OriginModelName, seedanceRequestResolution(req), hasVideo, info.PriceData.ModelRatio*2); ok && ratio > 0 {
 		videoRatio = ratio
@@ -283,7 +293,41 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		return nil, err
 	}
 
-	body, err := a.convertToRequestPayload(&req)
+	var body *requestPayload
+	if videoCtx, ok := getZQBAPIOpenAIVideoContext(c); a.ChannelType == constant.ChannelTypeZQBAPI && ok {
+		if strings.TrimSpace(req.Model) == "" {
+			req.Model = info.OriginModelName
+		}
+		originVideoURL := ""
+		if info.Action == constant.TaskActionRemix {
+			originTask, exists, getErr := model.GetByTaskId(info.UserId, info.OriginTaskID)
+			if getErr != nil {
+				return nil, errors.Wrap(getErr, "get remix origin task failed")
+			}
+			if !exists || originTask == nil || (originTask.Status != model.TaskStatusSuccess && originTask.Status != model.TaskStatusPendingSettlement) {
+				return nil, newZQBAPIBuildError(zqbapiErrorInvalidVideo, "remix", fmt.Errorf("origin video is not completed"))
+			}
+			originVideoURL = strings.TrimSpace(originTask.GetUpstreamResultURL())
+			if originVideoURL == "" {
+				return nil, newZQBAPIBuildError(zqbapiErrorInvalidVideo, "remix", fmt.Errorf("origin video URL is empty"))
+			}
+		}
+		body, err = a.convertToZQBAPIOpenAIRequestPayload(&req, originVideoURL)
+		if err != nil {
+			err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", err)
+		}
+		if err == nil {
+			imageCount, videoCount := countZQBAPIMedia(body.Content)
+			if videoCtx.ReferenceDeclared && imageCount == 0 {
+				err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", fmt.Errorf("input_reference was declared but no image reached the ZQBAPI payload"))
+			}
+			if info.Action == constant.TaskActionRemix && videoCount == 0 {
+				err = newZQBAPIBuildError(zqbapiErrorInvalidVideo, "protocol conversion", fmt.Errorf("remix origin was not included in the ZQBAPI payload"))
+			}
+		}
+	} else {
+		body, err = a.convertToRequestPayload(&req)
+	}
 	if err != nil {
 		return nil, errors.Wrap(err, "convert request payload failed")
 	}
@@ -295,6 +339,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if a.ChannelType == constant.ChannelTypeZQBAPI {
 		if err := a.prepareZQBAPIImages(c, info, body); err != nil {
 			return nil, err
+		}
+		if videoCtx, ok := getZQBAPIOpenAIVideoContext(c); ok {
+			logger.LogInfo(c.Request.Context(), fmt.Sprintf("ZQBAPI OpenAI video payload prepared: action=%s references=%d source=%s seconds=%s size=%s", info.Action, videoCtx.ReferenceCount, videoCtx.ReferenceSource, videoCtx.Seconds, videoCtx.Size))
 		}
 	}
 	data, err := common.Marshal(body)
@@ -335,6 +382,13 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
+	if a.ChannelType == constant.ChannelTypeZQBAPI {
+		if videoCtx, ok := getZQBAPIOpenAIVideoContext(c); ok {
+			ov.Seconds = videoCtx.Seconds
+			ov.Size = videoCtx.Size
+			ov.RemixedFromVideoID = videoCtx.RemixedFromID
+		}
+	}
 
 	c.JSON(http.StatusOK, ov)
 	return dResp.ID, responseBody, nil
@@ -413,6 +467,50 @@ func (a *TaskAdaptor) convertToRequestPayload(req *relaycommon.TaskSubmitReq) (*
 	return &r, nil
 }
 
+func (a *TaskAdaptor) convertToZQBAPIOpenAIRequestPayload(req *relaycommon.TaskSubmitReq, originVideoURL string) (*requestPayload, error) {
+	r := requestPayload{Model: req.Model, Content: []ContentItem{}}
+	if err := taskcommon.UnmarshalMetadata(req.Metadata, &r); err != nil {
+		return nil, errors.Wrap(err, "unmarshal metadata failed")
+	}
+
+	// Apply canonical protocol fields after metadata so metadata cannot silently
+	// erase a declared reference, remix source, size, duration, or prompt.
+	r.Content = lo.Reject(r.Content, func(c ContentItem, _ int) bool { return c.Type == "text" })
+	if originVideoURL != "" {
+		r.Content = append(r.Content, ContentItem{Type: "video_url", VideoURL: &MediaURL{URL: originVideoURL}})
+	}
+	for _, imageURL := range req.Images {
+		if imageURL = strings.TrimSpace(imageURL); imageURL != "" {
+			r.Content = append(r.Content, ContentItem{Type: "image_url", ImageURL: &MediaURL{URL: imageURL}})
+		}
+	}
+	if sec, _ := strconv.Atoi(req.Seconds); sec > 0 {
+		r.Duration = lo.ToPtr(dto.IntValue(sec))
+	}
+	if req.Size != "" {
+		resolution, ratio, ok := zqbapiOpenAISizeToProvider(req.Size)
+		if !ok {
+			return nil, fmt.Errorf("unsupported size %q for ZQBAPI", req.Size)
+		}
+		r.Resolution = resolution
+		r.Ratio = ratio
+	}
+	r.Content = append(r.Content, ContentItem{Type: "text", Text: req.Prompt})
+	return &r, nil
+}
+
+func countZQBAPIMedia(content []ContentItem) (images, videos int) {
+	for _, item := range content {
+		if item.ImageURL != nil && strings.TrimSpace(item.ImageURL.URL) != "" {
+			images++
+		}
+		if item.VideoURL != nil && strings.TrimSpace(item.VideoURL.URL) != "" {
+			videos++
+		}
+	}
+	return images, videos
+}
+
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
 	resTask := responseTask{}
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
@@ -471,8 +569,29 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.SetProgressStr(originTask.Progress)
 	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
 	openAIVideo.CreatedAt = originTask.CreatedAt
-	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
+
+	isZQBAPI := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
+	if isZQBAPI {
+		if originTask.Status == model.TaskStatusSuccess || originTask.Status == model.TaskStatusFailure || originTask.Status == model.TaskStatusPendingSettlement {
+			openAIVideo.CompletedAt = originTask.FinishTime
+			if openAIVideo.CompletedAt == 0 {
+				openAIVideo.CompletedAt = originTask.UpdatedAt
+			}
+		}
+		if dResp.Duration > 0 {
+			openAIVideo.Seconds = strconv.Itoa(dResp.Duration)
+		} else {
+			openAIVideo.Seconds = originTask.Properties.VideoSeconds
+		}
+		openAIVideo.Size = zqbapiProviderSizeToOpenAI(dResp.Resolution, dResp.Ratio)
+		if openAIVideo.Size == "" {
+			openAIVideo.Size = originTask.Properties.VideoSize
+		}
+		openAIVideo.RemixedFromVideoID = originTask.Properties.RemixedFromVideoID
+	} else {
+		openAIVideo.CompletedAt = originTask.UpdatedAt
+	}
 
 	if dResp.Status == "failed" || (originTask.Status == model.TaskStatusFailure && dResp.Error.Message != "") {
 		openAIVideo.Error = &dto.OpenAIVideoError{

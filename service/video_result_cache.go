@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -227,6 +228,26 @@ func OpenVideoResultCache(fileName string) (*os.File, os.FileInfo, error) {
 		return nil, nil, os.ErrNotExist
 	}
 	return file, info, nil
+}
+
+// DeleteVideoResultCache removes one validated generated cache file. Invalid
+// names and already-missing files are treated as no-ops.
+func DeleteVideoResultCache(fileName string) error {
+	file, _, err := OpenVideoResultCache(fileName)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func StartZQBAPIHousekeepingTask() {

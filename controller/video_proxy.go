@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,13 @@ func VideoProxy(c *gin.Context) {
 	if !exists || task == nil {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
+	}
+	if task.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI)) {
+		variant := strings.ToLower(strings.TrimSpace(c.DefaultQuery("variant", "video")))
+		if variant != "video" {
+			videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "ZQBAPI supports only variant=video")
+			return
+		}
 	}
 
 	if task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusPendingSettlement {

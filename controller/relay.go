@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
+	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -775,6 +776,7 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
 		if relayInfo.ChannelType == constant.ChannelTypeZQBAPI {
+			taskdoubao.ApplyZQBAPIOpenAIVideoTaskProperties(c, task)
 			if payload, exists := c.Get(string(constant.ContextKeyZQBAPIRetryPayload)); exists {
 				if data, ok := payload.([]byte); ok && len(data) > 0 {
 					task.PrivateData.ZQBAPIRetryPayload = string(data)

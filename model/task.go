@@ -85,9 +85,13 @@ func (t *Task) GetData(v any) error {
 }
 
 type Properties struct {
-	Input             string `json:"input"`
-	UpstreamModelName string `json:"upstream_model_name,omitempty"`
-	OriginModelName   string `json:"origin_model_name,omitempty"`
+	Input              string `json:"input"`
+	UpstreamModelName  string `json:"upstream_model_name,omitempty"`
+	OriginModelName    string `json:"origin_model_name,omitempty"`
+	OpenAIVideo        bool   `json:"openai_video,omitempty"`
+	VideoSeconds       string `json:"video_seconds,omitempty"`
+	VideoSize          string `json:"video_size,omitempty"`
+	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {
@@ -398,6 +402,43 @@ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 		return nil, err
 	}
 	return task, nil
+}
+
+// ListUserTasksByPlatformCursor implements stable cursor pagination for a
+// user's tasks on one provider platform. It intentionally uses the internal
+// numeric ID only as the ordering cursor; callers continue to expose TaskID.
+func ListUserTasksByPlatformCursor(userID int, platform constant.TaskPlatform, afterID int64, limit int, ascending bool) ([]*Task, bool, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	query := DB.Where("user_id = ? AND platform = ?", userID, platform)
+	order := "id desc"
+	if ascending {
+		order = "id asc"
+		if afterID > 0 {
+			query = query.Where("id > ?", afterID)
+		}
+	} else if afterID > 0 {
+		query = query.Where("id < ?", afterID)
+	}
+
+	var tasks []*Task
+	if err := query.Order(order).Limit(limit + 1).Find(&tasks).Error; err != nil {
+		return nil, false, err
+	}
+	hasMore := len(tasks) > limit
+	if hasMore {
+		tasks = tasks[:limit]
+	}
+	return tasks, hasMore, nil
+}
+
+func DeleteUserTaskByID(userID int, id int64, platform constant.TaskPlatform) error {
+	return DB.Where("id = ? AND user_id = ? AND platform = ?", id, userID, platform).Delete(&Task{}).Error
 }
 
 func (Task *Task) Insert() error {
