@@ -292,6 +292,31 @@ func ExtractEmailFromJWT(token string) (string, bool) {
 	return identity.Email, ok && identity.Email != ""
 }
 
+func extractCodexOAuthIdentityFromCredentials(credentials map[string]any) (CodexOAuthIdentity, bool) {
+	identity := CodexOAuthIdentity{}
+	found := false
+	for _, tokenKey := range []string{"id_token", "access_token"} {
+		candidate, ok := ExtractCodexOAuthIdentityFromJWT(upstreamCredentialMapString(credentials, tokenKey))
+		if !ok {
+			continue
+		}
+		found = true
+		if identity.AccountID == "" {
+			identity.AccountID = candidate.AccountID
+		}
+		if identity.Email == "" {
+			identity.Email = candidate.Email
+		}
+		if identity.PlanType == "" {
+			identity.PlanType = candidate.PlanType
+		}
+		if identity.SubscriptionExpiresAt == "" {
+			identity.SubscriptionExpiresAt = candidate.SubscriptionExpiresAt
+		}
+	}
+	return identity, found
+}
+
 func ExtractCodexOAuthIdentityFromJWT(token string) (CodexOAuthIdentity, bool) {
 	claims, ok := decodeJWTClaims(token)
 	if !ok {

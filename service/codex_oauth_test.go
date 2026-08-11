@@ -54,6 +54,28 @@ func TestExtractCodexOAuthIdentityKeepsTopLevelEmailCompatibility(t *testing.T) 
 	require.Equal(t, "legacy@example.com", identity.Email)
 }
 
+func TestExtractCodexOAuthIdentityFromCredentialsMergesIDAndAccessTokens(t *testing.T) {
+	credentials := map[string]any{
+		"id_token": codexTestJWT(t, map[string]any{
+			codexJWTClaimPath: map[string]any{
+				"chatgpt_plan_type":                 "pro",
+				"chatgpt_subscription_active_until": "2027-02-03T04:05:06Z",
+			},
+		}),
+		"access_token": codexTestJWT(t, map[string]any{
+			"email":           "merged@example.com",
+			codexJWTClaimPath: map[string]any{"chatgpt_account_id": "acct-merged"},
+		}),
+	}
+
+	identity, ok := extractCodexOAuthIdentityFromCredentials(credentials)
+	require.True(t, ok)
+	require.Equal(t, "acct-merged", identity.AccountID)
+	require.Equal(t, "merged@example.com", identity.Email)
+	require.Equal(t, "pro", identity.PlanType)
+	require.Equal(t, "2027-02-03T04:05:06Z", identity.SubscriptionExpiresAt)
+}
+
 func TestExchangeCodexAuthorizationCodePreservesTokenMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, r.ParseForm())

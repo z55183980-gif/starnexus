@@ -12,6 +12,7 @@ import (
 func TestFetchChatGPTAccountSubscriptionInfoPrefersMatchingAccount(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "Bearer token", r.Header.Get("Authorization"))
+		require.Contains(t, r.Header.Get("User-Agent"), "Chrome/")
 		_, _ = w.Write([]byte(`{"accounts":{"other":{"account":{"plan_type":"free","is_default":true},"entitlement":{"expires_at":"2027-01-01T00:00:00Z"}},"acct-paid":{"account":{"plan_type":"pro"},"entitlement":{"expires_at":"2026-12-31T00:00:00Z"}}}}`))
 	}))
 	defer server.Close()
@@ -30,7 +31,7 @@ func TestFetchChatGPTAccountSubscriptionInfoFallsBackToSubscriptions(t *testing.
 	})
 	mux.HandleFunc("/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "acct/plus", r.URL.Query().Get("account_id"))
-		require.Equal(t, "acct/plus", r.Header.Get("chatgpt-account-id"))
+		require.Empty(t, r.Header.Get("chatgpt-account-id"))
 		_, _ = w.Write([]byte(`{"plan_type":"plus","active_until":"2026-08-31T12:30:00Z","will_renew":true}`))
 	})
 	server := httptest.NewServer(mux)
@@ -83,6 +84,36 @@ func TestEnrichUpstreamOpenAICredentialsKeepsJWTMetadataWhenWebEndpointsRejectTo
 	require.Equal(t, "oauth@example.com", credentials["email"])
 	require.Equal(t, "pro", credentials["plan_type"])
 	require.NotContains(t, credentials, "subscription_expires_at")
+}
+
+func TestEnrichUpstreamOpenAICredentialsUsesIDTokenSubscriptionMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/check" {
+			_, _ = w.Write([]byte(`{"accounts":{}}`))
+			return
+		}
+		http.Error(w, "unexpected subscription request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	setChatGPTSubscriptionURLsForTest(t, server.URL+"/check", server.URL+"/subscriptions")
+
+	credentials := map[string]any{
+		"id_token": codexTestJWT(t, map[string]any{
+			codexJWTClaimPath: map[string]any{
+				"chatgpt_plan_type":                 "pro",
+				"chatgpt_subscription_active_until": "2027-03-04T05:06:07Z",
+			},
+		}),
+		"access_token": codexTestJWT(t, map[string]any{
+			"email":           "id-token@example.com",
+			codexJWTClaimPath: map[string]any{"chatgpt_account_id": "acct-id-token"},
+		}),
+	}
+
+	enrichUpstreamOpenAICredentials(context.Background(), credentials, "")
+	require.Equal(t, "id-token@example.com", credentials["email"])
+	require.Equal(t, "pro", credentials["plan_type"])
+	require.Equal(t, "2027-03-04T05:06:07Z", credentials["subscription_expires_at"])
 }
 
 func setChatGPTSubscriptionURLsForTest(t *testing.T, accountsURL, subscriptionsURL string) {

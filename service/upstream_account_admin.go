@@ -1876,7 +1876,7 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 			}
 		}
 		if account.Platform == constant.UpstreamPlatformOpenAI && account.Type == constant.UpstreamAccountTypeOAuth {
-			if identity, ok := ExtractCodexOAuthIdentityFromJWT(upstreamCredentialMapString(credentials, "access_token")); ok {
+			if identity, ok := extractCodexOAuthIdentityFromCredentials(credentials); ok {
 				if metadata.Email == "" {
 					metadata.Email = identity.Email
 				}
