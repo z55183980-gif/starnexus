@@ -67,7 +67,7 @@ func fetchChatGPTAccountsCheck(ctx context.Context, client *http.Client, accessT
 	var result struct {
 		Accounts map[string]map[string]any `json:"accounts"`
 	}
-	if err := requestChatGPTSubscriptionJSON(ctx, client, accessToken, chatGPTAccountsCheckURL, &result); err != nil {
+	if err := requestChatGPTSubscriptionJSON(ctx, client, accessToken, chatGPTAccountsCheckURL, "", &result); err != nil {
 		return nil, err
 	}
 	now := time.Now()
@@ -110,7 +110,7 @@ func fetchChatGPTSubscription(ctx context.Context, client *http.Client, accessTo
 		ActiveUntil string `json:"active_until"`
 	}
 	endpoint := chatGPTSubscriptionsURL + "?account_id=" + url.QueryEscape(accountID)
-	if err := requestChatGPTSubscriptionJSON(ctx, client, accessToken, endpoint, &result); err != nil {
+	if err := requestChatGPTSubscriptionJSON(ctx, client, accessToken, endpoint, accountID, &result); err != nil {
 		return "", "", err
 	}
 	expiresAt := strings.TrimSpace(result.ActiveUntil)
@@ -120,7 +120,7 @@ func fetchChatGPTSubscription(ctx context.Context, client *http.Client, accessTo
 	return strings.TrimSpace(result.PlanType), expiresAt, nil
 }
 
-func requestChatGPTSubscriptionJSON(ctx context.Context, client *http.Client, accessToken, url string, target any) error {
+func requestChatGPTSubscriptionJSON(ctx context.Context, client *http.Client, accessToken, url, accountID string, target any) error {
 	requestCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, url, nil)
@@ -131,6 +131,9 @@ func requestChatGPTSubscriptionJSON(ctx context.Context, client *http.Client, ac
 	request.Header.Set("Origin", "https://chatgpt.com")
 	request.Header.Set("Referer", "https://chatgpt.com/")
 	request.Header.Set("Accept", "application/json")
+	if accountID = strings.TrimSpace(accountID); accountID != "" {
+		request.Header.Set("chatgpt-account-id", accountID)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return err

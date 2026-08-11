@@ -30,6 +30,7 @@ func TestFetchChatGPTAccountSubscriptionInfoFallsBackToSubscriptions(t *testing.
 	})
 	mux.HandleFunc("/subscriptions", func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "acct/plus", r.URL.Query().Get("account_id"))
+		require.Equal(t, "acct/plus", r.Header.Get("chatgpt-account-id"))
 		_, _ = w.Write([]byte(`{"plan_type":"plus","active_until":"2026-08-31T12:30:00Z","will_renew":true}`))
 	})
 	server := httptest.NewServer(mux)
