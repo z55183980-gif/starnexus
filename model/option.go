@@ -752,6 +752,8 @@ func handleConfigUpdate(key, value string) bool {
 		ratio_setting.InvalidateExposedDataCache()
 	} else if configName == "theme" {
 		system_setting.UpdateAndSyncTheme()
+	} else if configName == "codex_setting" {
+		system_setting.UpdateAndSyncCodexSetting()
 	}
 
 	return true // 已处理

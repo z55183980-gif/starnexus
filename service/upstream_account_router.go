@@ -549,6 +549,11 @@ func (router *UpstreamAccountRouter) selectWithoutAccountAffinity(ctx context.Co
 				exclusions["model_unsupported"]++
 				continue
 			}
+			if IsUpstreamAccountModelTransientBlocked(candidate.account.Id, mappedModel) {
+				_ = lease.Release(context.Background())
+				exclusions["model_capacity_transient"]++
+				continue
+			}
 			proxy, proxyURL, proxyErr := resolveUpstreamProxy(ctx, &candidate.account, &pool, request.ChannelProxy)
 			if proxyErr != nil {
 				_ = lease.Release(context.Background())

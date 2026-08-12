@@ -350,6 +350,7 @@ export function PublishPoolChannelDrawer({
                       </span>
                     </FieldLabel>
                     <ToggleGroup
+                      multiple
                       value={selectedModels}
                       onValueChange={(models) => {
                         setSelectedModels(

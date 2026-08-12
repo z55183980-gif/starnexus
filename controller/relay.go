@@ -268,6 +268,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		addUsedChannel(c, channel.Id)
 		accountFailoverStartedAt := time.Now()
 		accountFailovers := 0
+		capacityRetries := make(map[int]int)
 		for {
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
@@ -294,7 +295,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 			if newAPIError == nil {
 				relayInfo.LastError = nil
-				service.RecordUpstreamAccountSuccess(common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId))
+				service.RecordUpstreamAccountSuccessForModel(
+					common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId),
+					relayInfo.UpstreamModelName,
+				)
 				recordUpstreamRequestEvent(c, "request_success", "success", "")
 				return
 			}
@@ -313,6 +317,19 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
 			if disposition.Handled() {
 				recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(newAPIError))
+				if disposition.RetrySameAccount() && relayInfo.SendResponseCount == 0 {
+					retryCount := capacityRetries[accountId]
+					if delay, ok := service.UpstreamAccountCapacityRetryDelay(retryCount); ok {
+						capacityRetries[accountId] = retryCount + 1
+						recordUpstreamRequestEvent(c, "request_retry", "retry", fmt.Sprintf("model capacity retry on account #%d after %s", accountId, delay))
+						if service.WaitForUpstreamAccountRetry(c.Request.Context(), delay) {
+							service.ClearResponsesHTTPContinuationPersistTarget(c)
+							relayInfo.InitChannelMeta(c)
+							continue
+						}
+					}
+					service.RecordUpstreamAccountModelTransientFailure(accountId, relayInfo.UpstreamModelName)
+				}
 				if disposition.RetryWithinPool() && relayInfo.SendResponseCount == 0 &&
 					service.ShouldRetryUpstreamAccount(accountFailovers, accountFailoverStartedAt) {
 					excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)

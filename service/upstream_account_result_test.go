@@ -103,21 +103,49 @@ func TestApplyUpstreamAccountErrorStoresRevokedTokenMessage(t *testing.T) {
 	require.Equal(t, "Token revoked (401): Encountered invalidated oauth token for user, failing request", updated.ErrorMessage)
 }
 
-func TestApplyUpstreamAccountErrorUsesOverloadCooldown(t *testing.T) {
+func TestApplyUpstreamAccountErrorKeepsCapacityTransient(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	account := createRouterTestAccountWithoutPool(t, "overloaded-account")
 	apiErr := types.NewErrorWithStatusCode(errors.New("overloaded"), types.ErrorCodeBadResponseStatusCode, 529)
 	apiErr.SetUpstreamResponse(http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"error":{"message":"Overloaded"}}`))
 
-	before := time.Now().Unix()
-	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
-	require.NotNil(t, updated.OverloadUntil)
-	require.InDelta(t, before+int64(upstreamAccountOverloadCooldown.Seconds()), *updated.OverloadUntil, 1)
+	require.Nil(t, updated.OverloadUntil)
 	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
 	require.True(t, updated.Schedulable)
-	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
+	require.True(t, updated.IsSchedulableAt(time.Now().Unix()))
+}
+
+func TestApplyUpstreamAccountErrorDoesNotPenalizeHTMLForbidden(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "html-forbidden-account")
+	apiErr := types.NewErrorWithStatusCode(errors.New("upstream forbidden"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
+	apiErr.SetUpstreamResponse(http.Header{"Content-Type": []string{"text/html; charset=utf-8"}}, []byte(`<!doctype html><html><title>Just a moment</title></html>`))
+
+	require.Equal(t, UpstreamAccountErrorRetryRequest, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var unchanged model.UpstreamAccount
+	require.NoError(t, model.DB.First(&unchanged, account.Id).Error)
+	require.Nil(t, unchanged.TempUnschedulableUntil)
+	require.Nil(t, unchanged.OverloadUntil)
+	require.Empty(t, unchanged.ErrorMessage)
+}
+
+func TestApplyUpstreamAccountErrorHTMLForbiddenBypassesCustomCooldownRule(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "html-rule-account")
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update(
+		"extra",
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":403,"keywords":["cloudflare"],"duration_minutes":30}]}`,
+	).Error)
+	apiErr := types.NewErrorWithStatusCode(errors.New("cloudflare challenge"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
+	apiErr.SetUpstreamResponse(http.Header{"Content-Type": []string{"text/html"}}, []byte(`<html>cloudflare challenge</html>`))
+
+	require.Equal(t, UpstreamAccountErrorRetryRequest, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var unchanged model.UpstreamAccount
+	require.NoError(t, model.DB.First(&unchanged, account.Id).Error)
+	require.Nil(t, unchanged.TempUnschedulableUntil)
 }
 
 func TestApplyUpstreamAccountErrorRecognizesOpenAIOverloadWrappedAs500(t *testing.T) {
@@ -129,14 +157,12 @@ func TestApplyUpstreamAccountErrorRecognizesOpenAIOverloadWrappedAs500(t *testin
 		Code:    "server_is_overloaded",
 	}, http.StatusInternalServerError)
 
-	before := time.Now().Unix()
-	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
-	require.NotNil(t, updated.OverloadUntil)
-	require.InDelta(t, before+int64(upstreamAccountOverloadCooldown.Seconds()), *updated.OverloadUntil, 1)
-	require.Equal(t, "upstream_overloaded", updated.TempUnschedulableReason)
-	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
+	require.Nil(t, updated.OverloadUntil)
+	require.Empty(t, updated.TempUnschedulableReason)
+	require.True(t, updated.IsSchedulableAt(time.Now().Unix()))
 }
 
 func TestApplyUpstreamAccountErrorRecognizesCapacityMessageWrappedAs500(t *testing.T) {
@@ -148,10 +174,10 @@ func TestApplyUpstreamAccountErrorRecognizesCapacityMessageWrappedAs500(t *testi
 		Code:    "server_error",
 	}, http.StatusInternalServerError)
 
-	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
-	require.NotNil(t, updated.OverloadUntil)
+	require.Nil(t, updated.OverloadUntil)
 }
 
 func TestApplyUpstreamAccountErrorDoesNotRetryOrdinary500(t *testing.T) {

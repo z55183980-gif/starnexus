@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 import type {
   ConfirmPaymentComplianceResponse,
+  CodexSettingsUpdateRequest,
+  CodexVersionSyncResponse,
   DeleteLogsResponse,
   FetchUpstreamRatiosRequest,
   SystemOptionsResponse,
@@ -40,6 +42,20 @@ export async function getSystemOptions() {
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
   const res = await api.put<UpdateOptionResponse>('/api/option/', request)
+  return res.data
+}
+
+export async function updateCodexSettings(
+  request: CodexSettingsUpdateRequest
+) {
+  const res = await api.put<UpdateOptionResponse>('/api/option/codex', request)
+  return res.data
+}
+
+export async function syncCodexVersion() {
+  const res = await api.post<CodexVersionSyncResponse>(
+    '/api/option/codex/version-sync'
+  )
   return res.data
 }
 

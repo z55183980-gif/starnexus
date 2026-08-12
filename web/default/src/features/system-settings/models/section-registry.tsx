@@ -21,6 +21,7 @@ import { IoNetDeploymentSettingsSection } from '../integrations/ionet-deployment
 import type { ModelSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
 import { ClaudeSettingsCard } from './claude-settings-card'
+import { CodexSettingsCard } from './codex-settings-card'
 import { GeminiSettingsCard } from './gemini-settings-card'
 import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
@@ -61,6 +62,33 @@ const MODELS_SECTIONS = [
             ping_interval_seconds:
               settings['general_setting.ping_interval_seconds'],
           },
+        }}
+      />
+    ),
+  },
+  {
+    id: 'codex',
+    titleKey: 'Codex OAuth',
+    descriptionKey: 'Configure Codex OAuth outbound identity and routing',
+    build: (settings: ModelSettings) => (
+      <CodexSettingsCard
+        defaultValues={{
+          'codex_setting.client_version':
+            settings['codex_setting.client_version'],
+          'codex_setting.version_auto_sync_enabled':
+            settings['codex_setting.version_auto_sync_enabled'],
+          'codex_setting.disable_identity_enforcement':
+            settings['codex_setting.disable_identity_enforcement'],
+          'codex_setting.routing_hint_enabled':
+            settings['codex_setting.routing_hint_enabled'],
+          'codex_setting.fingerprint_default_mode':
+            settings['codex_setting.fingerprint_default_mode'],
+          syncedVersion: settings['codex_setting.synced_client_version'],
+          versionSyncedAt: settings['codex_setting.version_synced_at'],
+          versionSyncStatus: settings['codex_setting.version_sync_status'],
+          versionSyncError: settings['codex_setting.version_sync_error'],
+          versionSyncAttemptedAt:
+            settings['codex_setting.version_sync_attempted_at'],
         }}
       />
     ),

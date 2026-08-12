@@ -62,6 +62,62 @@ func TestFetchChatGPTAccountSubscriptionInfoRejectsInvalidFallbackDate(t *testin
 	require.Empty(t, info.ExpiresAt)
 }
 
+func TestEnrichUpstreamOpenAICredentialsDoesNotMixWorkspaceExpiryWithPersonalPlan(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/check", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"accounts":{"workspace":{"account":{"account_id":"acct-workspace","plan_type":"team","is_default":true},"entitlement":{"expires_at":"2026-09-01T00:00:00Z"}}}}`))
+	})
+	mux.HandleFunc("/subscriptions", func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "acct-personal", r.URL.Query().Get("account_id"))
+		_, _ = w.Write([]byte(`{"plan_type":"pro","active_until":"2027-04-05T06:07:08Z"}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	setChatGPTSubscriptionURLsForTest(t, server.URL+"/check", server.URL+"/subscriptions")
+
+	credentials := map[string]any{
+		"access_token": codexTestJWT(t, map[string]any{
+			codexJWTClaimPath: map[string]any{
+				"chatgpt_account_id": "acct-personal",
+				"chatgpt_plan_type":  "pro",
+			},
+		}),
+		"account_id": "acct-personal",
+	}
+
+	enrichUpstreamOpenAICredentials(context.Background(), credentials, "")
+	require.Equal(t, "pro", credentials["plan_type"])
+	require.Equal(t, "2027-04-05T06:07:08Z", credentials["subscription_expires_at"])
+}
+
+func TestEnrichUpstreamOpenAICredentialsKeepsJWTExpiryWhenPersonalLookupFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/check" {
+			_, _ = w.Write([]byte(`{"accounts":{"workspace":{"account":{"account_id":"acct-workspace","plan_type":"team","is_default":true},"entitlement":{"expires_at":"2026-09-01T00:00:00Z"}}}}`))
+			return
+		}
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	setChatGPTSubscriptionURLsForTest(t, server.URL+"/check", server.URL+"/subscriptions")
+
+	credentials := map[string]any{
+		"id_token": codexTestJWT(t, map[string]any{
+			codexJWTClaimPath: map[string]any{
+				"chatgpt_account_id":                "acct-personal",
+				"chatgpt_plan_type":                 "pro",
+				"chatgpt_subscription_active_until": "2027-03-04T05:06:07Z",
+			},
+		}),
+		"access_token": "token",
+		"account_id":   "acct-personal",
+	}
+
+	enrichUpstreamOpenAICredentials(context.Background(), credentials, "")
+	require.Equal(t, "pro", credentials["plan_type"])
+	require.Equal(t, "2027-03-04T05:06:07Z", credentials["subscription_expires_at"])
+}
+
 func TestEnrichUpstreamOpenAICredentialsKeepsJWTMetadataWhenWebEndpointsRejectToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)

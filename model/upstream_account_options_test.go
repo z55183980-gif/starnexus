@@ -149,6 +149,8 @@ func TestValidateUpstreamAccountOptionsRejectsInvalidCombinations(t *testing.T) 
 		{name: "invalid compact mapping", type_: constant.UpstreamAccountTypeOAuth, extra: `{"compact_model_mapping":{"":"gpt-5.4"}}`},
 		{name: "API key websocket mode on OAuth", type_: constant.UpstreamAccountTypeOAuth, extra: `{"openai_apikey_responses_websockets_v2_mode":"off"}`},
 		{name: "API key responses support on OAuth", type_: constant.UpstreamAccountTypeOAuth, extra: `{"openai_responses_supported":false}`},
+		{name: "fingerprint on API key", type_: constant.UpstreamAccountTypeAPIKey, extra: `{"codex_fingerprint_mode":"session"}`},
+		{name: "invalid fingerprint mode", type_: constant.UpstreamAccountTypeOAuth, extra: `{"codex_fingerprint_mode":"random"}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -156,4 +158,10 @@ func TestValidateUpstreamAccountOptionsRejectsInvalidCombinations(t *testing.T) 
 			require.Error(t, ValidateUpstreamAccountOptions(account))
 		})
 	}
+}
+
+func TestEffectiveCodexFingerprintMode(t *testing.T) {
+	require.Equal(t, UpstreamCodexFingerprintModeSession, (UpstreamAccountOptions{}).EffectiveCodexFingerprintMode("session"))
+	require.Equal(t, UpstreamCodexFingerprintModeOff, (UpstreamAccountOptions{CodexFingerprintMode: "off"}).EffectiveCodexFingerprintMode("full"))
+	require.Equal(t, UpstreamCodexFingerprintModeFull, (UpstreamAccountOptions{CodexFingerprintMode: " FULL "}).EffectiveCodexFingerprintMode("off"))
 }

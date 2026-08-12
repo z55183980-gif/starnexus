@@ -81,6 +81,10 @@ func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInf
 		// upstream HTTP header for the same turn.
 		markResponsesLiteHTTPHeader(c)
 	}
+	jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)
+	if err != nil {
+		return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
 	logger.LogDebug(c, "responses websocket client request prepared: %d bytes", len(jsonData))
 	return jsonData, adaptor, nil
 }

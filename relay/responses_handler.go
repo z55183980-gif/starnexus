@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -100,7 +101,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	var requestBody io.Reader
 	if passThroughGlobal || info.ChannelSetting.ShouldPassThroughBody() {
-		preparedBody, closer, requestErr := preparePassthroughRequestBody(c, info)
+		preparedBody, closer, requestErr := preparePassthroughRequestBodyWithAdaptor(adaptor, c, info)
 		if requestErr != nil {
 			return requestErr
 		}
@@ -136,6 +137,10 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		jsonData, _, err = normalizeSelectedResponsesLitePayload(c, info, jsonData, false)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 
 		logger.LogDebug(c, "requestBody: %s", jsonData)

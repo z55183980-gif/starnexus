@@ -24,8 +24,10 @@ const upstreamManagementTestBodyLimit = 64 * 1024
 const upstreamAccountProbeOutputLimit = 8 * 1024
 
 const (
-	upstreamAccountProbeOpenAIUserAgent    = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
-	upstreamAccountProbeOpenAIVersion      = "0.144.1"
+	upstreamAccountProbeOpenAIUserAgent    = CodexDefaultOriginator + "/" + CodexFallbackVersion + " (Ubuntu 22.4.0; x86_64) xterm-256color"
+	upstreamAccountProbeOpenAIVersion      = CodexFallbackVersion
+	legacyOpenAIAPIKeyProbeUserAgent       = "codex_cli_rs/0.144.1 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	legacyOpenAIAPIKeyProbeVersion         = "0.144.1"
 	upstreamAccountProbeDefaultOpenAIModel = "gpt-5.4"
 	UpstreamAccountTestModeDefault         = "default"
 	UpstreamAccountTestModeCompact         = "compact"
@@ -407,9 +409,10 @@ func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.Ups
 		if account.Type == constant.UpstreamAccountTypeOAuth {
 			request.Header.Set("Authorization", "Bearer "+upstreamCredentialMapString(credentials, "access_token"))
 			request.Header.Set("chatgpt-account-id", upstreamCredentialMapString(credentials, "account_id"))
+			// The probe endpoint still accepts the experimental capability token,
+			// but its client identity must match production OAuth traffic.
 			request.Header.Set("OpenAI-Beta", "responses=experimental")
-			request.Header.Set("originator", "codex_cli_rs")
-			request.Header.Set("User-Agent", upstreamAccountProbeOpenAIUserAgent)
+			ApplyCodexOutboundIdentity(request.Header)
 		} else {
 			request.Header.Set("Authorization", "Bearer "+upstreamCredentialMapString(credentials, "api_key"))
 			applyUpstreamAccountOpenAIProbeHeaders(request.Header)
@@ -507,9 +510,11 @@ func applyUpstreamAccountOpenAIProbeHeaders(header http.Header) {
 		return
 	}
 	header.Set("OpenAI-Beta", "responses=experimental")
+	// API-key probes are not Codex OAuth traffic. Keep their historical
+	// probe identity isolated from the OAuth outbound convergence policy.
 	header.Set("originator", "codex_cli_rs")
-	header.Set("User-Agent", upstreamAccountProbeOpenAIUserAgent)
-	header.Set("version", upstreamAccountProbeOpenAIVersion)
+	header.Set("User-Agent", legacyOpenAIAPIKeyProbeUserAgent)
+	header.Set("version", legacyOpenAIAPIKeyProbeVersion)
 	header.Set("X-Codex-Window-ID", uuid.NewString())
 }
 
@@ -753,9 +758,6 @@ func recordUpstreamAccountTestState(account *model.UpstreamAccount, success bool
 			updates["session_window_end"] = *windowEnd
 			updates["session_window_status"] = "rejected"
 		}
-	} else if statusCode == 529 {
-		updates["overload_until"] = now + int64(upstreamAccountOverloadCooldown.Seconds())
-		updates["temp_unschedulable_reason"] = "upstream_overloaded"
 	}
 	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
 	if success {

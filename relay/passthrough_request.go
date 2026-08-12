@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -27,6 +28,10 @@ func shouldUsePassthroughRequestBody(info *relaycommon.RelayInfo) bool {
 // while still enforcing channel policy for account-owned passthrough. Explicit
 // global or channel passthrough keeps its historical full-bypass semantics.
 func preparePassthroughRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, io.Closer, *types.NewAPIError) {
+	return preparePassthroughRequestBodyWithAdaptor(nil, c, info)
+}
+
+func preparePassthroughRequestBodyWithAdaptor(adaptor channel.Adaptor, c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, io.Closer, *types.NewAPIError) {
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -43,7 +48,8 @@ func preparePassthroughRequestBody(c *gin.Context, info *relaycommon.RelayInfo) 
 	needsCodexStream := info.ChannelType == constant.ChannelTypeCodex && info.RelayMode == relayconstant.RelayModeResponses
 	needsCodexInputRepair := accountPassthrough && !info.ChannelSetting.PassThroughBodyEnabled &&
 		!model_setting.GetGlobalSettings().PassThroughRequestEnabled && needsCodexStream
-	if !accountPassthrough && !needsAccountModelMapping && !needsResponsesLiteNormalization && !needsCodexStream && !needsCodexInputRepair {
+	_, needsFinalization := adaptor.(channel.OutboundJSONBodyFinalizer)
+	if !accountPassthrough && !needsAccountModelMapping && !needsResponsesLiteNormalization && !needsCodexStream && !needsCodexInputRepair && !needsFinalization {
 		return common.ReaderOnly(storage), nil, nil
 	}
 
@@ -90,6 +96,12 @@ func preparePassthroughRequestBody(c *gin.Context, info *relaycommon.RelayInfo) 
 	}
 	if needsCodexStream {
 		jsonData, err = sjson.SetBytes(jsonData, "stream", true)
+		if err != nil {
+			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+	}
+	if needsFinalization {
+		jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)
 		if err != nil {
 			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}

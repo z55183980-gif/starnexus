@@ -103,13 +103,15 @@ func TestSetupRequestHeaderAppliesCodexUserAgent(t *testing.T) {
 		require.Equal(t, defaultCodexUserAgent, headers.Get("User-Agent"))
 	})
 
-	t.Run("cli ua is preserved", func(t *testing.T) {
+	t.Run("cli ua is converged", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 		c.Request.Header.Set("User-Agent", "codex_cli_rs/0.100.0 (Ubuntu 22.4.0; x86_64) xterm-256color")
 		headers := make(http.Header)
 		require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
-		require.Equal(t, "codex_cli_rs/0.100.0 (Ubuntu 22.4.0; x86_64) xterm-256color", headers.Get("User-Agent"))
+		require.Equal(t, defaultCodexUserAgent, headers.Get("User-Agent"))
+		require.Equal(t, "codex-tui", headers.Get("originator"))
+		require.Equal(t, "0.146.0", headers.Get("version"))
 	})
 }
 

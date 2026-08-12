@@ -30,6 +30,11 @@ const (
 	UpstreamOpenAIResponsesModeForceResponses       = "force_responses"
 	UpstreamOpenAIResponsesModeForceChatCompletions = "force_chat_completions"
 
+	UpstreamCodexFingerprintModeOff     = "off"
+	UpstreamCodexFingerprintModeDevice  = "device"
+	UpstreamCodexFingerprintModeSession = "session"
+	UpstreamCodexFingerprintModeFull    = "full"
+
 	UpstreamAnthropicAuthSchemeAPIKey = "x_api_key"
 	UpstreamAnthropicAuthSchemeBearer = "authorization_bearer"
 )
@@ -42,6 +47,7 @@ type UpstreamAccountOptions struct {
 	OpenAILongContextBillingEnabled bool                    `json:"openai_long_context_billing_enabled,omitempty"`
 	CodexCLIOnly                    bool                    `json:"codex_cli_only,omitempty"`
 	CodexCLIOnlyAllowAppServer      bool                    `json:"codex_cli_only_allow_app_server,omitempty"`
+	CodexFingerprintMode            string                  `json:"codex_fingerprint_mode,omitempty"`
 	OpenAICompactMode               string                  `json:"openai_compact_mode,omitempty"`
 	OpenAICompactSupported          *bool                   `json:"openai_compact_supported,omitempty"`
 	CompactModelMapping             map[string]string       `json:"compact_model_mapping,omitempty"`
@@ -344,6 +350,7 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 	if account.Platform != constant.UpstreamPlatformOpenAI {
 		if options.OpenAIPassthrough || options.OpenAIOAuthWSMode != "" || options.OpenAIAPIKeyWSMode != "" ||
 			options.OpenAILongContextBillingEnabled || options.CodexCLIOnly || options.CodexCLIOnlyAllowAppServer ||
+			options.CodexFingerprintMode != "" ||
 			options.OpenAICompactMode != "" || options.OpenAICompactSupported != nil || len(options.CompactModelMapping) > 0 || options.OpenAIResponsesMode != "" || options.OpenAIResponsesSupported != nil ||
 			len(options.OpenAIEndpointCapabilities) > 0 {
 			return errors.New("OpenAI account options require the OpenAI platform")
@@ -359,6 +366,9 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 	if options.CodexCLIOnly && account.Type != constant.UpstreamAccountTypeOAuth {
 		return errors.New("Codex-only mode requires an OpenAI OAuth account")
 	}
+	if options.CodexFingerprintMode != "" && account.Type != constant.UpstreamAccountTypeOAuth {
+		return errors.New("Codex fingerprint convergence requires an OpenAI OAuth account")
+	}
 	if account.Platform == constant.UpstreamPlatformOpenAI {
 		switch account.Type {
 		case constant.UpstreamAccountTypeOAuth:
@@ -366,7 +376,7 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 				return errors.New("OpenAI API key options require an API key account")
 			}
 		case constant.UpstreamAccountTypeAPIKey:
-			if options.OpenAIOAuthWSMode != "" || options.CodexCLIOnly || options.CodexCLIOnlyAllowAppServer {
+			if options.OpenAIOAuthWSMode != "" || options.CodexCLIOnly || options.CodexCLIOnlyAllowAppServer || options.CodexFingerprintMode != "" {
 				return errors.New("OpenAI OAuth options require an OAuth account")
 			}
 		}
@@ -386,6 +396,9 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 	}
 	if err := validateUpstreamOptionValue(options.OpenAIResponsesMode, UpstreamOpenAIResponsesModeAuto, UpstreamOpenAIResponsesModeForceResponses, UpstreamOpenAIResponsesModeForceChatCompletions); err != nil {
 		return errors.New("unsupported OpenAI responses mode")
+	}
+	if err := validateUpstreamOptionValue(options.CodexFingerprintMode, UpstreamCodexFingerprintModeOff, UpstreamCodexFingerprintModeDevice, UpstreamCodexFingerprintModeSession, UpstreamCodexFingerprintModeFull); err != nil {
+		return errors.New("unsupported Codex fingerprint convergence mode")
 	}
 	if err := validateUpstreamOptionValue(options.AnthropicAPIKeyAuthScheme, UpstreamAnthropicAuthSchemeAPIKey, UpstreamAnthropicAuthSchemeBearer); err != nil {
 		return errors.New("unsupported Anthropic API key authentication scheme")
@@ -408,6 +421,19 @@ func ValidateUpstreamAccountOptions(account *UpstreamAccount) error {
 		return errors.New("temporary unschedulable rules require at least one valid rule")
 	}
 	return nil
+}
+
+func (options UpstreamAccountOptions) EffectiveCodexFingerprintMode(defaultMode string) string {
+	mode := strings.ToLower(strings.TrimSpace(options.CodexFingerprintMode))
+	if mode == "" {
+		mode = strings.ToLower(strings.TrimSpace(defaultMode))
+	}
+	switch mode {
+	case UpstreamCodexFingerprintModeDevice, UpstreamCodexFingerprintModeSession, UpstreamCodexFingerprintModeFull:
+		return mode
+	default:
+		return UpstreamCodexFingerprintModeOff
+	}
 }
 
 func validateUpstreamCompactModelMapping(mapping map[string]string) error {

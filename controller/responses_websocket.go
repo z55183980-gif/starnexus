@@ -1098,6 +1098,7 @@ func (s *responsesWebSocketSession) retryResponsesWSCapacityTurn(turn *responses
 	if failedAccountID <= 0 {
 		return false
 	}
+	service.RecordUpstreamAccountModelTransientFailure(failedAccountID, turn.info.UpstreamModelName)
 	excludedIDs, _ := common.GetContextKeyType[map[int]struct{}](turn.ctx, appconstant.ContextKeyUpstreamAccountExcluded)
 	if excludedIDs == nil {
 		excludedIDs = make(map[int]struct{})

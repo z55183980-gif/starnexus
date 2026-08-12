@@ -60,8 +60,8 @@ func TestUpstreamAPIKeyAccountProbeUsesStoredCredential(t *testing.T) {
 	require.Equal(t, "http_sse_responses", result.Protocol)
 	require.Equal(t, "Bearer probe-secret", <-authorization)
 	headers := <-requestHeaders
-	require.Equal(t, upstreamAccountProbeOpenAIUserAgent, headers.Get("User-Agent"))
-	require.Equal(t, upstreamAccountProbeOpenAIVersion, headers.Get("version"))
+	require.Equal(t, legacyOpenAIAPIKeyProbeUserAgent, headers.Get("User-Agent"))
+	require.Equal(t, legacyOpenAIAPIKeyProbeVersion, headers.Get("version"))
 	require.Equal(t, "codex_cli_rs", headers.Get("originator"))
 	require.Equal(t, "responses=experimental", headers.Get("OpenAI-Beta"))
 	require.NotEmpty(t, headers.Get("X-Codex-Window-ID"))

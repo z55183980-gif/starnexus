@@ -150,6 +150,16 @@ export function ModelMutateDrawer({
   const modelSettings = useMemo(() => {
     if (!systemOptionsData?.data) return null
     const defaultModelSettings: ModelSettings = {
+      'codex_setting.client_version': '',
+      'codex_setting.synced_client_version': '',
+      'codex_setting.version_synced_at': 0,
+      'codex_setting.version_sync_status': 'idle',
+      'codex_setting.version_sync_error': '',
+      'codex_setting.version_sync_attempted_at': 0,
+      'codex_setting.version_auto_sync_enabled': true,
+      'codex_setting.disable_identity_enforcement': false,
+      'codex_setting.routing_hint_enabled': true,
+      'codex_setting.fingerprint_default_mode': 'off',
       'global.pass_through_request_enabled': false,
       'global.thinking_model_blacklist': '[]',
       'global.chat_completions_to_responses_policy': '{}',

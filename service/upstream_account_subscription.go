@@ -21,6 +21,7 @@ var (
 )
 
 type chatGPTAccountSubscriptionInfo struct {
+	AccountID string
 	PlanType  string
 	ExpiresAt string
 }
@@ -45,16 +46,26 @@ func fetchChatGPTAccountSubscriptionInfoDetailed(ctx context.Context, accessToke
 	if info == nil {
 		info = &chatGPTAccountSubscriptionInfo{}
 	}
+	forcePersonalSubscriptionLookup := strings.TrimSpace(accountID) != "" &&
+		strings.TrimSpace(info.AccountID) != "" &&
+		!strings.EqualFold(strings.TrimSpace(accountID), strings.TrimSpace(info.AccountID))
 	var subscriptionErr error
-	if info.ExpiresAt == "" && strings.TrimSpace(accountID) != "" {
+	if (info.ExpiresAt == "" || forcePersonalSubscriptionLookup) && strings.TrimSpace(accountID) != "" {
 		if plan, expiresAt, err := fetchChatGPTSubscription(ctx, client, accessToken, accountID); err != nil {
 			subscriptionErr = err
 		} else if expiresAt != "" {
 			info.ExpiresAt = expiresAt
+			info.AccountID = strings.TrimSpace(accountID)
 			if info.PlanType == "" {
 				info.PlanType = plan
 			}
 		}
+	}
+	if forcePersonalSubscriptionLookup && subscriptionErr != nil {
+		// accounts/check may describe the POID workspace rather than the
+		// personal ChatGPT subscription. Never expose that workspace expiry as
+		// the personal account's expiry when the authoritative lookup failed.
+		info.ExpiresAt = ""
 	}
 	if info.PlanType == "" && info.ExpiresAt == "" {
 		return nil, errors.Join(accountsErr, subscriptionErr)
@@ -87,15 +98,16 @@ func fetchChatGPTAccountsCheck(ctx context.Context, client *req.Client, accessTo
 		return nil, err
 	}
 	now := time.Now()
-	if account := result.Accounts[strings.TrimSpace(accountID)]; usableChatGPTAccount(account, now) {
-		return extractChatGPTAccountSubscription(account), nil
+	trimmedAccountID := strings.TrimSpace(accountID)
+	if account := result.Accounts[trimmedAccountID]; usableChatGPTAccount(account, now) {
+		return extractChatGPTAccountSubscription(account, trimmedAccountID), nil
 	}
 	var defaultInfo, paidInfo, anyInfo *chatGPTAccountSubscriptionInfo
-	for _, account := range result.Accounts {
+	for key, account := range result.Accounts {
 		if !usableChatGPTAccount(account, now) {
 			continue
 		}
-		candidate := extractChatGPTAccountSubscription(account)
+		candidate := extractChatGPTAccountSubscription(account, key)
 		if candidate == nil || candidate.PlanType == "" {
 			continue
 		}
@@ -159,12 +171,15 @@ func requestChatGPTSubscriptionJSON(ctx context.Context, client *req.Client, acc
 	return common.Unmarshal(body, target)
 }
 
-func extractChatGPTAccountSubscription(account map[string]any) *chatGPTAccountSubscriptionInfo {
+func extractChatGPTAccountSubscription(account map[string]any, fallbackAccountID string) *chatGPTAccountSubscriptionInfo {
 	if account == nil {
 		return nil
 	}
-	info := &chatGPTAccountSubscriptionInfo{}
+	info := &chatGPTAccountSubscriptionInfo{AccountID: strings.TrimSpace(fallbackAccountID)}
 	if details, ok := account["account"].(map[string]any); ok {
+		if accountID, _ := details["account_id"].(string); strings.TrimSpace(accountID) != "" {
+			info.AccountID = strings.TrimSpace(accountID)
+		}
 		info.PlanType, _ = details["plan_type"].(string)
 	}
 	if entitlement, ok := account["entitlement"].(map[string]any); ok {
@@ -185,7 +200,7 @@ func usableChatGPTAccount(account map[string]any, now time.Time) bool {
 	if details, ok := account["account"].(map[string]any); ok && chatGPTAccountDeactivated(details) {
 		return false
 	}
-	info := extractChatGPTAccountSubscription(account)
+	info := extractChatGPTAccountSubscription(account, "")
 	if info == nil || info.ExpiresAt == "" {
 		return true
 	}
@@ -241,10 +256,13 @@ func enrichUpstreamOpenAICredentials(ctx context.Context, credentials map[string
 	if info == nil {
 		return
 	}
-	if info.PlanType != "" {
+	personalPlanPresent := identityOK && strings.TrimSpace(identity.PlanType) != ""
+	if info.PlanType != "" && !personalPlanPresent {
 		credentials["plan_type"] = info.PlanType
 	}
-	if info.ExpiresAt != "" {
+	infoBelongsToPersonalAccount := strings.TrimSpace(identity.AccountID) == "" || strings.TrimSpace(info.AccountID) == "" ||
+		strings.EqualFold(strings.TrimSpace(identity.AccountID), strings.TrimSpace(info.AccountID))
+	if info.ExpiresAt != "" && (!personalPlanPresent || infoBelongsToPersonalAccount) {
 		credentials["subscription_expires_at"] = info.ExpiresAt
 	}
 }

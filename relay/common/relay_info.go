@@ -196,9 +196,29 @@ type RelayInfo struct {
 	*ResponsesUsageInfo
 	*ChannelMeta
 	*TaskRelayInfo
+	CodexOutboundState *CodexOutboundState
+}
+
+type CodexOutboundState struct {
+	AccountID   int
+	FinalModel  string
+	ServiceTier string
+	Fingerprint *CodexFingerprintState
+}
+
+type CodexFingerprintState struct {
+	Mode           string
+	InstallationID string
+	SessionID      string
+	ThreadID       string
+	TurnID         string
+	WindowID       string
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
+	// Account failover reuses RelayInfo. Provider-owned state must never leak
+	// from the previous selected account into the next attempt.
+	info.CodexOutboundState = nil
 	info.SetAccountRateMultiplierFromContext(c)
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	paramOverride := common.GetContextKeyStringMap(c, constant.ContextKeyChannelParamOverride)

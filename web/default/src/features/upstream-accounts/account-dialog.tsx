@@ -26,7 +26,6 @@ import {
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { CopyButton } from '@/components/copy-button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,6 +58,7 @@ import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { CopyButton } from '@/components/copy-button'
 import {
   buildHeaderOverridesObject,
   buildValidatedModelMapping,
@@ -94,6 +94,7 @@ import type {
 type OpenAIWebSocketMode = 'off' | 'ctx_pool' | 'passthrough' | 'http_bridge'
 type OpenAICompactMode = 'auto' | 'force_on' | 'force_off'
 type OpenAIResponsesMode = 'auto' | 'force_responses' | 'force_chat_completions'
+type CodexFingerprintMode = 'inherit' | 'off' | 'device' | 'session' | 'full'
 type OpenAIEndpointCapability = 'chat_completions' | 'embeddings'
 type AnthropicAPIKeyAuthScheme = 'x_api_key' | 'authorization_bearer'
 type ModelMapping = { from: string; to: string }
@@ -112,6 +113,7 @@ type AccountExtra = {
   openai_long_context_billing_enabled?: boolean
   codex_cli_only?: boolean
   codex_cli_only_allow_app_server?: boolean
+  codex_fingerprint_mode?: Exclude<CodexFingerprintMode, 'inherit'>
   openai_compact_mode?: OpenAICompactMode
   compact_model_mapping?: Record<string, string>
   openai_responses_mode?: OpenAIResponsesMode
@@ -164,6 +166,7 @@ type AccountDraft = {
   openaiLongContextBilling: boolean
   codexCLIOnly: boolean
   codexCLIOnlyAllowAppServer: boolean
+  codexFingerprintMode: CodexFingerprintMode
   openaiCompactMode: OpenAICompactMode
   compactModelMappings: ModelMapping[]
   openaiResponsesMode: OpenAIResponsesMode
@@ -243,8 +246,7 @@ function loadTempUnschedRules(
       Number.isFinite(rule.duration_minutes)
         ? String(rule.duration_minutes)
         : '',
-    description:
-      typeof rule.description === 'string' ? rule.description : '',
+    description: typeof rule.description === 'string' ? rule.description : '',
   }))
 }
 
@@ -355,6 +357,7 @@ function accountDraft(account?: UpstreamAccount | null): AccountDraft {
       extra.openai_long_context_billing_enabled === true,
     codexCLIOnly: extra.codex_cli_only === true,
     codexCLIOnlyAllowAppServer: extra.codex_cli_only_allow_app_server === true,
+    codexFingerprintMode: extra.codex_fingerprint_mode || 'inherit',
     openaiCompactMode: extra.openai_compact_mode || 'auto',
     compactModelMappings: compactMappingsFromMap(
       metadata?.compact_model_mapping || extra.compact_model_mapping
@@ -865,6 +868,7 @@ export function AccountDialog({
       'codex_cli_only',
       'codex_cli_only_allow_app_server',
       'codex_cli_only_allowed_clients',
+      'codex_fingerprint_mode',
       'openai_compact_mode',
       'openai_responses_mode',
       'anthropic_passthrough',
@@ -897,6 +901,9 @@ export function AccountDialog({
       if (draft.type === 'oauth') {
         extra.openai_oauth_responses_websockets_v2_mode =
           draft.openaiWebSocketMode
+        if (draft.codexFingerprintMode !== 'inherit') {
+          extra.codex_fingerprint_mode = draft.codexFingerprintMode
+        }
         if (draft.codexCLIOnly) {
           extra.codex_cli_only = true
           if (draft.codexCLIOnlyAllowAppServer) {
@@ -2144,6 +2151,62 @@ export function AccountDialog({
                           />
                         </Field>
                       )}
+
+                      <Field>
+                        <FieldLabel>
+                          {t('Codex fingerprint convergence')}
+                        </FieldLabel>
+                        <FieldDescription>
+                          {t(
+                            'Controls stable device and session identity for ordinary Codex Responses requests. WebSocket and compact requests are not modified.'
+                          )}
+                        </FieldDescription>
+                        <ToggleGroup
+                          variant='outline'
+                          value={[draft.codexFingerprintMode]}
+                          onValueChange={(values) => {
+                            const mode = values.at(-1) as
+                              | CodexFingerprintMode
+                              | undefined
+                            if (mode) set('codexFingerprintMode', mode)
+                          }}
+                          className='grid w-full grid-cols-2 gap-2 sm:grid-cols-5'
+                          aria-label={t('Codex fingerprint convergence')}
+                        >
+                          {(
+                            [
+                              ['inherit', t('System default')],
+                              ['off', t('Off')],
+                              ['device', t('Device')],
+                              ['session', t('Session')],
+                              ['full', t('Full')],
+                            ] as const
+                          ).map(([value, label]) => (
+                            <ToggleGroupItem
+                              key={value}
+                              value={value}
+                              className='w-full'
+                            >
+                              {label}
+                            </ToggleGroupItem>
+                          ))}
+                        </ToggleGroup>
+                        <FieldDescription>
+                          {draft.codexFingerprintMode === 'device'
+                            ? t('Stabilizes only the installation identity.')
+                            : draft.codexFingerprintMode === 'session'
+                              ? t(
+                                  'Stabilizes installation and account session identity while isolating client threads.'
+                                )
+                              : draft.codexFingerprintMode === 'full'
+                                ? t(
+                                    'Converges installation, session, and thread identity to the OAuth account.'
+                                  )
+                                : draft.codexFingerprintMode === 'off'
+                                  ? t('Does not inject a Codex fingerprint.')
+                                  : t('Uses the system-wide default mode.')}
+                        </FieldDescription>
+                      </Field>
                     </>
                   )}
 
@@ -2477,9 +2540,7 @@ export function AccountDialog({
                             error_code: '429',
                             keywords: 'rate limit, too many requests',
                             duration_minutes: '10',
-                            description: t(
-                              'Rate limited - pause 10 minutes'
-                            ),
+                            description: t('Rate limited - pause 10 minutes'),
                           },
                         },
                         {
@@ -2607,9 +2668,7 @@ export function AccountDialog({
                           />
                         </Field>
                         <Field>
-                          <FieldLabel>
-                            {t('Duration (minutes)')}
-                          </FieldLabel>
+                          <FieldLabel>{t('Duration (minutes)')}</FieldLabel>
                           <Input
                             type='number'
                             min={1}

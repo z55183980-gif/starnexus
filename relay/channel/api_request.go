@@ -348,6 +348,9 @@ func doApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	if err := FinalizeOutboundRequest(a, c, info, req); err != nil {
+		return nil, fmt.Errorf("finalize outbound request failed: %w", err)
+	}
 	var resp *http.Response
 	if bindContext {
 		resp, err = doRequestWithoutDownstreamStreamEffects(c, req, info)
@@ -418,6 +421,9 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 		return nil, err
 	}
 	applyHeaderOverrideToRequest(req, headerOverride)
+	if err := FinalizeOutboundRequest(a, c, info, req); err != nil {
+		return nil, fmt.Errorf("finalize outbound request failed: %w", err)
+	}
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
@@ -445,6 +451,10 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		targetHeader.Set(key, value)
 	}
 	targetHeader.Set("Content-Type", c.Request.Header.Get("Content-Type"))
+	request := &http.Request{Header: targetHeader}
+	if err := FinalizeOutboundRequest(a, c, info, request); err != nil {
+		return nil, fmt.Errorf("finalize websocket request failed: %w", err)
+	}
 	targetConn, _, err := websocket.DefaultDialer.Dial(fullRequestURL, targetHeader)
 	if err != nil {
 		return nil, fmt.Errorf("dial failed to %s: %w", fullRequestURL, err)
@@ -499,6 +509,10 @@ func DoResponsesWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo) (*
 	targetHeader.Set("Content-Type", "application/json")
 	targetHeader.Set("Accept", "application/json")
 	targetHeader.Set("OpenAI-Beta", "responses_websockets=2026-02-06")
+	request := &http.Request{Header: targetHeader}
+	if err := FinalizeOutboundRequest(a, c, info, request); err != nil {
+		return nil, nil, fmt.Errorf("finalize responses websocket request failed: %w", err)
+	}
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 15 * time.Second,

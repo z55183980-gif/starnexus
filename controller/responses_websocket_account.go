@@ -16,7 +16,10 @@ func recordResponsesWSNativeSuccess(turn *responsesWebSocketTurn) {
 	if turn == nil || turn.ctx == nil {
 		return
 	}
-	service.RecordUpstreamAccountSuccess(common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId))
+	service.RecordUpstreamAccountSuccessForModel(
+		common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId),
+		turn.info.UpstreamModelName,
+	)
 	recordUpstreamRequestEvent(turn.ctx, "request_success", "success", "")
 }
 

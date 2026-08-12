@@ -25,17 +25,26 @@ const (
 	UpstreamAccountErrorNotHandled UpstreamAccountErrorDisposition = iota
 	UpstreamAccountErrorRetryAccount
 	UpstreamAccountErrorRetryTransport
+	// UpstreamAccountErrorRetrySameAccount is a model-capacity signal. Callers
+	// first retry the selected account with a short backoff, then fail over.
+	UpstreamAccountErrorRetrySameAccount
+	// UpstreamAccountErrorRetryRequest retries another account for this request
+	// without persisting account or proxy health penalties.
+	UpstreamAccountErrorRetryRequest
 	UpstreamAccountErrorGlobal
 )
-
-const upstreamAccountOverloadCooldown = time.Minute
 
 func (disposition UpstreamAccountErrorDisposition) Handled() bool {
 	return disposition != UpstreamAccountErrorNotHandled
 }
 
 func (disposition UpstreamAccountErrorDisposition) RetryWithinPool() bool {
-	return disposition == UpstreamAccountErrorRetryAccount || disposition == UpstreamAccountErrorRetryTransport
+	return disposition == UpstreamAccountErrorRetryAccount || disposition == UpstreamAccountErrorRetryTransport ||
+		disposition == UpstreamAccountErrorRetrySameAccount || disposition == UpstreamAccountErrorRetryRequest
+}
+
+func (disposition UpstreamAccountErrorDisposition) RetrySameAccount() bool {
+	return disposition == UpstreamAccountErrorRetrySameAccount
 }
 
 type UpstreamAccountEventInput struct {
@@ -139,6 +148,13 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		return true
 	}
 
+	// HTML 403 responses are commonly emitted by Cloudflare or another edge
+	// layer. They do not prove that the selected OAuth account is forbidden and
+	// must be classified before administrator temp-unschedulable rules.
+	if isUpstreamHTMLForbidden(apiErr) {
+		return UpstreamAccountErrorRetryRequest
+	}
+
 	if matched, until, reason := matchUpstreamTempUnschedulableRule(apiErr, loadAccount, &account); matched {
 		updates["temp_unschedulable_until"] = until
 		updates["temp_unschedulable_reason"] = reason
@@ -148,8 +164,7 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 
 	switch {
 	case isUpstreamOverloadError(apiErr):
-		updates["overload_until"] = now + int64(upstreamAccountOverloadCooldown.Seconds())
-		updates["temp_unschedulable_reason"] = "upstream_overloaded"
+		return UpstreamAccountErrorRetrySameAccount
 	case apiErr.StatusCode == 401:
 		if !loadAccount() {
 			return UpstreamAccountErrorNotHandled
@@ -210,6 +225,15 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		}).Error
 	}
 	return disposition
+}
+
+func isUpstreamHTMLForbidden(apiErr *types.NewAPIError) bool {
+	if apiErr == nil || apiErr.StatusCode != 403 {
+		return false
+	}
+	header, body := apiErr.UpstreamResponse()
+	contentType := strings.ToLower(strings.TrimSpace(header.Get("Content-Type")))
+	return strings.Contains(contentType, "text/html") || looksLikeHTMLBody(string(body))
 }
 
 const upstreamTempUnschedReasonLimit = 128
@@ -328,6 +352,10 @@ func isUpstreamOverloadError(apiErr *types.NewAPIError) bool {
 		strings.Contains(message, "selected model is at capacity")
 }
 
+func IsUpstreamCapacityError(apiErr *types.NewAPIError) bool {
+	return isUpstreamOverloadError(apiErr)
+}
+
 func isPermanentUpstreamAuthenticationError(apiErr *types.NewAPIError) bool {
 	code, message := upstreamErrorDetails(apiErr)
 	code = strings.ToLower(strings.TrimSpace(code))
@@ -373,9 +401,14 @@ func ShouldRetryUpstreamAccount(failovers int, startedAt time.Time) bool {
 }
 
 func RecordUpstreamAccountSuccess(accountId int) {
+	RecordUpstreamAccountSuccessForModel(accountId, "")
+}
+
+func RecordUpstreamAccountSuccessForModel(accountId int, modelName string) {
 	if accountId <= 0 {
 		return
 	}
+	ClearUpstreamAccountModelTransient(accountId, modelName)
 	now := common.GetTimestamp()
 	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(map[string]any{
 		"last_used_at":  now,

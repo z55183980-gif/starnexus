@@ -39,6 +39,22 @@ export type UpdateOptionResponse = {
   message: string
 }
 
+export type CodexSettingsUpdateRequest = {
+  values: Record<string, string | boolean>
+}
+
+export type CodexVersionSyncResponse = {
+  success: boolean
+  message: string
+  data?: {
+    status: string
+    error: string
+    synced_version: string
+    synced_at: number
+    attempted_at: number
+  }
+}
+
 export type ConfirmPaymentComplianceResponse = {
   success: boolean
   message: string
@@ -138,6 +154,20 @@ export type ContentSettings = {
 }
 
 export type ModelSettings = {
+  'codex_setting.client_version': string
+  'codex_setting.synced_client_version': string
+  'codex_setting.version_synced_at': number
+  'codex_setting.version_sync_status': string
+  'codex_setting.version_sync_error': string
+  'codex_setting.version_sync_attempted_at': number
+  'codex_setting.version_auto_sync_enabled': boolean
+  'codex_setting.disable_identity_enforcement': boolean
+  'codex_setting.routing_hint_enabled': boolean
+  'codex_setting.fingerprint_default_mode':
+    | 'off'
+    | 'device'
+    | 'session'
+    | 'full'
   'global.pass_through_request_enabled': boolean
   'global.thinking_model_blacklist': string
   'global.chat_completions_to_responses_policy': string

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -113,10 +114,37 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	defer service.CloseResponseBodyGracefully(resp)
 
 	accumulator := NewResponsesEventAccumulator()
+	stageCapacityPrelude := common.GetContextKeyString(c, appconstant.ContextKeyChannelCredentialSource) == appconstant.ChannelCredentialSourceAccountPool
+	type stagedResponsesEvent struct {
+		response dto.ResponsesStreamResponse
+		data     string
+	}
+	prelude := make([]stagedResponsesEvent, 0, 2)
+	visibleResponse := false
+	var capacityErr *types.NewAPIError
+	deliver := func(streamResponse dto.ResponsesStreamResponse, data string) error {
+		if err := sendResponsesStreamData(c, streamResponse, data); err != nil {
+			return err
+		}
+		visibleResponse = true
+		info.SendResponseCount++
+		info.SetFirstResponseTime()
+		service.RecordDeliveredResponsesHTTPEvent(c, []byte(data))
+		return nil
+	}
+	flushPrelude := func() error {
+		for _, staged := range prelude {
+			if err := deliver(staged.response, staged.data); err != nil {
+				return err
+			}
+		}
+		prelude = prelude[:0]
+		return nil
+	}
 
 	// HTTP/SSE keeps the S4 reporting convention: lifecycle events such as
 	// response.created starts FRT for HTTP/SSE and WebSocket paths.
-	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+	helper.StreamScannerHandlerWithOptions(c, resp, info, helper.StreamScannerOptions{DisableAutoFirstResponseTime: true}, func(data string, sr *helper.StreamResult) {
 
 		streamResponse, err := accumulator.Consume(c, info, common.StringToByteSlice(data))
 		if err != nil {
@@ -124,12 +152,36 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		if writeErr := sendResponsesStreamData(c, *streamResponse, data); writeErr != nil {
+		if stageCapacityPrelude && !visibleResponse &&
+			(streamResponse.Type == "response.created" || streamResponse.Type == "response.in_progress") {
+			prelude = append(prelude, stagedResponsesEvent{response: *streamResponse, data: data})
+			return
+		}
+		if stageCapacityPrelude && !visibleResponse && accumulator.Terminal() && !accumulator.Successful() {
+			if failure := accumulator.FailureError(); failure != nil {
+				candidate := types.WithOpenAIError(*failure, 529)
+				if service.IsUpstreamCapacityError(candidate) {
+					capacityErr = candidate
+					prelude = prelude[:0]
+					sr.Stop(candidate)
+					return
+				}
+			}
+		}
+		if writeErr := flushPrelude(); writeErr != nil {
 			sr.Stop(writeErr)
 			return
 		}
-		service.RecordDeliveredResponsesHTTPEvent(c, []byte(data))
+		if writeErr := deliver(*streamResponse, data); writeErr != nil {
+			sr.Stop(writeErr)
+		}
 	})
+	if capacityErr != nil {
+		return nil, capacityErr
+	}
+	if writeErr := flushPrelude(); writeErr != nil {
+		return nil, types.NewErrorWithStatusCode(writeErr, types.ErrorCodeBadResponse, http.StatusBadGateway)
+	}
 	service.FinalizeResponsesHTTPContinuationStream(c)
 
 	usage := accumulator.Usage(info)

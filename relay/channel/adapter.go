@@ -33,6 +33,34 @@ type Adaptor interface {
 	ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error)
 }
 
+// OutboundJSONBodyFinalizer lets an adaptor apply provider-owned protocol
+// fields after model mapping, disabled-field filtering and parameter overrides.
+type OutboundJSONBodyFinalizer interface {
+	FinalizeOutboundJSONBody(c *gin.Context, info *relaycommon.RelayInfo, body []byte) ([]byte, error)
+}
+
+// OutboundRequestFinalizer runs after all generic/client header overrides and
+// is therefore the authoritative convergence point for provider-owned headers.
+type OutboundRequestFinalizer interface {
+	FinalizeOutboundRequest(c *gin.Context, info *relaycommon.RelayInfo, request *http.Request) error
+}
+
+func FinalizeOutboundJSONBody(adaptor Adaptor, c *gin.Context, info *relaycommon.RelayInfo, body []byte) ([]byte, error) {
+	finalizer, ok := adaptor.(OutboundJSONBodyFinalizer)
+	if !ok {
+		return body, nil
+	}
+	return finalizer.FinalizeOutboundJSONBody(c, info, body)
+}
+
+func FinalizeOutboundRequest(adaptor Adaptor, c *gin.Context, info *relaycommon.RelayInfo, request *http.Request) error {
+	finalizer, ok := adaptor.(OutboundRequestFinalizer)
+	if !ok {
+		return nil
+	}
+	return finalizer.FinalizeOutboundRequest(c, info, request)
+}
+
 type TaskAdaptor interface {
 	Init(info *relaycommon.RelayInfo)
 
