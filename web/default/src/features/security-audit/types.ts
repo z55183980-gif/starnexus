@@ -41,6 +41,8 @@ export interface PromptAuditLog {
   token_name: string
   request_id: string
   model_name: string
+  upstream_account_id: number
+  upstream_account_name: string
   protocol: string
   endpoint: string
   prompt: string

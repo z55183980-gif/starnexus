@@ -46,17 +46,19 @@ type PromptAuditPolicyView struct {
 }
 
 type PromptAuditLog struct {
-	Id         int    `json:"id" gorm:"index:idx_prompt_audit_created_id,priority:2"`
-	UserId     int    `json:"user_id" gorm:"index:idx_prompt_audit_user_created,priority:1;not null"`
-	Username   string `json:"username" gorm:"type:varchar(64);not null;default:''"`
-	TokenId    int    `json:"token_id" gorm:"index;not null;default:0"`
-	TokenName  string `json:"token_name" gorm:"type:varchar(64);not null;default:''"`
-	RequestId  string `json:"request_id" gorm:"type:varchar(64);index;not null;default:''"`
-	ModelName  string `json:"model_name" gorm:"type:varchar(255);index;not null;default:''"`
-	Protocol   string `json:"protocol" gorm:"type:varchar(32);not null;default:''"`
-	Endpoint   string `json:"endpoint" gorm:"type:varchar(128);not null;default:''"`
-	Prompt     string `json:"prompt" gorm:"type:text;not null"`
-	PromptHash string `json:"prompt_hash" gorm:"type:varchar(64);index;not null"`
+	Id                  int    `json:"id" gorm:"index:idx_prompt_audit_created_id,priority:2"`
+	UserId              int    `json:"user_id" gorm:"index:idx_prompt_audit_user_created,priority:1;not null"`
+	Username            string `json:"username" gorm:"type:varchar(64);not null;default:''"`
+	TokenId             int    `json:"token_id" gorm:"index;not null;default:0"`
+	TokenName           string `json:"token_name" gorm:"type:varchar(64);not null;default:''"`
+	RequestId           string `json:"request_id" gorm:"type:varchar(64);index;not null;default:''"`
+	ModelName           string `json:"model_name" gorm:"type:varchar(255);index;not null;default:''"`
+	UpstreamAccountId   int    `json:"upstream_account_id" gorm:"index;not null;default:0"`
+	UpstreamAccountName string `json:"upstream_account_name" gorm:"type:varchar(255);not null;default:''"`
+	Protocol            string `json:"protocol" gorm:"type:varchar(32);not null;default:''"`
+	Endpoint            string `json:"endpoint" gorm:"type:varchar(128);not null;default:''"`
+	Prompt              string `json:"prompt" gorm:"type:text;not null"`
+	PromptHash          string `json:"prompt_hash" gorm:"type:varchar(64);index;not null"`
 	// ModerationPolicyHash scopes observe-to-pre-block escalation to the exact
 	// detector/config revision that produced the hit. It is internal metadata,
 	// not part of the admin log response.
@@ -255,21 +257,23 @@ func SanitizeAllowedContentModerationCounts() error {
 	return LOG_DB.Model(&PromptAuditLog{}).
 		Where("action = ? AND matched_words LIKE ?", PromptAuditActionRecorded, "%moderation:%").
 		Updates(map[string]any{
-			"user_id":       0,
-			"username":      "",
-			"token_id":      0,
-			"token_name":    "",
-			"request_id":    "",
-			"model_name":    "",
-			"protocol":      "",
-			"endpoint":      "",
-			"prompt":        "",
-			"prompt_hash":   "",
-			"hit":           false,
-			"matched_words": `["moderation:allow"]`,
-			"delay_ms":      0,
-			"truncated":     false,
-			"score":         0,
+			"user_id":               0,
+			"username":              "",
+			"token_id":              0,
+			"token_name":            "",
+			"request_id":            "",
+			"model_name":            "",
+			"upstream_account_id":   0,
+			"upstream_account_name": "",
+			"protocol":              "",
+			"endpoint":              "",
+			"prompt":                "",
+			"prompt_hash":           "",
+			"hit":                   false,
+			"matched_words":         `["moderation:allow"]`,
+			"delay_ms":              0,
+			"truncated":             false,
+			"score":                 0,
 		}).Error
 }
 
@@ -430,5 +434,81 @@ func ListContentModerationLogs(filter ContentModerationLogFilter, pageInfo *comm
 		Limit(pageInfo.GetPageSize()).
 		Offset(pageInfo.GetStartIdx()).
 		Find(&logs).Error
+	if err == nil {
+		err = populatePromptAuditUpstreamAccounts(logs)
+	}
 	return logs, total, err
+}
+
+func populatePromptAuditUpstreamAccounts(logs []PromptAuditLog) error {
+	requestIds := make([]string, 0, len(logs))
+	seenRequestIds := make(map[string]struct{}, len(logs))
+	for index := range logs {
+		requestId := strings.TrimSpace(logs[index].RequestId)
+		if logs[index].UpstreamAccountId > 0 || requestId == "" {
+			continue
+		}
+		if _, exists := seenRequestIds[requestId]; exists {
+			continue
+		}
+		seenRequestIds[requestId] = struct{}{}
+		requestIds = append(requestIds, requestId)
+	}
+
+	if len(requestIds) > 0 {
+		var consumeLogs []struct {
+			RequestId         string
+			UpstreamAccountId int
+		}
+		if err := LOG_DB.Model(&Log{}).
+			Select("request_id, upstream_account_id").
+			Where("request_id IN ? AND upstream_account_id > ?", requestIds, 0).
+			Order("id DESC").
+			Find(&consumeLogs).Error; err != nil {
+			return err
+		}
+		accountIdByRequest := make(map[string]int, len(consumeLogs))
+		for _, consumeLog := range consumeLogs {
+			if _, exists := accountIdByRequest[consumeLog.RequestId]; !exists {
+				accountIdByRequest[consumeLog.RequestId] = consumeLog.UpstreamAccountId
+			}
+		}
+		for index := range logs {
+			if logs[index].UpstreamAccountId <= 0 {
+				logs[index].UpstreamAccountId = accountIdByRequest[logs[index].RequestId]
+			}
+		}
+	}
+
+	accountIds := make([]int, 0, len(logs))
+	seenAccountIds := make(map[int]struct{}, len(logs))
+	for index := range logs {
+		accountId := logs[index].UpstreamAccountId
+		if accountId <= 0 || logs[index].UpstreamAccountName != "" {
+			continue
+		}
+		if _, exists := seenAccountIds[accountId]; exists {
+			continue
+		}
+		seenAccountIds[accountId] = struct{}{}
+		accountIds = append(accountIds, accountId)
+	}
+	if len(accountIds) == 0 {
+		return nil
+	}
+
+	var accounts []UpstreamAccount
+	if err := DB.Select("id", "name").Where("id IN ?", accountIds).Find(&accounts).Error; err != nil {
+		return err
+	}
+	accountNameById := make(map[int]string, len(accounts))
+	for _, account := range accounts {
+		accountNameById[account.Id] = account.Name
+	}
+	for index := range logs {
+		if logs[index].UpstreamAccountName == "" {
+			logs[index].UpstreamAccountName = accountNameById[logs[index].UpstreamAccountId]
+		}
+	}
+	return nil
 }

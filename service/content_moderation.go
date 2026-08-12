@@ -313,15 +313,17 @@ func fetchDeepSeekModerationBalance(ctx context.Context, cfg setting.ContentMode
 }
 
 type contentModerationLogContext struct {
-	UserId     int
-	Username   string
-	TokenId    int
-	TokenName  string
-	RequestId  string
-	Endpoint   string
-	ModelName  string
-	Protocol   string
-	PolicyHash string
+	UserId              int
+	Username            string
+	TokenId             int
+	TokenName           string
+	RequestId           string
+	Endpoint            string
+	ModelName           string
+	UpstreamAccountId   int
+	UpstreamAccountName string
+	Protocol            string
+	PolicyHash          string
 }
 
 // ExtractContentModerationText returns only text introduced by the user in the
@@ -540,22 +542,28 @@ func captureContentModerationLogContext(c *gin.Context, modelName string, relayF
 	tokenId := 0
 	tokenName := ""
 	requestId := ""
+	upstreamAccountId := 0
+	upstreamAccountName := ""
 	if c != nil {
 		userId = common.GetContextKeyInt(c, constant.ContextKeyUserId)
 		username = c.GetString("username")
 		tokenId = c.GetInt("token_id")
 		tokenName = c.GetString("token_name")
 		requestId = c.GetString(common.RequestIdKey)
+		upstreamAccountId = common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
+		upstreamAccountName = common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountName)
 	}
 	return contentModerationLogContext{
-		UserId:    userId,
-		Username:  username,
-		TokenId:   tokenId,
-		TokenName: tokenName,
-		RequestId: requestId,
-		Endpoint:  endpoint,
-		ModelName: modelName,
-		Protocol:  string(relayFormat),
+		UserId:              userId,
+		Username:            username,
+		TokenId:             tokenId,
+		TokenName:           tokenName,
+		RequestId:           requestId,
+		Endpoint:            endpoint,
+		ModelName:           modelName,
+		UpstreamAccountId:   upstreamAccountId,
+		UpstreamAccountName: upstreamAccountName,
+		Protocol:            string(relayFormat),
 	}
 }
 
@@ -1441,6 +1449,8 @@ func logContentModerationResult(
 		TokenName:            logCtx.TokenName,
 		RequestId:            logCtx.RequestId,
 		ModelName:            logCtx.ModelName,
+		UpstreamAccountId:    logCtx.UpstreamAccountId,
+		UpstreamAccountName:  logCtx.UpstreamAccountName,
 		Protocol:             logCtx.Protocol,
 		Endpoint:             logCtx.Endpoint,
 		Prompt:               storedPrompt,

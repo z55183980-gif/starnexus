@@ -116,12 +116,42 @@ func TestListContentModerationLogsReturnsAllowedCountWithoutAllowedItems(t *test
 	require.Empty(t, items)
 }
 
+func TestListContentModerationLogsBackfillsUpstreamAccountFromConsumeLog(t *testing.T) {
+	db := openPromptAuditTestDB(t)
+	setPromptAuditTestDatabases(t, db, db)
+	require.NoError(t, db.AutoMigrate(&Log{}, &UpstreamAccount{}))
+	require.NoError(t, db.Create(&UpstreamAccount{Id: 17, Name: "specific-account"}).Error)
+	require.NoError(t, db.Create(&Log{
+		RequestId:         "req-account",
+		UpstreamAccountId: 17,
+	}).Error)
+	require.NoError(t, db.Create(&PromptAuditLog{
+		UserId:       31,
+		RequestId:    "req-account",
+		Prompt:       "observed hit",
+		PromptHash:   "hash",
+		MatchedWords: `["moderation:sexual"]`,
+		Hit:          true,
+		Action:       PromptAuditActionHit,
+		CreatedAt:    2,
+	}).Error)
+
+	items, total, err := ListContentModerationLogs(ContentModerationLogFilter{}, nil)
+
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, items, 1)
+	require.Equal(t, 17, items[0].UpstreamAccountId)
+	require.Equal(t, "specific-account", items[0].UpstreamAccountName)
+}
+
 func TestSanitizeAllowedContentModerationCountsRemovesRequestDetails(t *testing.T) {
 	db := openPromptAuditTestDB(t)
 	setPromptAuditTestDatabases(t, db, db)
 	require.NoError(t, db.Create(&PromptAuditLog{
 		UserId: 7, Username: "alice", TokenId: 9, TokenName: "secret", RequestId: "req-1",
-		ModelName: "gpt-test", Protocol: "openai", Endpoint: "/v1/responses",
+		ModelName: "gpt-test", UpstreamAccountId: 17, UpstreamAccountName: "account@example.com",
+		Protocol: "openai", Endpoint: "/v1/responses",
 		Prompt: "benign content", PromptHash: "hash", MatchedWords: `["moderation:allow"]`,
 		Action: PromptAuditActionRecorded, CreatedAt: 100, Score: 0.1,
 	}).Error)
@@ -135,6 +165,8 @@ func TestSanitizeAllowedContentModerationCountsRemovesRequestDetails(t *testing.
 	require.Empty(t, count.TokenName)
 	require.Empty(t, count.RequestId)
 	require.Empty(t, count.ModelName)
+	require.Zero(t, count.UpstreamAccountId)
+	require.Empty(t, count.UpstreamAccountName)
 	require.Empty(t, count.Protocol)
 	require.Empty(t, count.Endpoint)
 	require.Empty(t, count.Prompt)

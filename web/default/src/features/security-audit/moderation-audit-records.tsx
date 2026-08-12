@@ -342,8 +342,21 @@ export function ModerationAuditRecords({
                       <TableCell className='text-muted-foreground text-xs whitespace-nowrap'>
                         {formatTimestampToDate(log.created_at, 'seconds')}
                       </TableCell>
-                      <TableCell className='max-w-36 truncate text-sm'>
-                        {log.model_name || '-'}
+                      <TableCell>
+                        <div className='max-w-40'>
+                          <div className='truncate text-sm'>
+                            {log.model_name || '-'}
+                          </div>
+                          {(log.upstream_account_id > 0 ||
+                            log.upstream_account_name) && (
+                            <div className='text-muted-foreground truncate text-xs'>
+                              {log.upstream_account_id > 0
+                                ? `#${log.upstream_account_id} `
+                                : ''}
+                              {log.upstream_account_name}
+                            </div>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <div className='max-w-40'>

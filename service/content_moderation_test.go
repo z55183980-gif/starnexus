@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
@@ -28,6 +29,18 @@ func openContentModerationServiceTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&model.PromptAuditLog{}))
 	return db
+}
+
+func TestCaptureContentModerationLogContextIncludesUpstreamAccount(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, 23)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, "audit-account")
+
+	logCtx := captureContentModerationLogContext(c, "gpt-test", types.RelayFormatOpenAI)
+
+	require.Equal(t, 23, logCtx.UpstreamAccountId)
+	require.Equal(t, "audit-account", logCtx.UpstreamAccountName)
 }
 
 func TestEvaluateContentModerationScores(t *testing.T) {

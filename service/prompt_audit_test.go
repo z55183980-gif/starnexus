@@ -390,6 +390,8 @@ func TestShouldSkipPromptAuditText(t *testing.T) {
 func TestBuildPromptAuditLogIncludesUserBehaviorSource(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, 17)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, "account@example.com")
 
 	log := buildPromptAuditLog(
 		c,
@@ -405,6 +407,8 @@ func TestBuildPromptAuditLogIncludesUserBehaviorSource(t *testing.T) {
 	if log.MatchedWords != `["audit-source:user-behavior"]` {
 		t.Fatalf("unexpected matched words: %q", log.MatchedWords)
 	}
+	require.Equal(t, 17, log.UpstreamAccountId)
+	require.Equal(t, "account@example.com", log.UpstreamAccountName)
 }
 
 func TestApplyPromptAuditUsesUserBehaviorBlockedCode(t *testing.T) {
