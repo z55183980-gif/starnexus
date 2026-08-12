@@ -51,6 +51,179 @@ func TestNormalizeCodexResponsesRequestMatchesOAuthSchema(t *testing.T) {
 	require.Contains(t, include, "reasoning.encrypted_content")
 }
 
+func TestNormalizeCodexResponsesRequestCompactsAllOverlongCallIDs(t *testing.T) {
+	t.Parallel()
+	longFunctionID := "call_" + strings.Repeat("a", 80)
+	longCustomID := "custom_" + strings.Repeat("b", 80)
+	boundaryID := strings.Repeat("c", codexCallIDMaxLength)
+	request := dto.OpenAIResponsesRequest{
+		Input: json.RawMessage(`[
+			{"type":"function_call","call_id":"` + longFunctionID + `","name":"lookup","arguments":"{}"},
+			{"type":"function_call_output","call_id":"` + longFunctionID + `","output":{"call_id":"` + longFunctionID + `"}},
+			{"type":"custom_tool_call","call_id":"` + longCustomID + `","name":"exec","input":"pwd"},
+			{"type":"custom_tool_call_output","call_id":"` + longCustomID + `","output":"ok"},
+			{"type":"function_call","call_id":"` + boundaryID + `","name":"keep","arguments":"{}"}
+		]`),
+	}
+
+	require.NoError(t, normalizeCodexResponsesRequest(&request))
+	functionCallID := gjson.GetBytes(request.Input, "0.call_id").String()
+	customCallID := gjson.GetBytes(request.Input, "2.call_id").String()
+	require.Len(t, functionCallID, codexCallIDMaxLength)
+	require.Len(t, customCallID, codexCallIDMaxLength)
+	require.True(t, strings.HasPrefix(functionCallID, codexCallIDPrefix))
+	require.True(t, strings.HasPrefix(customCallID, codexCallIDPrefix))
+	require.Equal(t, functionCallID, gjson.GetBytes(request.Input, "1.call_id").String())
+	require.Equal(t, customCallID, gjson.GetBytes(request.Input, "3.call_id").String())
+	require.Equal(t, boundaryID, gjson.GetBytes(request.Input, "4.call_id").String())
+	require.Equal(t, longFunctionID, gjson.GetBytes(request.Input, "1.output.call_id").String())
+
+	first := append(json.RawMessage(nil), request.Input...)
+	require.NoError(t, normalizeCodexResponsesRequest(&request))
+	require.JSONEq(t, string(first), string(request.Input))
+}
+
+func TestNormalizeCodexResponsesCallIDsIgnoresNonObjectInputAndShortIDs(t *testing.T) {
+	t.Parallel()
+	request := dto.OpenAIResponsesRequest{Input: json.RawMessage(`[
+		"plain input",
+		null,
+		{"type":"message","role":"user","content":{"call_id":"` + strings.Repeat("x", 80) + `"}},
+		{"type":"message","role":"user","call_id":9007199254740993,"content":"keep numeric metadata"},
+		{"type":"function_call","call_id":"call_short","name":"lookup","arguments":"{}"}
+	]`)}
+
+	require.NoError(t, normalizeCodexResponsesRequest(&request))
+	require.Equal(t, "plain input", gjson.GetBytes(request.Input, "0").String())
+	require.Equal(t, strings.Repeat("x", 80), gjson.GetBytes(request.Input, "2.content.call_id").String())
+	require.Equal(t, int64(9007199254740993), gjson.GetBytes(request.Input, "3.call_id").Int())
+	require.Equal(t, "call_short", gjson.GetBytes(request.Input, "4.call_id").String())
+}
+
+func TestNormalizeCodexResponsesToolItemsPromotesNamesWithoutFabrication(t *testing.T) {
+	t.Parallel()
+	request := dto.OpenAIResponsesRequest{Input: json.RawMessage(`[
+		{"type":"function_call","call_id":"call_1","function":{"name":"lookup"},"arguments":"{}"},
+		{"type":"custom_tool_call","call_id":"call_2","tool_name":"exec","input":"pwd"},
+		{"type":"mcp_tool_call","call_id":"call_3","name":"remote","arguments":"{}"}
+	]`)}
+
+	require.NoError(t, normalizeCodexResponsesRequest(&request))
+	require.Equal(t, "lookup", gjson.GetBytes(request.Input, "0.name").String())
+	require.Equal(t, "exec", gjson.GetBytes(request.Input, "1.name").String())
+	require.Equal(t, "remote", gjson.GetBytes(request.Input, "2.name").String())
+
+	invalid := dto.OpenAIResponsesRequest{Input: json.RawMessage(`[
+		{"type":"function_call","call_id":"call_1","arguments":"{}"}
+	]`)}
+	err := normalizeCodexResponsesRequest(&invalid)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "input[0]")
+	require.Contains(t, err.Error(), "missing name")
+}
+
+func TestNormalizeCodexResponsesRequestNormalizesEveryToolDeclaration(t *testing.T) {
+	t.Parallel()
+	request := dto.OpenAIResponsesRequest{Tools: json.RawMessage(`[
+		{"type":"function","name":"canonical","parameters":{"type":"object"}},
+		{"type":"function","function":{"name":"nested","description":"desc","parameters":{"type":"object"},"strict":false}},
+		{"type":"custom","custom":{"name":"exec","description":"code","format":{"type":"text"}}},
+		{"type":"web_search_preview"},
+		{"type":"function","name":"f4"},
+		{"type":"function","name":"f5"},
+		{"type":"function","name":"f6"},
+		{"type":"function","name":"f7"},
+		{"type":"function","function":{"name":"ninth"}},
+		{"type":"function","name":"tenth"}
+	]`)}
+
+	require.NoError(t, normalizeCodexResponsesRequest(&request))
+	require.Equal(t, int64(10), gjson.GetBytes(request.Tools, "#").Int())
+	require.Equal(t, "canonical", gjson.GetBytes(request.Tools, "0.name").String())
+	require.Equal(t, "nested", gjson.GetBytes(request.Tools, "1.name").String())
+	require.Equal(t, "desc", gjson.GetBytes(request.Tools, "1.description").String())
+	require.False(t, gjson.GetBytes(request.Tools, "1.function").Exists())
+	require.Equal(t, "exec", gjson.GetBytes(request.Tools, "2.name").String())
+	require.Equal(t, "text", gjson.GetBytes(request.Tools, "2.format.type").String())
+	require.False(t, gjson.GetBytes(request.Tools, "2.custom").Exists())
+	require.Equal(t, "web_search_preview", gjson.GetBytes(request.Tools, "3.type").String())
+	require.Equal(t, "ninth", gjson.GetBytes(request.Tools, "8.name").String())
+}
+
+func TestNormalizeCodexResponsesRequestRejectsUnnamedFunctionTool(t *testing.T) {
+	t.Parallel()
+	request := dto.OpenAIResponsesRequest{Tools: json.RawMessage(`[
+		{"type":"function","name":"valid"},
+		{"type":"function","function":{"parameters":{"type":"object"}}}
+	]`)}
+
+	err := normalizeCodexResponsesRequest(&request)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tools[1]")
+	require.Contains(t, err.Error(), "missing name")
+}
+
+func TestCodexAdaptorReturnsBadRequestForUnnamedFunctionTool(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	_, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, dto.OpenAIResponsesRequest{
+		Input: json.RawMessage(`[{"type":"message","role":"user","content":"hello"}]`),
+		Tools: json.RawMessage(`[{"type":"function","function":{"parameters":{"type":"object"}}}]`),
+	})
+
+	require.Error(t, err)
+	var apiErr *types.NewAPIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	require.True(t, types.IsSkipRetryError(apiErr))
+}
+
+func TestCodexChatCompatibilityNormalizesMixedToolsAndLongCallIDsEndToEnd(t *testing.T) {
+	t.Parallel()
+	longCallID := "toolu_" + strings.Repeat("z", 79)
+	var chatRequest dto.GeneralOpenAIRequest
+	require.NoError(t, common.UnmarshalJsonStr(`{
+		"model":"gpt-5.6-sol",
+		"messages":[
+			{"role":"user","content":"use a tool"},
+			{"role":"assistant","content":"","tool_calls":[{"id":"`+longCallID+`","type":"function","function":{"name":"ninth_tool","arguments":"{}"}}]},
+			{"role":"tool","tool_call_id":"`+longCallID+`","content":"ok"}
+		],
+		"tools":[
+			{"type":"function","function":{"name":"tool_0"}},
+			{"type":"function","function":{"name":"tool_1"}},
+			{"type":"function","function":{"name":"tool_2"}},
+			{"type":"function","function":{"name":"tool_3"}},
+			{"type":"function","function":{"name":"tool_4"}},
+			{"type":"function","function":{"name":"tool_5"}},
+			{"type":"function","function":{"name":"tool_6"}},
+			{"type":"function","function":{"name":"tool_7"}},
+			{"type":"custom","name":"ninth_tool","format":{"type":"text"}}
+		]
+	}`, &chatRequest))
+
+	responsesRequest, err := service.ChatCompletionsRequestToResponsesRequest(&chatRequest)
+	require.NoError(t, err)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, *responsesRequest)
+	require.NoError(t, err)
+	request := converted.(dto.OpenAIResponsesRequest)
+
+	require.Equal(t, int64(9), gjson.GetBytes(request.Tools, "#").Int())
+	require.Equal(t, "ninth_tool", gjson.GetBytes(request.Tools, "8.name").String())
+	require.Equal(t, "custom", gjson.GetBytes(request.Tools, "8.type").String())
+	callID := gjson.GetBytes(request.Input, `#(type=="function_call").call_id`).String()
+	outputCallID := gjson.GetBytes(request.Input, `#(type=="function_call_output").call_id`).String()
+	require.Len(t, callID, codexCallIDMaxLength)
+	require.Equal(t, callID, outputCallID)
+}
+
 func TestNormalizeCodexResponsesInputStripsCacheBreakpointAndEmptyQuality(t *testing.T) {
 	t.Parallel()
 	input := []byte(`[

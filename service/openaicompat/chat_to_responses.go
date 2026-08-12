@@ -288,15 +288,38 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	var toolsRaw json.RawMessage
 	if req.Tools != nil {
 		tools := make([]map[string]any, 0, len(req.Tools))
-		for _, tool := range req.Tools {
+		for index, tool := range req.Tools {
 			switch tool.Type {
 			case "function":
-				tools = append(tools, map[string]any{
+				name := strings.TrimSpace(tool.Function.Name)
+				description := tool.Function.Description
+				parameters := tool.Function.Parameters
+				strict := tool.Function.Strict
+				if name == "" {
+					name = strings.TrimSpace(tool.Name)
+					description = tool.Description
+					parameters = tool.Parameters
+					strict = tool.Strict
+				}
+				if name == "" {
+					return nil, fmt.Errorf("tools[%d] function is missing name", index)
+				}
+				converted := map[string]any{
 					"type":        "function",
-					"name":        tool.Function.Name,
-					"description": tool.Function.Description,
-					"parameters":  tool.Function.Parameters,
-				})
+					"name":        name,
+					"description": description,
+					"parameters":  parameters,
+				}
+				if strict != nil {
+					converted["strict"] = *strict
+				}
+				tools = append(tools, converted)
+			case dto.CustomType:
+				converted, err := convertChatCustomToolToResponses(tool, index)
+				if err != nil {
+					return nil, err
+				}
+				tools = append(tools, converted)
 			default:
 				// Best-effort: keep original tool shape for unknown types.
 				var m map[string]any
@@ -399,4 +422,33 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	}
 
 	return out, nil
+}
+
+func convertChatCustomToolToResponses(tool dto.ToolCallRequest, index int) (map[string]any, error) {
+	converted := make(map[string]any)
+	if len(tool.Custom) > 0 {
+		_ = common.Unmarshal(tool.Custom, &converted)
+	}
+
+	name := strings.TrimSpace(tool.Name)
+	if name == "" {
+		name = strings.TrimSpace(common.Interface2String(converted["name"]))
+	}
+	if name == "" {
+		return nil, fmt.Errorf("tools[%d] custom tool is missing name", index)
+	}
+
+	converted["type"] = dto.CustomType
+	converted["name"] = name
+	if tool.Description != "" {
+		converted["description"] = tool.Description
+	}
+	if len(tool.Format) > 0 {
+		var format any
+		if err := common.Unmarshal(tool.Format, &format); err != nil {
+			return nil, fmt.Errorf("tools[%d] custom tool has invalid format: %w", index, err)
+		}
+		converted["format"] = format
+	}
+	return converted, nil
 }

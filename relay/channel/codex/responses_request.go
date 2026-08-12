@@ -2,6 +2,8 @@ package codex
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -177,6 +179,11 @@ func normalizeCodexResponsesRequest(request *dto.OpenAIResponsesRequest) error {
 		return err
 	}
 	request.Input = normalizedInput
+	normalizedTools, err := normalizeCodexResponsesTools(request.Tools)
+	if err != nil {
+		return err
+	}
+	request.Tools = normalizedTools
 
 	// ChatGPT's internal Codex endpoint accepts a narrower Responses schema.
 	// Keep this list aligned with the proven SUB2API OAuth normalization path.
@@ -358,7 +365,197 @@ func normalizeCodexResponsesInput(raw json.RawMessage) (json.RawMessage, error) 
 	if err := scrubCodexResponsesInputItems(items); err != nil {
 		return nil, err
 	}
+	if err := normalizeCodexResponsesToolItems(items); err != nil {
+		return nil, err
+	}
 	return common.Marshal(items)
+}
+
+const (
+	codexCallIDMaxLength = 64
+	codexCallIDPrefix    = "fc_"
+)
+
+func compactCodexCallID(callID string) string {
+	digest := sha256.Sum256([]byte("starnexus:codex-call-id:v1:" + callID))
+	encoded := hex.EncodeToString(digest[:])
+	return codexCallIDPrefix + encoded[:codexCallIDMaxLength-len(codexCallIDPrefix)]
+}
+
+func normalizeCodexResponsesToolItems(items []json.RawMessage) error {
+	for index, item := range items {
+		trimmed := bytes.TrimSpace(item)
+		if len(trimmed) == 0 || trimmed[0] != '{' {
+			continue
+		}
+		var envelope struct {
+			Type string `json:"type"`
+		}
+		if err := common.Unmarshal(item, &envelope); err != nil {
+			return fmt.Errorf("normalize Codex Responses call_id at input item %d: %w", index, err)
+		}
+		if !isCodexToolCallItemType(envelope.Type) && !isCodexToolOutputItemType(envelope.Type) {
+			continue
+		}
+
+		var obj map[string]json.RawMessage
+		if err := common.Unmarshal(item, &obj); err != nil {
+			return fmt.Errorf("normalize Codex Responses call_id at input item %d: %w", index, err)
+		}
+		changed := false
+		if codexToolCallItemRequiresName(envelope.Type) {
+			name := strings.TrimSpace(codexJSONRawString(obj["name"]))
+			if name == "" {
+				name = strings.TrimSpace(codexJSONRawString(obj["tool_name"]))
+			}
+			if name == "" {
+				for _, nestedKey := range []string{"function", "custom"} {
+					var nested map[string]json.RawMessage
+					if common.Unmarshal(obj[nestedKey], &nested) == nil {
+						name = strings.TrimSpace(codexJSONRawString(nested["name"]))
+					}
+					if name != "" {
+						break
+					}
+				}
+			}
+			if name == "" {
+				return fmt.Errorf("input[%d] %s item is missing name", index, envelope.Type)
+			}
+			if strings.TrimSpace(codexJSONRawString(obj["name"])) == "" {
+				encodedName, err := common.Marshal(name)
+				if err != nil {
+					return fmt.Errorf("normalize Codex Responses tool item name at input item %d: %w", index, err)
+				}
+				obj["name"] = encodedName
+				changed = true
+			}
+		}
+
+		callID := codexJSONRawString(obj["call_id"])
+		if len(callID) > codexCallIDMaxLength {
+			encoded, err := common.Marshal(compactCodexCallID(callID))
+			if err != nil {
+				return fmt.Errorf("normalize Codex Responses call_id at input item %d: %w", index, err)
+			}
+			obj["call_id"] = encoded
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		normalized, err := common.Marshal(obj)
+		if err != nil {
+			return fmt.Errorf("normalize Codex Responses call_id at input item %d: %w", index, err)
+		}
+		items[index] = normalized
+	}
+	return nil
+}
+
+func codexToolCallItemRequiresName(itemType string) bool {
+	switch strings.TrimSpace(itemType) {
+	case "function_call", "custom_tool_call", "mcp_tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeCodexResponsesTools(raw json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) || trimmed[0] != '[' {
+		return raw, nil
+	}
+
+	var tools []json.RawMessage
+	if err := common.Unmarshal(trimmed, &tools); err != nil {
+		return nil, fmt.Errorf("normalize Codex Responses tools: %w", err)
+	}
+	modified := false
+	for index, tool := range tools {
+		normalized, changed, err := normalizeCodexResponsesTool(tool, index)
+		if err != nil {
+			return nil, err
+		}
+		if changed {
+			tools[index] = normalized
+			modified = true
+		}
+	}
+	if !modified {
+		return raw, nil
+	}
+	return common.Marshal(tools)
+}
+
+func normalizeCodexResponsesTool(tool json.RawMessage, index int) (json.RawMessage, bool, error) {
+	trimmed := bytes.TrimSpace(tool)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return tool, false, nil
+	}
+
+	var obj map[string]json.RawMessage
+	if err := common.Unmarshal(trimmed, &obj); err != nil {
+		return nil, false, fmt.Errorf("normalize Codex Responses tool %d: %w", index, err)
+	}
+	toolType := strings.TrimSpace(codexJSONRawString(obj["type"]))
+	if toolType != "function" && toolType != dto.CustomType {
+		return tool, false, nil
+	}
+
+	name := strings.TrimSpace(codexJSONRawString(obj["name"]))
+	nestedKey := toolType
+	var nested map[string]json.RawMessage
+	if nestedRaw, ok := obj[nestedKey]; ok && len(bytes.TrimSpace(nestedRaw)) > 0 {
+		_ = common.Unmarshal(nestedRaw, &nested)
+	}
+	if name == "" && nested != nil {
+		name = strings.TrimSpace(codexJSONRawString(nested["name"]))
+	}
+	if name == "" {
+		return nil, false, fmt.Errorf("tools[%d] %s tool is missing name", index, toolType)
+	}
+
+	changed := false
+	if strings.TrimSpace(codexJSONRawString(obj["name"])) == "" {
+		encodedName, err := common.Marshal(name)
+		if err != nil {
+			return nil, false, fmt.Errorf("normalize Codex Responses tool %d name: %w", index, err)
+		}
+		obj["name"] = encodedName
+		changed = true
+	}
+	if nested != nil {
+		keys := []string{"description", "parameters", "strict", "format"}
+		if toolType == dto.CustomType {
+			keys = make([]string, 0, len(nested))
+			for key := range nested {
+				if key != "name" && key != "type" {
+					keys = append(keys, key)
+				}
+			}
+		}
+		for _, key := range keys {
+			if _, exists := obj[key]; exists {
+				continue
+			}
+			if value, exists := nested[key]; exists {
+				obj[key] = value
+				changed = true
+			}
+		}
+		delete(obj, nestedKey)
+		changed = true
+	}
+	if !changed {
+		return tool, false, nil
+	}
+	normalized, err := common.Marshal(obj)
+	if err != nil {
+		return nil, false, fmt.Errorf("normalize Codex Responses tool %d: %w", index, err)
+	}
+	return normalized, true, nil
 }
 
 func normalizeCodexResponsesInputItems(raw json.RawMessage) ([]json.RawMessage, error) {

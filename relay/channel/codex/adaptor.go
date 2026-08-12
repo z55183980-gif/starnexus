@@ -93,7 +93,12 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	}
 	request.Input = repairedInput
 	if err := normalizeCodexResponsesRequest(&request); err != nil {
-		return nil, err
+		return nil, types.NewErrorWithStatusCode(
+			err,
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
 	}
 	if err := applyCodexChannelSystemPrompt(info, &request, hadClientInstructions); err != nil {
 		return nil, err

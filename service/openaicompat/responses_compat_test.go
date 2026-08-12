@@ -6,7 +6,48 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
+
+func TestChatCompletionsRequestToResponsesNormalizesAllToolShapes(t *testing.T) {
+	t.Parallel()
+	var req dto.GeneralOpenAIRequest
+	require.NoError(t, common.UnmarshalJsonStr(`{
+		"model":"gpt-test",
+		"messages":[{"role":"user","content":"use tools"}],
+		"tools":[
+			{"type":"function","function":{"name":"nested","description":"nested desc","parameters":{"type":"object"},"strict":false}},
+			{"type":"function","name":"flat","description":"flat desc","parameters":{"type":"object"},"strict":true},
+			{"type":"custom","name":"exec","description":"run code","format":{"type":"grammar","syntax":"lark","definition":"start: WORD"}}
+		]
+	}`, &req))
+
+	converted, err := ChatCompletionsRequestToResponsesRequest(&req)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), gjson.GetBytes(converted.Tools, "#").Int())
+	require.Equal(t, "nested", gjson.GetBytes(converted.Tools, "0.name").String())
+	require.False(t, gjson.GetBytes(converted.Tools, "0.strict").Bool())
+	require.Equal(t, "flat", gjson.GetBytes(converted.Tools, "1.name").String())
+	require.True(t, gjson.GetBytes(converted.Tools, "1.strict").Bool())
+	require.Equal(t, "custom", gjson.GetBytes(converted.Tools, "2.type").String())
+	require.Equal(t, "exec", gjson.GetBytes(converted.Tools, "2.name").String())
+	require.Equal(t, "grammar", gjson.GetBytes(converted.Tools, "2.format.type").String())
+}
+
+func TestChatCompletionsRequestToResponsesRejectsUnnamedTools(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{
+		`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"parameters":{"type":"object"}}}]}`,
+		`{"model":"gpt-test","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"custom","format":{"type":"text"}}]}`,
+	} {
+		var req dto.GeneralOpenAIRequest
+		require.NoError(t, common.UnmarshalJsonStr(body, &req))
+		_, err := ChatCompletionsRequestToResponsesRequest(&req)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "tools[0]")
+		require.Contains(t, err.Error(), "missing name")
+	}
+}
 
 func TestResponsesRequestToChatCompletionsRequest(t *testing.T) {
 	stream := true
