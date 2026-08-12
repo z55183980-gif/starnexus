@@ -94,6 +94,15 @@ func StringToByteSlice(s string) []byte {
 	return *(*[]byte)(unsafe.Pointer(&tmp2))
 }
 
+// ByteSliceToString returns a read-only string view of b without allocating.
+// The byte slice must not be modified while the returned string is in use.
+func ByteSliceToString(b []byte) string {
+	if len(b) == 0 {
+		return ""
+	}
+	return unsafe.String(unsafe.SliceData(b), len(b))
+}
+
 func EncodeBase64(str string) string {
 	return base64.StdEncoding.EncodeToString([]byte(str))
 }

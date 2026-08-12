@@ -136,8 +136,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				common.SetContextKey(c, constant.ContextKeyUpstreamAccountPreferredId, preferredAccountID)
 				common.SetContextKey(c, constant.ContextKeyUpstreamAccountPreferredRequired, false)
 			}
-			if expandedMeta, expanded := service.ResponsesHTTPContinuationTokenCountMeta(c, responsesRequest); expanded {
-				responsesContinuationMeta = expandedMeta
+			if constant.CountToken {
+				if expandedMeta, expanded := service.ResponsesHTTPContinuationTokenCountMeta(c, responsesRequest); expanded {
+					responsesContinuationMeta = expandedMeta
+				}
 			}
 		}
 	}

@@ -19,6 +19,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+	"github.com/samber/lo"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -133,51 +135,102 @@ func PrepareResponsesHTTPContinuation(c *gin.Context, request *dto.OpenAIRespons
 	}
 }
 
-// ResponsesHTTPContinuationBillingRequest returns a copy whose input reflects
-// the recoverable full context. Callers use it for token estimation only; the
-// original request remains untouched for upstreams with native continuation.
-func ResponsesHTTPContinuationBillingRequest(c *gin.Context, request *dto.OpenAIResponsesRequest) (*dto.OpenAIResponsesRequest, bool) {
+func responsesHTTPContinuationBillingPreparation(c *gin.Context, request *dto.OpenAIResponsesRequest) (*responsesHTTPContinuationPreparation, bool) {
 	preparation := getResponsesHTTPPreparation(c)
 	if request == nil || preparation == nil || !preparation.StateFound || !preparation.ReplayComplete || preparation.ContinuationConflict != "" ||
 		preparation.ContextTooLarge || !preparation.FullInputExists {
-		return request, false
+		return nil, false
 	}
-	copyRequest, err := common.DeepCopy(request)
-	if err != nil {
-		return request, false
-	}
-	encoded, err := common.Marshal(preparation.FullInput)
-	if err != nil {
-		return request, false
-	}
-	copyRequest.Input = encoded
-	return copyRequest, true
+	return preparation, true
 }
 
-// ResponsesHTTPContinuationTokenCountMeta counts the complete replay JSON,
-// including assistant output, reasoning and tool-call arguments that the
-// generic Responses input parser intentionally ignores.
+// ResponsesHTTPContinuationTokenCountMeta counts the complete replay without
+// materializing an expanded request or a second, concatenated copy of its JSON.
+// Counting each raw item separately is deliberately conservative: tokenizer
+// merges that could span JSON item boundaries are not credited.
 func ResponsesHTTPContinuationTokenCountMeta(c *gin.Context, request *dto.OpenAIResponsesRequest) (*types.TokenCountMeta, bool) {
-	expanded, ok := ResponsesHTTPContinuationBillingRequest(c, request)
-	if !ok || expanded == nil {
+	preparation, ok := responsesHTTPContinuationBillingPreparation(c, request)
+	if !ok {
 		return nil, false
 	}
-	meta := expanded.GetTokenCountMeta()
-	inputJSON := strings.TrimSpace(string(expanded.Input))
-	withoutInput, err := common.DeepCopy(expanded)
-	if err != nil {
-		return nil, false
+
+	model := strings.TrimSpace(common.GetContextKeyString(c, appconstant.ContextKeyOriginalModel))
+	if model == "" {
+		model = strings.TrimSpace(request.Model)
 	}
-	withoutInput.Input = nil
-	otherMeta := withoutInput.GetTokenCountMeta()
-	meta.CombineText = inputJSON
-	if strings.TrimSpace(otherMeta.CombineText) != "" {
-		if meta.CombineText != "" {
-			meta.CombineText += "\n"
+	textTokens := countResponsesHTTPContinuationTextTokens(preparation.FullInput, request, model)
+	return &types.TokenCountMeta{
+		PrecomputedTextTokens: &textTokens,
+		Files:                 responsesHTTPContinuationFileMeta(preparation.FullInput),
+		MaxTokens:             int(lo.FromPtrOr(request.MaxOutputTokens, uint(0))),
+	}, true
+}
+
+func countResponsesHTTPContinuationTextTokens(items []json.RawMessage, request *dto.OpenAIResponsesRequest, model string) int {
+	tokens := CountTextToken("[", model)
+	for i, item := range items {
+		if i > 0 {
+			tokens += CountTextToken(",", model)
 		}
-		meta.CombineText += otherMeta.CombineText
+		trimmed := bytes.TrimSpace(item)
+		if len(trimmed) > 0 {
+			tokens += CountTextToken(common.ByteSliceToString(trimmed), model)
+		}
 	}
-	return meta, true
+	tokens += CountTextToken("]", model)
+
+	for _, field := range []json.RawMessage{
+		request.Instructions,
+		request.Metadata,
+		request.Text,
+		request.ToolChoice,
+		request.Prompt,
+		request.Tools,
+	} {
+		if len(field) == 0 {
+			continue
+		}
+		tokens += CountTextToken("\n", model)
+		tokens += CountTextToken(common.ByteSliceToString(field), model)
+	}
+	return tokens
+}
+
+func responsesHTTPContinuationFileMeta(items []json.RawMessage) []*types.FileMeta {
+	files := make([]*types.FileMeta, 0)
+	for _, item := range items {
+		content := gjson.GetBytes(item, "content")
+		if !content.IsArray() {
+			continue
+		}
+		content.ForEach(func(_, part gjson.Result) bool {
+			switch part.Get("type").String() {
+			case "input_image":
+				if source := responsesHTTPMediaSource(part.Get("image_url")); source != "" {
+					files = append(files, &types.FileMeta{
+						FileType: types.FileTypeImage,
+						Source:   types.NewFileSourceFromData(source, ""),
+					})
+				}
+			case "input_file":
+				if source := responsesHTTPMediaSource(part.Get("file_url")); source != "" {
+					files = append(files, &types.FileMeta{
+						FileType: types.FileTypeFile,
+						Source:   types.NewFileSourceFromData(source, ""),
+					})
+				}
+			}
+			return true
+		})
+	}
+	return files
+}
+
+func responsesHTTPMediaSource(value gjson.Result) string {
+	if value.IsObject() {
+		return value.Get("url").String()
+	}
+	return value.String()
 }
 
 // ResponsesHTTPContinuationPreferredAccountID exposes the account that created

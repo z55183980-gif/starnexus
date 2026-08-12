@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -28,7 +31,7 @@ func TestResponsesHTTPRedisWriteContextSurvivesRequestCancellation(t *testing.T)
 	require.NotNil(t, writeCtx.Done())
 }
 
-func newResponsesHTTPContinuationTestContext(t *testing.T) *gin.Context {
+func newResponsesHTTPContinuationTestContext(t testing.TB) *gin.Context {
 	t.Helper()
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -70,6 +73,7 @@ func resetResponsesHTTPContinuationTestCache(t *testing.T) {
 }
 
 func TestResponsesHTTPContinuationExpandsMatchingFunctionCallOutput(t *testing.T) {
+	InitTokenEncoders()
 	resetResponsesHTTPContinuationTestCache(t)
 	firstCtx := newResponsesHTTPContinuationTestContext(t)
 	enableResponsesHTTPContinuationPersist(t, firstCtx)
@@ -86,18 +90,138 @@ func TestResponsesHTTPContinuationExpandsMatchingFunctionCallOutput(t *testing.T
 		Input:              json.RawMessage(`[{"type":"function_call_output","call_id":"call_1","output":"ok"}]`),
 	}
 	PrepareResponsesHTTPContinuation(secondCtx, second)
-	billingRequest, expanded := ResponsesHTTPContinuationBillingRequest(secondCtx, second)
-	require.True(t, expanded)
-	require.Equal(t, int64(3), gjson.GetBytes(billingRequest.Input, "#").Int())
 	billingMeta, expanded := ResponsesHTTPContinuationTokenCountMeta(secondCtx, second)
 	require.True(t, expanded)
-	require.Contains(t, billingMeta.CombineText, "function_call_output")
-	require.Contains(t, billingMeta.CombineText, "lookup")
+	require.Empty(t, billingMeta.CombineText)
+	require.NotNil(t, billingMeta.PrecomputedTextTokens)
+	require.Positive(t, *billingMeta.PrecomputedTextTokens)
 	require.Nil(t, ApplyResponsesHTTPContinuationForCodex(secondCtx, second))
 	require.Equal(t, "expanded", secondCtx.GetString(responsesHTTPStatusContextKey))
 	require.Equal(t, int64(3), gjson.GetBytes(second.Input, "#").Int())
 	require.Equal(t, "function_call", gjson.GetBytes(second.Input, "1.type").String())
 	require.Equal(t, "function_call_output", gjson.GetBytes(second.Input, "2.type").String())
+}
+
+func TestResponsesHTTPContinuationTokenCountIsConservativeWithoutCombiningInput(t *testing.T) {
+	InitTokenEncoders()
+	request := &dto.OpenAIResponsesRequest{
+		Model:        "gpt-5",
+		Instructions: json.RawMessage(`"follow the tool policy"`),
+		Tools:        json.RawMessage(`[{"type":"function","name":"lookup"}]`),
+	}
+	items := []json.RawMessage{
+		json.RawMessage(`{"type":"message","role":"user","content":"first question"}`),
+		json.RawMessage(`{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"q\":\"value\"}"}`),
+		json.RawMessage(`{"type":"function_call_output","call_id":"call_1","output":"answer"}`),
+	}
+
+	encoded, err := common.Marshal(items)
+	require.NoError(t, err)
+	legacyText := strings.TrimSpace(string(encoded)) + "\n" + string(request.Instructions) + "\n" + string(request.Tools)
+	legacyTokens := CountTextToken(legacyText, request.Model)
+	streamedTokens := countResponsesHTTPContinuationTextTokens(items, request, request.Model)
+
+	require.GreaterOrEqual(t, streamedTokens, legacyTokens)
+	require.LessOrEqual(t, streamedTokens-legacyTokens, len(items)+4)
+}
+
+func TestResponsesHTTPContinuationTokenCountPreservesInputFiles(t *testing.T) {
+	items := []json.RawMessage{
+		json.RawMessage(`{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://example.com/a.png"},{"type":"input_file","file_url":{"url":"https://example.com/a.pdf"}}]}`),
+	}
+
+	files := responsesHTTPContinuationFileMeta(items)
+	require.Len(t, files, 2)
+	require.Equal(t, types.FileTypeImage, files[0].FileType)
+	require.Equal(t, types.FileTypeFile, files[1].FileType)
+}
+
+func TestEstimateRequestTokenUsesPrecomputedContinuationTokens(t *testing.T) {
+	originalCountToken := constant.CountToken
+	constant.CountToken = true
+	t.Cleanup(func() { constant.CountToken = originalCountToken })
+
+	ctx := newResponsesHTTPContinuationTestContext(t)
+	common.SetContextKey(ctx, constant.ContextKeyOriginalModel, "gpt-5")
+	precomputed := 12345
+	tokens, err := EstimateRequestToken(ctx, &types.TokenCountMeta{
+		CombineText:           "must not be counted",
+		PrecomputedTextTokens: &precomputed,
+	}, &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAIResponses})
+	require.NoError(t, err)
+	require.Equal(t, precomputed, tokens)
+}
+
+func BenchmarkResponsesHTTPContinuationTokenCountMeta(b *testing.B) {
+	InitTokenEncoders()
+	payload := strings.Repeat("continuation payload ", 2048)
+	items := make([]json.RawMessage, 64)
+	for i := range items {
+		item, err := common.Marshal(map[string]any{
+			"type":    "message",
+			"role":    "assistant",
+			"content": payload,
+		})
+		require.NoError(b, err)
+		items[i] = item
+	}
+	request := &dto.OpenAIResponsesRequest{
+		Model:        "gpt-5",
+		Instructions: json.RawMessage(`"follow the instructions"`),
+	}
+	ctx := newResponsesHTTPContinuationTestContext(b)
+	common.SetContextKey(ctx, constant.ContextKeyOriginalModel, request.Model)
+	ctx.Set(responsesHTTPContinuationContextKey, &responsesHTTPContinuationPreparation{
+		FullInput:       items,
+		FullInputExists: true,
+		StateFound:      true,
+		ReplayComplete:  true,
+	})
+
+	b.Run("incremental", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			meta, ok := ResponsesHTTPContinuationTokenCountMeta(ctx, request)
+			if !ok || meta.PrecomputedTextTokens == nil {
+				b.Fatal("incremental token metadata unavailable")
+			}
+		}
+	})
+
+	b.Run("legacy_combined", func(b *testing.B) {
+		b.ReportAllocs()
+		for range b.N {
+			meta, ok := legacyResponsesHTTPContinuationTokenCountMetaForBenchmark(items, request)
+			if !ok {
+				b.Fatal("legacy token metadata unavailable")
+			}
+			_ = CountTextToken(meta.CombineText, request.Model)
+		}
+	})
+}
+
+func legacyResponsesHTTPContinuationTokenCountMetaForBenchmark(items []json.RawMessage, request *dto.OpenAIResponsesRequest) (*types.TokenCountMeta, bool) {
+	expanded, err := common.DeepCopy(request)
+	if err != nil {
+		return nil, false
+	}
+	expanded.Input, err = common.Marshal(items)
+	if err != nil {
+		return nil, false
+	}
+	meta := expanded.GetTokenCountMeta()
+	inputJSON := strings.TrimSpace(string(expanded.Input))
+	withoutInput, err := common.DeepCopy(expanded)
+	if err != nil {
+		return nil, false
+	}
+	withoutInput.Input = nil
+	otherMeta := withoutInput.GetTokenCountMeta()
+	meta.CombineText = inputJSON
+	if strings.TrimSpace(otherMeta.CombineText) != "" {
+		meta.CombineText += "\n" + otherMeta.CombineText
+	}
+	return meta, true
 }
 
 func TestResponsesHTTPContinuationExposesCreatingAccountAsAffinityHint(t *testing.T) {
@@ -244,7 +368,7 @@ func TestResponsesHTTPContinuationDoesNotPromotePartialHistory(t *testing.T) {
 	nextCtx := newResponsesHTTPContinuationTestContext(t)
 	next := &dto.OpenAIResponsesRequest{Model: "gpt-5", PreviousResponseID: "resp_partial_child", Input: json.RawMessage(`"third"`)}
 	PrepareResponsesHTTPContinuation(nextCtx, next)
-	_, expanded := ResponsesHTTPContinuationBillingRequest(nextCtx, next)
+	_, expanded := ResponsesHTTPContinuationTokenCountMeta(nextCtx, next)
 	require.False(t, expanded)
 }
 

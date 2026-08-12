@@ -18,13 +18,17 @@ const (
 )
 
 type TokenCountMeta struct {
-	TokenType     TokenType   `json:"token_type,omitempty"`     // Type of tokens used in the request
-	CombineText   string      `json:"combine_text,omitempty"`   // Combined text from all messages
-	ToolsCount    int         `json:"tools_count,omitempty"`    // Number of tools used
-	NameCount     int         `json:"name_count,omitempty"`     // Number of names in the request
-	MessagesCount int         `json:"messages_count,omitempty"` // Number of messages in the request
-	Files         []*FileMeta `json:"files,omitempty"`          // List of files, each with type and content
-	MaxTokens     int         `json:"max_tokens,omitempty"`     // Maximum tokens allowed in the request
+	TokenType   TokenType `json:"token_type,omitempty"`   // Type of tokens used in the request
+	CombineText string    `json:"combine_text,omitempty"` // Combined text from all messages
+	// PrecomputedTextTokens lets memory-sensitive request paths provide a token
+	// total without retaining a second, fully concatenated copy of the input.
+	// It is process-local metadata and must never be serialized.
+	PrecomputedTextTokens *int        `json:"-"`
+	ToolsCount            int         `json:"tools_count,omitempty"`    // Number of tools used
+	NameCount             int         `json:"name_count,omitempty"`     // Number of names in the request
+	MessagesCount         int         `json:"messages_count,omitempty"` // Number of messages in the request
+	Files                 []*FileMeta `json:"files,omitempty"`          // List of files, each with type and content
+	MaxTokens             int         `json:"max_tokens,omitempty"`     // Maximum tokens allowed in the request
 
 	ImagePriceRatio float64            `json:"image_ratio,omitempty"`     // Ratio for image size, if applicable
 	ImageSizeTier   string             `json:"image_size_tier,omitempty"` // GPT Image fixed-price tier (1k/2k/4k)

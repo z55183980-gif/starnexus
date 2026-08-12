@@ -41,3 +41,9 @@ func TestJsonRawMessageToString(t *testing.T) {
 		})
 	}
 }
+
+func TestByteSliceToString(t *testing.T) {
+	data := []byte("continuation")
+	require.Equal(t, "continuation", ByteSliceToString(data))
+	require.Empty(t, ByteSliceToString(nil))
+}
