@@ -11,14 +11,15 @@ import (
 )
 
 type ChannelSettings struct {
-	ForceFormat                   bool                   `json:"force_format,omitempty"`
-	ThinkingToContent             bool                   `json:"thinking_to_content,omitempty"`
-	Proxy                         string                 `json:"proxy"`
-	PassThroughBodyEnabled        bool                   `json:"pass_through_body_enabled,omitempty"`
-	AccountPassThroughBodyEnabled bool                   `json:"-"`
-	SystemPrompt                  string                 `json:"system_prompt,omitempty"`
-	SystemPromptOverride          bool                   `json:"system_prompt_override,omitempty"`
-	ZQBAPI                        *ZQBAPIChannelSettings `json:"zqbapi,omitempty"`
+	ForceFormat                   bool                         `json:"force_format,omitempty"`
+	ThinkingToContent             bool                         `json:"thinking_to_content,omitempty"`
+	Proxy                         string                       `json:"proxy"`
+	PassThroughBodyEnabled        bool                         `json:"pass_through_body_enabled,omitempty"`
+	AccountPassThroughBodyEnabled bool                         `json:"-"`
+	SystemPrompt                  string                       `json:"system_prompt,omitempty"`
+	SystemPromptOverride          bool                         `json:"system_prompt_override,omitempty"`
+	ZQBAPI                        *ZQBAPIChannelSettings       `json:"zqbapi,omitempty"`
+	DoubaoVideo2                  *DoubaoVideo2ChannelSettings `json:"doubao_video2,omitempty"`
 }
 
 const (
@@ -27,6 +28,49 @@ const (
 	ZQBAPIMaterialModeFacePreflight = "face_preflight"
 	ZQBAPIMaterialModeAlways        = "always"
 )
+
+const (
+	DoubaoVideo2MaterialModeOff           = "off"
+	DoubaoVideo2MaterialModeRetryOnly     = "retry_only"
+	DoubaoVideo2MaterialModeFacePreflight = "face_preflight"
+	DoubaoVideo2MaterialModeAlways        = "always"
+)
+
+// DoubaoVideo2ChannelSettings is deliberately independent from ZQBAPI. The
+// Kuaizi material API uses the channel ApiKey and an existing AIGC group.
+type DoubaoVideo2ChannelSettings struct {
+	MaterialMode string `json:"material_mode,omitempty"`
+	GroupID      string `json:"group_id,omitempty"`
+}
+
+func (s *DoubaoVideo2ChannelSettings) Normalize() {
+	if s == nil {
+		return
+	}
+	s.MaterialMode = strings.ToLower(strings.TrimSpace(s.MaterialMode))
+	if s.MaterialMode == "" {
+		s.MaterialMode = DoubaoVideo2MaterialModeOff
+	}
+	s.GroupID = strings.TrimSpace(s.GroupID)
+}
+
+func (s *DoubaoVideo2ChannelSettings) Validate() error {
+	if s == nil {
+		return nil
+	}
+	s.Normalize()
+	switch s.MaterialMode {
+	case DoubaoVideo2MaterialModeOff:
+		return nil
+	case DoubaoVideo2MaterialModeRetryOnly, DoubaoVideo2MaterialModeFacePreflight, DoubaoVideo2MaterialModeAlways:
+		if s.GroupID == "" {
+			return fmt.Errorf("DoubaoVideo2.0 material group ID is required when material mode is enabled")
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid DoubaoVideo2.0 material mode: %s", s.MaterialMode)
+	}
+}
 
 type ZQBAPIChannelSettings struct {
 	MaterialMode   string `json:"material_mode,omitempty"`

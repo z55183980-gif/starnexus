@@ -17,7 +17,18 @@ import (
 const zqbapiRealPersonErrorFragment = "may contain real person"
 
 func (a *TaskAdaptor) ShouldRecoverFailedTask(task *model.Task, responseBody []byte) bool {
-	if a.ChannelType != constant.ChannelTypeZQBAPI || task == nil || task.PrivateData.ZQBAPIRetryCount > 0 || task.PrivateData.ZQBAPIRetryPayload == "" {
+	switch a.ChannelType {
+	case constant.ChannelTypeZQBAPI:
+		return shouldRecoverZQBAPIFailedTask(task, responseBody)
+	case constant.ChannelTypeDoubaoVideo2:
+		return shouldRecoverDoubaoVideo2FailedTask(task, responseBody)
+	default:
+		return false
+	}
+}
+
+func shouldRecoverZQBAPIFailedTask(task *model.Task, responseBody []byte) bool {
+	if task == nil || task.PrivateData.ZQBAPIRetryCount > 0 || task.PrivateData.ZQBAPIRetryPayload == "" {
 		return false
 	}
 	var failed responseTask
@@ -28,6 +39,9 @@ func (a *TaskAdaptor) ShouldRecoverFailedTask(task *model.Task, responseBody []b
 }
 
 func (a *TaskAdaptor) RecoverFailedTask(ctx context.Context, channelModel *model.Channel, task *model.Task, responseBody []byte) (*service.TaskFailureRecovery, error) {
+	if channelModel != nil && channelModel.Type == constant.ChannelTypeDoubaoVideo2 {
+		return recoverDoubaoVideo2FailedTask(ctx, channelModel, task, responseBody)
+	}
 	if channelModel == nil || channelModel.Type != constant.ChannelTypeZQBAPI || task == nil {
 		return nil, nil
 	}

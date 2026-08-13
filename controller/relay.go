@@ -807,6 +807,12 @@ func RelayTask(c *gin.Context) {
 		}
 		if relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo2 {
 			taskdoubao.ApplyDoubaoVideo2OpenAIVideoTaskProperties(c, task)
+			if payload, exists := c.Get(string(constant.ContextKeyDoubaoVideo2RetryPayload)); exists {
+				if data, ok := payload.([]byte); ok && len(data) > 0 {
+					task.PrivateData.DoubaoVideo2RetryPayload = string(data)
+					task.PrivateData.Key = relayInfo.ApiKey
+				}
+			}
 		}
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,

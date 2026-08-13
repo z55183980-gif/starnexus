@@ -64,9 +64,17 @@ require (
 
 require github.com/waffo-com/waffo-pancake-sdk-go v0.3.1
 
-require github.com/esimov/pigo v1.4.6
+require (
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
+	github.com/esimov/pigo v1.4.6
+)
 
 require (
+	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.22 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.13 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.21 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/icholy/digest v1.1.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect

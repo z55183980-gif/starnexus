@@ -3,6 +3,8 @@ package doubao
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -72,6 +74,14 @@ type requestPayload struct {
 	BitrateMode       *string            `json:"bitrate_mode,omitempty"`
 	OutputFormat      *string            `json:"output_format,omitempty"`
 }
+
+// The provider persists the complete request JSON in a MySQL request_body
+// column. Production has returned MySQL 1406 once inline media pushes that
+// value beyond the column capacity. Keep a small margin below the 64 KiB TEXT
+// boundary because Base64/data URLs are embedded in the same JSON document.
+const doubaoVideo2InlineRequestMaxBytes = 60 * 1024
+
+const doubaoVideo2R2RequestCacheContextKey = "doubao_video2_r2_request_cache"
 
 type responsePayload struct {
 	ID string `json:"id"` // task_id
@@ -360,11 +370,124 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			logger.LogInfo(c.Request.Context(), fmt.Sprintf("ZQBAPI OpenAI video payload prepared: action=%s references=%d source=%s seconds=%s size=%s", info.Action, videoCtx.ReferenceCount, videoCtx.ReferenceSource, videoCtx.Seconds, videoCtx.Size))
 		}
 	}
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+		if err := externalizeDoubaoVideo2InlineMedia(c, info, body); err != nil {
+			return nil, err
+		}
+		if err := a.prepareDoubaoVideo2Images(c, info, body); err != nil {
+			return nil, err
+		}
+	}
 	data, err := common.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
+	info.UpstreamRequestBodySize = int64(len(data))
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 && doubaoVideo2HasInlineMedia(body) && len(data) > doubaoVideo2InlineRequestMaxBytes {
+		return nil, &doubaoVideo2BuildError{
+			Kind:  doubaoVideo2ErrorRequestTooLarge,
+			Stage: "request size validation",
+			Err: fmt.Errorf(
+				"inline media makes the upstream JSON request %d bytes, exceeding the safe %d-byte limit; use a public HTTP(S) media URL or material-library asset instead of Base64/data URL input",
+				len(data), doubaoVideo2InlineRequestMaxBytes,
+			),
+		}
+	}
 	return bytes.NewReader(data), nil
+}
+
+func doubaoVideo2HasInlineMedia(body *requestPayload) bool {
+	if body == nil {
+		return false
+	}
+	for _, item := range body.Content {
+		for _, media := range []*MediaURL{item.ImageURL, item.VideoURL, item.AudioURL} {
+			if media == nil {
+				continue
+			}
+			if doubaoVideo2IsInlineMediaSource(media.URL) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func doubaoVideo2IsInlineMediaSource(source string) bool {
+	source = strings.ToLower(strings.TrimSpace(source))
+	return source != "" &&
+		!strings.HasPrefix(source, "http://") &&
+		!strings.HasPrefix(source, "https://") &&
+		!strings.HasPrefix(source, "asset://")
+}
+
+func externalizeDoubaoVideo2InlineMedia(c *gin.Context, info *relaycommon.RelayInfo, body *requestPayload) error {
+	if body == nil || !doubaoVideo2HasInlineMedia(body) {
+		return nil
+	}
+	data, err := common.Marshal(body)
+	if err != nil {
+		return err
+	}
+	info.UpstreamRequestBodySize = int64(len(data))
+	// Once R2 is configured, every inline payload uses the stable externalized
+	// path. Without R2, preserve legacy behavior for small payloads.
+	if len(data) <= doubaoVideo2InlineRequestMaxBytes && !service.DoubaoVideo2R2Configured() {
+		return nil
+	}
+	for index := range body.Content {
+		item := &body.Content[index]
+		for _, media := range []*MediaURL{item.ImageURL, item.VideoURL, item.AudioURL} {
+			if media == nil {
+				continue
+			}
+			if !doubaoVideo2IsInlineMediaSource(media.URL) {
+				continue
+			}
+			digest := sha256.Sum256([]byte(media.URL))
+			cacheKey := hex.EncodeToString(digest[:])
+			if cached, exists := getDoubaoVideo2R2RequestCache(c)[cacheKey]; exists {
+				media.URL = cached
+				continue
+			}
+			publicURL, uploadErr := service.StoreDoubaoVideo2InlineMedia(c.Request.Context(), media.URL)
+			if uploadErr != nil {
+				kind := doubaoVideo2ErrorTemporaryMedia
+				if !service.DoubaoVideo2R2Configured() {
+					kind = doubaoVideo2ErrorRequestTooLarge
+				}
+				return &doubaoVideo2BuildError{
+					Kind:  kind,
+					Stage: "R2 compatibility upload",
+					Err:   fmt.Errorf("content[%d] could not be converted to a temporary public URL: %w", index, uploadErr),
+				}
+			}
+			getDoubaoVideo2R2RequestCache(c)[cacheKey] = publicURL
+			media.URL = publicURL
+		}
+	}
+	converted, err := common.Marshal(body)
+	if err != nil {
+		return err
+	}
+	info.UpstreamRequestBodySize = int64(len(converted))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("DoubaoVideo2.0 inline media externalized to R2: upstream_bytes=%d", len(converted)))
+	return nil
+}
+
+func getDoubaoVideo2R2RequestCache(c *gin.Context) map[string]string {
+	if c != nil {
+		if cached, exists := c.Get(doubaoVideo2R2RequestCacheContextKey); exists {
+			if values, ok := cached.(map[string]string); ok {
+				return values
+			}
+		}
+	}
+	values := map[string]string{}
+	if c != nil {
+		c.Set(doubaoVideo2R2RequestCacheContextKey, values)
+	}
+	return values
 }
 
 // DoRequest delegates to common helper.

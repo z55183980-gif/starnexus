@@ -32,6 +32,56 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+func taskUsesDoubaoVideo2Recovery(task *model.Task) bool {
+	return task != nil && task.Platform == constant.TaskPlatform(fmt.Sprint(constant.ChannelTypeDoubaoVideo2))
+}
+
+func taskRecoveryProviderName(task *model.Task) string {
+	if taskUsesDoubaoVideo2Recovery(task) {
+		return "DoubaoVideo2.0"
+	}
+	return "ZQBAPI"
+}
+
+func taskRecoveryRetryCount(task *model.Task) int {
+	if taskUsesDoubaoVideo2Recovery(task) {
+		return task.PrivateData.DoubaoVideo2RetryCount
+	}
+	return task.PrivateData.ZQBAPIRetryCount
+}
+
+func setTaskRecoveryRetryCount(task *model.Task, count int) {
+	if taskUsesDoubaoVideo2Recovery(task) {
+		task.PrivateData.DoubaoVideo2RetryCount = count
+		return
+	}
+	task.PrivateData.ZQBAPIRetryCount = count
+}
+
+func setTaskRecoveryClaim(task *model.Task, startedAt int64, fromStatus string) {
+	if taskUsesDoubaoVideo2Recovery(task) {
+		task.PrivateData.DoubaoVideo2RetryCount++
+		task.PrivateData.DoubaoVideo2RecoveryStartedAt = startedAt
+		task.PrivateData.DoubaoVideo2RecoveryFromStatus = fromStatus
+		return
+	}
+	task.PrivateData.ZQBAPIRetryCount++
+	task.PrivateData.ZQBAPIRecoveryStartedAt = startedAt
+	task.PrivateData.ZQBAPIRecoveryFromStatus = fromStatus
+}
+
+func clearTaskRecoveryPayload(task *model.Task) {
+	if task == nil {
+		return
+	}
+	task.PrivateData.ZQBAPIRetryPayload = ""
+	task.PrivateData.ZQBAPIRecoveryStartedAt = 0
+	task.PrivateData.ZQBAPIRecoveryFromStatus = ""
+	task.PrivateData.DoubaoVideo2RetryPayload = ""
+	task.PrivateData.DoubaoVideo2RecoveryStartedAt = 0
+	task.PrivateData.DoubaoVideo2RecoveryFromStatus = ""
+}
+
 // TaskUsageRetriever is implemented only by providers that expose terminal
 // metering separately from their task-status endpoint.
 type TaskUsageRetriever interface {
@@ -196,14 +246,13 @@ func sweepStaleRetryingTasks(ctx context.Context) error {
 		if task == nil {
 			continue
 		}
-		reason := "ZQBAPI automatic recovery was interrupted; the task was stopped to prevent a duplicate upstream submission"
+		provider := taskRecoveryProviderName(task)
+		reason := provider + " automatic recovery was interrupted; the task was stopped to prevent a duplicate upstream submission"
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
 		task.FinishTime = now
 		task.FailReason = reason
-		task.PrivateData.ZQBAPIRetryPayload = ""
-		task.PrivateData.ZQBAPIRecoveryStartedAt = 0
-		task.PrivateData.ZQBAPIRecoveryFromStatus = ""
+		clearTaskRecoveryPayload(task)
 		won, updateErr := task.UpdateWithStatus(model.TaskStatusRetrying)
 		if updateErr != nil {
 			logger.LogError(ctx, fmt.Sprintf("fail stale retrying task %s: %v", task.TaskID, updateErr))
@@ -517,14 +566,12 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 		return false, nil
 	}
 	snapshot := task.Snapshot()
-	if task.PrivateData.ZQBAPIRetryCount > 0 {
+	if taskRecoveryRetryCount(task) > 0 {
 		return false, nil
 	}
 	previousPrivateData := task.PrivateData
 	task.Status = model.TaskStatusRetrying
-	task.PrivateData.ZQBAPIRetryCount++
-	task.PrivateData.ZQBAPIRecoveryStartedAt = time.Now().Unix()
-	task.PrivateData.ZQBAPIRecoveryFromStatus = string(snapshot.Status)
+	setTaskRecoveryClaim(task, time.Now().Unix(), string(snapshot.Status))
 	task.Progress = taskcommon.ProgressInProgress
 	won, err := task.UpdateWithStatus(snapshot.Status)
 	if err != nil {
@@ -534,7 +581,7 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 		if err := model.DB.First(task, task.ID).Error; err != nil {
 			return false, fmt.Errorf("reload task %s after recovery claim CAS loss: %w", task.TaskID, err)
 		}
-		return task.Status == model.TaskStatusRetrying || task.PrivateData.ZQBAPIRetryCount > 0, nil
+		return task.Status == model.TaskStatusRetrying || taskRecoveryRetryCount(task) > 0, nil
 	}
 
 	recovery, recoveryErr := recoverer.RecoverFailedTask(ctx, ch, task, responseBody)
@@ -553,9 +600,9 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 		if temporary {
 			// The original provider task is already terminal, but materialization
 			// can safely be retried because no replacement generation was posted.
-			task.PrivateData.ZQBAPIRetryCount = 0
+			setTaskRecoveryRetryCount(task, 0)
 		} else {
-			task.PrivateData.ZQBAPIRetryCount = 1
+			setTaskRecoveryRetryCount(task, 1)
 		}
 		_, restoreErr := task.UpdateWithStatus(model.TaskStatusRetrying)
 		if restoreErr != nil {
@@ -563,7 +610,7 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 		}
 		if recoveryErr != nil {
 			if temporary {
-				logger.LogWarn(ctx, fmt.Sprintf("Task %s ZQBAPI material recovery is temporarily unavailable; retry on next poll: %s", task.TaskID, recoveryErr.Error()))
+				logger.LogWarn(ctx, fmt.Sprintf("Task %s %s material recovery is temporarily unavailable; retry on next poll: %s", task.TaskID, taskRecoveryProviderName(task), recoveryErr.Error()))
 				return true, nil
 			}
 			return false, recoveryErr
@@ -572,9 +619,7 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 	}
 
 	task.PrivateData.UpstreamTaskID = recovery.UpstreamTaskID
-	task.PrivateData.ZQBAPIRetryPayload = ""
-	task.PrivateData.ZQBAPIRecoveryStartedAt = 0
-	task.PrivateData.ZQBAPIRecoveryFromStatus = ""
+	clearTaskRecoveryPayload(task)
 	task.Data = append(task.Data[:0], recovery.TaskData...)
 	task.FailReason = ""
 	task.Progress = taskcommon.ProgressQueued
@@ -588,9 +633,9 @@ func TryRecoverFailedVideoTask(ctx context.Context, adaptor TaskPollingAdaptor, 
 		if err := model.DB.First(task, task.ID).Error; err != nil {
 			return false, fmt.Errorf("reload task %s after recovery CAS loss: %w", task.TaskID, err)
 		}
-		return task.PrivateData.ZQBAPIRetryCount > 0, nil
+		return taskRecoveryRetryCount(task) > 0, nil
 	}
-	logger.LogInfo(ctx, fmt.Sprintf("Task %s automatically resubmitted after ZQBAPI real-person materialization", task.TaskID))
+	logger.LogInfo(ctx, fmt.Sprintf("Task %s automatically resubmitted after %s real-person materialization", task.TaskID, taskRecoveryProviderName(task)))
 	return true, nil
 }
 
@@ -634,9 +679,7 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 			}
 		}
 	case model.TaskStatusSuccess:
-		task.PrivateData.ZQBAPIRetryPayload = ""
-		task.PrivateData.ZQBAPIRecoveryStartedAt = 0
-		task.PrivateData.ZQBAPIRecoveryFromStatus = ""
+		clearTaskRecoveryPayload(task)
 		if settlementPending {
 			task.Status = model.TaskStatusPendingSettlement
 			task.Progress = model.TaskProgressPendingSettlement
@@ -676,9 +719,7 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 		task.FailReason = ""
 		shouldSettle = !settlementPending
 	case model.TaskStatusFailure:
-		task.PrivateData.ZQBAPIRetryPayload = ""
-		task.PrivateData.ZQBAPIRecoveryStartedAt = 0
-		task.PrivateData.ZQBAPIRecoveryFromStatus = ""
+		clearTaskRecoveryPayload(task)
 		logger.LogJson(ctx, fmt.Sprintf("Task %s failed", task.GetUpstreamTaskID()), task)
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete

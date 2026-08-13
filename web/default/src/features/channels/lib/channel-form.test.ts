@@ -20,11 +20,59 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
+  channelFormSchema,
   getChannelCreateDefaultValues,
   requiresChannelKeyForCreate,
   transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
 } from './channel-form'
+
+describe('DoubaoVideo2.0 material settings', () => {
+  test('keeps material automation disabled by default', () => {
+    const payload = transformFormDataToCreatePayload({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'doubao video 2',
+      type: 62,
+      key: 'kz-test',
+      models: 'dreamina-seedance-2-0-260128',
+      group: ['default'],
+    })
+    const setting = JSON.parse(payload.channel.setting || '{}')
+
+    assert.equal(setting.doubao_video2.material_mode, 'off')
+    assert.equal(setting.doubao_video2.group_id, '')
+  })
+
+  test('requires a group and serializes enabled settings independently', () => {
+    const invalid = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'doubao video 2',
+      type: 62,
+      key: 'kz-test',
+      models: 'dreamina-seedance-2-0-260128',
+      group: ['default'],
+      doubao_video2_material_mode: 'always',
+    })
+    assert.equal(invalid.success, false)
+
+    const payload = transformFormDataToCreatePayload({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'doubao video 2',
+      type: 62,
+      key: 'kz-test',
+      models: 'dreamina-seedance-2-0-260128',
+      group: ['default'],
+      doubao_video2_material_mode: 'face_preflight',
+      doubao_video2_group_id: ' 191014526315921433 ',
+    })
+    const setting = JSON.parse(payload.channel.setting || '{}')
+    assert.deepEqual(setting.doubao_video2, {
+      material_mode: 'face_preflight',
+      group_id: '191014526315921433',
+    })
+    assert.equal('zqbapi' in setting, false)
+  })
+})
 
 function buildSettings(
   type: number,

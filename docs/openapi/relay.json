@@ -562,11 +562,67 @@
         ]
       }
     },
+    "/v1/video-inputs/presign": {
+      "post": {
+        "summary": "申请视频输入 R2 直传地址",
+        "description": "申请私有 Cloudflare R2 的短期预签名 PUT URL。客户端直接上传文件，文件字节不经过应用服务器；上传后必须调用 /v1/video-inputs/complete 完成校验。",
+        "operationId": "presignVideoInputUpload",
+        "tags": ["视频生成/Sora兼容格式"],
+        "security": [{"BearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["content_type", "content_length", "checksum_sha256"],
+                "properties": {
+                  "content_type": {"type": "string", "example": "image/png"},
+                  "content_length": {"type": "integer", "format": "int64", "minimum": 1, "maximum": 67108864},
+                  "checksum_sha256": {"type": "string", "description": "文件 SHA-256 摘要的 Base64 编码"}
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "成功创建短期上传地址",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {
+              "object_id": {"type": "string"}, "upload_url": {"type": "string", "format": "uri"},
+              "complete_token": {"type": "string"}, "method": {"type": "string", "example": "PUT"},
+              "headers": {"type": "object", "additionalProperties": {"type": "string"}},
+              "expires_at": {"type": "integer", "format": "int64"}
+            }}}}
+          }
+        }
+      }
+    },
+    "/v1/video-inputs/complete": {
+      "post": {
+        "summary": "完成并校验视频输入 R2 直传",
+        "description": "校验已直传对象的真实大小与 Content-Type，成功后返回上游可读的短期 media_url。",
+        "operationId": "completeVideoInputUpload",
+        "tags": ["视频生成/Sora兼容格式"],
+        "security": [{"BearerAuth": []}],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"type": "object", "required": ["object_id", "complete_token"], "properties": {
+            "object_id": {"type": "string"}, "complete_token": {"type": "string"}
+          }}}}
+        },
+        "responses": {
+          "200": {"description": "上传已校验", "content": {"application/json": {"schema": {"type": "object", "properties": {
+            "media_url": {"type": "string", "format": "uri"}, "expires_at": {"type": "integer", "format": "int64"}
+          }}}}}
+        }
+      }
+    },
     "/v1/videos": {
       "post": {
         "summary": "创建视频 ",
         "deprecated": false,
-        "description": "OpenAI Videos 兼容的视频生成接口；DoubaoVideo2.0 会把 input_reference/content 规范化后直接转发上游，不使用素材库。\n\n参考文档: https://developers.openai.com/api/reference/resources/videos/methods/create\n",
+        "description": "OpenAI Videos 兼容的视频生成接口；DoubaoVideo2.0 会把 input_reference/content 规范化后转发上游。启用 R2 时 Base64/multipart 输入自动外置为短期预签名 URL，也可先用 /v1/video-inputs/presign 完全直传。管理员可按渠道为公开图片 URL 启用独立素材库自动化。\n\n参考文档: https://developers.openai.com/api/reference/resources/videos/methods/create\n",
         "operationId": "createVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -666,7 +722,7 @@
                   "input_reference": {
                     "format": "binary",
                     "type": "string",
-                    "description": "参考图片文件（JPEG/PNG/GIF/WebP，最大 20 MB）；直接编码并转发上游，不进入素材库",
+                    "description": "参考图片文件（JPEG/PNG/GIF/WebP，最大 20 MB）；启用 R2 时自动外置为短期预签名 URL后再转发上游",
                     "example": ""
                   }
                 }

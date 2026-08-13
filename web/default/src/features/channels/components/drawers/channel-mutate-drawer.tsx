@@ -263,6 +263,9 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
         values.zqbapi_project_name?.trim() ||
         values.zqbapi_asset_group_type !== 'virtual' ||
         values.zqbapi_auto_normalize === false)) ||
+    (values.type === 62 &&
+      (values.doubao_video2_material_mode !== 'off' ||
+        values.doubao_video2_group_id?.trim())) ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -3865,6 +3868,86 @@ export function ChannelMutateDrawer({
                             </FormItem>
                           )}
                         />
+                      </div>
+                    )}
+
+                    {currentType === 62 && (
+                      <div className='flex flex-col gap-4 rounded-lg border p-4'>
+                        <SubHeading
+                          title={t('DoubaoVideo2.0 material settings')}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name='doubao_video2_material_mode'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>
+                                {t('Automatic material mode')}
+                              </FormLabel>
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    <SelectItem value='off'>
+                                      {t('Disabled')}
+                                    </SelectItem>
+                                    <SelectItem value='retry_only'>
+                                      {t('Only after upstream rejection')}
+                                    </SelectItem>
+                                    <SelectItem value='face_preflight'>
+                                      {t('Local face preflight')}
+                                    </SelectItem>
+                                    <SelectItem value='always'>
+                                      {t('Always create material')}
+                                    </SelectItem>
+                                  </SelectGroup>
+                                </SelectContent>
+                              </Select>
+                              <FormDescription>
+                                {t(
+                                  'Controls when public image URLs are converted into DoubaoVideo2.0 material assets.'
+                                )}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormField
+                          control={form.control}
+                          name='doubao_video2_group_id'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('Material Group ID')}</FormLabel>
+                              <FormControl>
+                                <Input
+                                  placeholder='191014526315921433'
+                                  {...field}
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                {t(
+                                  'Use an approved AIGC material group owned by the same Kuaizi ApiKey.'
+                                )}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+
+                        <FormDescription>
+                          {t(
+                            'The public material API accepts only reachable HTTP(S) image URLs; inline files cannot be added automatically.'
+                          )}
+                        </FormDescription>
                       </div>
                     )}
 

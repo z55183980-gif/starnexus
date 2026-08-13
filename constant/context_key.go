@@ -85,6 +85,9 @@ const (
 	// ContextKeyZQBAPIRetryPayload stores the sanitized upstream video request
 	// needed for one automatic real-person material retry.
 	ContextKeyZQBAPIRetryPayload ContextKey = "zqbapi_retry_payload"
+	// ContextKeyDoubaoVideo2RetryPayload stores a type-62-only provider request
+	// for one material-library recovery attempt.
+	ContextKeyDoubaoVideo2RetryPayload ContextKey = "doubao_video2_retry_payload"
 	// ContextKeyZQBAPIOpenAIVideoResponse stores a successful compatibility
 	// response until the controller has durably inserted the local task.
 	ContextKeyZQBAPIOpenAIVideoResponse ContextKey = "zqbapi_openai_video_response"

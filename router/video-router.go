@@ -8,6 +8,14 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	directUploadRouter := router.Group("/v1/video-inputs")
+	directUploadRouter.Use(middleware.RouteTag("relay"))
+	directUploadRouter.Use(middleware.TokenAuth(), middleware.UploadRateLimit())
+	{
+		directUploadRouter.POST("/presign", controller.PresignDoubaoVideo2Upload)
+		directUploadRouter.POST("/complete", controller.CompleteDoubaoVideo2Upload)
+	}
+
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))

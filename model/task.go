@@ -123,6 +123,12 @@ type TaskPrivateData struct {
 	ZQBAPIRetryCount         int    `json:"zqbapi_retry_count,omitempty"`
 	ZQBAPIRecoveryStartedAt  int64  `json:"zqbapi_recovery_started_at,omitempty"`
 	ZQBAPIRecoveryFromStatus string `json:"zqbapi_recovery_from_status,omitempty"`
+	// DoubaoVideo2 retry state is independent from ZQBAPI credentials, assets,
+	// and recovery counters even though both channels share the polling hook.
+	DoubaoVideo2RetryPayload       string `json:"doubao_video2_retry_payload,omitempty"`
+	DoubaoVideo2RetryCount         int    `json:"doubao_video2_retry_count,omitempty"`
+	DoubaoVideo2RecoveryStartedAt  int64  `json:"doubao_video2_recovery_started_at,omitempty"`
+	DoubaoVideo2RecoveryFromStatus string `json:"doubao_video2_recovery_from_status,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。

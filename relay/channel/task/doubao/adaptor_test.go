@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -379,6 +381,68 @@ func TestDoubaoVideo2MultipartInputReferenceIsForwardedDirectly(t *testing.T) {
 	}
 	if payload.Content[0].Role != "first_frame" {
 		t.Fatalf("multipart image role = %q", payload.Content[0].Role)
+	}
+}
+
+func TestDoubaoVideo2RejectsOversizedInlineMediaBeforeUpstream(t *testing.T) {
+	inline := "data:image/png;base64," + strings.Repeat("A", doubaoVideo2InlineRequestMaxBytes)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"doubao-seedance-2-0-260128",
+		"prompt":"animate",
+		"input_reference":`+strconv.Quote(inline)+`
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	_, err := adaptor.BuildRequestBody(c, info)
+	if err == nil {
+		t.Fatal("expected oversized inline request to fail")
+	}
+	var buildErr *doubaoVideo2BuildError
+	if !errors.As(err, &buildErr) {
+		t.Fatalf("error type = %T, want *doubaoVideo2BuildError", err)
+	}
+	if buildErr.Kind != doubaoVideo2ErrorRequestTooLarge || buildErr.TaskHTTPStatus() != http.StatusRequestEntityTooLarge {
+		t.Fatalf("kind=%q status=%d", buildErr.Kind, buildErr.TaskHTTPStatus())
+	}
+	if info.UpstreamRequestBodySize <= doubaoVideo2InlineRequestMaxBytes {
+		t.Fatalf("upstream body size = %d", info.UpstreamRequestBodySize)
+	}
+}
+
+func TestDoubaoVideo2LargePublicMediaURLIsNotSubjectToInlineLimit(t *testing.T) {
+	longPrompt := strings.Repeat("p", doubaoVideo2InlineRequestMaxBytes)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"doubao-seedance-2-0-260128",
+		"prompt":`+strconv.Quote(longPrompt)+`,
+		"input_reference":"https://example.com/reference.png"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	if _, err := adaptor.BuildRequestBody(c, info); err != nil {
+		t.Fatalf("public URL request was incorrectly rejected: %v", err)
+	}
+	if info.UpstreamRequestBodySize <= doubaoVideo2InlineRequestMaxBytes {
+		t.Fatalf("test request did not exceed inline limit: %d", info.UpstreamRequestBodySize)
 	}
 }
 

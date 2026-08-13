@@ -88,6 +88,10 @@ const channelFormBaseSchema = z.object({
   zqbapi_project_name: z.string().optional(),
   zqbapi_asset_group_type: z.enum(['virtual', 'real']).optional(),
   zqbapi_auto_normalize: z.boolean().optional(),
+  doubao_video2_material_mode: z
+    .enum(['off', 'retry_only', 'face_preflight', 'always'])
+    .optional(),
+  doubao_video2_group_id: z.string().optional(),
   // Type-specific settings (stored in settings JSON)
   is_enterprise_account: z.boolean().optional(), // OpenRouter specific
   vertex_key_type: z.enum(['json', 'api_key']).optional(), // Vertex AI specific
@@ -128,6 +132,18 @@ export const channelFormSchema = channelFormBaseSchema.superRefine(
           message: 'Select a local account pool',
         })
       }
+    }
+
+    if (
+      data.type === 62 &&
+      (data.doubao_video2_material_mode ?? 'off') !== 'off' &&
+      !data.doubao_video2_group_id?.trim()
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['doubao_video2_group_id'],
+        message: 'Material Group ID is required when material mode is enabled',
+      })
     }
 
     if (data.type !== 58) return
@@ -228,6 +244,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   zqbapi_project_name: '',
   zqbapi_asset_group_type: 'virtual',
   zqbapi_auto_normalize: true,
+  doubao_video2_material_mode: 'off',
+  doubao_video2_group_id: '',
 }
 
 export function getChannelCreateDefaultValues(
@@ -284,6 +302,8 @@ export function transformChannelToFormDefaults(
     zqbapi_project_name: '',
     zqbapi_asset_group_type: 'virtual' as const,
     zqbapi_auto_normalize: true,
+    doubao_video2_material_mode: 'off' as const,
+    doubao_video2_group_id: '',
   }
 
   if (channel.setting) {
@@ -303,6 +323,9 @@ export function transformChannelToFormDefaults(
         zqbapi_project_name: parsed.zqbapi?.project_name || '',
         zqbapi_asset_group_type: parsed.zqbapi?.asset_group_type || 'virtual',
         zqbapi_auto_normalize: parsed.zqbapi?.auto_normalize !== false,
+        doubao_video2_material_mode:
+          parsed.doubao_video2?.material_mode || 'off',
+        doubao_video2_group_id: parsed.doubao_video2?.group_id || '',
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -453,6 +476,12 @@ function buildSettingJSON(formData: ChannelFormValues): string {
       project_name: formData.zqbapi_project_name?.trim() || '',
       asset_group_type: formData.zqbapi_asset_group_type || 'virtual',
       auto_normalize: formData.zqbapi_auto_normalize !== false,
+    }
+  }
+  if (formData.type === 62) {
+    settingObj.doubao_video2 = {
+      material_mode: formData.doubao_video2_material_mode || 'off',
+      group_id: formData.doubao_video2_group_id?.trim() || '',
     }
   }
   return JSON.stringify(settingObj)

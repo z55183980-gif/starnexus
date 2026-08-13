@@ -348,6 +348,19 @@ func runZQBAPIHousekeeping(ctx context.Context) {
 			break
 		}
 	}
+	for {
+		deleted, err := model.DeleteExpiredDoubaoVideo2AssetRecords(time.Now().Unix(), 500)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("cleanup expired DoubaoVideo2.0 asset registry records failed: %v", err))
+			break
+		}
+		if deleted < 500 {
+			if deleted > 0 {
+				logger.LogInfo(ctx, fmt.Sprintf("cleaned %d expired DoubaoVideo2.0 asset registry records", deleted))
+			}
+			break
+		}
+	}
 	root, enabled, err := videoResultCacheRoot()
 	if err != nil || !enabled {
 		return

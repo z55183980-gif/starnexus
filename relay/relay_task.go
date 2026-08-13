@@ -317,7 +317,13 @@ func openAIVideoSubmitError(c *gin.Context, resp *http.Response) *dto.TaskError 
 	publicStatus := resp.StatusCode
 	publicCode := "video_request_rejected"
 	publicMessage := "The video request was rejected. Check the prompt and reference image."
+	requestBodyTooLarge := common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeDoubaoVideo2 &&
+		isDoubaoVideo2RequestBodyTooLargeResponse(responseBody)
 	switch {
+	case requestBodyTooLarge:
+		publicStatus = http.StatusRequestEntityTooLarge
+		publicCode = "doubao_video2_request_body_too_large"
+		publicMessage = "The inline media makes this video request too large for the upstream service. Use a public HTTP(S) media URL instead of Base64 or multipart input."
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		publicStatus = http.StatusBadGateway
 		publicCode = "video_service_authentication_failed"
@@ -330,9 +336,23 @@ func openAIVideoSubmitError(c *gin.Context, resp *http.Response) *dto.TaskError 
 		publicCode = "video_service_error"
 		publicMessage = "The video service is temporarily unavailable. Please retry later."
 	}
-	taskErr := service.TaskErrorWrapper(internalErr, publicCode, publicStatus)
+	var taskErr *dto.TaskError
+	if requestBodyTooLarge {
+		// This provider-side persistence limit is deterministic. Treat it as a
+		// local/non-retryable compatibility error so failover cannot submit the
+		// same oversized body repeatedly to the same channel.
+		taskErr = service.TaskErrorWrapperLocal(internalErr, publicCode, publicStatus)
+	} else {
+		taskErr = service.TaskErrorWrapper(internalErr, publicCode, publicStatus)
+	}
 	taskErr.Message = publicMessage
 	return taskErr
+}
+
+func isDoubaoVideo2RequestBodyTooLargeResponse(body []byte) bool {
+	text := strings.ToLower(string(body))
+	return strings.Contains(text, "data too long for column 'request_body'") ||
+		(strings.Contains(text, "error 1406") && strings.Contains(text, "request_body"))
 }
 
 // recalcQuotaFromRatios 根据 adjustedRatios 重新计算 quota。

@@ -60,8 +60,19 @@ type zqbapiImageInspection struct {
 }
 
 func inspectZQBAPIImage(c *gin.Context, input string) (*zqbapiImageInspection, error) {
+	return inspectSeedanceImage(c, input, "ZQBAPI local face detection")
+}
+
+func inspectDoubaoVideo2Image(c *gin.Context, input string) (*zqbapiImageInspection, error) {
+	return inspectSeedanceImage(c, input, "DoubaoVideo2.0 local face detection")
+}
+
+// inspectSeedanceImage is the provider-neutral image validation and face
+// detection implementation shared by the two independently configured
+// material systems.
+func inspectSeedanceImage(c *gin.Context, input, purpose string) (*zqbapiImageInspection, error) {
 	source := types.NewFileSourceFromData(input, "")
-	fileData, err := service.LoadFileSource(c, source, "ZQBAPI local face detection")
+	fileData, err := service.LoadFileSource(c, source, purpose)
 	if err != nil {
 		return nil, fmt.Errorf("load image for face detection: %w", err)
 	}

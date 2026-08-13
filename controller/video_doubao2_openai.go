@@ -117,8 +117,8 @@ func convertDoubaoVideo2TaskToOpenAIVideo(task *model.Task) (*dto.OpenAIVideo, e
 }
 
 // DeleteDoubaoVideo2OpenAIVideo deletes the gateway video resource and its
-// optional local result cache. DoubaoVideo2.0 has no material-library asset in
-// this flow, so deletion deliberately performs no material or asset API call.
+// optional local result cache. Material assets are reusable channel resources,
+// so deletion deliberately performs no material or asset API call.
 func DeleteDoubaoVideo2OpenAIVideo(c *gin.Context) {
 	taskID := strings.TrimSpace(c.Param("task_id"))
 	userID := c.GetInt("id")
