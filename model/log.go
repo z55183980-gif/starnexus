@@ -491,6 +491,54 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) int {
 	return log.Id
 }
 
+// RecordTaskBillingLogIdempotent creates one task billing log per durable
+// outbox event. Receipt and log share the LOG_DB transaction, so retries after
+// crashes or a temporary log-database outage cannot duplicate user records.
+func RecordTaskBillingLogIdempotent(eventID string, params RecordTaskBillingLogParams) (int, error) {
+	if strings.TrimSpace(eventID) == "" {
+		return 0, errors.New("billing log event id is empty")
+	}
+	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
+		return 0, nil
+	}
+	// Resolve display-only metadata before opening the LOG_DB transaction. When
+	// DB and LOG_DB share a single SQLite connection, querying DB from inside the
+	// transaction would wait on itself indefinitely.
+	username, _ := GetUsernameById(params.UserId, false)
+	tokenName := ""
+	if params.TokenId > 0 {
+		if token, err := GetTokenById(params.TokenId); err == nil {
+			tokenName = token.Name
+		}
+	}
+	logID := 0
+	err := LOG_DB.Transaction(func(tx *gorm.DB) error {
+		var receipt BillingLogReceipt
+		found := tx.Where("event_id = ?", eventID).Limit(1).Find(&receipt)
+		if found.Error != nil {
+			return found.Error
+		}
+		if found.RowsAffected > 0 {
+			logID = receipt.LogID
+			return nil
+		}
+		log := &Log{
+			UserId: params.UserId, Username: username, CreatedAt: common.GetTimestamp(), Type: params.LogType,
+			Content: params.Content, PromptTokens: params.PromptTokens, CompletionTokens: params.CompletionTokens,
+			TokenName: tokenName, ModelName: params.ModelName, Quota: params.Quota, ChannelId: params.ChannelId,
+			TokenId: params.TokenId, UseTime: params.UseTimeSeconds,
+			UseTimeMs: resolveUseTimeMilliseconds(params.UseTimeSeconds, params.UseTimeMilliseconds),
+			Group:     params.Group, Other: common.MapToJsonStr(attachNodeNameToLogOther(params.Other)),
+		}
+		if err := tx.Create(log).Error; err != nil {
+			return err
+		}
+		logID = log.Id
+		return tx.Create(&BillingLogReceipt{EventID: eventID, LogID: logID}).Error
+	})
+	return logID, err
+}
+
 type LogExcludeFilter struct {
 	Field string `json:"field"`
 	Value string `json:"value"`

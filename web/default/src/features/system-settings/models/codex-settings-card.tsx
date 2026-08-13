@@ -6,11 +6,24 @@ it under the terms of the GNU Affero General Public License as
 published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
-import * as z from 'zod'
 import { useState } from 'react'
+import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { RefreshCw, ShieldAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -24,25 +37,12 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
-import { RefreshCw, ShieldAlert } from 'lucide-react'
 import { SettingsSection } from '../components/settings-section'
-import { useResetForm } from '../hooks/use-reset-form'
 import {
   useSyncCodexVersion,
   useUpdateCodexSettings,
 } from '../hooks/use-codex-settings'
+import { useResetForm } from '../hooks/use-reset-form'
 
 const versionPattern = /^$|^[0-9]+(?:\.[0-9]+){1,3}(?:-[0-9A-Za-z.]+)?$/
 const schema = z.object({
@@ -97,14 +97,9 @@ export function CodexSettingsCard({ defaultValues }: CodexSettingsCardProps) {
   useResetForm(form, formDefaults)
 
   const onSubmit = async (values: CodexFormValues) => {
-    const changedValues = Object.fromEntries(
-      Object.entries(values).filter(
-        ([key, value]) => value !== formDefaults[key as keyof CodexFormValues]
-      )
-    ) as Record<string, string | boolean>
-    if (Object.keys(changedValues).length > 0) {
-      await updateCodexSettings.mutateAsync({ values: changedValues })
-    }
+    // Codex settings form a single outbound policy. Submit the complete snapshot
+    // so a stale default cannot silently turn Save Changes into a no-op.
+    await updateCodexSettings.mutateAsync({ values })
   }
 
   const syncedAt = defaultValues.versionSyncedAt
@@ -114,7 +109,8 @@ export function CodexSettingsCard({ defaultValues }: CodexSettingsCardProps) {
     ? new Date(defaultValues.versionSyncAttemptedAt * 1000).toLocaleString()
     : t('Not synchronized yet')
   const fixedVersion = defaultValues['codex_setting.client_version'].trim()
-  const effectiveVersion = fixedVersion || defaultValues.syncedVersion || '0.146.0'
+  const effectiveVersion =
+    fixedVersion || defaultValues.syncedVersion || '0.146.0'
   const effectiveVersionSource = fixedVersion
     ? t('Administrator fixed version')
     : defaultValues.syncedVersion
@@ -134,12 +130,16 @@ export function CodexSettingsCard({ defaultValues }: CodexSettingsCardProps) {
       {syncFailed && (
         <Alert variant='destructive'>
           <ShieldAlert className='h-4 w-4' />
-          <AlertTitle>{t('Official version synchronization failed')}</AlertTitle>
+          <AlertTitle>
+            {t('Official version synchronization failed')}
+          </AlertTitle>
           <AlertDescription>
             <div className='space-y-2'>
               <p>
                 {defaultValues.versionSyncError ||
-                  t('GitHub is unavailable. The last usable version remains active.')}
+                  t(
+                    'GitHub is unavailable. The last usable version remains active.'
+                  )}
               </p>
               <p className='text-xs'>
                 {t('Last attempt')}: {attemptedAt}
@@ -202,7 +202,9 @@ export function CodexSettingsCard({ defaultValues }: CodexSettingsCardProps) {
                 </Badge>
               </div>
               <FormDescription>
-                {t('This is the version used for outbound OAuth identity headers.')}
+                {t(
+                  'This is the version used for outbound OAuth identity headers.'
+                )}
               </FormDescription>
             </FormItem>
             <FormItem>
@@ -285,14 +287,15 @@ export function CodexSettingsCard({ defaultValues }: CodexSettingsCardProps) {
                 </FormDescription>
                 <FormControl>
                   <ToggleGroup
-                    variant='outline'
+                    variant='segmented'
                     value={[field.value]}
                     onValueChange={(values) => {
-                      const value = values.at(-1) as
+                      const value = values[0] as
                         | CodexFormValues['codex_setting.fingerprint_default_mode']
                         | undefined
                       if (value) field.onChange(value)
                     }}
+                    aria-label={t('Default Codex fingerprint convergence')}
                     className='grid w-full grid-cols-2 gap-2 sm:max-w-xl sm:grid-cols-4'
                   >
                     <ToggleGroupItem value='off'>{t('Off')}</ToggleGroupItem>

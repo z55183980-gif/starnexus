@@ -145,7 +145,12 @@ func sweepTimedOutTasks(ctx context.Context) error {
 			task.FailReason = reason
 		}
 
-		won, err := task.UpdateWithStatus(oldStatus)
+		var won bool
+		if taskHasDurableBilling(task) {
+			won, err = CreateTaskBillingIntent(task, oldStatus, 0, nil, task.FailReason)
+		} else {
+			won, err = task.UpdateWithStatus(oldStatus)
+		}
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("sweepTimedOutTasks CAS update error for task %s: %v", task.TaskID, err))
 			continue
@@ -155,7 +160,7 @@ func sweepTimedOutTasks(ctx context.Context) error {
 			continue
 		}
 		timedOutCount++
-		if !isLegacy && task.Quota != 0 {
+		if !taskHasDurableBilling(task) && !isLegacy && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, reason)
 		}
 	}
@@ -219,11 +224,16 @@ func runTaskPollingIteration(ctx context.Context) error {
 			taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
 		}
 		if len(nullTaskIds) > 0 {
-			if err := model.TaskBulkUpdateByID(nullTaskIds, map[string]any{
-				"status":   model.TaskStatusFailure,
-				"progress": taskcommon.ProgressComplete,
-			}); err != nil {
-				return fmt.Errorf("mark tasks without upstream id failed: %w", err)
+			for _, task := range tasks {
+				if task.GetUpstreamTaskID() != "" {
+					continue
+				}
+				if _, err := failTaskWithDurableBilling(ctx, task, task.Status, "任务缺少上游任务 ID"); err != nil {
+					return fmt.Errorf("mark task without upstream id failed: %w", err)
+				}
+				if !taskHasDurableBilling(task) && task.Quota != 0 {
+					RefundTaskQuota(ctx, task, task.FailReason)
+				}
 			}
 			logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %v", nullTaskIds))
 		}
@@ -253,12 +263,18 @@ func sweepStaleRetryingTasks(ctx context.Context) error {
 		task.FinishTime = now
 		task.FailReason = reason
 		clearTaskRecoveryPayload(task)
-		won, updateErr := task.UpdateWithStatus(model.TaskStatusRetrying)
+		var won bool
+		var updateErr error
+		if taskHasDurableBilling(task) {
+			won, updateErr = CreateTaskBillingIntent(task, model.TaskStatusRetrying, 0, nil, reason)
+		} else {
+			won, updateErr = task.UpdateWithStatus(model.TaskStatusRetrying)
+		}
 		if updateErr != nil {
 			logger.LogError(ctx, fmt.Sprintf("fail stale retrying task %s: %v", task.TaskID, updateErr))
 			continue
 		}
-		if won && task.Quota != 0 {
+		if won && !taskHasDurableBilling(task) && task.Quota != 0 {
 			RefundTaskQuota(ctx, task, reason)
 		}
 	}
@@ -298,20 +314,19 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 	ch, err := model.CacheGetChannel(channelId)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("CacheGetChannel: %v", err))
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
-		var failedIDs []int64
+		reason := fmt.Sprintf("获取渠道信息失败，请联系管理员，渠道ID：%d", channelId)
 		for _, upstreamID := range taskIds {
 			if t, ok := taskM[upstreamID]; ok {
-				failedIDs = append(failedIDs, t.ID)
+				oldStatus := t.Status
+				won, updateErr := failTaskWithDurableBilling(ctx, t, oldStatus, reason)
+				if updateErr != nil {
+					common.SysLog(fmt.Sprintf("UpdateSunoTask error: %v", updateErr))
+					continue
+				}
+				if won && !taskHasDurableBilling(t) {
+					RefundTaskQuota(ctx, t, reason)
+				}
 			}
-		}
-		err = model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": fmt.Sprintf("获取渠道信息失败，请联系管理员，渠道ID：%d", channelId),
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
-		if err != nil {
-			common.SysLog(fmt.Sprintf("UpdateSunoTask error: %v", err))
 		}
 		return err
 	}
@@ -354,22 +369,45 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 			continue
 		}
 
+		oldStatus := task.Status
 		task.Status = lo.If(model.TaskStatus(responseItem.Status) != "", model.TaskStatus(responseItem.Status)).Else(task.Status)
 		task.FailReason = lo.If(responseItem.FailReason != "", responseItem.FailReason).Else(task.FailReason)
 		task.SubmitTime = lo.If(responseItem.SubmitTime != 0, responseItem.SubmitTime).Else(task.SubmitTime)
 		task.StartTime = lo.If(responseItem.StartTime != 0, responseItem.StartTime).Else(task.StartTime)
 		task.FinishTime = lo.If(responseItem.FinishTime != 0, responseItem.FinishTime).Else(task.FinishTime)
+		if responseItem.FailReason != "" {
+			task.Status = model.TaskStatusFailure
+		}
 		if responseItem.FailReason != "" || task.Status == model.TaskStatusFailure {
 			logger.LogInfo(ctx, task.TaskID+" 构建失败，"+task.FailReason)
 			task.Progress = "100%"
-			RefundTaskQuota(ctx, task, task.FailReason)
 		}
 		if responseItem.Status == model.TaskStatusSuccess {
 			task.Progress = "100%"
 		}
 		task.Data = responseItem.Data
 
-		err = task.Update()
+		if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+			if taskHasDurableBilling(task) {
+				finalQuota := task.Quota
+				if task.Status == model.TaskStatusFailure {
+					finalQuota = 0
+				}
+				var won bool
+				won, err = CreateTaskBillingIntent(task, oldStatus, finalQuota, nil, task.FailReason)
+				if won {
+					_ = ProcessDurableBillingOnce(ctx, 1)
+				}
+			} else {
+				var won bool
+				won, err = task.UpdateWithStatus(oldStatus)
+				if err == nil && won && task.Status == model.TaskStatusFailure {
+					RefundTaskQuota(ctx, task, task.FailReason)
+				}
+			}
+		} else {
+			_, err = task.UpdateWithStatus(oldStatus)
+		}
 		if err != nil {
 			common.SysLog("UpdateSunoTask task error: " + err.Error())
 		}
@@ -432,20 +470,18 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
-		// Collect DB primary key IDs for bulk update (taskIds are upstream IDs, not task_id column values)
-		var failedIDs []int64
+		reason := fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId)
 		for _, upstreamID := range taskIds {
 			if t, ok := taskM[upstreamID]; ok {
-				failedIDs = append(failedIDs, t.ID)
+				oldStatus := t.Status
+				if _, updateErr := failTaskWithDurableBilling(ctx, t, oldStatus, reason); updateErr != nil {
+					common.SysLog(fmt.Sprintf("fail task after channel lookup error: %v", updateErr))
+					continue
+				}
+				if !taskHasDurableBilling(t) && t.Quota != 0 {
+					RefundTaskQuota(ctx, t, reason)
+				}
 			}
-		}
-		errUpdate := model.TaskBulkUpdateByID(failedIDs, map[string]any{
-			"fail_reason": fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId),
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
-		if errUpdate != nil {
-			common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
@@ -749,6 +785,32 @@ func ApplyTaskResult(ctx context.Context, adaptor TaskPollingAdaptor, task *mode
 	}
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
+	if isDone && snap.Status != task.Status && taskHasDurableBilling(task) {
+		finalQuota := quota
+		if shouldSettle {
+			if taskResult.Resolution != "" && task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.VideoTokenBilling {
+				task.PrivateData.BillingContext.VideoResolution = taskResult.Resolution
+			}
+			finalQuota = recalculateDurableVideoBilling(adaptor, task, taskResult)
+		}
+		won, err := CreateTaskBillingIntent(task, snap.Status, finalQuota, taskResult, task.FailReason)
+		if err != nil {
+			return false, fmt.Errorf("persist terminal billing intent for task %s: %w", task.TaskID, err)
+		}
+		if !won {
+			if err := model.DB.First(task, task.ID).Error; err != nil {
+				return false, fmt.Errorf("reload task %s after durable billing CAS loss: %w", task.TaskID, err)
+			}
+			return false, nil
+		}
+		if err := ProcessDurableBillingOnce(ctx, 1); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("immediate durable billing attempt failed task %s: %s", task.TaskID, err.Error()))
+		}
+		if task.Status == model.TaskStatusSuccess {
+			archiveZQBAPIVideoResultAsync(task)
+		}
+		return true, nil
+	}
 	if isDone && snap.Status != task.Status {
 		won, err := task.UpdateWithStatus(snap.Status)
 		if err != nil {

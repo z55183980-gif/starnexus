@@ -99,6 +99,9 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 // emits no quota notification or user-visible billing record.
 func SettleTaskPreAuthorization(relayInfo *relaycommon.RelayInfo, reservedQuota int) error {
 	if relayInfo.Billing != nil {
+		if session, ok := relayInfo.Billing.(*BillingSession); ok && session.durableTxID > 0 {
+			return session.holdForAsyncTask(reservedQuota)
+		}
 		return relayInfo.Billing.Settle(reservedQuota)
 	}
 	quotaDelta := reservedQuota - relayInfo.FinalPreConsumedQuota

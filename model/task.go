@@ -49,24 +49,25 @@ const (
 const TaskProgressPendingSettlement = "settling"
 
 type Task struct {
-	ID         int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
-	CreatedAt  int64                 `json:"created_at" gorm:"index"`
-	UpdatedAt  int64                 `json:"updated_at"`
-	TaskID     string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
-	Platform   constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
-	UserId     int                   `json:"user_id" gorm:"index"`
-	Group      string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
-	ChannelId  int                   `json:"channel_id" gorm:"index"`
-	Quota      int                   `json:"quota"`
-	Action     string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
-	Status     TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
-	FailReason string                `json:"fail_reason"`
-	SubmitTime int64                 `json:"submit_time" gorm:"index"`
-	StartTime  int64                 `json:"start_time" gorm:"index"`
-	FinishTime int64                 `json:"finish_time" gorm:"index"`
-	Progress   string                `json:"progress" gorm:"type:varchar(20);index"`
-	Properties Properties            `json:"properties" gorm:"type:json"`
-	Username   string                `json:"username,omitempty" gorm:"-"`
+	ID           int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
+	CreatedAt    int64                 `json:"created_at" gorm:"index"`
+	UpdatedAt    int64                 `json:"updated_at"`
+	TaskID       string                `json:"task_id" gorm:"type:varchar(191);index"` // 第三方id，不一定有/ song id\ Task id
+	Platform     constant.TaskPlatform `json:"platform" gorm:"type:varchar(30);index"` // 平台
+	UserId       int                   `json:"user_id" gorm:"index"`
+	Group        string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
+	ChannelId    int                   `json:"channel_id" gorm:"index"`
+	Quota        int                   `json:"quota"`
+	BillingState string                `json:"billing_state,omitempty" gorm:"type:varchar(32);index;not null;default:''"`
+	Action       string                `json:"action" gorm:"type:varchar(40);index"` // 任务类型, song, lyrics, description-mode
+	Status       TaskStatus            `json:"status" gorm:"type:varchar(20);index"` // 任务状态
+	FailReason   string                `json:"fail_reason"`
+	SubmitTime   int64                 `json:"submit_time" gorm:"index"`
+	StartTime    int64                 `json:"start_time" gorm:"index"`
+	FinishTime   int64                 `json:"finish_time" gorm:"index"`
+	Progress     string                `json:"progress" gorm:"type:varchar(20);index"`
+	Properties   Properties            `json:"properties" gorm:"type:json"`
+	Username     string                `json:"username,omitempty" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	// ResultFile contains only a generated cache file name. The configured
@@ -355,6 +356,21 @@ func GetAllUnFinishSyncTasks(limit int) ([]*Task, error) {
 		return nil, err
 	}
 	return tasks, nil
+}
+
+// GetTasksWithPendingBilling returns terminal tasks whose durable accounting
+// has not finished. It is a repair safety-net for interruptions between task
+// state persistence and coordinator execution.
+func GetTasksWithPendingBilling(limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var tasks []*Task
+	err := DB.Where("billing_state IN ?", []string{
+		BillingTransactionStateSettlePending,
+		BillingTransactionStateRefundPending,
+	}).Order("id").Limit(limit).Find(&tasks).Error
+	return tasks, err
 }
 
 func GetStaleRetryingTasks(cutoffUnix int64, limit int) ([]*Task, error) {

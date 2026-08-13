@@ -138,6 +138,10 @@ func DeleteZQBAPIOpenAIVideo(c *gin.Context) {
 		zqbapiOpenAIVideoError(c, http.StatusConflict, "video_not_terminal", "video_id", "Only completed or failed videos can be deleted")
 		return
 	}
+	if task.BillingState != "" && task.BillingState != model.BillingTransactionStateSettled && task.BillingState != model.BillingTransactionStateRefunded {
+		zqbapiOpenAIVideoError(c, http.StatusConflict, "video_billing_pending", "video_id", "Video billing is still being finalized")
+		return
+	}
 
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil || channelModel == nil || channelModel.Type != constant.ChannelTypeZQBAPI {

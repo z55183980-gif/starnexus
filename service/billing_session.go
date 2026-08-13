@@ -33,6 +33,8 @@ type BillingSession struct {
 	settled          bool // Settle 全部完成（资金 + 令牌）
 	refunded         bool // Refund 已调用
 	mu               sync.Mutex
+	durableTxID      int64
+	businessKey      string
 }
 
 // Settle 根据实际消耗额度进行结算。
@@ -45,6 +47,13 @@ func (s *BillingSession) Settle(actualQuota int) error {
 		return nil
 	}
 	delta := actualQuota - s.preConsumedQuota
+	if s.durableTxID > 0 {
+		if err := settleDurableRequestBilling(s, actualQuota); err != nil {
+			return err
+		}
+		s.settled = true
+		return nil
+	}
 	if delta == 0 {
 		s.settled = true
 		return nil
@@ -78,15 +87,46 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	return tokenErr
 }
 
+func (s *BillingSession) holdForAsyncTask(reservedQuota int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.durableTxID <= 0 {
+		return fmt.Errorf("durable billing transaction is required for async task hold")
+	}
+	if reservedQuota < 0 {
+		return fmt.Errorf("async task reservation cannot be negative: %d", reservedQuota)
+	}
+	if reservedQuota != s.preConsumedQuota {
+		oldQuota := s.preConsumedQuota
+		if err := adjustDurableReservation(s, reservedQuota); err != nil {
+			return err
+		}
+		s.preConsumedQuota = reservedQuota
+		s.tokenConsumed = reservedQuota
+		s.extraReserved += reservedQuota - oldQuota
+		s.syncRelayInfo()
+	}
+	return nil
+}
+
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
 	s.mu.Lock()
-	if s.settled || s.refunded || !s.needsRefundLocked() {
+	if s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
 		return
 	}
 	s.refunded = true
 	s.mu.Unlock()
+	if s.durableTxID > 0 {
+		if err := refundDurableRequestBilling(s); err != nil {
+			common.SysLog("error refunding durable billing transaction: " + err.Error())
+			s.mu.Lock()
+			s.refunded = false
+			s.mu.Unlock()
+		}
+		return
+	}
 
 	logger.LogInfo(c, fmt.Sprintf("用户 %d 请求失败, 返还预扣费（token_quota=%s, funding=%s）",
 		s.relayInfo.UserId,
@@ -130,8 +170,11 @@ func (s *BillingSession) NeedsRefund() bool {
 }
 
 func (s *BillingSession) needsRefundLocked() bool {
-	if s.settled || s.refunded || s.fundingSettled {
+	if s.refunded || s.fundingSettled {
 		// fundingSettled 时资金来源已提交结算，不能再退预扣费
+		return false
+	}
+	if s.settled && s.durableTxID <= 0 {
 		return false
 	}
 	if s.tokenConsumed > 0 {
@@ -159,6 +202,16 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 
 	delta := targetQuota - s.preConsumedQuota
 	if delta <= 0 {
+		return nil
+	}
+	if s.durableTxID > 0 {
+		if err := reserveDurableRequestBilling(s, targetQuota); err != nil {
+			return err
+		}
+		s.preConsumedQuota = targetQuota
+		s.tokenConsumed += delta
+		s.extraReserved += delta
+		s.syncRelayInfo()
 		return nil
 	}
 
@@ -345,6 +398,9 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 	}
 
 	pref := common.NormalizeBillingPreference(relayInfo.UserSetting.BillingPreference)
+	if relayInfo.ForcePreConsume && preConsumedQuota > 0 {
+		return newDurableBillingSession(c, relayInfo, preConsumedQuota, pref)
+	}
 
 	// 钱包路径需要先检查用户额度
 	tryWallet := func() (*BillingSession, *types.NewAPIError) {

@@ -138,6 +138,10 @@ func DeleteDoubaoVideo2OpenAIVideo(c *gin.Context) {
 		doubaoVideo2OpenAIVideoError(c, http.StatusConflict, "video_not_terminal", "video_id", "Only completed or failed videos can be deleted")
 		return
 	}
+	if task.BillingState != "" && task.BillingState != model.BillingTransactionStateSettled && task.BillingState != model.BillingTransactionStateRefunded {
+		doubaoVideo2OpenAIVideoError(c, http.StatusConflict, "video_billing_pending", "video_id", "Video billing reconciliation is still pending")
+		return
+	}
 
 	if err := model.DeleteUserTaskByID(userID, task.ID, doubaoVideo2Platform()); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to delete DoubaoVideo2.0 video %s: %v", taskID, err))

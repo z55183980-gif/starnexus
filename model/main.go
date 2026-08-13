@@ -308,6 +308,8 @@ func migrateDB() error {
 		&TopUp{},
 		&QuotaData{},
 		&Task{},
+		&BillingTransaction{},
+		&BillingOutbox{},
 		&ZQBAPIAsset{},
 		&DoubaoVideo2Asset{},
 		&Model{},
@@ -413,6 +415,8 @@ func migrateDBFast() error {
 		{&TopUp{}, "TopUp"},
 		{&QuotaData{}, "QuotaData"},
 		{&Task{}, "Task"},
+		{&BillingTransaction{}, "BillingTransaction"},
+		{&BillingOutbox{}, "BillingOutbox"},
 		{&ZQBAPIAsset{}, "ZQBAPIAsset"},
 		{&DoubaoVideo2Asset{}, "DoubaoVideo2Asset"},
 		{&Model{}, "Model"},
@@ -515,7 +519,7 @@ func backfillUserConcurrencyDefault() error {
 
 func migrateLOGDB() error {
 	var err error
-	if err = LOG_DB.AutoMigrate(&Log{}, &ErrorAlert{}, &PromptAuditLog{}, &ContentModerationKeyUsage{}); err != nil {
+	if err = LOG_DB.AutoMigrate(&Log{}, &BillingLogReceipt{}, &ErrorAlert{}, &PromptAuditLog{}, &ContentModerationKeyUsage{}); err != nil {
 		return err
 	}
 	if err = SanitizeAllowedContentModerationCounts(); err != nil {

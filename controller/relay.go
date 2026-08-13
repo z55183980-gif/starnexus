@@ -778,7 +778,8 @@ func RelayTask(c *gin.Context) {
 		}
 		var settleErr error
 		consumeLogID := 0
-		if silentVideoPreAuth {
+		durableTaskBilling := service.HasDurableBilling(relayInfo)
+		if silentVideoPreAuth || durableTaskBilling {
 			settleErr = service.SettleTaskPreAuthorization(relayInfo, result.Quota)
 		} else {
 			settleErr = service.SettleBilling(c, relayInfo, result.Quota)
@@ -822,23 +823,25 @@ func RelayTask(c *gin.Context) {
 			OriginModelName: relayInfo.OriginModelName,
 			PerCallBilling:  common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || relayInfo.PriceData.UsePrice,
 		}
-		if silentVideoPreAuth {
+		if silentVideoPreAuth || durableTaskBilling {
 			bc := task.PrivateData.BillingContext
 			bc.PreAuthorization = true
 			bc.PreAuthorizedQuota = result.Quota
 			bc.RequestPath = c.Request.URL.Path
 			bc.QuotaPerUnit = common.QuotaPerUnit
-			bc.VideoTokenBilling = true
-			if estimatedTextTokens, ok := c.Get("seedance_estimated_text_tokens"); ok {
-				bc.EstimatedTextTokens, _ = estimatedTextTokens.(int)
-			}
-			if estimatedVideoTokens, ok := c.Get("seedance_estimated_video_tokens"); ok {
-				bc.EstimatedVideoTokens, _ = estimatedVideoTokens.(int)
-			}
-			if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
-				bc.VideoResolution = taskReq.Size
-				if resolution, ok := taskReq.Metadata["resolution"].(string); ok && resolution != "" {
-					bc.VideoResolution = resolution
+			bc.VideoTokenBilling = silentVideoPreAuth
+			if silentVideoPreAuth {
+				if estimatedTextTokens, ok := c.Get("seedance_estimated_text_tokens"); ok {
+					bc.EstimatedTextTokens, _ = estimatedTextTokens.(int)
+				}
+				if estimatedVideoTokens, ok := c.Get("seedance_estimated_video_tokens"); ok {
+					bc.EstimatedVideoTokens, _ = estimatedVideoTokens.(int)
+				}
+				if taskReq, err := relaycommon.GetTaskRequest(c); err == nil {
+					bc.VideoResolution = taskReq.Size
+					if resolution, ok := taskReq.Metadata["resolution"].(string); ok && resolution != "" {
+						bc.VideoResolution = resolution
+					}
 				}
 			}
 		}
@@ -850,14 +853,19 @@ func RelayTask(c *gin.Context) {
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
-		if insertErr := task.Insert(); insertErr != nil {
+		if insertErr := service.InsertTaskWithBilling(task, relayInfo); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
+			if refundErr := service.RefundUnboundDurableBilling(relayInfo); refundErr != nil {
+				common.SysError("refund unbound durable task billing error: " + refundErr.Error())
+			}
 			if len(result.ResponseBody) > 0 {
-				service.RefundTaskQuota(c, task, "任务创建失败")
+				if !service.HasDurableBilling(relayInfo) {
+					service.RefundTaskQuota(c, task, "任务创建失败")
+				}
 				respondTaskError(c, service.TaskErrorWrapperLocal(errors.New("video task could not be persisted"), "task_persistence_failed", http.StatusInternalServerError))
 				return
 			}
-			if silentVideoPreAuth {
+			if silentVideoPreAuth && !service.HasDurableBilling(relayInfo) {
 				service.RefundTaskQuota(c, task, "任务创建失败")
 			}
 		} else if len(result.ResponseBody) > 0 {

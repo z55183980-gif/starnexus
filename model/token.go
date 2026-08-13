@@ -532,3 +532,22 @@ func InvalidateUserTokensCache(userId int) error {
 	}
 	return firstErr
 }
+
+// InvalidateTokenCacheByID clears one token's Redis snapshot after a durable
+// database transaction changes its quota counters directly.
+func InvalidateTokenCacheByID(tokenId int) error {
+	if !common.RedisEnabled {
+		return nil
+	}
+	if tokenId <= 0 {
+		return nil
+	}
+	var token Token
+	if err := DB.Select("id", commonKeyCol).Where("id = ?", tokenId).First(&token).Error; err != nil {
+		return err
+	}
+	if token.Key == "" {
+		return nil
+	}
+	return cacheDeleteToken(token.Key)
+}
