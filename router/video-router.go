@@ -13,8 +13,8 @@ func SetVideoRouter(router *gin.Engine) {
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
 	videoProxyRouter.Use(middleware.TokenOrUserAuth())
 	{
-		videoProxyRouter.GET("/videos", controller.ListZQBAPIOpenAIVideos)
-		videoProxyRouter.DELETE("/videos/:task_id", controller.DeleteZQBAPIOpenAIVideo)
+		videoProxyRouter.GET("/videos", controller.ListDoubaoVideo2OpenAIVideos)
+		videoProxyRouter.DELETE("/videos/:task_id", controller.DeleteDoubaoVideo2OpenAIVideo)
 		videoProxyRouter.GET("/videos/:task_id/content", middleware.RelayConcurrency(), controller.VideoProxy)
 	}
 
@@ -27,7 +27,7 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.POST("/videos/:video_id/remix", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayTask)
 	}
 	// openai compatible API video routes
-	// docs: https://platform.openai.com/docs/api-reference/videos/create
+	// docs: https://developers.openai.com/api/reference/resources/videos/methods/create
 	{
 		videoV1Router.POST("/videos", middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), controller.RelayTask)
 		videoV1Router.GET("/videos/:task_id", middleware.RelayConcurrency(), controller.RelayTaskFetch)

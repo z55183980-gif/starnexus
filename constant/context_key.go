@@ -91,6 +91,11 @@ const (
 	// ContextKeyZQBAPIOpenAIVideoRequest marks only channel type 61 requests
 	// that entered the OpenAI Videos compatibility path.
 	ContextKeyZQBAPIOpenAIVideoRequest ContextKey = "zqbapi_openai_video_request"
+	// ContextKeyOpenAIVideoResponse stores a successful provider-independent
+	// compatibility response until the local task row is durable.
+	ContextKeyOpenAIVideoResponse ContextKey = "openai_video_response"
+	// ContextKeyOpenAIVideoRequest marks a request that entered /v1/videos.
+	ContextKeyOpenAIVideoRequest ContextKey = "openai_video_request"
 
 	// ContextKeyAdminRejectReason stores an admin-only reject/block reason extracted from upstream responses.
 	// It is not returned to end users, but can be persisted into consume/error logs for debugging.

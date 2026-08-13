@@ -245,8 +245,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
-		if info.ChannelType == constant.ChannelTypeZQBAPI && c.GetBool(string(constant.ContextKeyZQBAPIOpenAIVideoRequest)) {
-			return nil, zqbapiOpenAIVideoSubmitError(c, resp)
+		if c.GetBool(string(constant.ContextKeyOpenAIVideoRequest)) ||
+			(info.ChannelType == constant.ChannelTypeZQBAPI && c.GetBool(string(constant.ContextKeyZQBAPIOpenAIVideoRequest))) {
+			return nil, openAIVideoSubmitError(c, resp)
 		}
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
@@ -289,10 +290,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			result.ResponseBody = append([]byte(nil), responseBody...)
 		}
 	}
+	if value, exists := c.Get(string(constant.ContextKeyOpenAIVideoResponse)); exists {
+		if responseBody, ok := value.([]byte); ok && len(responseBody) > 0 {
+			result.ResponseStatus = http.StatusOK
+			result.ResponseBody = append([]byte(nil), responseBody...)
+		}
+	}
 	return result, nil
 }
 
-func zqbapiOpenAIVideoSubmitError(c *gin.Context, resp *http.Response) *dto.TaskError {
+func openAIVideoSubmitError(c *gin.Context, resp *http.Response) *dto.TaskError {
 	const maxErrorBodyBytes = int64(1 << 20)
 	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes+1))
 	_ = resp.Body.Close()
@@ -457,11 +464,13 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	if isZQBAPI && originTask.Properties.OpenAIVideo {
 		c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoRequest), true)
 	}
-	if isOpenAIVideoAPI && isZQBAPI && !originTask.Properties.OpenAIVideo {
+	isDoubaoVideo2 := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo2))
+	isIsolatedOpenAIVideoPlatform := isZQBAPI || isDoubaoVideo2
+	if isOpenAIVideoAPI && isIsolatedOpenAIVideoPlatform && !originTask.Properties.OpenAIVideo {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("video_not_found"), "video_not_found", http.StatusNotFound)
 		return
 	}
-	if !isOpenAIVideoAPI && isZQBAPI && originTask.Properties.OpenAIVideo {
+	if !isOpenAIVideoAPI && isIsolatedOpenAIVideoPlatform && originTask.Properties.OpenAIVideo {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusNotFound)
 		return
 	}
@@ -599,7 +608,7 @@ func shouldIgnoreEmptyRealtimeTaskStatus(task *model.Task, status string) bool {
 
 func supportsRealtimeTaskFetch(channelType int) bool {
 	switch channelType {
-	case constant.ChannelTypeVertexAi, constant.ChannelTypeGemini, constant.ChannelTypeSora, constant.ChannelTypeZQBAPI:
+	case constant.ChannelTypeVertexAi, constant.ChannelTypeGemini, constant.ChannelTypeSora, constant.ChannelTypeZQBAPI, constant.ChannelTypeDoubaoVideo2:
 		return true
 	default:
 		return false

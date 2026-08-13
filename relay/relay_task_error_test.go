@@ -21,7 +21,7 @@ func TestZQBAPIOpenAIVideoSubmitErrorKeepsUpstreamBodyInternal(t *testing.T) {
 		)),
 	}
 
-	taskErr := zqbapiOpenAIVideoSubmitError(c, resp)
+	taskErr := openAIVideoSubmitError(c, resp)
 	if taskErr.StatusCode != http.StatusBadRequest || taskErr.Code != "video_request_rejected" {
 		t.Fatalf("status=%d code=%q", taskErr.StatusCode, taskErr.Code)
 	}

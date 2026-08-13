@@ -566,7 +566,7 @@
       "post": {
         "summary": "创建视频 ",
         "deprecated": false,
-        "description": "OpenAI 兼容的视频生成接口。\n\n参考文档: https://platform.openai.com/docs/api-reference/videos/create\n",
+        "description": "OpenAI Videos 兼容的视频生成接口；DoubaoVideo2.0 会把 input_reference/content 规范化后直接转发上游，不使用素材库。\n\n参考文档: https://developers.openai.com/api/reference/resources/videos/methods/create\n",
         "operationId": "createVideo",
         "tags": [
           "视频生成/Sora兼容格式"
@@ -574,6 +574,71 @@
         "parameters": [],
         "requestBody": {
           "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "model",
+                  "prompt"
+                ],
+                "properties": {
+                  "model": {
+                    "description": "DoubaoVideo2.0 模型名称",
+                    "example": "doubao-seedance-2-0-260128",
+                    "type": "string"
+                  },
+                  "prompt": {
+                    "description": "提示词；也可以放在 content 的 text 项中，二者不能同时出现",
+                    "example": "人物轻微转头",
+                    "type": "string"
+                  },
+                  "seconds": {
+                    "description": "生成秒数，可传整数或整数字符串",
+                    "example": "8",
+                    "oneOf": [
+                      { "type": "integer" },
+                      { "type": "string" }
+                    ]
+                  },
+                  "size": {
+                    "description": "输出尺寸，例如 1280x720",
+                    "example": "1280x720",
+                    "type": "string"
+                  },
+                  "input_reference": {
+                    "description": "参考图；兼容历史 URL 字符串和 OpenAI image_url 对象。file_id 不受 DoubaoVideo2.0 支持",
+                    "oneOf": [
+                      { "type": "string", "format": "uri" },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "image_url": {
+                            "oneOf": [
+                              { "type": "string", "format": "uri" },
+                              {
+                                "type": "object",
+                                "required": ["url"],
+                                "properties": {
+                                  "url": { "type": "string" }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "content": {
+                    "description": "DoubaoVideo2.0 上游 content 数组；不能与 input_reference/image/images 混用",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              }
+            },
             "multipart/form-data": {
               "schema": {
                 "type": "object",
@@ -593,10 +658,15 @@
                     "example": "8",
                     "type": "string"
                   },
+                  "size": {
+                    "description": "输出尺寸，例如 1280x720",
+                    "example": "1280x720",
+                    "type": "string"
+                  },
                   "input_reference": {
                     "format": "binary",
                     "type": "string",
-                    "description": "参考图片文件",
+                    "description": "参考图片文件（JPEG/PNG/GIF/WebP，最大 20 MB）；直接编码并转发上游，不进入素材库",
                     "example": ""
                   }
                 }

@@ -805,6 +805,9 @@ func RelayTask(c *gin.Context) {
 				}
 			}
 		}
+		if relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+			taskdoubao.ApplyDoubaoVideo2OpenAIVideoTaskProperties(c, task)
+		}
 		task.PrivateData.BillingContext = &model.TaskBillingContext{
 			ModelPrice:      relayInfo.PriceData.ModelPrice,
 			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
@@ -870,7 +873,7 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr == nil {
 		return
 	}
-	isOpenAIVideoRequest := isZQBAPIOpenAIVideoPublicRequest(c)
+	isOpenAIVideoRequest := isOpenAIVideoPublicRequest(c)
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		if isOpenAIVideoRequest {
 			taskErr.Message = "The video service is temporarily busy. Please retry later."

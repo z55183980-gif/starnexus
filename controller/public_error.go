@@ -21,7 +21,7 @@ func sanitizePublicErrorMessage(message string) string {
 	return publicErrorURLPattern.ReplaceAllString(message, "[upstream URL hidden]")
 }
 
-func isZQBAPIOpenAIVideoPublicRequest(c *gin.Context) bool {
+func isOpenAIVideoPublicRequest(c *gin.Context) bool {
 	if c == nil || c.Request == nil {
 		return false
 	}
@@ -29,10 +29,14 @@ func isZQBAPIOpenAIVideoPublicRequest(c *gin.Context) bool {
 	if path != "/v1/videos" && !strings.HasPrefix(path, "/v1/videos/") {
 		return false
 	}
+	if c.GetBool(string(constant.ContextKeyOpenAIVideoRequest)) {
+		return true
+	}
 	if c.GetBool(string(constant.ContextKeyZQBAPIOpenAIVideoRequest)) {
 		return true
 	}
-	return common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeZQBAPI
+	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
+	return channelType == constant.ChannelTypeZQBAPI || channelType == constant.ChannelTypeDoubaoVideo2
 }
 
 func openAIVideoErrorType(status int) string {

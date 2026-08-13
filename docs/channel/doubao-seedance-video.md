@@ -1,18 +1,18 @@
 # 星域互联（Starnexus）Doubao Seedance 系列视频生成接入规范
 
-**文档版本：** 1.1
-**适用范围：** Doubao Seedance 系列视频模型
+**文档版本：** 1.2
+**适用范围：** DoubaoVideo2.0 渠道（渠道类型 62）的 Seedance 系列视频模型
 **读者：** API 调用方、业务后端、客户端 SDK 和运维人员
 
-本文说明如何通过星域互联（Starnexus）统一视频接口提交 Doubao Seedance 系列图生视频任务。调用方只需要传入 API Key、模型名称、提示词和图片，不需要管理素材组、素材凭据或内部素材引用。
+本文说明如何通过星域互联（Starnexus）统一视频接口提交 DoubaoVideo2.0 视频任务。该渠道把 URL、数据 URL 或上传文件直接转换为上游 `content`，不创建、不查询也不依赖素材库资源。
 
 ## 1. 接口流程
 
 ```mermaid
 flowchart LR
     A[调用方] -->|Bearer API Key| B[星域互联统一视频接口]
-    B --> C[图片检查与必要的素材处理]
-    C --> D[Doubao Seedance 系列模型]
+    B --> C[请求校验与 content 规范化]
+    C --> D[DoubaoVideo2.0 上游]
     D --> E[任务状态]
     E --> F[鉴权内容接口]
 ```
@@ -24,7 +24,7 @@ flowchart LR
 3. 保存接口返回的公开任务 ID；
 4. 轮询任务状态，并通过内容接口读取结果。
 
-素材创建、状态等待、失败恢复和内部素材引用均由服务端自动处理。
+调用方和网关均不需要管理素材组、素材凭据或内部素材引用。公网 URL 必须在上游读取期间保持可用；上传文件则由网关直接转换为数据 URL 后转发。
 
 ## 2. 认证
 
@@ -71,6 +71,28 @@ POST /v1/video/generations
 
 创建成功后，响应中的 `id` 或 `task_id` 是公开任务 ID。调用方不得依赖或猜测内部任务标识。
 
+### 3.1 OpenAI Videos 兼容接口
+
+```http
+POST /v1/videos
+```
+
+JSON 请求可以使用对象形式（推荐）或历史字符串形式的 `input_reference`：
+
+```json
+{
+  "model": "doubao-seedance-2-0-260128",
+  "prompt": "人物轻微转头，保持面部稳定",
+  "input_reference": {
+    "image_url": "https://cdn.example.com/portrait.jpg"
+  },
+  "seconds": "8",
+  "size": "1280x720"
+}
+```
+
+也可直接传 DoubaoVideo2.0 上游兼容的顶层 `content` 数组。`content` 与 `input_reference`、`image`、`images` 互斥；一个请求中最多有一个文本项、一个 `first_frame` 和一个 `last_frame`，且 `last_frame` 必须同时提供 `first_frame`。
+
 ## 4. 图片传输规范
 
 ### 4.1 支持的传输形式
@@ -106,17 +128,25 @@ HTTPS URL：
 
 ### 4.3 本地文件
 
-视频接口的图片参数是 JSON 字符串引用，不接受把二进制图片直接作为普通 multipart 文件字段提交：
+原生接口 `/v1/video/generations` 使用 JSON，不接受把二进制图片作为 multipart 文件提交。本地文件可先转换为数据 URL，或上传到稳定的对象存储。
+
+兼容接口 `/v1/videos` 额外接受名为 `input_reference` 的 multipart 图片文件：
 
 ```bash
-curl -F "file=@portrait.jpg" ...
+curl https://gateway.example.com/v1/videos \
+  -H "Authorization: Bearer sk-your-api-key" \
+  -F "model=doubao-seedance-2-0-260128" \
+  -F "prompt=人物轻微转头" \
+  -F "seconds=8" \
+  -F "size=1280x720" \
+  -F "input_reference=@portrait.jpg"
 ```
 
-本地文件应先转换为数据 URL，或上传到可公开访问的对象存储，再把稳定的 HTTPS URL 放入 `image` 或 `images` 字段。
+文件必须是 JPEG、PNG、GIF 或 WebP，大小为 1 byte～20 MB。网关只进行格式和大小校验，然后在内存中编码为数据 URL 直接转发；不会上传素材库，也不会持久化原始文件。
 
 ## 5. 公网 URL 要求
 
-服务端可能拉取图片进行格式检查、人脸检测、方向校正、尺寸规范化和必要的素材处理。未触发素材处理时，生成服务可能再次访问原 URL。因此图片 URL 必须满足：
+当传入 URL 时，DoubaoVideo2.0 上游会读取该 URL，因此图片 URL 必须满足：
 
 - 使用 HTTPS；
 - 无需 Cookie、登录态或临时请求头即可访问；
@@ -131,12 +161,15 @@ curl -F "file=@portrait.jpg" ...
 
 - URL 下载大小受服务端配置限制，默认不超过 64 MB；
 - 请求体默认不超过 128 MB；
-- 素材处理后的单张图片小于 30 MB；
-- 图片总像素不超过 64 megapixels；
-- 宽高比严格位于 `(0.4, 2.5)`；
-- 开启自动规范化时，服务端会对过大图片进行缩放和重新编码。
+- `/v1/videos` multipart 单文件不超过 20 MB；
+- JSON URL 或数据 URL 仍受网关请求体和上游限制；
+- 最终尺寸、比例及引用数量必须符合所选 Seedance 模型能力。
 
 推荐优先使用经过压缩的 JPEG、PNG 或 WebP，避免在请求中发送超大 Base64 图片。
+
+### 6.1 计费配置
+
+DoubaoVideo2.0 的模型基础倍率仍由管理端模型倍率配置决定。若需要按分辨率和是否含视频输入区分倍率，应为实际启用的模型配置 `VideoTokenPrice`；尤其是新增的 mini、2.5 或未来模型，不应套用其他型号的未验证价格。
 
 ## 7. 查询任务
 
@@ -174,11 +207,9 @@ GET /v1/videos/{task_id}/content
 | 错误码 | HTTP | 含义 | 调用方建议 |
 |---|---:|---|---|
 | `invalid_image` | 422 | 图片格式、尺寸、比例或解码失败 | 更换或重新编码图片 |
-| `material_rejected` | 422 | 素材处理失败 | 检查图片内容后重新提交 |
-| `material_rate_limited` | 429 | 素材处理被限流 | 延迟后重试 |
-| `material_not_configured` | 503 | 服务端素材能力未配置完整 | 联系服务管理员 |
-| `material_auth_failed` | 502 | 素材服务认证失败 | 联系服务管理员 |
-| `material_transient` | 502 | 素材服务网络或瞬时错误 | 延迟后重试 |
+| `invalid_reference_role` | 400 | 首尾帧角色组合无效 | 修正 `content[].role` 后重新提交 |
+| `reference_image_download_failed` | 失败任务 | 上游无法下载图片 URL | 改用稳定公网 URL 或 multipart 文件 |
+| `video_generation_failed` | 失败任务 | 上游生成失败且没有可公开的详细原因 | 使用任务 ID 联系管理员查询内部日志 |
 
 如果创建请求超时且未收到完整响应，不要立即重复提交，以免产生重复计费任务。应先依据业务侧记录查询任务；无法确认时，请结合请求时间和请求 ID 联系服务管理员排查。
 
@@ -190,4 +221,4 @@ GET /v1/videos/{task_id}/content
 4. 创建成功后立即保存公开任务 ID；
 5. 按 2～5 秒间隔轮询，遇到 `RETRYING` 继续等待；
 6. 完成后通过 `/v1/videos/{task_id}/content` 获取视频；
-7. 不直接管理素材组、素材凭据或内部素材引用。
+7. 不创建或管理素材组、素材凭据、`file_id` 或内部素材引用。

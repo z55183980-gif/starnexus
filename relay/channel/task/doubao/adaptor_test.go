@@ -206,6 +206,268 @@ func TestDoubaoVideo2BuildRequestMapsEPAndForwardsSupportedFields(t *testing.T) 
 	}
 }
 
+func TestDoubaoVideo2AcceptsInputReferenceCompatibilityForms(t *testing.T) {
+	tests := []struct {
+		name      string
+		reference string
+	}{
+		{name: "string", reference: `"https://example.com/reference.png"`},
+		{name: "compatibility object", reference: `{"image_url":"https://example.com/reference.png"}`},
+		{name: "provider object", reference: `{"image_url":{"url":"https://example.com/reference.png"}}`},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+				"model":"doubao-seedance-2-0-260128",
+				"prompt":"animate this image",
+				"input_reference":`+test.reference+`,
+				"seconds":"8",
+				"size":"1280x720"
+			}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "doubao-seedance-2-0-260128",
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelType: constant.ChannelTypeDoubaoVideo2,
+				},
+			}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+				t.Fatalf("validation failed: %+v", taskErr)
+			}
+			body, err := adaptor.BuildRequestBody(c, info)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := io.ReadAll(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var payload requestPayload
+			if err := common.Unmarshal(data, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if len(payload.Content) != 2 {
+				t.Fatalf("content count = %d, want 2: %s", len(payload.Content), data)
+			}
+			image := payload.Content[0]
+			if image.Type != "image_url" || image.ImageURL == nil || image.ImageURL.URL != "https://example.com/reference.png" || image.Role != "first_frame" {
+				t.Fatalf("reference was not normalized: %+v", image)
+			}
+			if payload.Content[1].Type != "text" || payload.Content[1].Text != "animate this image" {
+				t.Fatalf("prompt content = %+v", payload.Content[1])
+			}
+			if payload.Duration == nil || int(*payload.Duration) != 8 || payload.Resolution == nil || *payload.Resolution != "720p" || payload.Ratio == nil || *payload.Ratio != "16:9" {
+				t.Fatalf("duration/size = %v/%v/%v", payload.Duration, payload.Resolution, payload.Ratio)
+			}
+		})
+	}
+}
+
+func TestDoubaoVideo2AcceptsProviderContentAndPreservesFalse(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"doubao-seedance-2-0-260128",
+		"content":[
+			{"type":"image_url","image_url":{"url":"https://example.com/reference.png"},"role":"first_frame"},
+			{"type":"text","text":"move naturally"}
+		],
+		"duration":8,
+		"resolution":"720p",
+		"ratio":"adaptive",
+		"generate_audio":false,
+		"watermark":false
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeDoubaoVideo2,
+		},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	body, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload requestPayload
+	if err := common.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Content) != 2 || payload.Content[0].Role != "first_frame" || payload.Content[1].Text != "move naturally" {
+		t.Fatalf("provider content was not preserved: %+v", payload.Content)
+	}
+	if payload.Duration == nil || int(*payload.Duration) != 8 || payload.Resolution == nil || *payload.Resolution != "720p" || payload.Ratio == nil || *payload.Ratio != "adaptive" {
+		t.Fatalf("native options = duration:%v resolution:%v ratio:%v", payload.Duration, payload.Resolution, payload.Ratio)
+	}
+	if payload.GenerateAudio == nil || bool(*payload.GenerateAudio) || payload.Watermark == nil || bool(*payload.Watermark) {
+		t.Fatalf("explicit false values were not preserved: generate_audio=%v watermark=%v", payload.GenerateAudio, payload.Watermark)
+	}
+}
+
+func TestDoubaoVideo2MultipartInputReferenceIsForwardedDirectly(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	var pngData bytes.Buffer
+	if err := png.Encode(&pngData, img); err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	for key, value := range map[string]string{
+		"model":   "doubao-seedance-2-0-260128",
+		"prompt":  "animate directly",
+		"seconds": "8",
+		"size":    "1280x720",
+	} {
+		if err := writer.WriteField(key, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	part, err := writer.CreateFormFile("input_reference", "reference.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(pngData.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", &body)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(requestBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload requestPayload
+	if err := common.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Content) != 2 || payload.Content[0].ImageURL == nil || !strings.HasPrefix(payload.Content[0].ImageURL.URL, "data:image/png;base64,") {
+		t.Fatalf("multipart image was not directly encoded into upstream content: %s", data)
+	}
+	if payload.Content[0].Role != "first_frame" {
+		t.Fatalf("multipart image role = %q", payload.Content[0].Role)
+	}
+}
+
+func TestDoubaoVideo2TopLevelVideoContentParticipatesInBilling(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"doubao-seedance-2-0-260128",
+		"prompt":"use the reference video",
+		"content":[{"type":"video_url","video_url":{"url":"https://example.com/reference.mp4"},"role":"reference_video"}]
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	req, err := relaycommon.GetTaskRequest(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasVideoInMetadata(req.Metadata) {
+		t.Fatalf("normalized video content was not visible to billing: %#v", req.Metadata["content"])
+	}
+}
+
+func TestDoubaoVideo2RejectsInvalidFrameRoleCombinations(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{
+			name:    "last frame without first frame",
+			content: `[{"type":"image_url","image_url":{"url":"https://example.com/last.png"},"role":"last_frame"}]`,
+		},
+		{
+			name:    "duplicate first frame",
+			content: `[{"type":"image_url","image_url":{"url":"https://example.com/a.png"},"role":"first_frame"},{"type":"image_url","image_url":{"url":"https://example.com/b.png"},"role":"first_frame"}]`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0-260128","prompt":"animate","content":`+test.content+`}`))
+			c.Request.Header.Set("Content-Type", "application/json")
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "doubao-seedance-2-0-260128",
+				ChannelMeta:     &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2},
+			}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			if taskErr == nil || taskErr.Code != "invalid_reference_role" {
+				t.Fatalf("validation error = %+v", taskErr)
+			}
+		})
+	}
+}
+
+func TestDoubaoVideo2RejectsContentAndInputReferenceTogether(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
+		"model":"doubao-seedance-2-0-260128",
+		"prompt":"animate",
+		"content":[{"type":"image_url","image_url":{"url":"https://example.com/content.png"}}],
+		"input_reference":{"image_url":"https://example.com/reference.png"}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeDoubaoVideo2,
+		},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+	if taskErr == nil || taskErr.Code != "invalid_request" || !strings.Contains(taskErr.Message, "content and input_reference") {
+		t.Fatalf("validation error = %+v", taskErr)
+	}
+}
+
 func TestDoubaoVideo2ValidatesOfficialModelBeforeEPMapping(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -364,8 +626,8 @@ func TestZQBAPIOpenAIVideoMapsInputReferenceAfterMetadata(t *testing.T) {
 	if payload.Content[0].Role != "first_frame" {
 		t.Fatalf("input_reference role = %q, want first_frame", payload.Content[0].Role)
 	}
-	if payload.Duration == nil || int(*payload.Duration) != 8 || payload.Resolution != "720p" || payload.Ratio != "16:9" {
-		t.Fatalf("duration/size mapping failed: duration=%v resolution=%q ratio=%q", payload.Duration, payload.Resolution, payload.Ratio)
+	if payload.Duration == nil || int(*payload.Duration) != 8 || payload.Resolution == nil || *payload.Resolution != "720p" || payload.Ratio == nil || *payload.Ratio != "16:9" {
+		t.Fatalf("duration/size mapping failed: duration=%v resolution=%v ratio=%v", payload.Duration, payload.Resolution, payload.Ratio)
 	}
 }
 
@@ -624,6 +886,61 @@ func TestZQBAPIOpenAIVideoSubmitResponseIsDeferred(t *testing.T) {
 	responseBody, ok := value.([]byte)
 	if !exists || !ok || !bytes.Contains(responseBody, []byte(`"id":"task_public"`)) {
 		t.Fatalf("deferred response missing or invalid: %q", responseBody)
+	}
+}
+
+func TestDoubaoVideo2OpenAIVideoResponseAndPropertiesAreStable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Set("task_request", relaycommon.TaskSubmitReq{Prompt: "stored prompt"})
+	c.Set(doubaoVideo2OpenAIContextKey, doubaoVideo2OpenAIVideoContext{Seconds: "8", Size: "1280x720"})
+	c.Set(string(constant.ContextKeyOpenAIVideoRequest), true)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"upstream-task"}`)),
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	}
+	taskID, _, taskErr := (&TaskAdaptor{ChannelType: constant.ChannelTypeDoubaoVideo2}).DoResponse(c, resp, info)
+	if taskErr != nil {
+		t.Fatal(taskErr)
+	}
+	if taskID != "upstream-task" || recorder.Body.Len() != 0 {
+		t.Fatalf("submission response must be deferred until persistence: id=%q body=%s", taskID, recorder.Body.String())
+	}
+	value, exists := c.Get(string(constant.ContextKeyOpenAIVideoResponse))
+	responseBody, ok := value.([]byte)
+	if !exists || !ok || !bytes.Contains(responseBody, []byte(`"id":"task_public"`)) || bytes.Contains(responseBody, []byte(`"task_id"`)) {
+		t.Fatalf("deferred OpenAI response missing or invalid: %s", responseBody)
+	}
+
+	task := &model.Task{}
+	ApplyDoubaoVideo2OpenAIVideoTaskProperties(c, task)
+	if !task.Properties.OpenAIVideo || task.Properties.VideoPrompt != "stored prompt" || task.Properties.VideoSeconds != "8" || task.Properties.VideoSize != "1280x720" {
+		t.Fatalf("compatibility properties = %+v", task.Properties)
+	}
+
+	task.TaskID = "task_public"
+	task.Platform = constant.TaskPlatform("62")
+	task.Status = model.TaskStatusFailure
+	task.CreatedAt = 100
+	task.UpdatedAt = 200
+	task.FailReason = "provider stack at https://internal.example/image"
+	task.Data = []byte(`{"status":"failed","error":{"message":"resource download failed at https://internal.example/image"}}`)
+	converted, err := (&TaskAdaptor{}).ConvertToOpenAIVideo(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(converted, []byte(`"completed_at":200`)) || !bytes.Contains(converted, []byte(`"seconds":"8"`)) || !bytes.Contains(converted, []byte(`"size":"1280x720"`)) {
+		t.Fatalf("persisted compatibility fields missing: %s", converted)
+	}
+	if bytes.Contains(converted, []byte(`"task_id"`)) || bytes.Contains(converted, []byte("internal.example")) || !bytes.Contains(converted, []byte(`"code":"reference_image_download_failed"`)) {
+		t.Fatalf("public failure response is not sanitized: %s", converted)
 	}
 }
 

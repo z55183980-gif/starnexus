@@ -51,17 +51,17 @@ type ModerationOptions struct {
 type requestPayload struct {
 	Model                 string         `json:"model"`
 	Content               []ContentItem  `json:"content,omitempty"`
-	CallbackURL           string         `json:"callback_url,omitempty"`
+	CallbackURL           *string        `json:"callback_url,omitempty"`
 	ReturnLastFrame       *dto.BoolValue `json:"return_last_frame,omitempty"`
-	ServiceTier           string         `json:"service_tier,omitempty"`
+	ServiceTier           *string        `json:"service_tier,omitempty"`
 	ExecutionExpiresAfter *dto.IntValue  `json:"execution_expires_after,omitempty"`
 	GenerateAudio         *dto.BoolValue `json:"generate_audio,omitempty"`
 	Draft                 *dto.BoolValue `json:"draft,omitempty"`
 	Tools                 []struct {
 		Type string `json:"type,omitempty"`
 	} `json:"tools,omitempty"`
-	Resolution        string             `json:"resolution,omitempty"`
-	Ratio             string             `json:"ratio,omitempty"`
+	Resolution        *string            `json:"resolution,omitempty"`
+	Ratio             *string            `json:"ratio,omitempty"`
 	Duration          *dto.IntValue      `json:"duration,omitempty"`
 	Frames            *dto.IntValue      `json:"frames,omitempty"`
 	Seed              *dto.IntValue      `json:"seed,omitempty"`
@@ -132,12 +132,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if a.ChannelType == constant.ChannelTypeZQBAPI && isZQBAPIOpenAIVideoRequest(c) {
 		return validateZQBAPIOpenAIVideoRequest(c, info)
 	}
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+		return a.validateAndSetDoubaoVideo2Request(c, info)
+	}
 	// Accept only POST /v1/video/generations as "generate" action.
 	if taskErr = relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
 		return taskErr
-	}
-	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
-		return a.validateDoubaoVideo2Request(c, info)
 	}
 	return nil
 }
@@ -398,6 +398,17 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	ov.TaskID = info.PublicTaskID
 	ov.CreatedAt = time.Now().Unix()
 	ov.Model = info.OriginModelName
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+		if videoCtx, ok := getDoubaoVideo2OpenAIVideoContext(c); ok {
+			ov.TaskID = ""
+			ov.StandardFields = true
+			if taskReq, reqErr := relaycommon.GetTaskRequest(c); reqErr == nil {
+				ov.Prompt = taskReq.Prompt
+			}
+			ov.Seconds = videoCtx.Seconds
+			ov.Size = videoCtx.Size
+		}
+	}
 	if a.ChannelType == constant.ChannelTypeZQBAPI {
 		if videoCtx, ok := getZQBAPIOpenAIVideoContext(c); ok {
 			ov.TaskID = ""
@@ -420,6 +431,16 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			// The controller writes this response only after the local task row is
 			// durable, preventing successful-but-unqueryable public task IDs.
 			c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoResponse), responseData)
+			return dResp.ID, responseBody, nil
+		}
+	}
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+		if _, ok := getDoubaoVideo2OpenAIVideoContext(c); ok {
+			responseData, marshalErr := common.Marshal(ov)
+			if marshalErr != nil {
+				return "", nil, service.TaskErrorWrapper(marshalErr, "marshal_response_failed", http.StatusInternalServerError)
+			}
+			c.Set(string(constant.ContextKeyOpenAIVideoResponse), responseData)
 			return dResp.ID, responseBody, nil
 		}
 	}
@@ -559,8 +580,8 @@ func (a *TaskAdaptor) convertToZQBAPIOpenAIRequestPayload(req *relaycommon.TaskS
 		if !ok {
 			return nil, fmt.Errorf("unsupported size %q", req.Size)
 		}
-		r.Resolution = resolution
-		r.Ratio = ratio
+		r.Resolution = lo.ToPtr(resolution)
+		r.Ratio = lo.ToPtr(ratio)
 	}
 	r.Content = append(r.Content, ContentItem{Type: "text", Text: req.Prompt})
 	return &r, nil
@@ -650,8 +671,11 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.Model = originTask.Properties.OriginModelName
 
 	isZQBAPI := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
+	isDoubaoVideo2 := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo2))
 	isZQBAPIOpenAI := isZQBAPI && originTask.Properties.OpenAIVideo
-	if !isZQBAPIOpenAI {
+	isDoubaoVideo2OpenAI := isDoubaoVideo2 && originTask.Properties.OpenAIVideo
+	isOpenAICompatible := isZQBAPIOpenAI || isDoubaoVideo2OpenAI
+	if !isOpenAICompatible {
 		openAIVideo.SetMetadata("url", preferredDoubaoVideoURL(dResp))
 		if dResp.Content.KZVideoURL != "" {
 			openAIVideo.SetMetadata("kz_video_url", dResp.Content.KZVideoURL)
@@ -682,12 +706,34 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 			openAIVideo.Size = originTask.Properties.VideoSize
 		}
 		openAIVideo.RemixedFromVideoID = originTask.Properties.RemixedFromVideoID
+	} else if isDoubaoVideo2OpenAI {
+		openAIVideo.TaskID = ""
+		openAIVideo.StandardFields = true
+		openAIVideo.Prompt = originTask.Properties.VideoPrompt
+		if originTask.Status == model.TaskStatusSuccess || originTask.Status == model.TaskStatusFailure || originTask.Status == model.TaskStatusPendingSettlement {
+			openAIVideo.CompletedAt = originTask.FinishTime
+			if openAIVideo.CompletedAt == 0 {
+				openAIVideo.CompletedAt = originTask.UpdatedAt
+			}
+		}
+		if dResp.Duration > 0 {
+			openAIVideo.Seconds = strconv.Itoa(dResp.Duration)
+		} else {
+			openAIVideo.Seconds = originTask.Properties.VideoSeconds
+		}
+		openAIVideo.Size = doubaoVideo2ProviderSizeToOpenAI(dResp.Resolution, dResp.Ratio)
+		if openAIVideo.Size == "" {
+			openAIVideo.Size = originTask.Properties.VideoSize
+		}
 	} else {
 		openAIVideo.CompletedAt = originTask.UpdatedAt
 	}
 
 	isFailedResponse := dResp.Status == "failed" || (originTask.Status == model.TaskStatusFailure && dResp.Error.Message != "")
 	if isZQBAPIOpenAI && (dResp.Status == "expired" || dResp.Status == "cancelled" || dResp.Status == "canceled" || originTask.Status == model.TaskStatusFailure) {
+		isFailedResponse = true
+	}
+	if isDoubaoVideo2OpenAI && originTask.Status == model.TaskStatusFailure {
 		isFailedResponse = true
 	}
 	if isFailedResponse {
@@ -699,6 +745,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 			message = "Video generation failed"
 		}
 		publicMessage, publicCode := zqbapiPublicVideoFailure(message)
+		if isDoubaoVideo2OpenAI {
+			publicMessage, publicCode = doubaoVideo2PublicVideoFailure(message)
+		}
 		openAIVideo.Error = &dto.OpenAIVideoError{
 			Message: publicMessage,
 			Code:    publicCode,
