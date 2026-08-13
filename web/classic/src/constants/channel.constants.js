@@ -180,6 +180,11 @@ export const CHANNEL_OPTIONS = [
     label: 'ZQBAPI',
   },
   {
+    value: 62,
+    color: 'blue',
+    label: 'DoubaoVideo2.0',
+  },
+  {
     value: 55,
     color: 'green',
     label: 'Sora',

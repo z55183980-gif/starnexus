@@ -59,6 +59,7 @@ const (
 	ChannelTypeSub2API        = 59
 	ChannelTypeNewAPI         = 60
 	ChannelTypeZQBAPI         = 61
+	ChannelTypeDoubaoVideo2   = 62
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -126,6 +127,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //59
 	"",                                          //60
 	"https://ai.zqgame.com",                     //61
+	"https://aiopenapi.kuaizi.cn/ai-open-platform-api", //62
 }
 
 var ChannelTypeNames = map[int]string{
@@ -187,6 +189,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeSub2API:        "Sub2API",
 	ChannelTypeNewAPI:         "New API",
 	ChannelTypeZQBAPI:         "ZQBAPI",
+	ChannelTypeDoubaoVideo2:   "DoubaoVideo2.0",
 }
 
 func GetChannelTypeName(channelType int) string {

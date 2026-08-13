@@ -148,6 +148,181 @@ func TestDoubaoVideoBuildRequestDoesNotRunZQBAPIFaceFlow(t *testing.T) {
 	}
 }
 
+func TestDoubaoVideo2BuildRequestMapsEPAndForwardsSupportedFields(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model:  "doubao-seedance-2-0-260128",
+		Prompt: "a calm lake at sunrise",
+		Metadata: map[string]interface{}{
+			"resolution":        "720p",
+			"ratio":             "16:9",
+			"duration":          5,
+			"generate_audio":    false,
+			"watermark":         false,
+			"safety_identifier": "user-57",
+			"bitrate_mode":      "standard",
+			"output_format":     "mp4",
+			"moderation_options": map[string]interface{}{
+				"ips": []interface{}{"kz-ip-1"},
+			},
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0-260128",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeDoubaoVideo2,
+			UpstreamModelName: "kzep_pro",
+			IsModelMapped:     true,
+		},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.validateDoubaoVideo2Request(c, info); taskErr != nil {
+		t.Fatalf("validation failed: %+v", taskErr)
+	}
+	body, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload requestPayload
+	if err := common.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Model != "kzep_pro" {
+		t.Fatalf("mapped model = %q", payload.Model)
+	}
+	if payload.GenerateAudio == nil || bool(*payload.GenerateAudio) || payload.Watermark == nil || bool(*payload.Watermark) {
+		t.Fatalf("explicit false values were not preserved: generate_audio=%v watermark=%v", payload.GenerateAudio, payload.Watermark)
+	}
+	if payload.SafetyIdentifier == nil || *payload.SafetyIdentifier != "user-57" || payload.BitrateMode == nil || *payload.BitrateMode != "standard" || payload.OutputFormat == nil || *payload.OutputFormat != "mp4" {
+		t.Fatalf("supported fields missing from payload: %+v", payload)
+	}
+	if payload.ModerationOptions == nil || len(payload.ModerationOptions.IPs) != 1 || payload.ModerationOptions.IPs[0] != "kz-ip-1" {
+		t.Fatalf("moderation options missing from payload: %+v", payload.ModerationOptions)
+	}
+}
+
+func TestDoubaoVideo2ValidatesOfficialModelBeforeEPMapping(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    string
+		metadata map[string]interface{}
+		code     string
+	}{
+		{
+			name:  "seedance 2.5 rejects 1080p",
+			model: "doubao-seedance-2-5-260628",
+			metadata: map[string]interface{}{
+				"resolution": "1080p",
+			},
+			code: "unsupported_resolution",
+		},
+		{
+			name:  "seedance 2.5 first frame requires adaptive ratio",
+			model: "doubao-seedance-2-5-260628",
+			metadata: map[string]interface{}{
+				"ratio": "16:9",
+				"content": []interface{}{
+					map[string]interface{}{
+						"type":      "image_url",
+						"image_url": map[string]interface{}{"url": "https://example.com/first.png"},
+						"role":      "first_frame",
+					},
+				},
+			},
+			code: "unsupported_ratio",
+		},
+		{
+			name:  "pro rejects duration above 15",
+			model: "doubao-seedance-2-0-260128",
+			metadata: map[string]interface{}{
+				"duration": 16,
+			},
+			code: "unsupported_duration",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Set("task_request", relaycommon.TaskSubmitReq{Model: test.model, Prompt: "test", Metadata: test.metadata})
+			info := &relaycommon.RelayInfo{
+				OriginModelName: test.model,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelType:       constant.ChannelTypeDoubaoVideo2,
+					UpstreamModelName: "kzep_mapped",
+					IsModelMapped:     true,
+				},
+			}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			taskErr := adaptor.validateDoubaoVideo2Request(c, info)
+			if taskErr == nil || taskErr.Code != test.code {
+				t.Fatalf("validation error = %+v, want code %q", taskErr, test.code)
+			}
+		})
+	}
+}
+
+func TestDoubaoVideo2UsesPersistentResultAndTerminalStatuses(t *testing.T) {
+	adaptor := &TaskAdaptor{ChannelType: constant.ChannelTypeDoubaoVideo2}
+	responseData := []byte(`{
+		"status":"succeeded",
+		"content":{
+			"video_url":"https://example.com/temporary.mp4",
+			"kz_video_url":"https://example.com/persistent.mp4",
+			"last_frame_url":"https://example.com/last.png"
+		}
+	}`)
+	result, err := adaptor.ParseTaskResult(responseData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Url != "https://example.com/persistent.mp4" {
+		t.Fatalf("result URL = %q", result.Url)
+	}
+	converted, err := adaptor.ConvertToOpenAIVideo(&model.Task{
+		TaskID:   "task_video2",
+		Platform: constant.TaskPlatform("62"),
+		Status:   model.TaskStatusSuccess,
+		Data:     responseData,
+		Properties: model.Properties{
+			OriginModelName: "doubao-seedance-2-0-260128",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(converted, []byte(`"url":"https://example.com/persistent.mp4"`)) || !bytes.Contains(converted, []byte(`"kz_video_url":"https://example.com/persistent.mp4"`)) || !bytes.Contains(converted, []byte(`"last_frame_url":"https://example.com/last.png"`)) {
+		t.Fatalf("persistent result metadata missing: %s", converted)
+	}
+
+	for _, status := range []string{"expired", "cancelled", "canceled"} {
+		terminal, err := adaptor.ParseTaskResult([]byte(`{"status":"` + status + `"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if terminal.Status != string(model.TaskStatusFailure) || terminal.Progress != "100%" || !strings.Contains(terminal.Reason, status) {
+			t.Fatalf("terminal mapping for %s = %+v", status, terminal)
+		}
+	}
+}
+
+func TestDoubaoVideo2ModelMetadata(t *testing.T) {
+	adaptor := &TaskAdaptor{ChannelType: constant.ChannelTypeDoubaoVideo2}
+	models := adaptor.GetModelList()
+	if len(models) != 4 || models[2] != "doubao-seedance-2-0-mini-260615" || models[3] != "doubao-seedance-2-5-260628" {
+		t.Fatalf("DoubaoVideo2.0 models = %#v", models)
+	}
+	if adaptor.GetChannelName() != "doubao-video-2.0" {
+		t.Fatalf("channel name = %q", adaptor.GetChannelName())
+	}
+}
+
 func TestZQBAPIOpenAIVideoMapsInputReferenceAfterMetadata(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{

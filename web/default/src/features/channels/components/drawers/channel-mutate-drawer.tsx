@@ -798,6 +798,29 @@ export function ChannelMutateDrawer({
       }
     }
 
+    // Type 62 (DoubaoVideo2.0) - Kuaizi compatible Seedance endpoint.
+    if (currentType === 62) {
+      const currentBaseUrlValue = form.getValues('base_url')
+      if (!currentBaseUrlValue || currentBaseUrlValue === '') {
+        form.setValue(
+          'base_url',
+          'https://aiopenapi.kuaizi.cn/ai-open-platform-api'
+        )
+      }
+      const currentModelsValue = form.getValues('models')
+      if (!currentModelsValue || currentModelsValue === '') {
+        form.setValue(
+          'models',
+          [
+            'doubao-seedance-2-0-260128',
+            'doubao-seedance-2-0-fast-260128',
+            'doubao-seedance-2-0-mini-260615',
+            'doubao-seedance-2-5-260628',
+          ].join(',')
+        )
+      }
+    }
+
     // Type 18 (Xunfei) - set default other (version)
     if (currentType === 18) {
       const currentOther = form.getValues('other')

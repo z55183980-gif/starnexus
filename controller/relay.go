@@ -772,7 +772,7 @@ func RelayTask(c *gin.Context) {
 		// Native DoubaoVideo Seedance tasks expose actual video tokens only when
 		// the asynchronous task completes. Keep their estimated reservation
 		// silent as well, then write one final log from the native usage payload.
-		if (relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo || relayInfo.ChannelType == constant.ChannelTypeZQBAPI) &&
+		if (relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo || relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo2 || relayInfo.ChannelType == constant.ChannelTypeZQBAPI) &&
 			isSeedanceVideoModel && !relayInfo.PriceData.UsePrice && relayInfo.PriceData.ModelRatio > 0 {
 			silentVideoPreAuth = true
 		}

@@ -11,6 +11,8 @@ var ModelList = []string{
 	"doubao-seedance-1-5-pro-251215",
 	"doubao-seedance-2-0-260128",
 	"doubao-seedance-2-0-fast-260128",
+	"doubao-seedance-2-0-mini-260615",
+	"doubao-seedance-2-5-260628",
 	// Dreamina-branded aliases used by channel model lists.
 	"dreamina-seedance-2-0-260128",
 	"dreamina-seedance-2-0-ep",
@@ -20,6 +22,13 @@ var ModelList = []string{
 }
 
 var ChannelName = "doubao-video"
+
+var DoubaoVideo2ModelList = []string{
+	"doubao-seedance-2-0-260128",
+	"doubao-seedance-2-0-fast-260128",
+	"doubao-seedance-2-0-mini-260615",
+	"doubao-seedance-2-5-260628",
+}
 
 // videoPriceKey 价格表的键：输出分辨率档（is1080p/is4k 均为 false 即 480p/720p 基准档）、输入是否含视频。
 type videoPriceKey struct {

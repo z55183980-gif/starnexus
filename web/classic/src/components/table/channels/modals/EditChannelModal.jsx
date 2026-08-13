@@ -681,6 +681,18 @@ const EditChannelModal = (props) => {
             base_url: 'https://ai.zqgame.com',
           }));
           break;
+        case 62:
+          localModels = [
+            'doubao-seedance-2-0-260128',
+            'doubao-seedance-2-0-fast-260128',
+            'doubao-seedance-2-0-mini-260615',
+            'doubao-seedance-2-5-260628',
+          ];
+          setInputs((prevInputs) => ({
+            ...prevInputs,
+            base_url: 'https://aiopenapi.kuaizi.cn/ai-open-platform-api',
+          }));
+          break;
         default:
           localModels = getChannelModels(value);
           break;

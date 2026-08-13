@@ -44,6 +44,10 @@ type MediaURL struct {
 	URL string `json:"url,omitempty"`
 }
 
+type ModerationOptions struct {
+	IPs []string `json:"ips,omitempty"`
+}
+
 type requestPayload struct {
 	Model                 string         `json:"model"`
 	Content               []ContentItem  `json:"content,omitempty"`
@@ -56,13 +60,17 @@ type requestPayload struct {
 	Tools                 []struct {
 		Type string `json:"type,omitempty"`
 	} `json:"tools,omitempty"`
-	Resolution  string         `json:"resolution,omitempty"`
-	Ratio       string         `json:"ratio,omitempty"`
-	Duration    *dto.IntValue  `json:"duration,omitempty"`
-	Frames      *dto.IntValue  `json:"frames,omitempty"`
-	Seed        *dto.IntValue  `json:"seed,omitempty"`
-	CameraFixed *dto.BoolValue `json:"camera_fixed,omitempty"`
-	Watermark   *dto.BoolValue `json:"watermark,omitempty"`
+	Resolution        string             `json:"resolution,omitempty"`
+	Ratio             string             `json:"ratio,omitempty"`
+	Duration          *dto.IntValue      `json:"duration,omitempty"`
+	Frames            *dto.IntValue      `json:"frames,omitempty"`
+	Seed              *dto.IntValue      `json:"seed,omitempty"`
+	CameraFixed       *dto.BoolValue     `json:"camera_fixed,omitempty"`
+	Watermark         *dto.BoolValue     `json:"watermark,omitempty"`
+	ModerationOptions *ModerationOptions `json:"moderation_options,omitempty"`
+	SafetyIdentifier  *string            `json:"safety_identifier,omitempty"`
+	BitrateMode       *string            `json:"bitrate_mode,omitempty"`
+	OutputFormat      *string            `json:"output_format,omitempty"`
 }
 
 type responsePayload struct {
@@ -74,7 +82,9 @@ type responseTask struct {
 	Model   string `json:"model"`
 	Status  string `json:"status"`
 	Content struct {
-		VideoURL string `json:"video_url"`
+		VideoURL     string `json:"video_url"`
+		KZVideoURL   string `json:"kz_video_url"`
+		LastFrameURL string `json:"last_frame_url"`
 	} `json:"content"`
 	Seed            int    `json:"seed"`
 	Resolution      string `json:"resolution"`
@@ -123,7 +133,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return validateZQBAPIOpenAIVideoRequest(c, info)
 	}
 	// Accept only POST /v1/video/generations as "generate" action.
-	return relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate)
+	if taskErr = relaycommon.ValidateBasicTaskRequest(c, info, constant.TaskActionGenerate); taskErr != nil {
+		return taskErr
+	}
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+		return a.validateDoubaoVideo2Request(c, info)
+	}
+	return nil
 }
 
 // BuildRequestURL constructs the upstream URL.
@@ -460,10 +476,16 @@ func (a *TaskAdaptor) DeleteOpenAIVideo(ctx context.Context, baseURL, key, upstr
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+		return DoubaoVideo2ModelList
+	}
 	return ModelList
 }
 
 func (a *TaskAdaptor) GetChannelName() string {
+	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
+		return "doubao-video-2.0"
+	}
 	return ChannelName
 }
 
@@ -583,7 +605,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	case "succeeded":
 		taskResult.Status = model.TaskStatusSuccess
 		taskResult.Progress = "100%"
-		taskResult.Url = resTask.Content.VideoURL
+		taskResult.Url = preferredDoubaoVideoURL(resTask)
 		// 解析 usage 信息用于按倍率计费
 		taskResult.CompletionTokens = resTask.Usage.CompletionTokens
 		taskResult.TotalTokens = resTask.Usage.TotalTokens
@@ -593,7 +615,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Progress = "100%"
 		taskResult.Reason = resTask.Error.Message
 	case "expired", "cancelled", "canceled":
-		if a.ChannelType == constant.ChannelTypeZQBAPI {
+		if a.ChannelType == constant.ChannelTypeZQBAPI || a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
 			taskResult.Status = model.TaskStatusFailure
 			taskResult.Progress = "100%"
 			taskResult.Reason = resTask.Error.Message
@@ -630,7 +652,13 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	isZQBAPI := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
 	isZQBAPIOpenAI := isZQBAPI && originTask.Properties.OpenAIVideo
 	if !isZQBAPIOpenAI {
-		openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
+		openAIVideo.SetMetadata("url", preferredDoubaoVideoURL(dResp))
+		if dResp.Content.KZVideoURL != "" {
+			openAIVideo.SetMetadata("kz_video_url", dResp.Content.KZVideoURL)
+		}
+		if dResp.Content.LastFrameURL != "" {
+			openAIVideo.SetMetadata("last_frame_url", dResp.Content.LastFrameURL)
+		}
 	}
 	if isZQBAPI {
 		if isZQBAPIOpenAI {
