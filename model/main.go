@@ -229,7 +229,7 @@ func InitLogDB() (err error) {
 			return nil
 		}
 		common.SysLog("log database migration started")
-		if err := LOG_DB.AutoMigrate(&ErrorAlert{}); err != nil {
+		if err := LOG_DB.AutoMigrate(&BillingLogReceipt{}, &ErrorAlert{}); err != nil {
 			return err
 		}
 		return migrateErrorAlertReadState()

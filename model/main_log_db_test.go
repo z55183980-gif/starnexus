@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestInitLogDBMigratesErrorAlertsWhenUsingMainDB(t *testing.T) {
+func TestInitLogDBMigratesLogMetadataWhenUsingMainDB(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 
@@ -28,6 +28,7 @@ func TestInitLogDBMigratesErrorAlertsWhenUsingMainDB(t *testing.T) {
 
 	require.NoError(t, InitLogDB())
 	require.Same(t, DB, LOG_DB)
+	require.True(t, LOG_DB.Migrator().HasTable(&BillingLogReceipt{}))
 	require.True(t, LOG_DB.Migrator().HasTable(&ErrorAlert{}))
 }
 
