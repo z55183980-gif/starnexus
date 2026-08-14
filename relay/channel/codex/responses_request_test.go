@@ -946,12 +946,24 @@ func TestApplyCodexReasoningContentRetry(t *testing.T) {
 		{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}],"encrypted_content":"cipher"}
 	]`)
 
-	repaired, err := applyCodexReasoningContentRetry(input, 1, 1)
+	repaired, removedWithoutEncryptedContent, err := applyCodexReasoningContentRetry(input, 1, 1)
 	require.NoError(t, err)
+	require.False(t, removedWithoutEncryptedContent)
 	require.False(t, gjson.GetBytes(repaired, "1.content").Exists())
 	require.Equal(t, "cipher", gjson.GetBytes(repaired, "1.encrypted_content").String())
 	require.True(t, gjson.GetBytes(repaired, "1.summary").IsArray())
 	require.Equal(t, "keep", gjson.GetBytes(repaired, "0.content").String())
+}
+
+func TestApplyCodexReasoningContentRetryWithoutEncryptedContent(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}],"summary":[{"type":"summary_text","text":"keep"}]}]`)
+
+	repaired, removedWithoutEncryptedContent, err := applyCodexReasoningContentRetry(input, 0, 1)
+	require.NoError(t, err)
+	require.True(t, removedWithoutEncryptedContent)
+	require.False(t, gjson.GetBytes(repaired, "0.content").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(repaired, "0.summary.0.text").String())
 }
 
 func TestApplyCodexReasoningContentRetryFailsClosed(t *testing.T) {
@@ -960,7 +972,6 @@ func TestApplyCodexReasoningContentRetryFailsClosed(t *testing.T) {
 		name  string
 		input string
 	}{
-		{name: "missing encrypted content", input: `[{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}]}]`},
 		{name: "unsupported block", input: `[{"type":"reasoning","content":[{"type":"unknown","text":"private"}],"encrypted_content":"cipher"}]`},
 		{name: "wrong item type", input: `[{"type":"message","content":[{"type":"reasoning_text","text":"private"}],"encrypted_content":"cipher"}]`},
 	}
@@ -968,7 +979,7 @@ func TestApplyCodexReasoningContentRetryFailsClosed(t *testing.T) {
 		testCase := testCase
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := applyCodexReasoningContentRetry([]byte(testCase.input), 0, 1)
+			_, _, err := applyCodexReasoningContentRetry([]byte(testCase.input), 0, 1)
 			require.Error(t, err)
 		})
 	}
