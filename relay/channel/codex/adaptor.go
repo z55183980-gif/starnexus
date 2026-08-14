@@ -116,14 +116,14 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			common.SetContextKey(c, appconstant.ContextKeyCodexReasoningContentRetryArmed, false)
 			index := common.GetContextKeyInt(c, appconstant.ContextKeyCodexReasoningContentRetryIndex)
 			expectedLength := common.GetContextKeyInt(c, appconstant.ContextKeyCodexReasoningContentRetryLength)
-			repairedInput, removedWithoutEncryptedContent, retryErr := applyCodexReasoningContentRetry(request.Input, index, expectedLength)
+			repairedInput, repairResult, retryErr := applyCodexReasoningContentRetry(request.Input, index, expectedLength)
 			if retryErr != nil {
 				return nil, types.NewErrorWithStatusCode(retryErr, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 			}
 			request.Input = repairedInput
 			mergeCodexReasoningContentRepairInfo(c, map[string]interface{}{
-				"reasoning_content_removed":                    1,
-				"reasoning_content_removed_without_encryption": removedWithoutEncryptedContent,
+				"reasoning_content_removed":                    repairResult.RemovedContentArrays,
+				"reasoning_content_removed_without_encryption": repairResult.RemovedWithoutEncryptedContent,
 				"first_removed_index":                          index,
 				"upstream_validation_retry":                    true,
 			})

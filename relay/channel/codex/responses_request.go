@@ -850,59 +850,91 @@ func codexReasoningTextBlockKey(block json.RawMessage, expectedType string) (str
 	return expectedType + "\x00" + codexJSONRawString(obj["text"]), true
 }
 
+type codexReasoningContentRetryResult struct {
+	RemovedContentArrays           int
+	RemovedWithoutEncryptedContent int
+}
+
 // applyCodexReasoningContentRetry removes reasoning_text only after the
-// upstream has explicitly rejected the exact content array. When the client
-// did not preserve encrypted_content there is no lossless replay path, so the
-// caller receives a degradation flag for audit logging.
-func applyCodexReasoningContentRetry(raw json.RawMessage, index, expectedLength int) (json.RawMessage, bool, error) {
+// upstream has explicitly rejected the exact content array. The Codex endpoint
+// rejects every such replay item, so the single retry repairs all compatible
+// reasoning items at once. Unknown or mixed content is left untouched.
+func applyCodexReasoningContentRetry(raw json.RawMessage, index, expectedLength int) (json.RawMessage, codexReasoningContentRetryResult, error) {
+	var result codexReasoningContentRetryResult
 	var items []json.RawMessage
 	if err := common.Unmarshal(bytes.TrimSpace(raw), &items); err != nil {
-		return nil, false, fmt.Errorf("repair rejected Codex reasoning content: %w", err)
+		return nil, result, fmt.Errorf("repair rejected Codex reasoning content: %w", err)
 	}
 	if index < 0 || index >= len(items) {
-		return nil, false, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: index no longer exists", index)
+		return nil, result, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: index no longer exists", index)
 	}
 
-	var obj map[string]json.RawMessage
-	if err := common.Unmarshal(bytes.TrimSpace(items[index]), &obj); err != nil {
-		return nil, false, fmt.Errorf("repair rejected Codex reasoning content at input[%d]: %w", index, err)
+	var rejectedItem map[string]json.RawMessage
+	if err := common.Unmarshal(bytes.TrimSpace(items[index]), &rejectedItem); err != nil {
+		return nil, result, fmt.Errorf("repair rejected Codex reasoning content at input[%d]: %w", index, err)
 	}
-	if codexJSONRawString(obj["type"]) != "reasoning" {
-		return nil, false, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: item is not reasoning", index)
+	if codexJSONRawString(rejectedItem["type"]) != "reasoning" {
+		return nil, result, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: item is not reasoning", index)
 	}
-	var contentBlocks []json.RawMessage
-	content := bytes.TrimSpace(obj["content"])
-	if len(content) == 0 || content[0] != '[' || common.Unmarshal(content, &contentBlocks) != nil {
-		return nil, false, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: content is not an array", index)
+	var rejectedContentBlocks []json.RawMessage
+	content := bytes.TrimSpace(rejectedItem["content"])
+	if len(content) == 0 || content[0] != '[' || common.Unmarshal(content, &rejectedContentBlocks) != nil {
+		return nil, result, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: content is not an array", index)
 	}
-	if len(contentBlocks) != expectedLength {
-		return nil, false, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: expected length %d, got %d", index, expectedLength, len(contentBlocks))
+	if len(rejectedContentBlocks) != expectedLength {
+		return nil, result, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: expected length %d, got %d", index, expectedLength, len(rejectedContentBlocks))
 	}
-	for _, block := range contentBlocks {
+	for _, block := range rejectedContentBlocks {
 		if _, ok := codexReasoningTextBlockKey(block, "reasoning_text"); !ok {
-			return nil, false, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: unsupported content block", index)
+			return nil, result, fmt.Errorf("cannot safely repair rejected Codex reasoning content at input[%d]: unsupported content block", index)
 		}
 	}
-	removedWithoutEncryptedContent := codexJSONRawString(obj["encrypted_content"]) == ""
 
-	delete(obj, "content")
-	if summary, exists := obj["summary"]; !exists || bytes.Equal(bytes.TrimSpace(summary), []byte("null")) {
-		emptySummary, err := common.Marshal([]json.RawMessage{})
-		if err != nil {
-			return nil, false, err
+	for itemIndex, item := range items {
+		var obj map[string]json.RawMessage
+		if common.Unmarshal(bytes.TrimSpace(item), &obj) != nil || codexJSONRawString(obj["type"]) != "reasoning" {
+			continue
 		}
-		obj["summary"] = emptySummary
+		var contentBlocks []json.RawMessage
+		itemContent := bytes.TrimSpace(obj["content"])
+		if len(itemContent) == 0 || itemContent[0] != '[' || common.Unmarshal(itemContent, &contentBlocks) != nil || len(contentBlocks) == 0 {
+			continue
+		}
+		compatible := true
+		for _, block := range contentBlocks {
+			if _, ok := codexReasoningTextBlockKey(block, "reasoning_text"); !ok {
+				compatible = false
+				break
+			}
+		}
+		if !compatible {
+			continue
+		}
+
+		delete(obj, "content")
+		if summary, exists := obj["summary"]; !exists || bytes.Equal(bytes.TrimSpace(summary), []byte("null")) {
+			emptySummary, err := common.Marshal([]json.RawMessage{})
+			if err != nil {
+				return nil, result, err
+			}
+			obj["summary"] = emptySummary
+		}
+		encodedItem, err := common.Marshal(obj)
+		if err != nil {
+			return nil, result, fmt.Errorf("repair rejected Codex reasoning content at input[%d]: %w", itemIndex, err)
+		}
+		items[itemIndex] = encodedItem
+		result.RemovedContentArrays++
+		if codexJSONRawString(obj["encrypted_content"]) == "" {
+			result.RemovedWithoutEncryptedContent++
+		}
 	}
-	encodedItem, err := common.Marshal(obj)
-	if err != nil {
-		return nil, false, fmt.Errorf("repair rejected Codex reasoning content at input[%d]: %w", index, err)
-	}
-	items[index] = encodedItem
+
 	encoded, err := common.Marshal(items)
 	if err != nil {
-		return nil, false, fmt.Errorf("repair rejected Codex reasoning content: %w", err)
+		return nil, result, fmt.Errorf("repair rejected Codex reasoning content: %w", err)
 	}
-	return encoded, removedWithoutEncryptedContent, nil
+	return encoded, result, nil
 }
 
 func codexJSONRawString(value json.RawMessage) string {

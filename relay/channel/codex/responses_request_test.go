@@ -946,9 +946,10 @@ func TestApplyCodexReasoningContentRetry(t *testing.T) {
 		{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}],"encrypted_content":"cipher"}
 	]`)
 
-	repaired, removedWithoutEncryptedContent, err := applyCodexReasoningContentRetry(input, 1, 1)
+	repaired, result, err := applyCodexReasoningContentRetry(input, 1, 1)
 	require.NoError(t, err)
-	require.False(t, removedWithoutEncryptedContent)
+	require.Equal(t, 1, result.RemovedContentArrays)
+	require.Zero(t, result.RemovedWithoutEncryptedContent)
 	require.False(t, gjson.GetBytes(repaired, "1.content").Exists())
 	require.Equal(t, "cipher", gjson.GetBytes(repaired, "1.encrypted_content").String())
 	require.True(t, gjson.GetBytes(repaired, "1.summary").IsArray())
@@ -959,11 +960,31 @@ func TestApplyCodexReasoningContentRetryWithoutEncryptedContent(t *testing.T) {
 	t.Parallel()
 	input := []byte(`[{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}],"summary":[{"type":"summary_text","text":"keep"}]}]`)
 
-	repaired, removedWithoutEncryptedContent, err := applyCodexReasoningContentRetry(input, 0, 1)
+	repaired, result, err := applyCodexReasoningContentRetry(input, 0, 1)
 	require.NoError(t, err)
-	require.True(t, removedWithoutEncryptedContent)
+	require.Equal(t, 1, result.RemovedContentArrays)
+	require.Equal(t, 1, result.RemovedWithoutEncryptedContent)
 	require.False(t, gjson.GetBytes(repaired, "0.content").Exists())
 	require.Equal(t, "keep", gjson.GetBytes(repaired, "0.summary.0.text").String())
+}
+
+func TestApplyCodexReasoningContentRetryRepairsAllCompatibleHistoryItems(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[
+		{"type":"reasoning","content":[{"type":"reasoning_text","text":"first"}],"summary":[]},
+		{"type":"message","role":"user","content":"keep"},
+		{"type":"reasoning","content":[{"type":"reasoning_text","text":"second"}],"encrypted_content":"cipher"},
+		{"type":"reasoning","content":[{"type":"unknown","text":"untouched"}],"encrypted_content":"cipher"}
+	]`)
+
+	repaired, result, err := applyCodexReasoningContentRetry(input, 0, 1)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.RemovedContentArrays)
+	require.Equal(t, 1, result.RemovedWithoutEncryptedContent)
+	require.False(t, gjson.GetBytes(repaired, "0.content").Exists())
+	require.False(t, gjson.GetBytes(repaired, "2.content").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(repaired, "1.content").String())
+	require.Equal(t, "unknown", gjson.GetBytes(repaired, "3.content.0.type").String())
 }
 
 func TestApplyCodexReasoningContentRetryFailsClosed(t *testing.T) {
