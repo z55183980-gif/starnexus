@@ -20,6 +20,8 @@ import (
 type PerformanceStats struct {
 	// 缓存统计
 	CacheStats common.DiskCacheStats `json:"cache_stats"`
+	// WebSocket Responses continuation 回放缓存统计
+	ResponsesWSContinuationCache ResponsesWSContinuationCacheStats `json:"responses_ws_continuation_cache"`
 	// 系统内存统计
 	MemoryStats MemoryStats `json:"memory_stats"`
 	// 磁盘缓存目录信息
@@ -120,7 +122,8 @@ func GetPerformanceStats(c *gin.Context) {
 	diskSpaceInfo = common.GetDiskSpaceInfo()
 
 	stats := PerformanceStats{
-		CacheStats: cacheStats,
+		CacheStats:                   cacheStats,
+		ResponsesWSContinuationCache: defaultResponsesWSContinuationStore.snapshotStats(),
 		MemoryStats: MemoryStats{
 			Alloc:        memStats.Alloc,
 			TotalAlloc:   memStats.TotalAlloc,
@@ -158,6 +161,7 @@ func ClearDiskCache(c *gin.Context) {
 // ResetPerformanceStats 重置性能统计
 func ResetPerformanceStats(c *gin.Context) {
 	common.ResetDiskCacheStats()
+	defaultResponsesWSContinuationStore.resetStats()
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
