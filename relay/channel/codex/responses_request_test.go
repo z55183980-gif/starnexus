@@ -901,3 +901,138 @@ func TestCodexHTTPRejectsOrphanFunctionCallOutput(t *testing.T) {
 	require.ErrorAs(t, err, &apiErr)
 	require.Equal(t, http.StatusConflict, apiErr.StatusCode)
 }
+
+func TestNormalizeCodexReasoningSummaryContent(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[
+		{"type":"message","role":"user","content":"keep"},
+		{"type":"reasoning","summary":[{"type":"summary_text","text":"existing"}],"content":[
+			{"type":"summary_text","text":"existing"},
+			{"type":"summary_text","text":"new"},
+			{"type":"reasoning_text","text":"private"}
+		],"encrypted_content":"cipher"},
+		{"type":"reasoning","content":null}
+	]`)
+
+	normalized, result, err := normalizeCodexReasoningSummaryContent(input)
+	require.NoError(t, err)
+	require.Equal(t, 2, result.MovedSummaryBlocks)
+	require.Equal(t, 1, result.RemovedNullContent)
+	require.Equal(t, int64(2), gjson.GetBytes(normalized, "1.summary.#").Int())
+	require.Equal(t, "existing", gjson.GetBytes(normalized, "1.summary.0.text").String())
+	require.Equal(t, "new", gjson.GetBytes(normalized, "1.summary.1.text").String())
+	require.Equal(t, int64(1), gjson.GetBytes(normalized, "1.content.#").Int())
+	require.Equal(t, "reasoning_text", gjson.GetBytes(normalized, "1.content.0.type").String())
+	require.Equal(t, "cipher", gjson.GetBytes(normalized, "1.encrypted_content").String())
+	require.False(t, gjson.GetBytes(normalized, "2.content").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(normalized, "0.content").String())
+}
+
+func TestNormalizeCodexReasoningSummaryContentDeletesContentWhenFullyMigrated(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[{"type":"reasoning","content":[{"type":"summary_text","text":"thinking"}],"encrypted_content":"cipher"}]`)
+
+	normalized, result, err := normalizeCodexReasoningSummaryContent(input)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.MovedSummaryBlocks)
+	require.False(t, gjson.GetBytes(normalized, "0.content").Exists())
+	require.Equal(t, "thinking", gjson.GetBytes(normalized, "0.summary.0.text").String())
+}
+
+func TestApplyCodexReasoningContentRetry(t *testing.T) {
+	t.Parallel()
+	input := []byte(`[
+		{"type":"message","role":"user","content":"keep"},
+		{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}],"encrypted_content":"cipher"}
+	]`)
+
+	repaired, err := applyCodexReasoningContentRetry(input, 1, 1)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(repaired, "1.content").Exists())
+	require.Equal(t, "cipher", gjson.GetBytes(repaired, "1.encrypted_content").String())
+	require.True(t, gjson.GetBytes(repaired, "1.summary").IsArray())
+	require.Equal(t, "keep", gjson.GetBytes(repaired, "0.content").String())
+}
+
+func TestApplyCodexReasoningContentRetryFailsClosed(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name  string
+		input string
+	}{
+		{name: "missing encrypted content", input: `[{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}]}]`},
+		{name: "unsupported block", input: `[{"type":"reasoning","content":[{"type":"unknown","text":"private"}],"encrypted_content":"cipher"}]`},
+		{name: "wrong item type", input: `[{"type":"message","content":[{"type":"reasoning_text","text":"private"}],"encrypted_content":"cipher"}]`},
+	}
+	for _, testCase := range testCases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := applyCodexReasoningContentRetry([]byte(testCase.input), 0, 1)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestCodexOrdinaryHTTPNormalizesMisplacedReasoningSummary(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request := dto.OpenAIResponsesRequest{
+		Model: "gpt-5.6-sol",
+		Input: []byte(`[{"type":"reasoning","content":[{"type":"summary_text","text":"thinking"}],"encrypted_content":"cipher"},{"role":"user","content":"continue"}]`),
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, request)
+	require.NoError(t, err)
+	prepared := converted.(dto.OpenAIResponsesRequest)
+	require.False(t, gjson.GetBytes(prepared.Input, "0.content").Exists())
+	require.Equal(t, "thinking", gjson.GetBytes(prepared.Input, "0.summary.0.text").String())
+	require.Equal(t, "cipher", gjson.GetBytes(prepared.Input, "0.encrypted_content").String())
+}
+
+func TestCodexReasoningContentRetryAppliesAfterOutboundNormalization(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyCodexReasoningContentRetryArmed, true)
+	common.SetContextKey(ctx, constant.ContextKeyCodexReasoningContentRetryIndex, 1)
+	common.SetContextKey(ctx, constant.ContextKeyCodexReasoningContentRetryLength, 1)
+	request := dto.OpenAIResponsesRequest{
+		Model: "gpt-5.6-sol",
+		Input: []byte(`[{"role":"user","content":"continue"},{"type":"reasoning","content":[{"type":"reasoning_text","text":"private"}],"encrypted_content":"cipher"}]`),
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, request)
+	require.NoError(t, err)
+	prepared := converted.(dto.OpenAIResponsesRequest)
+	require.False(t, gjson.GetBytes(prepared.Input, "1.content").Exists())
+	require.Equal(t, "cipher", gjson.GetBytes(prepared.Input, "1.encrypted_content").String())
+	require.True(t, gjson.GetBytes(prepared.Input, "1.summary").IsArray())
+}
+
+func TestCodexWebSocketIngressPreservesReasoningContent(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyResponsesWebSocketIngress, true)
+	request := dto.OpenAIResponsesRequest{
+		Model: "gpt-5.6-sol",
+		Input: []byte(`[{"type":"reasoning","content":[{"type":"summary_text","text":"keep websocket unchanged"}],"encrypted_content":"cipher"}]`),
+	}
+
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, request)
+	require.NoError(t, err)
+	prepared := converted.(dto.OpenAIResponsesRequest)
+	require.Equal(t, "summary_text", gjson.GetBytes(prepared.Input, "0.content.0.type").String())
+	require.False(t, gjson.GetBytes(prepared.Input, "0.summary").Exists())
+}

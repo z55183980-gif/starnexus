@@ -415,16 +415,26 @@ func (a *ResponsesEventAccumulator) rebuiltOutputs() []dto.ResponsesOutput {
 	}
 
 	if a.reasoningSummary.Len() > 0 && !responsesOutputHasReasoningText(outputs) {
-		outputs = append([]dto.ResponsesOutput{{
-			Type:   "reasoning",
-			ID:     "rs_sse_rebuild",
-			Status: "completed",
-			Content: []dto.ResponsesOutputContent{{
-				Type:        "summary_text",
-				Text:        a.reasoningSummary.String(),
-				Annotations: []any{},
-			}},
-		}}, outputs...)
+		summary := []dto.ResponsesReasoningSummaryPart{{
+			Type: "summary_text",
+			Text: a.reasoningSummary.String(),
+		}}
+		attached := false
+		for index := range outputs {
+			if outputs[index].Type == "reasoning" {
+				outputs[index].Summary = summary
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			outputs = append([]dto.ResponsesOutput{{
+				Type:    "reasoning",
+				ID:      "rs_sse_rebuild",
+				Status:  "completed",
+				Summary: summary,
+			}}, outputs...)
+		}
 	}
 
 	return outputs
@@ -460,6 +470,11 @@ func responsesOutputHasClientContent(outputs []dto.ResponsesOutput) bool {
 				return true
 			}
 		case "reasoning":
+			for _, summary := range out.Summary {
+				if strings.TrimSpace(summary.Text) != "" {
+					return true
+				}
+			}
 			for _, content := range out.Content {
 				if strings.TrimSpace(content.Text) != "" {
 					return true
@@ -477,6 +492,11 @@ func responsesOutputHasReasoningText(outputs []dto.ResponsesOutput) bool {
 		if out.Type != "reasoning" {
 			continue
 		}
+		for _, summary := range out.Summary {
+			if strings.TrimSpace(summary.Text) != "" {
+				return true
+			}
+		}
 		for _, content := range out.Content {
 			if strings.TrimSpace(content.Text) != "" {
 				return true
@@ -493,6 +513,9 @@ func cloneResponsesOutput(item *dto.ResponsesOutput) *dto.ResponsesOutput {
 	cloned := *item
 	if item.Content != nil {
 		cloned.Content = append([]dto.ResponsesOutputContent(nil), item.Content...)
+	}
+	if item.Summary != nil {
+		cloned.Summary = append([]dto.ResponsesReasoningSummaryPart(nil), item.Summary...)
 	}
 	if item.Arguments != nil {
 		cloned.Arguments = append(json.RawMessage(nil), item.Arguments...)
@@ -532,9 +555,17 @@ func mergeResponsesOutput(existing, incoming *dto.ResponsesOutput) *dto.Response
 	if incoming.Size != "" {
 		merged.Size = incoming.Size
 	}
+	if incoming.EncryptedContent != "" {
+		merged.EncryptedContent = incoming.EncryptedContent
+	}
 	if len(incoming.Content) > 0 {
 		if responsesOutputContentHasText(incoming.Content) || !responsesOutputContentHasText(merged.Content) {
 			merged.Content = append([]dto.ResponsesOutputContent(nil), incoming.Content...)
+		}
+	}
+	if len(incoming.Summary) > 0 {
+		if responsesReasoningSummaryHasText(incoming.Summary) || !responsesReasoningSummaryHasText(merged.Summary) {
+			merged.Summary = append([]dto.ResponsesReasoningSummaryPart(nil), incoming.Summary...)
 		}
 	}
 	if args := incoming.ArgumentsString(); args != "" {
@@ -545,6 +576,15 @@ func mergeResponsesOutput(existing, incoming *dto.ResponsesOutput) *dto.Response
 
 func responsesOutputContentHasText(content []dto.ResponsesOutputContent) bool {
 	for _, item := range content {
+		if strings.TrimSpace(item.Text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func responsesReasoningSummaryHasText(summary []dto.ResponsesReasoningSummaryPart) bool {
+	for _, item := range summary {
 		if strings.TrimSpace(item.Text) != "" {
 			return true
 		}

@@ -99,6 +99,35 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
+	if !common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
+		normalizedInput, normalizationResult, err := normalizeCodexReasoningSummaryContent(request.Input)
+		if err != nil {
+			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+		request.Input = normalizedInput
+		if normalizationResult.Modified() {
+			mergeCodexReasoningContentRepairInfo(c, map[string]interface{}{
+				"reasoning_summary_blocks_migrated": normalizationResult.MovedSummaryBlocks,
+				"reasoning_null_content_removed":    normalizationResult.RemovedNullContent,
+				"upstream_validation_retry":         false,
+			})
+		}
+		if common.GetContextKeyBool(c, appconstant.ContextKeyCodexReasoningContentRetryArmed) {
+			common.SetContextKey(c, appconstant.ContextKeyCodexReasoningContentRetryArmed, false)
+			index := common.GetContextKeyInt(c, appconstant.ContextKeyCodexReasoningContentRetryIndex)
+			expectedLength := common.GetContextKeyInt(c, appconstant.ContextKeyCodexReasoningContentRetryLength)
+			repairedInput, retryErr := applyCodexReasoningContentRetry(request.Input, index, expectedLength)
+			if retryErr != nil {
+				return nil, types.NewErrorWithStatusCode(retryErr, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+			}
+			request.Input = repairedInput
+			mergeCodexReasoningContentRepairInfo(c, map[string]interface{}{
+				"reasoning_content_removed": 1,
+				"first_removed_index":       index,
+				"upstream_validation_retry": true,
+			})
+		}
+	}
 	if err := applyCodexChannelSystemPrompt(info, &request, hadClientInstructions); err != nil {
 		return nil, err
 	}
@@ -121,6 +150,24 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	request.MaxOutputTokens = nil
 	request.Temperature = nil
 	return request, nil
+}
+
+func mergeCodexReasoningContentRepairInfo(c *gin.Context, values map[string]interface{}) {
+	if c == nil || len(values) == 0 {
+		return
+	}
+	repairInfo := map[string]interface{}{}
+	if existing, exists := c.Get("codex_input_repair_admin_info"); exists {
+		if existingMap, ok := existing.(map[string]interface{}); ok {
+			for key, value := range existingMap {
+				repairInfo[key] = value
+			}
+		}
+	}
+	for key, value := range values {
+		repairInfo[key] = value
+	}
+	c.Set("codex_input_repair_admin_info", repairInfo)
 }
 
 func applyCodexInputRepair(c *gin.Context, input json.RawMessage) (json.RawMessage, error) {

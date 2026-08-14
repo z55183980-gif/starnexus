@@ -154,3 +154,21 @@ func TestIsResponsesFirstFrameEvent(t *testing.T) {
 		})
 	}
 }
+
+func TestResponsesEventAccumulatorRebuildsReasoningSummaryWithoutContent(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	accumulator := NewResponsesEventAccumulator()
+
+	_, err := accumulator.Consume(ctx, &relaycommon.RelayInfo{}, []byte(`{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","encrypted_content":"cipher"}}`))
+	require.NoError(t, err)
+	_, err = accumulator.Consume(ctx, &relaycommon.RelayInfo{}, []byte(`{"type":"response.reasoning_summary_text.delta","output_index":0,"item_id":"rs_1","delta":"thinking"}`))
+	require.NoError(t, err)
+
+	response := accumulator.FinalizeResponse(&dto.OpenAIResponsesResponse{})
+	require.Len(t, response.Output, 1)
+	require.Equal(t, "reasoning", response.Output[0].Type)
+	require.Equal(t, "cipher", response.Output[0].EncryptedContent)
+	require.Empty(t, response.Output[0].Content)
+	require.Equal(t, "thinking", response.Output[0].Summary[0].Text)
+}

@@ -60,6 +60,9 @@ const (
 	ContextKeyUpstreamInterceptWarmup              ContextKey = "upstream_intercept_warmup"
 	ContextKeyResponsesWebSocketIngress            ContextKey = "responses_websocket_ingress"
 	ContextKeyResponsesWebSocketPreferredChannelId ContextKey = "responses_websocket_preferred_channel_id"
+	ContextKeyCodexReasoningContentRetryArmed      ContextKey = "codex_reasoning_content_retry_armed"
+	ContextKeyCodexReasoningContentRetryIndex      ContextKey = "codex_reasoning_content_retry_index"
+	ContextKeyCodexReasoningContentRetryLength     ContextKey = "codex_reasoning_content_retry_length"
 
 	ContextKeyAutoGroup           ContextKey = "auto_group"
 	ContextKeyAutoGroupIndex      ContextKey = "auto_group_index"

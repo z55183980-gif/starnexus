@@ -20,7 +20,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const codexInvalidMessageIDRetryContextKey = "codex_invalid_message_id_retry_applied"
+const codexResponsesValidationRetryContextKey = "codex_responses_validation_retry_applied"
 
 var codexInvalidMessageIDErrorPattern = regexp.MustCompile(`^Invalid 'input\[(\d+)\]\.id': '([^']+)'\. Expected an ID that begins with 'msg'\.$`)
 
@@ -38,7 +38,7 @@ func TryRepairCodexInvalidMessageIDForRetry(c *gin.Context, info *relaycommon.Re
 		common.GetContextKeyInt(c, appconstant.ContextKeyChannelType) != appconstant.ChannelTypeCodex ||
 		c.Request == nil || c.Request.URL == nil || c.Request.URL.Path != "/v1/responses" ||
 		common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) ||
-		c.GetBool(codexInvalidMessageIDRetryContextKey) {
+		c.GetBool(codexResponsesValidationRetryContextKey) {
 		return false
 	}
 
@@ -98,7 +98,7 @@ func TryRepairCodexInvalidMessageIDForRetry(c *gin.Context, info *relaycommon.Re
 		return false
 	}
 	request.Input = repairedInput
-	c.Set(codexInvalidMessageIDRetryContextKey, true)
+	c.Set(codexResponsesValidationRetryContextKey, true)
 
 	repairInfo := map[string]interface{}{}
 	if existing, exists := c.Get("codex_input_repair_admin_info"); exists {

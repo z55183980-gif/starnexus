@@ -312,6 +312,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				relayInfo.LastError = nil
 				continue
 			}
+			if relay.TryArmCodexReasoningContentRetry(c, relayInfo, newAPIError) {
+				logger.LogWarn(c, "retrying Codex Responses once after an upstream-rejected reasoning content array")
+				recordUpstreamRequestEvent(c, "request_retry", "retry", "removed upstream-rejected Codex reasoning content")
+				service.ClearResponsesHTTPContinuationPersistTarget(c)
+				relayInfo.LastError = nil
+				continue
+			}
 			accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 			proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
 			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
