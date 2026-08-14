@@ -108,6 +108,26 @@ func GetBusinessMonitorConcurrency(c *gin.Context) {
 	})
 }
 
+func GetBusinessMonitorCacheHitRate(c *gin.Context) {
+	endTimestamp := time.Now().Unix()
+	startTimestamp := endTimestamp - int64((24*time.Hour)/time.Second)
+	stats, err := model.GetBusinessMonitorCacheStats(startTimestamp, endTimestamp)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "",
+		"data": gin.H{
+			"input_tokens":          stats.InputTokens,
+			"cache_read_tokens":     stats.CacheReadTokens,
+			"cache_creation_tokens": stats.CacheCreationTokens,
+			"window_seconds":        int64((24 * time.Hour) / time.Second),
+		},
+	})
+}
+
 func GetBusinessMonitorAlerts(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	alerts, err := model.ListErrorAlerts(c.Query("status"), limit)

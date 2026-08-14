@@ -24,6 +24,7 @@ import {
   CircleDollarSign,
   Clock3,
   CheckCheck,
+  Database,
   Gauge,
   KeyRound,
   Sparkles,
@@ -89,6 +90,7 @@ import { getUsers } from '@/features/users/api'
 import {
   acknowledgeAllBusinessMonitorAlerts,
   acknowledgeBusinessMonitorAlert,
+  getBusinessMonitorCacheHitRate,
   getBusinessMonitorConcurrency,
   getBusinessMonitorAlerts,
   type ErrorAlert,
@@ -379,6 +381,16 @@ function getPercentileLatency(logs: UsageLog[], percentile: number) {
   return values[
     Math.min(values.length - 1, Math.ceil(values.length * percentile) - 1)
   ]
+}
+
+function formatCacheHitRate(
+  inputTokens: number,
+  cacheReadTokens: number,
+  cacheCreationTokens: number
+) {
+  const totalPromptTokens = inputTokens + cacheReadTokens + cacheCreationTokens
+  if (totalPromptTokens <= 0) return '--'
+  return `${((cacheReadTokens / totalPromptTokens) * 100).toFixed(2)}%`
 }
 
 type MetricProps = {
@@ -698,6 +710,16 @@ export function BusinessMonitor() {
     staleTime: 1000,
   })
 
+  const { data: cacheHitStats } = useQuery({
+    queryKey: ['business-monitor-cache-hit-rate'],
+    queryFn: async () => {
+      const response = await getBusinessMonitorCacheHitRate()
+      return response.success ? response.data : undefined
+    },
+    refetchInterval: 60000,
+    staleTime: 30000,
+  })
+
   const { data: logsData } = useQuery({
     queryKey: ['business-monitor-logs'],
     queryFn: async () => {
@@ -864,7 +886,15 @@ export function BusinessMonitor() {
         <div className='flex flex-col gap-3 sm:gap-4'>
           <Card size='sm' className='gap-0 py-0'>
             <CardContent className='p-0'>
-              <div className='bg-border grid grid-cols-1 gap-px sm:grid-cols-2 xl:grid-cols-5'>
+              <div className='bg-border grid grid-cols-1 gap-px sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,0.65fr)_minmax(0,0.8fr)_minmax(0,0.7fr)_minmax(0,1.15fr)_minmax(0,1.05fr)_minmax(0,1.25fr)]'>
+                <Metric
+                  icon={CircleDollarSign}
+                  title={t("Today's Consumption")}
+                >
+                  <div className='mt-2.5 truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
+                    {formatLogQuota(statsData?.stats?.quota ?? 0)}
+                  </div>
+                </Metric>
                 <Metric icon={Gauge} title={t('Concurrency')}>
                   <DualMetricValues
                     leftValue={concurrency == null ? '--' : String(concurrency)}
@@ -872,6 +902,18 @@ export function BusinessMonitor() {
                     rightValue={String(statsData?.stats?.rpm ?? 0)}
                     rightLabel={t('RPM')}
                   />
+                </Metric>
+                <Metric icon={Database} title={t('Cache hit ratio')}>
+                  <div className='mt-2.5 truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
+                    {formatCacheHitRate(
+                      cacheHitStats?.input_tokens ?? 0,
+                      cacheHitStats?.cache_read_tokens ?? 0,
+                      cacheHitStats?.cache_creation_tokens ?? 0
+                    )}
+                  </div>
+                  <div className='text-muted-foreground mt-0.5 truncate text-xs'>
+                    {t('Last 24 hours')}
+                  </div>
                 </Metric>
                 <Metric icon={Timer} title={t('Token Throughput')}>
                   <DualMetricValues
@@ -888,14 +930,6 @@ export function BusinessMonitor() {
                     rightValue={formatUseTime(p95Latency)}
                     rightLabel='P95'
                   />
-                </Metric>
-                <Metric
-                  icon={CircleDollarSign}
-                  title={t("Today's Consumption")}
-                >
-                  <div className='mt-2.5 truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
-                    {formatLogQuota(statsData?.stats?.quota ?? 0)}
-                  </div>
                 </Metric>
                 <Metric icon={Users} title={t('User Data')}>
                   <TripleMetricValues

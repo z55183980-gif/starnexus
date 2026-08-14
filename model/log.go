@@ -893,6 +893,87 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
+type BusinessMonitorCacheStats struct {
+	InputTokens         int64 `json:"input_tokens"`
+	CacheReadTokens     int64 `json:"cache_read_tokens"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+}
+
+type businessMonitorCacheLogOther struct {
+	UsageSemantic         string `json:"usage_semantic"`
+	Claude                bool   `json:"claude"`
+	CacheTokens           int64  `json:"cache_tokens"`
+	CacheWriteTokens      int64  `json:"cache_write_tokens"`
+	CacheCreationTokens   int64  `json:"cache_creation_tokens"`
+	CacheCreationTokens5m int64  `json:"cache_creation_tokens_5m"`
+	CacheCreationTokens1h int64  `json:"cache_creation_tokens_1h"`
+}
+
+func (other businessMonitorCacheLogOther) cacheCreationTotal() int64 {
+	if other.CacheWriteTokens > 0 {
+		return other.CacheWriteTokens
+	}
+	splitTotal := other.CacheCreationTokens5m + other.CacheCreationTokens1h
+	if splitTotal > 0 {
+		if other.CacheCreationTokens > splitTotal {
+			return other.CacheCreationTokens
+		}
+		return splitTotal
+	}
+	return other.CacheCreationTokens
+}
+
+// GetBusinessMonitorCacheStats normalizes logs into the same token buckets as
+// sub2api: uncached input, cache read, and cache creation. OpenAI-style prompt
+// totals already include cache tokens, while Anthropic reports these buckets
+// separately, so the former is de-duplicated before aggregation.
+func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64) (stats BusinessMonitorCacheStats, err error) {
+	query := LOG_DB.Table("logs").
+		Select("COALESCE(prompt_tokens, 0), COALESCE(other, '')").
+		Where("type = ?", LogTypeConsume)
+	if startTimestamp != 0 {
+		query = query.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		query = query.Where("created_at <= ?", endTimestamp)
+	}
+	rows, queryErr := query.Rows()
+	if queryErr != nil {
+		common.SysError("failed to query business monitor cache stats: " + queryErr.Error())
+		return stats, errors.New("查询缓存命中统计失败")
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var promptTokens int64
+		var otherJSON string
+		if scanErr := rows.Scan(&promptTokens, &otherJSON); scanErr != nil {
+			common.SysError("failed to scan business monitor cache stats: " + scanErr.Error())
+			return stats, errors.New("查询缓存命中统计失败")
+		}
+		var other businessMonitorCacheLogOther
+		if otherJSON != "" {
+			_ = common.UnmarshalJsonStr(otherJSON, &other)
+		}
+
+		cacheReadTokens := max(other.CacheTokens, 0)
+		cacheCreationTokens := max(other.cacheCreationTotal(), 0)
+		inputTokens := max(promptTokens, 0)
+		if other.UsageSemantic != "anthropic" && !other.Claude {
+			inputTokens = max(inputTokens-cacheReadTokens-cacheCreationTokens, 0)
+		}
+
+		stats.InputTokens += inputTokens
+		stats.CacheReadTokens += cacheReadTokens
+		stats.CacheCreationTokens += cacheCreationTokens
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		common.SysError("failed to iterate business monitor cache stats: " + rowsErr.Error())
+		return stats, errors.New("查询缓存命中统计失败")
+	}
+	return stats, nil
+}
+
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("sum(quota) quota")
 

@@ -94,6 +94,33 @@ func TestSQLiteDecimalAutoMigrateIsIdempotent(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(models...))
 }
 
+func TestGetBusinessMonitorCacheStats(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalLogDB := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { LOG_DB = originalLogDB })
+	require.NoError(t, db.AutoMigrate(&Log{}))
+
+	logs := []Log{
+		// OpenAI prompt totals include cache reads, so 2,000 becomes 500 uncached + 1,500 read.
+		{Type: LogTypeConsume, CreatedAt: 150, PromptTokens: 2000, Other: `{"cache_tokens":1500}`},
+		// Anthropic reports input, cache read, and cache creation separately.
+		{Type: LogTypeConsume, CreatedAt: 160, PromptTokens: 200, Other: `{"usage_semantic":"anthropic","cache_tokens":500,"cache_creation_tokens_5m":100,"cache_creation_tokens_1h":200}`},
+		{Type: LogTypeConsume, CreatedAt: 170, PromptTokens: 100, Other: `{}`},
+		{Type: LogTypeError, CreatedAt: 180, PromptTokens: 900, Other: `{"cache_tokens":800}`},
+		{Type: LogTypeConsume, CreatedAt: 99, PromptTokens: 900, Other: `{"cache_tokens":800}`},
+		{Type: LogTypeConsume, CreatedAt: 201, PromptTokens: 900, Other: `{"cache_tokens":800}`},
+	}
+	require.NoError(t, db.Create(&logs).Error)
+
+	stats, err := GetBusinessMonitorCacheStats(100, 200)
+	require.NoError(t, err)
+	require.Equal(t, int64(800), stats.InputTokens)
+	require.Equal(t, int64(2000), stats.CacheReadTokens)
+	require.Equal(t, int64(300), stats.CacheCreationTokens)
+}
+
 func TestGetAllLogsIncludesUpstreamAccountName(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

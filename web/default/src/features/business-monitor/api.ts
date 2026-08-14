@@ -9,6 +9,19 @@ export async function getBusinessMonitorConcurrency(): Promise<{
   return res.data
 }
 
+export async function getBusinessMonitorCacheHitRate(): Promise<{
+  success: boolean
+  data?: {
+    input_tokens: number
+    cache_read_tokens: number
+    cache_creation_tokens: number
+    window_seconds: number
+  }
+}> {
+  const res = await api.get('/api/business-monitor/cache-hit-rate')
+  return res.data
+}
+
 export type ErrorAlertSeverity = 'critical' | 'warning' | 'info'
 export type ErrorAlertStatus = 'unhandled' | 'acknowledged' | 'resolved'
 
