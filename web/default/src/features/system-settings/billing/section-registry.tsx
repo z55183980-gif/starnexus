@@ -247,6 +247,7 @@ const BILLING_SECTIONS = [
               : storedGateway,
             EpUSDTApiToken: settings.EpUSDTApiToken ?? '',
             EpUSDTNotifyURL: settings.EpUSDTNotifyURL ?? '',
+            EpUSDTCreditPerUSDT: settings.EpUSDTCreditPerUSDT ?? 6.8,
             Price: settings.Price,
             MinTopUp: settings.MinTopUp,
             PayMethods: settings.PayMethods,

@@ -4087,6 +4087,8 @@
     "Recently launched models": "近期发布的模型",
     "Recently launched models gaining traction": "近期发布并快速增长的模型",
     "Recharge": "充值",
+    "Recharge credits per USDT": "每 1 USDT 对应的充值额度",
+    "USDT amount = recharge credits ÷ this ratio. For example, 50 ÷ 6.8 = 7.35 USDT.": "USDT 支付金额 = 充值额度 ÷ 此比例。例如：50 ÷ 6.8 = 7.35 USDT。",
     "Recharge Amount": "充值金额",
     "Recharge Amount (USD)": "充值金额 (USD)",
     "Recommended": "推荐",

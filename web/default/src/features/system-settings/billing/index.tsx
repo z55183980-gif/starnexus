@@ -74,6 +74,7 @@ const defaultBillingSettings: BillingSettings = {
   EpUSDTApiToken: '',
   EpUSDTApiTokenConfigured: false,
   EpUSDTNotifyURL: '',
+  EpUSDTCreditPerUSDT: 6.8,
   Price: 7.3,
   MinTopUp: 1,
   CustomCallbackAddress: '',

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -223,6 +224,15 @@ func UpdateOption(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "无效的主题值，可选值：default（新版前端）、classic（经典前端）",
+			})
+			return
+		}
+	case "EpUSDTCreditPerUSDT":
+		creditRatio, parseErr := strconv.ParseFloat(strings.TrimSpace(option.Value.(string)), 64)
+		if parseErr != nil || creditRatio <= 0 || math.IsNaN(creditRatio) || math.IsInf(creditRatio, 0) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "EpUSDT 充值比例必须是大于 0 的数字",
 			})
 			return
 		}

@@ -4087,6 +4087,8 @@
     "Recently launched models": "Недавно запущенные модели",
     "Recently launched models gaining traction": "Недавно вышедшие модели, набирающие популярность",
     "Recharge": "Пополнение",
+    "Recharge credits per USDT": "Единиц пополнения на 1 USDT",
+    "USDT amount = recharge credits ÷ this ratio. For example, 50 ÷ 6.8 = 7.35 USDT.": "Сумма в USDT = единицы пополнения ÷ этот коэффициент. Например: 50 ÷ 6,8 = 7,35 USDT.",
     "Recharge Amount": "Сумма пополнения",
     "Recharge Amount (USD)": "Сумма пополнения (USD)",
     "Recommended": "Рекомендуется",

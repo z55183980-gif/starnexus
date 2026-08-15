@@ -4087,6 +4087,8 @@
     "Recently launched models": "Các mô hình ra mắt gần đây",
     "Recently launched models gaining traction": "Mô hình mới phát hành đang được ưa chuộng",
     "Recharge": "Nạp lại",
+    "Recharge credits per USDT": "Số dư nạp cho mỗi USDT",
+    "USDT amount = recharge credits ÷ this ratio. For example, 50 ÷ 6.8 = 7.35 USDT.": "Số tiền USDT = số dư nạp ÷ tỷ lệ này. Ví dụ: 50 ÷ 6,8 = 7,35 USDT.",
     "Recharge Amount": "Số tiền nạp",
     "Recharge Amount (USD)": "Số tiền nạp (USD)",
     "Recommended": "Đề xuất",

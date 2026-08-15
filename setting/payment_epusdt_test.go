@@ -1,10 +1,30 @@
 package setting
 
 import (
+	"math"
 	"testing"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
+
+func TestEffectiveEpUSDTCreditPerUSDT(t *testing.T) {
+	original := EpUSDTCreditPerUSDT
+	t.Cleanup(func() {
+		EpUSDTCreditPerUSDT = original
+	})
+
+	EpUSDTCreditPerUSDT = 5
+	if got := EffectiveEpUSDTCreditPerUSDT(); got != 5 {
+		t.Fatalf("custom ratio = %v, want 5", got)
+	}
+
+	for _, invalid := range []float64{0, -1, math.NaN(), math.Inf(1)} {
+		EpUSDTCreditPerUSDT = invalid
+		if got := EffectiveEpUSDTCreditPerUSDT(); got != DefaultEpUSDTCreditPerUSDT {
+			t.Fatalf("invalid ratio %v returned %v, want default %v", invalid, got, DefaultEpUSDTCreditPerUSDT)
+		}
+	}
+}
 
 func TestIsLegacyEpUSDTGatewayAddress(t *testing.T) {
 	tests := []struct {

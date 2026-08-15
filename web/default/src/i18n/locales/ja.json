@@ -4087,6 +4087,8 @@
     "Recently launched models": "最近リリースされたモデル",
     "Recently launched models gaining traction": "最近リリースされ勢いのあるモデル",
     "Recharge": "チャージ",
+    "Recharge credits per USDT": "1 USDT あたりのチャージクレジット",
+    "USDT amount = recharge credits ÷ this ratio. For example, 50 ÷ 6.8 = 7.35 USDT.": "USDT 支払額 = チャージクレジット ÷ この比率。例：50 ÷ 6.8 = 7.35 USDT。",
     "Recharge Amount": "チャージ額",
     "Recharge Amount (USD)": "チャージ額 (USD)",
     "Recommended": "推奨",

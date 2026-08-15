@@ -267,6 +267,7 @@ export type BillingSettings = {
   EpUSDTApiToken: string
   EpUSDTApiTokenConfigured: boolean
   EpUSDTNotifyURL: string
+  EpUSDTCreditPerUSDT: number
   Price: number
   MinTopUp: number
   CustomCallbackAddress: string

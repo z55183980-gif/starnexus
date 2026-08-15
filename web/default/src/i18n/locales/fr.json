@@ -4087,6 +4087,8 @@
     "Recently launched models": "Modèles récemment lancés",
     "Recently launched models gaining traction": "Modèles récemment publiés et en forte progression",
     "Recharge": "Recharger",
+    "Recharge credits per USDT": "Crédits de recharge par USDT",
+    "USDT amount = recharge credits ÷ this ratio. For example, 50 ÷ 6.8 = 7.35 USDT.": "Montant en USDT = crédits de recharge ÷ ce taux. Par exemple, 50 ÷ 6,8 = 7,35 USDT.",
     "Recharge Amount": "Montant de la recharge",
     "Recharge Amount (USD)": "Montant de la recharge (USD)",
     "Recommended": "Recommandé",

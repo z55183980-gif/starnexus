@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -134,6 +135,7 @@ func InitOptionMap() {
 	common.OptionMap["EpUSDTGatewayAddress"] = setting.EpUSDTGatewayAddress
 	common.OptionMap["EpUSDTApiToken"] = setting.EpUSDTApiToken
 	common.OptionMap["EpUSDTNotifyURL"] = setting.EpUSDTNotifyURL
+	common.OptionMap["EpUSDTCreditPerUSDT"] = strconv.FormatFloat(setting.EffectiveEpUSDTCreditPerUSDT(), 'f', -1, 64)
 	common.OptionMap["TopupGroupRatio"] = common.TopupGroupRatio2JSONString()
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["SupportChannels"] = setting.SupportChannels2JsonString()
@@ -546,6 +548,15 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.EpUSDTApiToken = value
 	case "EpUSDTNotifyURL":
 		setting.EpUSDTNotifyURL = value
+	case "EpUSDTCreditPerUSDT":
+		var parsed float64
+		parsed, err = strconv.ParseFloat(value, 64)
+		if err == nil && (parsed <= 0 || math.IsNaN(parsed) || math.IsInf(parsed, 0)) {
+			err = errors.New("EpUSDT credit ratio must be greater than 0")
+		}
+		if err == nil {
+			setting.EpUSDTCreditPerUSDT = parsed
+		}
 	case "TopupGroupRatio":
 		err = common.UpdateTopupGroupRatioByJSONString(value)
 	case "GitHubClientId":

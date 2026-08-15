@@ -77,6 +77,7 @@ const paymentSchema = z.object({
     return /^https?:\/\//.test(trimmed)
   }, 'Provide a valid URL starting with http:// or https://'),
   EpUSDTApiToken: z.string(),
+  EpUSDTCreditPerUSDT: z.number().positive(),
   EpUSDTNotifyURL: z.string().refine((value) => {
     const trimmed = value.trim()
     if (!trimmed) return true
@@ -398,12 +399,20 @@ export function PaymentSettingsSection({
   }
 
   const saveEpusdtSettings = async () => {
+    const isValid = await form.trigger([
+      'EpUSDTGatewayAddress',
+      'EpUSDTCreditPerUSDT',
+      'EpUSDTNotifyURL',
+    ])
+    if (!isValid) return
+
     const values = form.getValues()
     const sanitized = {
       EpUSDTGatewayAddress: resolveEpusdtGatewayAddress(
         values.EpUSDTGatewayAddress
       ),
       EpUSDTApiToken: values.EpUSDTApiToken.trim(),
+      EpUSDTCreditPerUSDT: values.EpUSDTCreditPerUSDT,
       EpUSDTNotifyURL: removeTrailingSlash(values.EpUSDTNotifyURL),
     }
 
@@ -416,10 +425,11 @@ export function PaymentSettingsSection({
         initialRef.current.EpUSDTGatewayAddress
       ),
       EpUSDTApiToken: initialRef.current.EpUSDTApiToken.trim(),
+      EpUSDTCreditPerUSDT: initialRef.current.EpUSDTCreditPerUSDT,
       EpUSDTNotifyURL: removeTrailingSlash(initialRef.current.EpUSDTNotifyURL),
     }
 
-    const updates: Array<{ key: string; value: string }> = []
+    const updates: Array<{ key: string; value: string | number }> = []
 
     if (sanitized.EpUSDTGatewayAddress !== initial.EpUSDTGatewayAddress) {
       updates.push({
@@ -445,6 +455,13 @@ export function PaymentSettingsSection({
       })
     }
 
+    if (sanitized.EpUSDTCreditPerUSDT !== initial.EpUSDTCreditPerUSDT) {
+      updates.push({
+        key: 'EpUSDTCreditPerUSDT',
+        value: sanitized.EpUSDTCreditPerUSDT,
+      })
+    }
+
     if (updates.length === 0) {
       return
     }
@@ -457,6 +474,7 @@ export function PaymentSettingsSection({
       ...initialRef.current,
       EpUSDTGatewayAddress: sanitized.EpUSDTGatewayAddress,
       EpUSDTApiToken: sanitized.EpUSDTApiToken,
+      EpUSDTCreditPerUSDT: sanitized.EpUSDTCreditPerUSDT,
       EpUSDTNotifyURL: sanitized.EpUSDTNotifyURL,
     }
   }
@@ -544,6 +562,7 @@ export function PaymentSettingsSection({
     const sanitized = {
       EpUSDTGatewayAddress: epusdtGatewayAddress,
       EpUSDTApiToken: values.EpUSDTApiToken.trim(),
+      EpUSDTCreditPerUSDT: values.EpUSDTCreditPerUSDT,
       EpUSDTNotifyURL: removeTrailingSlash(values.EpUSDTNotifyURL),
       Price: values.Price,
       MinTopUp: values.MinTopUp,
@@ -563,6 +582,7 @@ export function PaymentSettingsSection({
         initialRef.current.EpUSDTGatewayAddress
       ),
       EpUSDTApiToken: initialRef.current.EpUSDTApiToken.trim(),
+      EpUSDTCreditPerUSDT: initialRef.current.EpUSDTCreditPerUSDT,
       EpUSDTNotifyURL: removeTrailingSlash(initialRef.current.EpUSDTNotifyURL),
       Price: initialRef.current.Price,
       MinTopUp: initialRef.current.MinTopUp,
@@ -601,6 +621,13 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'EpUSDTNotifyURL',
         value: sanitized.EpUSDTNotifyURL,
+      })
+    }
+
+    if (sanitized.EpUSDTCreditPerUSDT !== initial.EpUSDTCreditPerUSDT) {
+      updates.push({
+        key: 'EpUSDTCreditPerUSDT',
+        value: sanitized.EpUSDTCreditPerUSDT,
       })
     }
 
@@ -1102,6 +1129,34 @@ export function PaymentSettingsSection({
                 )}
               />
             </div>
+
+            <FormField
+              control={form.control}
+              name='EpUSDTCreditPerUSDT'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Recharge credits per USDT')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      type='number'
+                      min='0.01'
+                      step='0.01'
+                      inputMode='decimal'
+                      {...field}
+                      onChange={(event) =>
+                        field.onChange(event.target.valueAsNumber)
+                      }
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'USDT amount = recharge credits ÷ this ratio. For example, 50 ÷ 6.8 = 7.35 USDT.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
 
             <FormField
               control={form.control}

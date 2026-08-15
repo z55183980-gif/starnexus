@@ -84,25 +84,14 @@ func (r epusdtCreateOrderResponse) statusCode() int {
 	return r.CodeAlt
 }
 
-const epusdtCreditPerUSDT = 6.8
-
 func epusdtPayMoneyFromCredit(creditAmount int64) float64 {
 	if creditAmount <= 0 {
 		return 0
 	}
 	return decimal.NewFromInt(creditAmount).
-		Div(decimal.NewFromFloat(epusdtCreditPerUSDT)).
+		Div(decimal.NewFromFloat(setting.EffectiveEpUSDTCreditPerUSDT())).
 		Round(2).
 		InexactFloat64()
-}
-
-// epusdtGatewayFiatAmount is the fiat (USD) order amount sent to BEpusdt.
-// The gateway converts it to USDT using its configured exchange rate.
-func epusdtGatewayFiatAmount(creditAmount int64) float64 {
-	if creditAmount <= 0 {
-		return 0
-	}
-	return decimal.NewFromInt(creditAmount).Round(2).InexactFloat64()
 }
 
 func epusdtStoredCreditAmount(amount int64) int64 {
@@ -147,8 +136,7 @@ func RequestUsdtPay(c *gin.Context) {
 	id := c.GetInt("id")
 	creditAmount := epusdtStoredCreditAmount(req.Amount)
 	payMoney := epusdtPayMoneyFromCredit(creditAmount)
-	gatewayFiatAmount := epusdtGatewayFiatAmount(creditAmount)
-	if payMoney < 0.01 || gatewayFiatAmount < 0.01 {
+	if payMoney < 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
 	}
@@ -161,8 +149,11 @@ func RequestUsdtPay(c *gin.Context) {
 	redirectURL := paymentReturnPath("/console/topup?pay=success")
 	tradeNo := fmt.Sprintf("USR%dNO%s%d", id, common.GetRandomString(6), time.Now().Unix())
 
-	amountValue := gatewayFiatAmount
-	amountSign := epusdtAmountSignString(gatewayFiatAmount)
+	// StarNexus has already converted the selected credit amount to the exact
+	// USDT amount shown to the user. Send that amount to BEpusdt so the gateway
+	// does not receive the original credit amount and convert it a second time.
+	amountValue := payMoney
+	amountSign := epusdtAmountSignString(payMoney)
 	signParams := map[string]string{
 		"order_id":     tradeNo,
 		"amount":       amountSign,

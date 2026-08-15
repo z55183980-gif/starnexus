@@ -1,6 +1,7 @@
 package setting
 
 import (
+	"math"
 	"strings"
 
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -9,8 +10,17 @@ import (
 var EpUSDTGatewayAddress = DefaultEpUSDTGatewayAddress
 var EpUSDTApiToken = ""
 var EpUSDTNotifyURL = ""
+var EpUSDTCreditPerUSDT = DefaultEpUSDTCreditPerUSDT
 
 const DefaultEpUSDTGatewayAddress = "https://pay.xingyuapi.com"
+const DefaultEpUSDTCreditPerUSDT = 6.8
+
+func EffectiveEpUSDTCreditPerUSDT() float64 {
+	if EpUSDTCreditPerUSDT <= 0 || math.IsNaN(EpUSDTCreditPerUSDT) || math.IsInf(EpUSDTCreditPerUSDT, 0) {
+		return DefaultEpUSDTCreditPerUSDT
+	}
+	return EpUSDTCreditPerUSDT
+}
 
 func storedEpUSDTGatewayAddress() string {
 	if gateway := normalizeGatewayURL(EpUSDTGatewayAddress); gateway != "" {

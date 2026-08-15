@@ -8,6 +8,12 @@ import (
 )
 
 func TestEpusdtPayMoneyFromCredit(t *testing.T) {
+	originalRatio := setting.EpUSDTCreditPerUSDT
+	t.Cleanup(func() {
+		setting.EpUSDTCreditPerUSDT = originalRatio
+	})
+	setting.EpUSDTCreditPerUSDT = 6.8
+
 	tests := []struct {
 		credit int64
 		want   float64
@@ -22,6 +28,11 @@ func TestEpusdtPayMoneyFromCredit(t *testing.T) {
 		if got != tt.want {
 			t.Fatalf("epusdtPayMoneyFromCredit(%d) = %v, want %v", tt.credit, got, tt.want)
 		}
+	}
+
+	setting.EpUSDTCreditPerUSDT = 5
+	if got := epusdtPayMoneyFromCredit(50); got != 10 {
+		t.Fatalf("epusdtPayMoneyFromCredit(50) with ratio 5 = %v, want 10", got)
 	}
 }
 
@@ -60,14 +71,18 @@ func TestIsUsdtTopUpEnabledWithoutPayMethodEntry(t *testing.T) {
 	}
 }
 
-func TestEpusdtGatewayFiatAmount(t *testing.T) {
-	got := epusdtGatewayFiatAmount(100)
-	if got != 100 {
-		t.Fatalf("epusdtGatewayFiatAmount(100) = %v, want 100", got)
-	}
+func TestEpusdtGatewayAmountUsesDisplayedUSDTAmount(t *testing.T) {
+	originalRatio := setting.EpUSDTCreditPerUSDT
+	t.Cleanup(func() {
+		setting.EpUSDTCreditPerUSDT = originalRatio
+	})
+	setting.EpUSDTCreditPerUSDT = 6.8
 
-	pay := epusdtPayMoneyFromCredit(100)
-	if pay != 14.71 {
-		t.Fatalf("epusdtPayMoneyFromCredit(100) = %v, want 14.71", pay)
+	pay := epusdtPayMoneyFromCredit(50)
+	if pay != 7.35 {
+		t.Fatalf("epusdtPayMoneyFromCredit(50) = %v, want 7.35", pay)
+	}
+	if got := epusdtAmountSignString(pay); got != "7.35" {
+		t.Fatalf("epusdtAmountSignString(%v) = %q, want %q", pay, got, "7.35")
 	}
 }
