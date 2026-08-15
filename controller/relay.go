@@ -150,16 +150,6 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
-	if moderationError := service.ApplyContentModeration(c, request, relayFormat, relayInfo.OriginModelName); moderationError != nil {
-		newAPIError = moderationError
-		return
-	}
-
-	if promptAuditError := service.ApplyPromptAudit(c, request, relayFormat, relayInfo.OriginModelName); promptAuditError != nil {
-		newAPIError = promptAuditError
-		return
-	}
-
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.
@@ -238,6 +228,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			service.ChargeViolationFeeIfNeeded(c, relayInfo, newAPIError)
 		}
 	}()
+
+	// Paid requests must pass the definitive wallet/subscription reservation
+	// before invoking either audit path. Requests that billing will reject must
+	// not consume moderation capacity or create security-audit records. Free
+	// requests still reach the audits because they intentionally skip billing.
+	if moderationError := service.ApplyContentModeration(c, request, relayFormat, relayInfo.OriginModelName); moderationError != nil {
+		newAPIError = moderationError
+		return
+	}
+
+	if promptAuditError := service.ApplyPromptAudit(c, request, relayFormat, relayInfo.OriginModelName); promptAuditError != nil {
+		newAPIError = promptAuditError
+		return
+	}
 
 	retryParam := &service.RetryParam{
 		Ctx:        c,

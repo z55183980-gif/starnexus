@@ -335,8 +335,9 @@ func ExtractContentModerationText(request dto.Request) string {
 	return ExtractPromptAuditUserText(request)
 }
 
-// ApplyContentModeration runs the global OpenAI Moderations gate before billing
-// and upstream forwarding. It is independent of per-user prompt audit policies.
+// ApplyContentModeration runs the global OpenAI Moderations gate after billing
+// reservation and before upstream forwarding. It is independent of per-user
+// prompt audit policies.
 //
 // Modes:
 //   - pre_block: sync call; flagged prompts are blocked

@@ -93,9 +93,9 @@ func getPromptAuditPolicy(userId int) (*model.PromptAuditPolicy, error) {
 	return &policy, nil
 }
 
-// ApplyPromptAudit applies local per-user behavior controls after the global
-// upstream account-risk content audit and before billing or forwarding. It is
-// not an OpenAI policy classifier; it only monitors, delays, or blocks local
+// ApplyPromptAudit applies local per-user behavior controls after billing and
+// the global upstream account-risk content audit, before forwarding. It is not
+// an OpenAI policy classifier; it only monitors, delays, or blocks local
 // sensitive-word hits for selected users.
 func ApplyPromptAudit(c *gin.Context, request dto.Request, relayFormat types.RelayFormat, modelName string) *types.NewAPIError {
 	userId := common.GetContextKeyInt(c, constant.ContextKeyUserId)
