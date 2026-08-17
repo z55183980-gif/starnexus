@@ -139,6 +139,8 @@ export async function listUpstreamAccounts(params?: {
   type?: string
   status?: string
   schedulable?: boolean
+  sort_by?: 'priority' | 'schedulable'
+  sort_order?: 'asc' | 'desc'
 }): Promise<
   ApiResponse<{
     items: UpstreamAccount[]
@@ -304,9 +306,7 @@ export async function getUpstreamAccountTodayStats(
 
 export async function getUpstreamAccountTodayStatsBatch(
   accountIds: number[]
-): Promise<
-  ApiResponse<{ stats: Record<string, UpstreamAccountWindowStats> }>
-> {
+): Promise<ApiResponse<{ stats: Record<string, UpstreamAccountWindowStats> }>> {
   const response = await api.post(
     '/api/upstream/accounts/today-stats/batch',
     { account_ids: accountIds },

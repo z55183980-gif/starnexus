@@ -271,6 +271,7 @@ func ListUpstreamAccounts(c *gin.Context) {
 	filter := service.UpstreamAccountListFilter{
 		Platform: c.Query("platform"), Type: c.Query("type"), Status: c.Query("status"),
 		Search: c.Query("search"), PoolId: queryPositiveInt(c, "pool_id"), ProxyId: queryPositiveInt(c, "proxy_id"),
+		SortBy: c.Query("sort_by"), SortOrder: c.Query("sort_order"),
 		Page: pageInfo.GetPage(), PageSize: pageInfo.GetPageSize(),
 	}
 	if raw := strings.TrimSpace(c.Query("schedulable")); raw != "" {

@@ -12,6 +12,7 @@ import { useDebounce } from '@/hooks'
 import {
   Add01Icon,
   ArrowDown01Icon,
+  ArrowUp01Icon,
   ChartIcon,
   Clock01Icon,
   Delete02Icon,
@@ -1701,6 +1702,9 @@ interface AccountManagementProps {
   editPoolId?: number
 }
 
+type AccountSortBy = 'priority' | 'schedulable'
+type AccountSortOrder = 'asc' | 'desc'
+
 export function AccountManagement({
   initialTab = 'accounts',
   editPoolId,
@@ -1716,6 +1720,8 @@ export function AccountManagement({
   const [schedulableFilter, setSchedulableFilter] = useState('all')
   const [poolFilter, setPoolFilter] = useState('all')
   const [proxyFilter, setProxyFilter] = useState('all')
+  const [sortBy, setSortBy] = useState<AccountSortBy | null>(null)
+  const [sortOrder, setSortOrder] = useState<AccountSortOrder>('asc')
   const [page, setPage] = useState(1)
   const [accountDialog, setAccountDialog] = useState(false)
   const [batchImportOpen, setBatchImportOpen] = useState(false)
@@ -1764,6 +1770,8 @@ export function AccountManagement({
       schedulableFilter,
       poolFilter,
       proxyFilter,
+      sortBy,
+      sortOrder,
     ],
     queryFn: () =>
       listUpstreamAccounts({
@@ -1779,6 +1787,8 @@ export function AccountManagement({
             : schedulableFilter === 'true',
         pool_id: poolFilter === 'all' ? undefined : Number(poolFilter),
         proxy_id: proxyFilter === 'all' ? undefined : Number(proxyFilter),
+        sort_by: sortBy ?? undefined,
+        sort_order: sortBy ? sortOrder : undefined,
       }),
   })
   const poolsQuery = useQuery({
@@ -1796,6 +1806,20 @@ export function AccountManagement({
     queryFn: listUpstreamProxies,
   })
   const accounts = accountsQuery.data?.data?.items ?? []
+  const toggleAccountSort = (column: AccountSortBy) => {
+    setPage(1)
+    if (sortBy !== column) {
+      setSortBy(column)
+      setSortOrder('asc')
+      return
+    }
+    if (sortOrder === 'asc') {
+      setSortOrder('desc')
+      return
+    }
+    setSortBy(null)
+    setSortOrder('asc')
+  }
   const accountIds = useMemo(
     () => accounts.map((account) => account.id),
     [accounts]
@@ -2443,9 +2467,66 @@ export function AccountManagement({
                     <TableHead>{t('Account ID')}</TableHead>
                     <TableHead>{t('Platform / Type')}</TableHead>
                     <TableHead>{t('Capacity')}</TableHead>
-                    <TableHead className='w-20'>{t('Priority')}</TableHead>
+                    <TableHead
+                      className='w-20'
+                      aria-sort={
+                        sortBy === 'priority'
+                          ? sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                    >
+                      <Button
+                        variant='ghost'
+                        size='sm'
+                        className='-ml-3'
+                        onClick={() => toggleAccountSort('priority')}
+                      >
+                        {t('Priority')}
+                        {sortBy === 'priority' && (
+                          <HugeiconsIcon
+                            data-icon='inline-end'
+                            icon={
+                              sortOrder === 'asc'
+                                ? ArrowUp01Icon
+                                : ArrowDown01Icon
+                            }
+                            strokeWidth={2}
+                          />
+                        )}
+                      </Button>
+                    </TableHead>
                     <TableHead>{t('Status')}</TableHead>
-                    <TableHead>{t('Scheduling')}</TableHead>
+                    <TableHead
+                      aria-sort={
+                        sortBy === 'schedulable'
+                          ? sortOrder === 'asc'
+                            ? 'ascending'
+                            : 'descending'
+                          : 'none'
+                      }
+                    >
+                      <Button
+                        variant='ghost'
+                        size='sm'
+                        className='-ml-3'
+                        onClick={() => toggleAccountSort('schedulable')}
+                      >
+                        {t('Scheduling')}
+                        {sortBy === 'schedulable' && (
+                          <HugeiconsIcon
+                            data-icon='inline-end'
+                            icon={
+                              sortOrder === 'asc'
+                                ? ArrowUp01Icon
+                                : ArrowDown01Icon
+                            }
+                            strokeWidth={2}
+                          />
+                        )}
+                      </Button>
+                    </TableHead>
                     <TableHead>{t('Today Stats')}</TableHead>
                     <TableHead>{t('Groups')}</TableHead>
                     <TableHead>

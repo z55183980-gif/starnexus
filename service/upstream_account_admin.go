@@ -27,6 +27,8 @@ type UpstreamAccountListFilter struct {
 	PoolId      int
 	ProxyId     int
 	Schedulable *bool
+	SortBy      string
+	SortOrder   string
 	Page        int
 	PageSize    int
 }
@@ -570,6 +572,15 @@ func publishedAccountPoolChannelUpdates(pool model.UpstreamAccountPool, channelT
 	}
 }
 
+func publishedAccountPoolChannelMetadataUpdates(pool model.UpstreamAccountPool, channelType int) map[string]any {
+	return map[string]any{
+		"type": channelType, "key": "", "name": pool.Name,
+		"base_url": nil, "open_ai_organization": nil, "model_mapping": nil,
+		"header_override":   nil,
+		"credential_source": constant.ChannelCredentialSourceAccountPool, "upstream_account_pool_id": pool.Id,
+	}
+}
+
 func syncPublishedAccountPoolChannelsTx(tx *gorm.DB, poolIds []int) (bool, error) {
 	changed := false
 	for _, poolId := range normalizePositiveIds(poolIds) {
@@ -586,21 +597,17 @@ func syncPublishedAccountPoolChannelsTx(tx *gorm.DB, poolIds []int) (bool, error
 		if err := tx.First(&pool, poolId).Error; err != nil {
 			return false, err
 		}
-		capabilities, err := getUpstreamAccountPoolCapabilities(tx, poolId)
-		if err != nil {
-			return false, err
-		}
 		channelType := constant.ChannelTypeOpenAI
 		if pool.Platform == constant.UpstreamPlatformAnthropic {
 			channelType = constant.ChannelTypeAnthropic
 		}
 		for i := range channels {
 			channel := &channels[i]
-			publishedModels := intersectPublishedChannelModels(channel.GetModels(), capabilities.Models)
-			updates := publishedAccountPoolChannelUpdates(pool, channelType, strings.Join(publishedModels, ","))
-			if pool.Status != constant.UpstreamStatusActive || capabilities.SchedulableAccountCount == 0 || len(publishedModels) == 0 || len(channels) > 1 {
-				updates["status"] = common.ChannelStatusAutoDisabled
-			}
+			// Account availability and discovered capabilities are runtime state. They
+			// must not overwrite the administrator's published model selection or the
+			// local channel status. An unavailable pool is handled by the scheduler at
+			// request time and recovers automatically when an account becomes usable.
+			updates := publishedAccountPoolChannelMetadataUpdates(pool, channelType)
 			if err := tx.Model(&model.Channel{}).Where("id = ?", channel.Id).Updates(updates).Error; err != nil {
 				return false, err
 			}
@@ -1051,8 +1058,18 @@ func ListUpstreamAccounts(filter UpstreamAccountListFilter) ([]UpstreamAccountVi
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
+	sortColumn := "id"
+	if strings.EqualFold(strings.TrimSpace(filter.SortBy), "priority") {
+		sortColumn = "priority"
+	} else if strings.EqualFold(strings.TrimSpace(filter.SortBy), "schedulable") {
+		sortColumn = "schedulable"
+	}
+	sortOrder := "ASC"
+	if strings.EqualFold(strings.TrimSpace(filter.SortOrder), "desc") {
+		sortOrder = "DESC"
+	}
 	var accounts []model.UpstreamAccount
-	if err := query.Order("priority ASC").Order("id ASC").Limit(filter.PageSize).Offset((filter.Page - 1) * filter.PageSize).Find(&accounts).Error; err != nil {
+	if err := query.Order(sortColumn + " " + sortOrder).Order("id ASC").Limit(filter.PageSize).Offset((filter.Page - 1) * filter.PageSize).Find(&accounts).Error; err != nil {
 		return nil, 0, err
 	}
 	accountIds := make([]int, 0, len(accounts))

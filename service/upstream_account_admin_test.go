@@ -514,24 +514,29 @@ func TestPublishUpstreamAccountPoolChannelProjectsAndSyncsAccountSettings(t *tes
 		Account: account, Credentials: &updatedCredentials,
 	}))
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
-	require.Empty(t, channel.Models)
-	require.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+	require.Equal(t, "model-b", channel.Models)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, channel.Status)
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
-	require.Empty(t, abilities)
+	require.Len(t, abilities, 1)
 
 	republished, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"vip"}, []string{"model-c"})
 	require.NoError(t, err)
 	require.False(t, republished.Created)
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
 	require.Equal(t, "model-c", channel.Models)
-	require.Equal(t, common.ChannelStatusEnabled, channel.Status)
+	require.Equal(t, common.ChannelStatusManuallyDisabled, channel.Status)
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channel.Id).
+		Update("status", common.ChannelStatusEnabled).Error)
+	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
+	require.NoError(t, channel.UpdateAbilities(model.DB))
 
 	require.NoError(t, DeleteUpstreamAccount(account.Id))
 	require.NoError(t, model.DB.First(&channel, channel.Id).Error)
-	require.Empty(t, channel.Models)
-	require.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
+	require.Equal(t, "model-c", channel.Models)
+	require.Equal(t, common.ChannelStatusEnabled, channel.Status)
 	require.NoError(t, model.DB.Where("channel_id = ?", channel.Id).Find(&abilities).Error)
-	require.Empty(t, abilities)
+	require.Len(t, abilities, 1)
 
 	require.NoError(t, UnpublishUpstreamAccountPoolChannel(pool.Id))
 	require.Error(t, model.DB.First(&channel, channel.Id).Error)
