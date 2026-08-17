@@ -177,6 +177,8 @@ const queryKeys = {
   proxies: ['upstream-proxies'] as const,
 }
 
+const ACCOUNT_SORT_PREFERENCE_KEY = 'upstream-accounts-sort-preference'
+
 function timestamp(value?: number | null) {
   if (!value) return '-'
   return dayjs(value * 1000).format('YYYY-MM-DD HH:mm:ss')
@@ -1720,8 +1722,31 @@ export function AccountManagement({
   const [schedulableFilter, setSchedulableFilter] = useState('all')
   const [poolFilter, setPoolFilter] = useState('all')
   const [proxyFilter, setProxyFilter] = useState('all')
-  const [sortBy, setSortBy] = useState<AccountSortBy | null>(null)
-  const [sortOrder, setSortOrder] = useState<AccountSortOrder>('asc')
+  const [sortBy, setSortBy] = useState<AccountSortBy | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(ACCOUNT_SORT_PREFERENCE_KEY)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as {
+        sortBy?: AccountSortBy | null
+        sortOrder?: AccountSortOrder
+      }
+      return parsed.sortBy === 'priority' || parsed.sortBy === 'schedulable'
+        ? parsed.sortBy
+        : null
+    } catch {
+      return null
+    }
+  })
+  const [sortOrder, setSortOrder] = useState<AccountSortOrder>(() => {
+    try {
+      const raw = window.localStorage.getItem(ACCOUNT_SORT_PREFERENCE_KEY)
+      if (!raw) return 'asc'
+      const parsed = JSON.parse(raw) as { sortOrder?: AccountSortOrder }
+      return parsed.sortOrder === 'desc' ? 'desc' : 'asc'
+    } catch {
+      return 'asc'
+    }
+  })
   const [page, setPage] = useState(1)
   const [accountDialog, setAccountDialog] = useState(false)
   const [batchImportOpen, setBatchImportOpen] = useState(false)
@@ -1806,6 +1831,13 @@ export function AccountManagement({
     queryFn: listUpstreamProxies,
   })
   const accounts = accountsQuery.data?.data?.items ?? []
+  useEffect(() => {
+    window.localStorage.setItem(
+      ACCOUNT_SORT_PREFERENCE_KEY,
+      JSON.stringify({ sortBy, sortOrder })
+    )
+  }, [sortBy, sortOrder])
+
   const toggleAccountSort = (column: AccountSortBy) => {
     setPage(1)
     if (sortBy !== column) {
@@ -2321,6 +2353,29 @@ export function AccountManagement({
                   </SelectContent>
                 </Select>
                 <div className='ml-auto flex flex-wrap gap-2'>
+                  <Button
+                    variant='outline'
+                    onClick={refresh}
+                    disabled={
+                      accountsQuery.isFetching ||
+                      poolsQuery.isFetching ||
+                      proxiesQuery.isFetching
+                    }
+                  >
+                    <HugeiconsIcon
+                      data-icon='inline-start'
+                      icon={RefreshIcon}
+                      strokeWidth={2}
+                      className={
+                        accountsQuery.isFetching ||
+                        poolsQuery.isFetching ||
+                        proxiesQuery.isFetching
+                          ? 'animate-spin'
+                          : undefined
+                      }
+                    />
+                    {t('Refresh')}
+                  </Button>
                   {selectedAccountIds.length > 0 && (
                     <>
                       <Button
