@@ -36,6 +36,7 @@ func TestNormalizeResponsesLitePayloadEnsuresReasoningContract(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, changed)
 			require.Equal(t, "all_turns", gjson.GetBytes(normalized, "reasoning.context").String())
+			require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Bool())
 			require.Equal(t, "reasoning.encrypted_content", gjson.GetBytes(normalized, "include.0").String())
 			if effort := gjson.Get(testCase.body, "reasoning.effort").String(); effort != "" {
 				require.Equal(t, effort, gjson.GetBytes(normalized, "reasoning.effort").String())
@@ -76,6 +77,17 @@ func TestNormalizeResponsesLitePayloadMovesNamespaceTools(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, changedAgain)
 	require.JSONEq(t, string(normalized), string(second))
+}
+
+func TestNormalizeResponsesLitePayloadForcesParallelToolCallsFalse(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"true", "false", "null"} {
+		body := []byte(`{"model":"gpt-5.6-sol","input":"hello","parallel_tool_calls":` + value + `}`)
+		normalized, changed, err := NormalizeResponsesLitePayload(body)
+		require.NoError(t, err)
+		require.True(t, changed)
+		require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Bool())
+	}
 }
 
 func TestNormalizeResponsesLitePayloadRejectsUnsupportedToolShapes(t *testing.T) {

@@ -39,6 +39,9 @@ func NormalizeResponsesLitePayload(body []byte) ([]byte, bool, error) {
 	if err != nil {
 		return body, false, err
 	}
+	if ensureResponsesLiteParallelToolCalls(requestBody) {
+		changed = true
+	}
 	if ensureResponsesLiteReasoningInclude(requestBody) {
 		changed = true
 	}
@@ -51,6 +54,19 @@ func NormalizeResponsesLitePayload(body []byte) ([]byte, bool, error) {
 		return body, false, fmt.Errorf("encode Responses Lite request body: %w", err)
 	}
 	return rebuilt, true, nil
+}
+
+func ensureResponsesLiteParallelToolCalls(requestBody map[string]any) bool {
+	if requestBody == nil {
+		return false
+	}
+	if value, exists := requestBody["parallel_tool_calls"]; exists {
+		if parallel, ok := value.(bool); ok && !parallel {
+			return false
+		}
+	}
+	requestBody["parallel_tool_calls"] = false
+	return true
 }
 
 func normalizeResponsesLiteTools(requestBody map[string]any) (bool, error) {
