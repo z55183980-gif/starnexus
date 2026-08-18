@@ -113,18 +113,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	}
 	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 
-	jsonData, err := common.Marshal(convertedRequest)
-	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-	}
-
-	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-	}
-	jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)
-	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	jsonData, newAPIError := prepareChatCompletionsViaResponsesBody(c, info, adaptor, convertedRequest)
+	if newAPIError != nil {
+		return nil, newAPIError
 	}
 
 	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
@@ -182,4 +173,30 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 		return nil, newApiErr
 	}
 	return usage, nil
+}
+
+func prepareChatCompletionsViaResponsesBody(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, convertedRequest any) ([]byte, *types.NewAPIError) {
+	jsonData, err := common.Marshal(convertedRequest)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	// The chat-completions bridge switches to Responses mode after the normal
+	// Responses handler has already been bypassed. Apply the same Lite wire
+	// contract before the Codex adaptor forwards the Lite request header.
+	jsonData, _, err = normalizeSelectedResponsesLitePayload(c, info, jsonData, false)
+	if err != nil {
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+
+	jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	return jsonData, nil
 }
