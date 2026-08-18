@@ -1387,7 +1387,7 @@ func RecoverUpstreamAccountRuntimeState(id int, scope UpstreamAccountRecoverySco
 	if scope != UpstreamAccountRecoveryAll && scope != UpstreamAccountRecoveryRateLimit && scope != UpstreamAccountRecoveryTemporary {
 		return errors.New("unsupported upstream account recovery scope")
 	}
-	return model.DB.Transaction(func(tx *gorm.DB) error {
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var account model.UpstreamAccount
 		if err := tx.First(&account, id).Error; err != nil {
 			return err
@@ -1421,6 +1421,10 @@ func RecoverUpstreamAccountRuntimeState(id int, scope UpstreamAccountRecoverySco
 		}
 		return tx.Model(&model.UpstreamAccount{}).Where("id = ?", id).Updates(updates).Error
 	})
+	if err == nil {
+		clearUpstreamAccountRuntimeBlock(id)
+	}
+	return err
 }
 
 func ListUpstreamProxies() ([]UpstreamProxyView, error) {

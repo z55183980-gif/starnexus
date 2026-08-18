@@ -683,6 +683,10 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 			exclusions["credential_type_mismatch"]++
 			continue
 		}
+		if isUpstreamAccountRuntimeBlocked(account.Id, time.Unix(now, 0)) {
+			exclusions[openAITeamLinkedErrorBlockReason]++
+			continue
+		}
 		if !account.IsSchedulableAt(now) {
 			exclusions[upstreamAccountIneligibleReason(account, now)]++
 			continue

@@ -45,6 +45,7 @@ const (
 	ContextKeyUpstreamAccountName                  ContextKey = "upstream_account_name"
 	ContextKeyUpstreamAccountPlatform              ContextKey = "upstream_account_platform"
 	ContextKeyUpstreamAccountType                  ContextKey = "upstream_account_type"
+	ContextKeyUpstreamAccountPlanType              ContextKey = "upstream_account_plan_type"
 	ContextKeyUpstreamProxyId                      ContextKey = "upstream_proxy_id"
 	ContextKeyUpstreamAccountLeaseId               ContextKey = "upstream_account_lease_id"
 	ContextKeyUpstreamAccountSelection             ContextKey = "upstream_account_selection"

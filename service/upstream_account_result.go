@@ -148,6 +148,12 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		return true
 	}
 
+	// Team-linked workspace failures must fan out before custom temporary
+	// unschedulable rules or other account-error early returns.
+	if apiErr.StatusCode == http.StatusPaymentRequired && loadAccount() {
+		maybeHandleOpenAITeamLinkedError(&account, apiErr)
+	}
+
 	// HTML 403 responses are commonly emitted by Cloudflare or another edge
 	// layer. They do not prove that the selected OAuth account is forbidden and
 	// must be classified before administrator temp-unschedulable rules.

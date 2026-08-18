@@ -407,12 +407,15 @@ func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.Ups
 	}
 	if account.Platform == constant.UpstreamPlatformOpenAI {
 		if account.Type == constant.UpstreamAccountTypeOAuth {
+			accountID := upstreamCredentialMapString(credentials, "account_id")
+			if accountID == "" {
+				accountID = upstreamCredentialMapString(credentials, "chatgpt_account_id")
+			}
 			request.Header.Set("Authorization", "Bearer "+upstreamCredentialMapString(credentials, "access_token"))
-			request.Header.Set("chatgpt-account-id", upstreamCredentialMapString(credentials, "account_id"))
+			request.Header.Set("chatgpt-account-id", accountID)
 			// The probe endpoint still accepts the experimental capability token,
 			// but its client identity must match production OAuth traffic.
 			request.Header.Set("OpenAI-Beta", "responses=experimental")
-			ApplyCodexOutboundIdentity(request.Header)
 		} else {
 			request.Header.Set("Authorization", "Bearer "+upstreamCredentialMapString(credentials, "api_key"))
 			applyUpstreamAccountOpenAIProbeHeaders(request.Header)
@@ -432,6 +435,11 @@ func buildUpstreamGenerationProbeRequest(ctx context.Context, account *model.Ups
 		request.Header.Set("X-App", "cli")
 	}
 	ApplyUpstreamAccountHeaderOverrides(request.Header, account, credentials)
+	// Account-level overrides are applied before the final OAuth identity
+	// convergence so probe requests cannot drift from production Codex traffic.
+	if account.Platform == constant.UpstreamPlatformOpenAI && account.Type == constant.UpstreamAccountTypeOAuth {
+		ApplyCodexOutboundIdentity(request.Header)
+	}
 	return request, protocol, nil
 }
 

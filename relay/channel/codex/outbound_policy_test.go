@@ -59,6 +59,29 @@ func TestCodexOutboundPolicyConvergesBodyHeadersAndRouting(t *testing.T) {
 	require.NotEmpty(t, request.Header.Get("session-id"))
 }
 
+func TestCodexOutboundPolicyLeavesNonOAuthIdentityUntouched(t *testing.T) {
+	c := newCodexPolicyTestContext(t)
+	selection := &service.UpstreamAccountSelection{
+		Account: model.UpstreamAccount{
+			Id:       44,
+			Platform: constant.UpstreamPlatformOpenAI,
+			Type:     constant.UpstreamAccountTypeAPIKey,
+		},
+		Credentials: map[string]any{"api_key": "selected-key"},
+	}
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountSelection, selection)
+	info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeResponses}
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request.Header.Set("User-Agent", "custom-api-client")
+	request.Header.Set("originator", "custom-originator")
+	request.Header.Set("version", "9.9.9")
+
+	require.NoError(t, (&Adaptor{}).FinalizeOutboundRequest(c, info, request))
+	require.Equal(t, "custom-api-client", request.Header.Get("User-Agent"))
+	require.Equal(t, "custom-originator", request.Header.Get("originator"))
+	require.Equal(t, "9.9.9", request.Header.Get("version"))
+}
+
 func TestCodexOutboundPolicyNormalizesExplicitDeviceID(t *testing.T) {
 	c := newCodexPolicyTestContext(t)
 	selection := &service.UpstreamAccountSelection{

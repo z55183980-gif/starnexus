@@ -351,6 +351,9 @@ func ApplyContentModeration(c *gin.Context, request dto.Request, relayFormat typ
 	if !cfg.Enabled {
 		return nil
 	}
+	if cfg.ExcludeOpenAIOAuthTeam && isOpenAIOAuthTeamAccount(c) {
+		return nil
+	}
 
 	usingGroup := ""
 	if c != nil {
@@ -402,6 +405,18 @@ func ApplyContentModeration(c *gin.Context, request dto.Request, relayFormat typ
 		http.StatusBadRequest,
 		types.ErrOptionWithSkipRetry(),
 	)
+}
+
+func isOpenAIOAuthTeamAccount(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	platform := strings.ToLower(strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountPlatform)))
+	credentialType := strings.ToLower(strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountType)))
+	planType := strings.ToLower(strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountPlanType)))
+	return platform == constant.UpstreamPlatformOpenAI &&
+		credentialType == constant.UpstreamAccountTypeOAuth &&
+		planType == "team"
 }
 
 func contentModerationUnavailableError() *types.NewAPIError {

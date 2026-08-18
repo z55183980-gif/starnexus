@@ -76,6 +76,7 @@ type ContentModerationConfig struct {
 	AllGroups        bool                         `json:"all_groups"`
 	Groups           []string                     `json:"groups"`
 	ModelFilter      ContentModerationModelFilter `json:"model_filter"`
+	ExcludeOpenAIOAuthTeam bool                    `json:"exclude_openai_oauth_team"`
 	Thresholds       map[string]float64           `json:"thresholds"`
 }
 
@@ -95,6 +96,7 @@ type ContentModerationConfigView struct {
 	AllGroups        bool                         `json:"all_groups"`
 	Groups           []string                     `json:"groups"`
 	ModelFilter      ContentModerationModelFilter `json:"model_filter"`
+	ExcludeOpenAIOAuthTeam bool                    `json:"exclude_openai_oauth_team"`
 	Thresholds       map[string]float64           `json:"thresholds"`
 	KeysConfigured   bool                         `json:"keys_configured"`
 }
@@ -143,6 +145,7 @@ func defaultContentModerationConfig() ContentModerationConfig {
 			Type:   ContentModerationModelFilterAll,
 			Models: nil,
 		},
+		ExcludeOpenAIOAuthTeam: false,
 		Thresholds: ContentModerationDefaultThresholds(),
 	}
 }
@@ -240,6 +243,7 @@ func ContentModerationConfigToView(cfg ContentModerationConfig) ContentModeratio
 		AllGroups:        cfg.AllGroups,
 		Groups:           append([]string(nil), cfg.Groups...),
 		ModelFilter:      cloneContentModerationModelFilter(cfg.ModelFilter),
+		ExcludeOpenAIOAuthTeam: cfg.ExcludeOpenAIOAuthTeam,
 		Thresholds:       cloneFloatMap(cfg.Thresholds),
 		KeysConfigured:   len(cfg.APIKeys) > 0,
 	}
@@ -360,6 +364,7 @@ func contentModerationConfigFromView(view ContentModerationConfigView) ContentMo
 		AllGroups:        view.AllGroups,
 		Groups:           view.Groups,
 		ModelFilter:      view.ModelFilter,
+		ExcludeOpenAIOAuthTeam: view.ExcludeOpenAIOAuthTeam,
 		Thresholds:       view.Thresholds,
 	}
 }
@@ -441,6 +446,7 @@ func cloneContentModerationConfig(cfg ContentModerationConfig) ContentModeration
 		AllGroups:        cfg.AllGroups,
 		Groups:           append([]string(nil), cfg.Groups...),
 		ModelFilter:      cloneContentModerationModelFilter(cfg.ModelFilter),
+		ExcludeOpenAIOAuthTeam: cfg.ExcludeOpenAIOAuthTeam,
 		Thresholds:       cloneFloatMap(cfg.Thresholds),
 	}
 }

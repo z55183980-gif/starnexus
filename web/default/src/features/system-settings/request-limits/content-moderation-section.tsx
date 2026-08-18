@@ -74,6 +74,7 @@ const contentModerationSchema = z
     groups: z.array(z.string()),
     model_filter_type: z.enum(['all', 'include', 'exclude']),
     model_filter_models_text: z.string().optional(),
+    exclude_openai_oauth_team: z.boolean(),
   })
   .superRefine((values, ctx) => {
     if (
@@ -112,6 +113,7 @@ function toFormValues(raw: string): ContentModerationFormValues {
     groups: config.groups,
     model_filter_type: config.model_filter.type,
     model_filter_models_text: config.model_filter.models.join('\n'),
+    exclude_openai_oauth_team: config.exclude_openai_oauth_team,
   }
 }
 
@@ -183,6 +185,7 @@ export function ContentModerationSection({
         type: values.model_filter_type,
         models: values.model_filter_type === 'all' ? [] : filterModels,
       },
+      exclude_openai_oauth_team: values.exclude_openai_oauth_team,
       thresholds,
     })
     await updateOption.mutateAsync({
@@ -735,6 +738,24 @@ export function ContentModerationSection({
               )}
             />
           ) : null}
+
+          <FormField
+            control={form.control}
+            name='exclude_openai_oauth_team'
+            render={({ field }) => (
+              <FormItem className='flex items-center justify-between rounded-md border p-3'>
+                <div className='space-y-1'>
+                  <FormLabel>{t('Exclude OpenAI OAuth Team accounts')}</FormLabel>
+                  <FormDescription>
+                    {t('Skip content audit only for OpenAI OAuth accounts with Team subscription.')}
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                </FormControl>
+              </FormItem>
+            )}
+          />
 
           <FormField
             control={form.control}

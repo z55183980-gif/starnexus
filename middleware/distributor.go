@@ -448,6 +448,7 @@ func setupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, "")
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, "")
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, "")
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlanType, "")
 	common.SetContextKey(c, constant.ContextKeyUpstreamProxyId, 0)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountLeaseId, "")
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountMappedModel, "")
@@ -648,6 +649,7 @@ func setupLocalUpstreamAccount(c *gin.Context, channel *model.Channel, modelName
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountName, selection.Account.Name)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, selection.Account.Platform)
 	common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, selection.Account.Type)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlanType, upstreamAccountPlanType(selection.Credentials))
 	common.SetContextKey(c, constant.ContextKeyUpstreamAnthropicAuthScheme, options.AnthropicAPIKeyAuthScheme)
 	common.SetContextKey(c, constant.ContextKeyUpstreamOpenAIResponsesMode, options.EffectiveOpenAIResponsesMode())
 	common.SetContextKey(c, constant.ContextKeyUpstreamOpenAILongContextBilling, options.OpenAILongContextBillingEnabled)
@@ -829,6 +831,28 @@ func upstreamCredentialString(credentials map[string]any, key string) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprintf("%v", value))
+}
+
+func upstreamAccountPlanType(credentials map[string]any) string {
+	planType := upstreamCredentialString(credentials, "plan_type")
+	if planType == "" {
+		planType = upstreamCredentialString(credentials, "plan")
+	}
+	if planType == "" {
+		planType = upstreamCredentialString(credentials, "chatgpt_plan_type")
+	}
+	for _, key := range []string{"metadata", "live_identity"} {
+		if nested, ok := credentials[key].(map[string]any); ok && planType == "" {
+			planType = upstreamCredentialString(nested, "plan_type")
+			if planType == "" {
+				planType = upstreamCredentialString(nested, "plan")
+			}
+			if planType == "" {
+				planType = upstreamCredentialString(nested, "chatgpt_plan_type")
+			}
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(planType))
 }
 
 func isUpstreamBedrockAPIKeyMode(credentials map[string]any) bool {

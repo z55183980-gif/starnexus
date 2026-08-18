@@ -94,6 +94,7 @@ export type ContentModerationConfigView = {
   all_groups: boolean
   groups: string[]
   model_filter: ContentModerationModelFilter
+  exclude_openai_oauth_team: boolean
   thresholds: Record<string, number>
   keys_configured?: boolean
 }
@@ -114,6 +115,7 @@ export const DEFAULT_CONTENT_MODERATION_CONFIG: ContentModerationConfigView = {
     type: 'all',
     models: [],
   },
+  exclude_openai_oauth_team: false,
   thresholds: { ...DEFAULT_CONTENT_MODERATION_THRESHOLDS },
   keys_configured: false,
 }
@@ -237,6 +239,7 @@ export function parseContentModerationConfig(
       all_groups: allGroups,
       groups,
       model_filter: normalizeModelFilter(parsed.model_filter),
+      exclude_openai_oauth_team: Boolean(parsed.exclude_openai_oauth_team),
       thresholds,
       keys_configured: Boolean(parsed.keys_configured ?? apiKeys.length > 0),
     }
@@ -262,6 +265,7 @@ export function stringifyContentModerationConfig(
     all_groups: Boolean(config.all_groups),
     groups: config.all_groups ? [] : normalizeStringList(config.groups),
     model_filter: modelFilter,
+    exclude_openai_oauth_team: Boolean(config.exclude_openai_oauth_team),
     thresholds: config.thresholds,
   })
 }

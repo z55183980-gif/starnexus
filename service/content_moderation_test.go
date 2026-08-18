@@ -43,6 +43,31 @@ func TestCaptureContentModerationLogContextIncludesUpstreamAccount(t *testing.T)
 	require.Equal(t, "audit-account", logCtx.UpstreamAccountName)
 }
 
+func TestIsOpenAIOAuthTeamAccount(t *testing.T) {
+	cases := []struct {
+		name    string
+		platform string
+		accountType string
+		planType string
+		want    bool
+	}{
+		{"matching team", constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth, "team", true},
+		{"api key team", constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeAPIKey, "team", false},
+		{"oauth pro", constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth, "pro", false},
+		{"other platform", "anthropic", constant.UpstreamAccountTypeOAuth, "team", false},
+		{"unknown plan", constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, tc.platform)
+			common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, tc.accountType)
+			common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlanType, tc.planType)
+			require.Equal(t, tc.want, isOpenAIOAuthTeamAccount(c))
+		})
+	}
+}
+
 func TestEvaluateContentModerationScores(t *testing.T) {
 	thresholds := setting.ContentModerationDefaultThresholds()
 	scores := map[string]float64{

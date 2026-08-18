@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -31,6 +32,51 @@ func TestApplyUpstreamAccountErrorOwnership(t *testing.T) {
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.Equal(t, constant.UpstreamStatusError, updated.Status)
 	require.False(t, updated.Schedulable)
+}
+
+func TestApplyUpstreamAccountErrorFansOutDeactivatedTeamWorkspace(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	teamID := fmt.Sprintf("team-%d", time.Now().UnixNano())
+	trigger := createTeamLinkedTestAccount(t, "team-trigger", constant.UpstreamAccountTypeOAuth, teamID)
+	sibling := createTeamLinkedTestAccount(t, "team-sibling", constant.UpstreamAccountTypeOAuth, teamID)
+	otherTeam := createTeamLinkedTestAccount(t, "team-other", constant.UpstreamAccountTypeOAuth, teamID+"-other")
+	apiKey := createTeamLinkedTestAccount(t, "team-apikey", constant.UpstreamAccountTypeAPIKey, teamID)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("workspace deactivated"), types.ErrorCodeBadResponseStatusCode, http.StatusPaymentRequired)
+	apiErr.SetUpstreamResponse(nil, []byte(`{"detail":{"code":"deactivated_workspace"}}`))
+
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(trigger.Id, 0, apiErr))
+
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, sibling.Id).Error)
+	require.Equal(t, constant.UpstreamStatusError, updated.Status)
+	require.False(t, updated.Schedulable)
+	require.Contains(t, updated.ErrorMessage, fmt.Sprintf("account #%d", trigger.Id))
+	require.NoError(t, model.DB.First(&updated, otherTeam.Id).Error)
+	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
+	require.True(t, updated.Schedulable)
+	require.NoError(t, model.DB.First(&updated, apiKey.Id).Error)
+	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
+	require.True(t, updated.Schedulable)
+	require.True(t, isUpstreamAccountRuntimeBlocked(sibling.Id, time.Now()))
+	require.NoError(t, RecoverUpstreamAccountRuntimeState(sibling.Id, UpstreamAccountRecoveryAll))
+	require.False(t, isUpstreamAccountRuntimeBlocked(sibling.Id, time.Now()))
+}
+
+func TestApplyUpstreamAccountErrorDoesNotFanOutGenericPaymentRequired(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	teamID := fmt.Sprintf("team-generic-%d", time.Now().UnixNano())
+	trigger := createTeamLinkedTestAccount(t, "generic-trigger", constant.UpstreamAccountTypeOAuth, teamID)
+	sibling := createTeamLinkedTestAccount(t, "generic-sibling", constant.UpstreamAccountTypeOAuth, teamID)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("insufficient balance"), types.ErrorCodeBadResponseStatusCode, http.StatusPaymentRequired)
+	apiErr.SetUpstreamResponse(nil, []byte(`{"error":{"message":"insufficient balance"}}`))
+
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(trigger.Id, 0, apiErr))
+	var unchanged model.UpstreamAccount
+	require.NoError(t, model.DB.First(&unchanged, sibling.Id).Error)
+	require.Equal(t, constant.UpstreamStatusActive, unchanged.Status)
+	require.True(t, unchanged.Schedulable)
 }
 
 func TestUpstreamHTTPServerErrorDoesNotMarkProxyUnhealthy(t *testing.T) {
@@ -294,6 +340,27 @@ func createRouterTestAccountWithoutPool(t *testing.T, name string) model.Upstrea
 			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
 		},
 		Credentials: map[string]any{"access_token": name + "-secret", "account_id": "acct-" + name},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	return input.Account
+}
+
+func createTeamLinkedTestAccount(t *testing.T, name, accountType, teamID string) model.UpstreamAccount {
+	t.Helper()
+	credentials := map[string]any{"chatgpt_account_id": teamID}
+	if accountType == constant.UpstreamAccountTypeOAuth {
+		credentials["access_token"] = name + "-secret"
+		credentials["account_id"] = name + "-account"
+	} else {
+		credentials["api_key"] = name + "-key"
+	}
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: name, Platform: constant.UpstreamPlatformOpenAI, Type: accountType,
+			Extra: "{}", Concurrency: 1, Priority: 1, Weight: 1,
+			Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: credentials,
 	}
 	require.NoError(t, CreateUpstreamAccount(&input))
 	return input.Account

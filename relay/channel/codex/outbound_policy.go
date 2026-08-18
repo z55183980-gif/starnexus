@@ -70,7 +70,11 @@ func (a *Adaptor) FinalizeOutboundRequest(c *gin.Context, info *relaycommon.Rela
 
 	applyCodexEndpointBetaPolicy(request.Header, c, info)
 	applyCodexOAuthCredentials(request.Header, c)
-	service.ApplyCodexOutboundIdentity(request.Header)
+	// The identity convergence policy is specific to OpenAI OAuth. Keep
+	// non-OAuth Codex-compatible requests' client identity untouched.
+	if _, ok := currentOpenAIOAuthSelection(c); ok {
+		service.ApplyCodexOutboundIdentity(request.Header)
+	}
 	if state != nil && state.Fingerprint != nil {
 		applyCodexFingerprintHeaders(request.Header, state.Fingerprint)
 	}
