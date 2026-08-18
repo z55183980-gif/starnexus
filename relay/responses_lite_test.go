@@ -56,9 +56,11 @@ func TestPrepareResponsesWebSocketRequestNormalizesLiteEveryTurn(t *testing.T) {
 		require.Nilf(t, apiErr, "turn %d", turn+1)
 		require.Equal(t, "all_turns", gjson.GetBytes(prepared, "reasoning.context").String())
 		require.Equal(t, "reasoning.encrypted_content", gjson.GetBytes(prepared, "include.0").String())
+		require.False(t, gjson.GetBytes(prepared, "store").Bool())
 		require.Equal(t, "true", gjson.GetBytes(prepared, "client_metadata."+codex.ResponsesLiteWSMetadataKey).String())
-		require.False(t, gjson.GetBytes(prepared, `tools.#(type=="namespace")`).Exists())
-		require.Equal(t, "collaboration", gjson.GetBytes(prepared, `input.#(type=="additional_tools").tools.0.name`).String())
+		require.False(t, gjson.GetBytes(prepared, "tools").Exists())
+		require.Equal(t, "shell", gjson.GetBytes(prepared, `input.#(type=="additional_tools").tools.0.name`).String())
+		require.Equal(t, "collaboration", gjson.GetBytes(prepared, `input.#(type=="additional_tools").tools.1.name`).String())
 	}
 }
 
@@ -75,6 +77,7 @@ func TestPrepareResponsesWebSocketRequestRestoresLiteHeaderForHTTPBridge(t *test
 	prepared, _, apiErr := PrepareResponsesWebSocketRequest(c, info, request, true)
 	require.Nil(t, apiErr)
 	require.Equal(t, "all_turns", gjson.GetBytes(prepared, "reasoning.context").String())
+	require.False(t, gjson.GetBytes(prepared, "store").Bool())
 	require.Equal(t, "true", c.GetHeader(codex.ResponsesLiteHeader))
 }
 

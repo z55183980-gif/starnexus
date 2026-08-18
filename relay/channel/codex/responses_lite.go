@@ -26,9 +26,9 @@ func IsResponsesLiteWebSocketPayload(body []byte) bool {
 }
 
 // NormalizeResponsesLitePayload applies the wire contract used by the Codex
-// Responses Lite endpoint. Besides requiring reasoning over all turns, Lite
-// carries private namespace declarations through input.additional_tools and
-// only accepts a narrow set of top-level tool kinds.
+// Responses Lite endpoint. Lite requires reasoning over all turns, keeps
+// instructions and tools inside input, and uses store=false with serialized
+// tool declarations in input.additional_tools.
 func NormalizeResponsesLitePayload(body []byte) ([]byte, bool, error) {
 	var requestBody map[string]any
 	if err := common.Unmarshal(body, &requestBody); err != nil {
@@ -39,7 +39,17 @@ func NormalizeResponsesLitePayload(body []byte) ([]byte, bool, error) {
 	if err != nil {
 		return body, false, err
 	}
+	instructionsChanged, err := normalizeResponsesLiteInstructions(requestBody)
+	if err != nil {
+		return body, false, err
+	}
+	if instructionsChanged {
+		changed = true
+	}
 	if ensureResponsesLiteParallelToolCalls(requestBody) {
+		changed = true
+	}
+	if ensureResponsesLiteStore(requestBody) {
 		changed = true
 	}
 	if ensureResponsesLiteReasoningInclude(requestBody) {
@@ -54,6 +64,50 @@ func NormalizeResponsesLitePayload(body []byte) ([]byte, bool, error) {
 		return body, false, fmt.Errorf("encode Responses Lite request body: %w", err)
 	}
 	return rebuilt, true, nil
+}
+
+func ensureResponsesLiteStore(requestBody map[string]any) bool {
+	if requestBody == nil {
+		return false
+	}
+	if value, exists := requestBody["store"]; exists {
+		if store, ok := value.(bool); ok && !store {
+			return false
+		}
+	}
+	requestBody["store"] = false
+	return true
+}
+
+func normalizeResponsesLiteInstructions(requestBody map[string]any) (bool, error) {
+	if requestBody == nil {
+		return false, nil
+	}
+
+	rawInstructions, exists := requestBody["instructions"]
+	if !exists || rawInstructions == nil {
+		requestBody["instructions"] = ""
+		return true, nil
+	}
+	instructions, ok := rawInstructions.(string)
+	if !ok {
+		return false, fmt.Errorf("Responses Lite instructions must be a string")
+	}
+	if strings.TrimSpace(instructions) == "" {
+		if instructions == "" {
+			return false, nil
+		}
+		requestBody["instructions"] = ""
+		return true, nil
+	}
+
+	input, err := prependResponsesLiteDeveloperMessage(requestBody["input"], instructions)
+	if err != nil {
+		return false, err
+	}
+	requestBody["input"] = input
+	requestBody["instructions"] = ""
+	return true, nil
 }
 
 func ensureResponsesLiteParallelToolCalls(requestBody map[string]any) bool {
@@ -81,21 +135,32 @@ func normalizeResponsesLiteTools(requestBody map[string]any) (bool, error) {
 
 	rawTools, exists := requestBody["tools"]
 	if !exists || rawTools == nil {
-		return ensureResponsesLiteReasoningContext(requestBody)
+		if exists {
+			delete(requestBody, "tools")
+		}
+		contextChanged, err := ensureResponsesLiteReasoningContext(requestBody)
+		if err != nil {
+			return false, err
+		}
+		input, inputChanged, inputErr := appendResponsesLiteAdditionalTools(requestBody["input"], nil)
+		if inputErr != nil {
+			return false, inputErr
+		}
+		requestBody["input"] = input
+		return contextChanged || inputChanged || exists, nil
 	}
 	tools, ok := rawTools.([]any)
 	if !ok {
 		return false, fmt.Errorf("Responses Lite requires tools to be an array")
 	}
 
-	topLevelTools := make([]any, 0, len(tools))
-	namespaceTools := make([]any, 0, len(tools))
+	liteTools := make([]any, 0, len(tools))
 	for index, rawTool := range tools {
 		if customTool, ok := rawTool.(string); ok {
 			if strings.TrimSpace(customTool) == "" {
 				return false, fmt.Errorf("Responses Lite custom tool at index %d must not be empty", index)
 			}
-			topLevelTools = append(topLevelTools, rawTool)
+			liteTools = append(liteTools, rawTool)
 			continue
 		}
 
@@ -105,10 +170,8 @@ func normalizeResponsesLiteTools(requestBody map[string]any) (bool, error) {
 		}
 		toolType := strings.TrimSpace(responsesLiteString(tool["type"]))
 		switch toolType {
-		case "function", "custom", "tool_search":
-			topLevelTools = append(topLevelTools, rawTool)
-		case "namespace":
-			namespaceTools = append(namespaceTools, rawTool)
+		case "function", "custom", "tool_search", "namespace":
+			liteTools = append(liteTools, rawTool)
 		case "":
 			return false, fmt.Errorf("Responses Lite tool at index %d is missing type", index)
 		default:
@@ -120,20 +183,25 @@ func normalizeResponsesLiteTools(requestBody map[string]any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if len(namespaceTools) == 0 {
+	if len(liteTools) == 0 {
+		if _, exists := requestBody["tools"]; exists {
+			delete(requestBody, "tools")
+			input, _, inputErr := appendResponsesLiteAdditionalTools(requestBody["input"], nil)
+			if inputErr != nil {
+				return false, inputErr
+			}
+			requestBody["input"] = input
+			return true, nil
+		}
 		return contextChanged, nil
 	}
 
-	input, err := appendResponsesLiteAdditionalTools(requestBody["input"], namespaceTools)
+	input, _, err := appendResponsesLiteAdditionalTools(requestBody["input"], liteTools)
 	if err != nil {
 		return false, err
 	}
 	requestBody["input"] = input
-	if len(topLevelTools) == 0 {
-		delete(requestBody, "tools")
-	} else {
-		requestBody["tools"] = topLevelTools
-	}
+	delete(requestBody, "tools")
 	return true, nil
 }
 
@@ -179,7 +247,7 @@ func ensureResponsesLiteReasoningInclude(requestBody map[string]any) bool {
 	return true
 }
 
-func appendResponsesLiteAdditionalTools(input any, namespaceTools []any) ([]any, error) {
+func appendResponsesLiteAdditionalTools(input any, liteTools []any) ([]any, bool, error) {
 	var items []any
 	switch typed := input.(type) {
 	case nil:
@@ -193,13 +261,14 @@ func appendResponsesLiteAdditionalTools(input any, namespaceTools []any) ([]any,
 	case []any:
 		items = typed
 	default:
-		return nil, fmt.Errorf("Responses Lite namespace tools require input to be a string or array")
+		return nil, false, fmt.Errorf("Responses Lite tools require input to be a string or array")
 	}
 
 	var target map[string]any
 	var targetTools []any
+	targetIndex := -1
 	var allAdditionalTools []any
-	for _, rawItem := range items {
+	for index, rawItem := range items {
 		item, ok := rawItem.(map[string]any)
 		if !ok || strings.TrimSpace(responsesLiteString(item["type"])) != "additional_tools" {
 			continue
@@ -211,32 +280,92 @@ func appendResponsesLiteAdditionalTools(input any, namespaceTools []any) ([]any,
 			additionalTools, toolsOK = rawAdditionalTools.([]any)
 		}
 		if !toolsOK {
-			return nil, fmt.Errorf("Responses Lite input.additional_tools tools must be an array")
+			return nil, false, fmt.Errorf("Responses Lite input.additional_tools tools must be an array")
 		}
 		if target == nil {
 			target = item
 			targetTools = additionalTools
+			targetIndex = index
 		}
 		allAdditionalTools = append(allAdditionalTools, additionalTools...)
 	}
 
-	merged, err := mergeResponsesLiteAdditionalTools(allAdditionalTools, namespaceTools)
+	merged, err := mergeResponsesLiteAdditionalTools(allAdditionalTools, liteTools)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	newTools := merged[len(allAdditionalTools):]
+	changed := false
 	if target != nil {
+		if strings.TrimSpace(responsesLiteString(target["role"])) != "developer" {
+			target["role"] = "developer"
+			changed = true
+		}
 		if len(newTools) > 0 {
 			target["tools"] = append(append([]any(nil), targetTools...), newTools...)
+			changed = true
+		} else if targetTools == nil {
+			target["tools"] = []any{}
+			changed = true
 		}
-		return items, nil
+		if targetIndex > 0 {
+			copy(items[targetIndex:], items[targetIndex+1:])
+			items = items[:len(items)-1]
+			items = append([]any{target}, items...)
+			changed = true
+		}
+		return items, changed, nil
 	}
 
-	items = append(items, map[string]any{
+	if newTools == nil {
+		newTools = []any{}
+	}
+	items = append([]any{map[string]any{
 		"type":  "additional_tools",
 		"role":  "developer",
 		"tools": newTools,
-	})
+	}}, items...)
+	return items, true, nil
+}
+
+func prependResponsesLiteDeveloperMessage(input any, instructions string) ([]any, error) {
+	var items []any
+	switch typed := input.(type) {
+	case nil:
+		items = make([]any, 0, 1)
+	case string:
+		items = []any{map[string]any{
+			"type":    "message",
+			"role":    "user",
+			"content": typed,
+		}}
+	case []any:
+		items = typed
+	default:
+		return nil, fmt.Errorf("Responses Lite instructions require input to be a string or array")
+	}
+
+	developerMessage := map[string]any{
+		"type": "message",
+		"role": "developer",
+		"content": []any{
+			map[string]any{
+				"type": "input_text",
+				"text": instructions,
+			},
+		},
+	}
+	insertAt := 0
+	for insertAt < len(items) {
+		item, ok := items[insertAt].(map[string]any)
+		if !ok || strings.TrimSpace(responsesLiteString(item["type"])) != "additional_tools" {
+			break
+		}
+		insertAt++
+	}
+	items = append(items, nil)
+	copy(items[insertAt+1:], items[insertAt:])
+	items[insertAt] = developerMessage
 	return items, nil
 }
 

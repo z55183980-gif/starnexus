@@ -99,6 +99,13 @@ func preparePassthroughRequestBodyWithAdaptor(adaptor channel.Adaptor, c *gin.Co
 		if err != nil {
 			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
+		// The ChatGPT Codex Responses backend does not allow storing the
+		// response. Converted requests already set this in the adaptor; keep
+		// account/channel passthrough on the same wire contract.
+		jsonData, err = sjson.SetBytes(jsonData, "store", false)
+		if err != nil {
+			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 	}
 	if needsFinalization {
 		jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)

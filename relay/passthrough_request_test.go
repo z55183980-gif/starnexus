@@ -156,7 +156,7 @@ func TestPrepareAccountPassthroughRejectsCodexRepairWithOrphanToolOutput(t *test
 func TestPreparePassthroughRequestBodyForcesCodexResponsesStream(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false,"input":[{"role":"system","content":"preserve exactly"}]}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5","stream":false,"store":true,"input":[{"role":"system","content":"preserve exactly"}]}`))
 	t.Cleanup(func() { common.CleanupBodyStorage(c) })
 
 	info := &relaycommon.RelayInfo{
@@ -174,6 +174,7 @@ func TestPreparePassthroughRequestBodyForcesCodexResponsesStream(t *testing.T) {
 	data, err := io.ReadAll(body)
 	require.NoError(t, err)
 	require.True(t, gjson.GetBytes(data, "stream").Bool())
+	require.False(t, gjson.GetBytes(data, "store").Bool())
 	require.Equal(t, "system", gjson.GetBytes(data, "input.0.role").String())
 	require.Equal(t, "preserve exactly", gjson.GetBytes(data, "input.0.content").String())
 }
@@ -184,7 +185,9 @@ func TestPreparePassthroughRequestBodyNormalizesResponsesLite(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{
 		"model":"gpt-5.6-sol",
 		"input":"hello",
+		"instructions":"Use the repository tools.",
 		"reasoning":{"effort":"high","context":"current_turn"},
+		"store":true,
 		"tools":[{"type":"namespace","name":"collaboration","tools":[]}]
 	}`))
 	c.Request.Header.Set(codex.ResponsesLiteHeader, "true")
@@ -210,6 +213,10 @@ func TestPreparePassthroughRequestBodyNormalizesResponsesLite(t *testing.T) {
 	require.Equal(t, "all_turns", gjson.GetBytes(data, "reasoning.context").String())
 	require.True(t, gjson.GetBytes(data, "stream").Bool())
 	require.Equal(t, "reasoning.encrypted_content", gjson.GetBytes(data, "include.0").String())
-	require.False(t, gjson.GetBytes(data, `tools.#(type=="namespace")`).Exists())
+	require.False(t, gjson.GetBytes(data, "store").Bool())
+	require.Equal(t, "", gjson.GetBytes(data, "instructions").String())
+	require.False(t, gjson.GetBytes(data, "tools").Exists())
 	require.Equal(t, "collaboration", gjson.GetBytes(data, `input.#(type=="additional_tools").tools.0.name`).String())
+	require.Equal(t, "developer", gjson.GetBytes(data, "input.1.role").String())
+	require.Equal(t, "Use the repository tools.", gjson.GetBytes(data, "input.1.content.0.text").String())
 }

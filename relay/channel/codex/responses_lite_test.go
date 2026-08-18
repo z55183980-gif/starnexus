@@ -37,6 +37,8 @@ func TestNormalizeResponsesLitePayloadEnsuresReasoningContract(t *testing.T) {
 			require.True(t, changed)
 			require.Equal(t, "all_turns", gjson.GetBytes(normalized, "reasoning.context").String())
 			require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Bool())
+			require.False(t, gjson.GetBytes(normalized, "store").Bool())
+			require.Equal(t, "", gjson.GetBytes(normalized, "instructions").String())
 			require.Equal(t, "reasoning.encrypted_content", gjson.GetBytes(normalized, "include.0").String())
 			if effort := gjson.Get(testCase.body, "reasoning.effort").String(); effort != "" {
 				require.Equal(t, effort, gjson.GetBytes(normalized, "reasoning.effort").String())
@@ -66,12 +68,37 @@ func TestNormalizeResponsesLitePayloadMovesNamespaceTools(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 	require.Equal(t, "all_turns", gjson.GetBytes(normalized, "reasoning.context").String())
-	require.False(t, gjson.GetBytes(normalized, `tools.#(type=="namespace")`).Exists())
-	require.Equal(t, "shell", gjson.GetBytes(normalized, `tools.#(type=="function").name`).String())
-	require.Equal(t, "apply_patch", gjson.GetBytes(normalized, `tools.#(type=="custom").name`).String())
-	require.True(t, gjson.GetBytes(normalized, `tools.#(type=="tool_search")`).Exists())
+	require.False(t, gjson.GetBytes(normalized, "tools").Exists())
+	require.Equal(t, "additional_tools", gjson.GetBytes(normalized, "input.0.type").String())
 	require.Equal(t, "exec", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.0.name`).String())
-	require.Equal(t, "collaboration", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.1.name`).String())
+	require.Equal(t, "shell", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.1.name`).String())
+	require.Equal(t, "apply_patch", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.2.name`).String())
+	require.Equal(t, "tool_search", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.3.type`).String())
+	require.Equal(t, "collaboration", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.4.name`).String())
+
+	second, changedAgain, err := NormalizeResponsesLitePayload(normalized)
+	require.NoError(t, err)
+	require.False(t, changedAgain)
+	require.JSONEq(t, string(normalized), string(second))
+}
+
+func TestNormalizeResponsesLitePayloadMovesInstructionsIntoDeveloperInput(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{
+		"model":"gpt-5.6-sol",
+		"instructions":"Use the repository tools.",
+		"input":[{"type":"message","role":"user","content":"hello"}]
+	}`)
+
+	normalized, changed, err := NormalizeResponsesLitePayload(body)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, "", gjson.GetBytes(normalized, "instructions").String())
+	require.Equal(t, "additional_tools", gjson.GetBytes(normalized, "input.0.type").String())
+	require.Equal(t, "developer", gjson.GetBytes(normalized, "input.1.role").String())
+	require.Equal(t, "input_text", gjson.GetBytes(normalized, "input.1.content.0.type").String())
+	require.Equal(t, "Use the repository tools.", gjson.GetBytes(normalized, "input.1.content.0.text").String())
+	require.Equal(t, "user", gjson.GetBytes(normalized, "input.2.role").String())
 
 	second, changedAgain, err := NormalizeResponsesLitePayload(normalized)
 	require.NoError(t, err)
@@ -82,11 +109,12 @@ func TestNormalizeResponsesLitePayloadMovesNamespaceTools(t *testing.T) {
 func TestNormalizeResponsesLitePayloadForcesParallelToolCallsFalse(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{"true", "false", "null"} {
-		body := []byte(`{"model":"gpt-5.6-sol","input":"hello","parallel_tool_calls":` + value + `}`)
+		body := []byte(`{"model":"gpt-5.6-sol","input":"hello","parallel_tool_calls":` + value + `,"store":true}`)
 		normalized, changed, err := NormalizeResponsesLitePayload(body)
 		require.NoError(t, err)
 		require.True(t, changed)
 		require.False(t, gjson.GetBytes(normalized, "parallel_tool_calls").Bool())
+		require.False(t, gjson.GetBytes(normalized, "store").Bool())
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/common"
+	appconstant "github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/sjson"
 )
 
 func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest, forceStream bool) ([]byte, channel.Adaptor, *types.NewAPIError) {
@@ -80,6 +82,12 @@ func PrepareResponsesWebSocketRequest(c *gin.Context, info *relaycommon.RelayInf
 		// client_metadata. The SSE/HTTP bridge must restore it as an actual
 		// upstream HTTP header for the same turn.
 		markResponsesLiteHTTPHeader(c)
+	}
+	if info.ChannelType == appconstant.ChannelTypeCodex {
+		jsonData, err = sjson.SetBytes(jsonData, "store", false)
+		if err != nil {
+			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
 	}
 	jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)
 	if err != nil {
