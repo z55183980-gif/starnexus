@@ -309,13 +309,14 @@ func ExportUpstreamAccounts(c *gin.Context) {
 
 func ImportUpstreamData(c *gin.Context) {
 	var request struct {
-		Data service.UpstreamAccountExport `json:"data"`
+		Data          service.UpstreamAccountExport `json:"data"`
+		DefaultConfig string                        `json:"default_config"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	result, err := service.ImportUpstreamData(request.Data)
+	result, err := service.ImportUpstreamData(request.Data, request.DefaultConfig)
 	if err != nil {
 		common.ApiError(c, err)
 		return

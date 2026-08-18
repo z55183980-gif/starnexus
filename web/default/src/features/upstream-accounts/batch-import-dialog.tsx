@@ -27,6 +27,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Field, FieldDescription, FieldLabel } from '@/components/ui/field'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { extractImportItems, type ImportCollectionKey } from './batch-import'
 
 const MAX_IMPORT_FILE_SIZE = 5 * 1024 * 1024
@@ -45,11 +52,18 @@ export function BatchImportDialog({
   title: string
   description: string
   collectionKey: ImportCollectionKey
-  onImport: (items: unknown[], documents: unknown[]) => Promise<void>
+  onImport: (
+    items: unknown[],
+    documents: unknown[],
+    defaultConfig?: string
+  ) => Promise<void>
 }) {
   const { t } = useTranslation()
   const [busy, setBusy] = useState(false)
   const [files, setFiles] = useState<File[]>([])
+  // Keep the first built-in account preset selected so imported credentials
+  // can be used immediately without an additional manual edit.
+  const [defaultConfig, setDefaultConfig] = useState('team')
   const [dragDepth, setDragDepth] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const dragActive = dragDepth > 0
@@ -58,6 +72,7 @@ export function BatchImportDialog({
   useEffect(() => {
     if (!open) {
       setFiles([])
+      setDefaultConfig('team')
       setDragDepth(0)
       setBusy(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
@@ -123,7 +138,13 @@ export function BatchImportDialog({
         throw new Error(t('Enter a JSON array containing 1 to 100 items'))
       }
 
-      await onImport(items, documents)
+      await onImport(
+        items,
+        documents,
+        collectionKey === 'accounts' && defaultConfig !== 'none'
+          ? defaultConfig
+          : undefined
+      )
       onOpenChange(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('Invalid JSON'))
@@ -204,6 +225,35 @@ export function BatchImportDialog({
             )}
           </FieldDescription>
         </Field>
+        {collectionKey === 'accounts' && (
+          <Field className='min-w-0'>
+            <FieldLabel htmlFor='account-import-default-config'>
+              {t('Default configuration')}
+            </FieldLabel>
+            <Select
+              value={defaultConfig}
+              onValueChange={(value) => {
+                if (value !== null) setDefaultConfig(value)
+              }}
+              disabled={busy}
+            >
+              <SelectTrigger id='account-import-default-config'>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='team'>team</SelectItem>
+                <SelectItem value='none'>
+                  {t('No default configuration')}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              {t(
+                'Apply the selected configuration to imported accounts automatically.'
+              )}
+            </FieldDescription>
+          </Field>
+        )}
         <DialogFooter>
           <Button
             variant='outline'

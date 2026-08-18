@@ -19,13 +19,34 @@ import (
 )
 
 const (
-	upstreamAccountExportVersion = 1
-	upstreamAccountExportType    = "sub2api-data"
-	upstreamLegacyExportType     = "starnexus-upstream-accounts"
-	upstreamLegacySub2ExportType = "sub2api-bundle"
-	crsSourceSystem              = "crs"
-	maxCRSResponseBytes          = 5 << 20
+	upstreamAccountExportVersion             = 1
+	upstreamAccountExportType                = "sub2api-data"
+	upstreamLegacyExportType                 = "starnexus-upstream-accounts"
+	upstreamLegacySub2ExportType             = "sub2api-bundle"
+	crsSourceSystem                          = "crs"
+	maxCRSResponseBytes                      = 5 << 20
+	upstreamAccountImportTeamPoolName        = "PRO-T"
+	upstreamAccountImportTeamSchedulerConfig = `{"top_k":2,"version":1,"strategy":"priority_tier","priority_source":"account","session_affinity_enabled":true,"session_affinity_wait_ms":1500,"session_affinity_max_waiters":1,"session_affinity_ttl_seconds":900,"session_affinity_fallback_mode":"prefix","session_affinity_fallback_models":["gpt-5.6-sol"],"session_affinity_fallback_min_body_bytes":262144,"session_affinity_fallback_sample_percent":100}`
 )
+
+var upstreamAccountImportTeamModelMapping = map[string]string{
+	"codex-auto-review":       "codex-auto-review",
+	"gpt-4o-audio-preview":    "gpt-4o-audio-preview",
+	"gpt-4o-realtime-preview": "gpt-4o-realtime-preview",
+	"gpt-5.2":                 "gpt-5.2",
+	"gpt-5.2-2025-12-11":      "gpt-5.2-2025-12-11",
+	"gpt-5.2-chat-latest":     "gpt-5.2-chat-latest",
+	"gpt-5.2-pro":             "gpt-5.2-pro",
+	"gpt-5.2-pro-2025-12-11":  "gpt-5.2-pro-2025-12-11",
+	"gpt-5.3-codex-spark":     "gpt-5.6-terra",
+	"gpt-5.4":                 "gpt-5.4",
+	"gpt-5.4-2026-03-05":      "gpt-5.4-2026-03-05",
+	"gpt-5.4-mini":            "gpt-5.4-mini",
+	"gpt-5.5":                 "gpt-5.5",
+	"gpt-5.6":                 "gpt-5.6",
+	"gpt-5.6-sol":             "gpt-5.6-sol",
+	"gpt-5.6-terra":           "gpt-5.6-terra",
+}
 
 type UpstreamProxyExportItem struct {
 	ProxyKey        string `json:"proxy_key"`
@@ -207,7 +228,25 @@ func ExportUpstreamAccounts(ids []int) (*UpstreamAccountExport, error) {
 	return result, nil
 }
 
-func ImportUpstreamData(payload UpstreamAccountExport) (*UpstreamDataImportResult, error) {
+func ImportUpstreamData(payload UpstreamAccountExport, defaultConfigs ...string) (*UpstreamDataImportResult, error) {
+	if len(defaultConfigs) > 1 {
+		return nil, errors.New("only one default configuration may be selected")
+	}
+	defaultConfig := ""
+	if len(defaultConfigs) == 1 {
+		defaultConfig = strings.ToLower(strings.TrimSpace(defaultConfigs[0]))
+	}
+	if defaultConfig != "" && defaultConfig != "team" {
+		return nil, fmt.Errorf("unsupported default configuration: %s", defaultConfig)
+	}
+	teamPoolId := 0
+	if defaultConfig == "team" {
+		pool, err := ensureUpstreamAccountImportTeamPool()
+		if err != nil {
+			return nil, err
+		}
+		teamPoolId = pool.Id
+	}
 	if payload.Type != "" && payload.Type != upstreamAccountExportType && payload.Type != upstreamLegacySub2ExportType && payload.Type != upstreamLegacyExportType {
 		return nil, fmt.Errorf("unsupported data type: %s", payload.Type)
 	}
@@ -326,8 +365,18 @@ func ImportUpstreamData(payload UpstreamAccountExport) (*UpstreamDataImportResul
 			continue
 		}
 		extra = string(extraRaw)
+		if defaultConfig == "team" {
+			applyUpstreamAccountImportTeamConfiguration(platform, accountType, credentials, extraObject)
+			extraRaw, err = common.Marshal(extraObject)
+			if err != nil {
+				result.AccountFailed++
+				result.Errors = append(result.Errors, UpstreamDataImportError{Kind: "account", Name: item.Name, Message: err.Error()})
+				continue
+			}
+			extra = string(extraRaw)
+		}
 		proxyId := item.ProxyId
-		if item.ProxyKey != nil && strings.TrimSpace(*item.ProxyKey) != "" {
+		if defaultConfig != "team" && item.ProxyKey != nil && strings.TrimSpace(*item.ProxyKey) != "" {
 			mappedId, ok := proxyKeyToId[strings.TrimSpace(*item.ProxyKey)]
 			if !ok {
 				result.AccountFailed++
@@ -363,6 +412,32 @@ func ImportUpstreamData(payload UpstreamAccountExport) (*UpstreamDataImportResul
 				refreshOwner = constant.UpstreamOAuthRefreshOwnerStarNexus
 			}
 		}
+		poolIds := item.PoolIds
+		if defaultConfig == "team" {
+			// PRO-T is an OpenAI pool in production (account 142 is a member).
+			// Keep non-OpenAI imports valid while still applying the account-level
+			// settings below.
+			proxyId = nil
+			poolIds = nil
+			if platform == constant.UpstreamPlatformOpenAI {
+				poolIds = []int{teamPoolId}
+			}
+			concurrency = 10
+			priority := 1
+			weight = 1000
+			loadFactor := 1000
+			rateMultiplier := 1.0
+			item.Priority = priority
+			item.Weight = weight
+			item.LoadFactor = &loadFactor
+			item.RateMultiplier = &rateMultiplier
+			status = constant.UpstreamStatusActive
+			schedulable = true
+			autoPause = true
+			if accountType == constant.UpstreamAccountTypeOAuth || accountType == constant.UpstreamAccountTypeSetupToken {
+				refreshOwner = constant.UpstreamOAuthRefreshOwnerStarNexus
+			}
+		}
 		account := model.UpstreamAccount{
 			Name: item.Name, Notes: item.Notes, Platform: platform, Type: accountType, Extra: extra,
 			ProxyId: proxyId, Concurrency: concurrency, Priority: item.Priority, Weight: weight,
@@ -370,7 +445,14 @@ func ImportUpstreamData(payload UpstreamAccountExport) (*UpstreamDataImportResul
 			Schedulable: schedulable, ExpiresAt: item.ExpiresAt, AutoPauseOnExpired: autoPause,
 			OAuthRefreshOwner: refreshOwner,
 		}
-		input := &UpstreamAccountCreateInput{Account: account, Credentials: credentials}
+		// Preserve destination pool memberships from the import item.  Exported
+		// payloads include pool_ids so callers can explicitly assign imported
+		// accounts to an existing pool (for example, a selected default import
+		// configuration).  CreateUpstreamAccount validates the references and
+		// atomically replaces the memberships.  Empty/unknown IDs therefore fail
+		// the individual account import with a useful error instead of silently
+		// dropping the requested assignment.
+		input := &UpstreamAccountCreateInput{Account: account, Credentials: credentials, PoolIds: poolIds}
 		if err := CreateUpstreamAccount(input); err != nil {
 			result.AccountFailed++
 			result.Errors = append(result.Errors, UpstreamDataImportError{Kind: "account", Name: item.Name, Message: err.Error()})
@@ -379,6 +461,73 @@ func ImportUpstreamData(payload UpstreamAccountExport) (*UpstreamDataImportResul
 		result.AccountCreated++
 	}
 	return result, nil
+}
+
+// applyUpstreamAccountImportTeamConfiguration copies the non-secret settings
+// from production account 142. Tokens, account IDs, expiry timestamps, and
+// usage counters are intentionally left untouched because they belong to the
+// imported credential rather than to the reusable Team configuration.
+func applyUpstreamAccountImportTeamConfiguration(platform, accountType string, credentials map[string]any, extra map[string]any) {
+	if platform != constant.UpstreamPlatformOpenAI || accountType != constant.UpstreamAccountTypeOAuth {
+		return
+	}
+	delete(credentials, "plan")
+	credentials["plan_type"] = "team"
+	modelMapping := make(map[string]string, len(upstreamAccountImportTeamModelMapping))
+	for source, target := range upstreamAccountImportTeamModelMapping {
+		modelMapping[source] = target
+	}
+	credentials["model_mapping"] = modelMapping
+	for _, key := range []string{
+		"base_url", "compact_model_mapping", "openai_capabilities",
+		"intercept_warmup_requests", "temp_unschedulable_enabled",
+		"temp_unschedulable_rules", "header_override_enabled", "header_overrides",
+		"openai_compact_mode", "openai_oauth_responses_websockets_v2_mode",
+		"openai_apikey_responses_websockets_v2_mode", "openai_long_context_billing_enabled",
+		"openai_passthrough", "openai_responses_mode", "codex_fingerprint_mode",
+		"codex_cli_only", "codex_cli_only_allow_app_server",
+	} {
+		delete(credentials, key)
+	}
+	for key := range extra {
+		delete(extra, key)
+	}
+	extra["openai_long_context_billing_enabled"] = false
+	extra["openai_oauth_responses_websockets_v2_mode"] = "ctx_pool"
+	extra["codex_fingerprint_mode"] = "device"
+}
+
+// ensureUpstreamAccountImportTeamPool resolves the production pool used by
+// account 142. A destination instance may not have that pool yet, so create a
+// compatible local copy using the scheduler settings read from production.
+func ensureUpstreamAccountImportTeamPool() (*model.UpstreamAccountPool, error) {
+	var pool model.UpstreamAccountPool
+	err := model.DB.Where("name = ?", upstreamAccountImportTeamPoolName).First(&pool).Error
+	if err == nil {
+		if strings.ToLower(strings.TrimSpace(pool.Platform)) != constant.UpstreamPlatformOpenAI {
+			return nil, fmt.Errorf("default team pool %q must use the OpenAI platform", upstreamAccountImportTeamPoolName)
+		}
+		return &pool, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	pool = model.UpstreamAccountPool{
+		Name: upstreamAccountImportTeamPoolName, Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: "mixed", Status: constant.UpstreamStatusActive,
+		SchedulerConfig: upstreamAccountImportTeamSchedulerConfig,
+	}
+	if err := CreateUpstreamAccountPool(&pool); err != nil {
+		// Another concurrent import may have created it after the initial lookup.
+		if lookupErr := model.DB.Where("name = ?", upstreamAccountImportTeamPoolName).First(&pool).Error; lookupErr == nil {
+			if strings.ToLower(strings.TrimSpace(pool.Platform)) != constant.UpstreamPlatformOpenAI {
+				return nil, fmt.Errorf("default team pool %q must use the OpenAI platform", upstreamAccountImportTeamPoolName)
+			}
+			return &pool, nil
+		}
+		return nil, err
+	}
+	return &pool, nil
 }
 
 func buildUpstreamDataProxyKey(protocol, host string, port int, username, password string) string {

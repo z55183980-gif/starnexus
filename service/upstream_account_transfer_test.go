@@ -107,6 +107,100 @@ func TestImportUpstreamAccountsKeepsSub2CredentialBackedOptionsCanonical(t *test
 	require.NotContains(t, extra, "openai_capabilities")
 }
 
+func TestImportUpstreamAccountsAppliesPoolMemberships(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	pool := model.UpstreamAccountPool{
+		Name: "import-default-pool", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType:  constant.UpstreamAccountTypeAPIKey,
+		Status:          constant.UpstreamStatusActive,
+		SchedulerConfig: "{}",
+	}
+	require.NoError(t, CreateUpstreamAccountPool(&pool))
+
+	payload := UpstreamAccountExport{Accounts: []UpstreamAccountExportItem{{
+		Name: "pooled-import", Platform: constant.UpstreamPlatformOpenAI,
+		Type:        constant.UpstreamAccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "pooled-secret"},
+		PoolIds:     []int{pool.Id},
+	}}}
+	result, err := ImportUpstreamData(payload)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.AccountCreated)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.Where("name = ?", "pooled-import").First(&account).Error)
+	poolIds, err := listUpstreamAccountPoolIds(model.DB, account.Id)
+	require.NoError(t, err)
+	require.Equal(t, []int{pool.Id}, poolIds)
+}
+
+func TestImportUpstreamAccountsAppliesTeamDefaultConfiguration(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+
+	payload := UpstreamAccountExport{Accounts: []UpstreamAccountExportItem{{
+		Name: "team-import", Platform: constant.UpstreamPlatformOpenAI,
+		Type:        constant.UpstreamAccountTypeAPIKey,
+		Credentials: map[string]any{"api_key": "team-secret"},
+		Concurrency: 2, Priority: 50, Weight: 3,
+	}}}
+	result, err := ImportUpstreamData(payload, "team")
+	require.NoError(t, err)
+	require.Equal(t, 1, result.AccountCreated)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.Where("name = ?", "team-import").First(&account).Error)
+	require.Equal(t, 10, account.Concurrency)
+	require.Equal(t, 1, account.Priority)
+	require.Equal(t, 1000, account.Weight)
+	require.NotNil(t, account.LoadFactor)
+	require.Equal(t, 1000, *account.LoadFactor)
+	require.NotNil(t, account.RateMultiplier)
+	require.Equal(t, 1.0, *account.RateMultiplier)
+
+	var pool model.UpstreamAccountPool
+	require.NoError(t, model.DB.Where("name = ?", upstreamAccountImportTeamPoolName).First(&pool).Error)
+	require.Equal(t, constant.UpstreamPlatformOpenAI, pool.Platform)
+	require.Equal(t, upstreamAccountImportTeamSchedulerConfig, pool.SchedulerConfig)
+	poolIds, err := listUpstreamAccountPoolIds(model.DB, account.Id)
+	require.NoError(t, err)
+	require.Equal(t, []int{pool.Id}, poolIds)
+}
+
+func TestImportUpstreamAccountsCopiesTeamCredentialOptions(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+
+	payload := UpstreamAccountExport{Accounts: []UpstreamAccountExportItem{{
+		Name: "team-oauth-import", Platform: constant.UpstreamPlatformOpenAI,
+		Type: constant.UpstreamAccountTypeOAuth,
+		Credentials: map[string]any{
+			"access_token": "import-access-token", "account_id": "import-account-id",
+			"model_mapping": map[string]any{"gpt-5.6": "wrong-model"},
+			"plan_type":     "plus",
+		},
+		Extra: map[string]any{
+			"openai_oauth_responses_websockets_v2_mode": "off",
+			"codex_fingerprint_mode":                    "off",
+			"codex_7d_used_percent":                     99,
+		},
+	}}}
+	result, err := ImportUpstreamData(payload, "team")
+	require.NoError(t, err)
+	require.Equal(t, 1, result.AccountCreated)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.Where("name = ?", "team-oauth-import").First(&account).Error)
+	credentials, err := DecryptUpstreamAccountCredentials(&account)
+	require.NoError(t, err)
+	require.Equal(t, "team", credentials["plan_type"])
+	require.Equal(t, upstreamAccountImportTeamModelMapping, upstreamCredentialStringMap(credentials["model_mapping"]))
+	var extra map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(account.Extra, &extra))
+	require.Equal(t, "ctx_pool", extra["openai_oauth_responses_websockets_v2_mode"])
+	require.Equal(t, "device", extra["codex_fingerprint_mode"])
+	require.Equal(t, false, extra["openai_long_context_billing_enabled"])
+	require.NotContains(t, extra, "codex_7d_used_percent")
+}
+
 func TestSub2APICompatibleExportImportRoundTripWithoutKeyring(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	t.Setenv(upstreamCredentialKeysEnv, "")

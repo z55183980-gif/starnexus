@@ -2070,9 +2070,14 @@ export function AccountManagement({
     }
   }
 
-  const importAccounts = async (_items: unknown[], documents: unknown[]) => {
+  const importAccounts = async (
+    _items: unknown[],
+    documents: unknown[],
+    defaultConfig?: string
+  ) => {
     const response = await importUpstreamData(
-      mergeAccountImportDocuments(documents)
+      mergeAccountImportDocuments(documents),
+      defaultConfig
     )
     if (!response.success)
       throw new Error(response.message || t('Import failed'))

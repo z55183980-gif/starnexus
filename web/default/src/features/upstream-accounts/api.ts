@@ -175,11 +175,13 @@ export async function exportUpstreamAccounts(
 }
 
 export async function importUpstreamData(
-  data: UpstreamAccountExport
+  data: UpstreamAccountExport,
+  defaultConfig?: string
 ): Promise<ApiResponse<UpstreamDataImportResult>> {
   const response = await api.post('/api/upstream/accounts/import', {
     data,
     skip_default_group_bind: true,
+    ...(defaultConfig ? { default_config: defaultConfig } : {}),
   })
   return response.data
 }
