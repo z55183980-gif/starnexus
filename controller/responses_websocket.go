@@ -1274,9 +1274,9 @@ func (s *responsesWebSocketSession) retryResponsesWSCapacityTurn(turn *responses
 // normal terminal-event capacity retry path cannot run. Exclude the rejected
 // account and establish the same request on another account serving the same
 // model before exposing the failure to the downstream client.
-func (s *responsesWebSocketSession) retryInitialResponsesWSCapacityDial(turn *responsesWebSocketTurn, channel *model.Channel) bool {
-	if s == nil || turn == nil || turn.ctx == nil || turn.info == nil || channel == nil ||
-		channel.CredentialSource != appconstant.ChannelCredentialSourceAccountPool || turn.originalRequest == nil {
+func (s *responsesWebSocketSession) retryInitialResponsesWSCapacityDial(turn *responsesWebSocketTurn, selectedChannel *model.Channel) bool {
+	if s == nil || turn == nil || turn.ctx == nil || turn.info == nil || selectedChannel == nil ||
+		selectedChannel.CredentialSource != appconstant.ChannelCredentialSourceAccountPool || turn.originalRequest == nil {
 		return false
 	}
 	failedAccountID := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId)
@@ -1295,11 +1295,11 @@ func (s *responsesWebSocketSession) retryInitialResponsesWSCapacityDial(turn *re
 	common.SetContextKey(turn.ctx, appconstant.ContextKeyUpstreamAccountRequiredWSMode, turn.upstreamMode)
 
 	for service.ShouldRetryUpstreamAccount(turn.accountFailovers, turn.failoverStartedAt) {
-		if setupErr := middleware.SetupContextForSelectedChannel(turn.ctx, channel, turn.info.OriginModelName); setupErr != nil {
+		if setupErr := middleware.SetupContextForSelectedChannel(turn.ctx, selectedChannel, turn.info.OriginModelName); setupErr != nil {
 			return false
 		}
 		replacementAccountID := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId)
-		replacementMode := responsesWSUpstreamMode(turn.ctx, channel)
+		replacementMode := responsesWSUpstreamMode(turn.ctx, selectedChannel)
 		if replacementAccountID <= 0 || replacementAccountID == failedAccountID || replacementMode != turn.upstreamMode ||
 			!responsesWSModeUsesUpstreamWebSocket(replacementMode) {
 			middleware.ReleaseUpstreamAccountSelection(turn.ctx)
@@ -1316,9 +1316,9 @@ func (s *responsesWebSocketSession) retryInitialResponsesWSCapacityDial(turn *re
 		// bypass the account failover cap and spin through the pool until the time
 		// budget expires.
 		turn.accountFailovers++
-		turn.channel = channel
+		turn.channel = selectedChannel
 		turn.accountID = replacementAccountID
-		turn.upstreamIdentity = responsesWSUpstreamIdentity(turn.ctx, channel)
+		turn.upstreamIdentity = responsesWSUpstreamIdentity(turn.ctx, selectedChannel)
 		turn.accumulator = openairelay.NewResponsesEventAccumulator()
 		turn.upstreamEvent = false
 		turn.upstreamOutputStarted = false
@@ -1356,7 +1356,7 @@ func (s *responsesWebSocketSession) retryInitialResponsesWSCapacityDial(turn *re
 		s.lockedWSMode = turn.upstreamMode
 		s.mu.Unlock()
 		turn.setReplayState(outbound, reconnect)
-		s.setChannel(channel)
+		s.setChannel(selectedChannel)
 		recordUpstreamRequestEvent(turn.ctx, "request_retry", "retry", fmt.Sprintf("initial capacity failover from account #%d", failedAccountID))
 		return true
 	}
