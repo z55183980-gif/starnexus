@@ -745,9 +745,15 @@ export function ContentModerationSection({
             render={({ field }) => (
               <FormItem className='flex items-center justify-between rounded-md border p-3'>
                 <div className='space-y-1'>
-                  <FormLabel>{t('Exclude OpenAI OAuth Team accounts')}</FormLabel>
+                  <FormLabel>
+                    {t(
+                      'Exclude OpenAI OAuth Team accounts from API content audit'
+                    )}
+                  </FormLabel>
                   <FormDescription>
-                    {t('Skip content audit only for OpenAI OAuth accounts with Team subscription.')}
+                    {t(
+                      'Skip API content audit for requests routed to OpenAI OAuth accounts with a Team subscription. Security audit rules still apply.'
+                    )}
                   </FormDescription>
                 </div>
                 <FormControl>

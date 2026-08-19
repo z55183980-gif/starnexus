@@ -233,11 +233,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	// before invoking either audit path. Requests that billing will reject must
 	// not consume moderation capacity or create security-audit records. Free
 	// requests still reach the audits because they intentionally skip billing.
-	if moderationError := service.ApplyContentModeration(c, request, relayFormat, relayInfo.OriginModelName); moderationError != nil {
-		newAPIError = moderationError
-		return
-	}
-
+	// The API content audit runs after account selection below because its Team
+	// exclusion depends on the selected upstream account metadata.
 	if promptAuditError := service.ApplyPromptAudit(c, request, relayFormat, relayInfo.OriginModelName); promptAuditError != nil {
 		newAPIError = promptAuditError
 		return
@@ -251,6 +248,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
+	contentModerationCompleted := false
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -268,12 +266,17 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			break
 		}
-
 		addUsedChannel(c, channel.Id)
 		accountFailoverStartedAt := time.Now()
 		accountFailovers := 0
 		capacityFailoverExhausted := false
 		for {
+			if moderationError := applyContentModerationForSelectedAccount(
+				c, request, relayFormat, relayInfo.OriginModelName, &contentModerationCompleted,
+			); moderationError != nil {
+				newAPIError = moderationError
+				return
+			}
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
 				// Ensure consistent 413 for oversized bodies even when error occurs later (e.g., retry path)
@@ -390,6 +393,30 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			perfmetrics.RecordRelaySample(relayInfo, false, 0)
 		})
 	}
+}
+
+// applyContentModerationForSelectedAccount applies the API content audit at
+// most once, after routing has selected an upstream account. A Team exclusion
+// deliberately does not mark the audit complete: if that account fails over to
+// a non-Team account, the request must be audited before the retry is sent.
+func applyContentModerationForSelectedAccount(
+	c *gin.Context,
+	request dto.Request,
+	relayFormat types.RelayFormat,
+	modelName string,
+	completed *bool,
+) *types.NewAPIError {
+	if completed != nil && *completed {
+		return nil
+	}
+	if service.ShouldSkipContentModerationForOpenAIOAuthTeam(c) {
+		return nil
+	}
+	apiErr := service.ApplyContentModeration(c, request, relayFormat, modelName)
+	if apiErr == nil && completed != nil {
+		*completed = true
+	}
+	return apiErr
 }
 
 func checkGlobalPromptSensitive(meta *types.TokenCountMeta) ([]string, *types.NewAPIError) {

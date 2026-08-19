@@ -44,12 +44,20 @@ func TestCaptureContentModerationLogContextIncludesUpstreamAccount(t *testing.T)
 }
 
 func TestIsOpenAIOAuthTeamAccount(t *testing.T) {
+	original := setting.GetContentModerationConfig()
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateContentModerationConfigByJsonString(setting.ContentModerationConfigJSON(original)))
+	})
+	cfg := original
+	cfg.ExcludeOpenAIOAuthTeam = true
+	require.NoError(t, setting.UpdateContentModerationConfigByJsonString(setting.ContentModerationConfigJSON(cfg)))
+
 	cases := []struct {
-		name    string
-		platform string
+		name        string
+		platform    string
 		accountType string
-		planType string
-		want    bool
+		planType    string
+		want        bool
 	}{
 		{"matching team", constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeOAuth, "team", true},
 		{"api key team", constant.UpstreamPlatformOpenAI, constant.UpstreamAccountTypeAPIKey, "team", false},
@@ -63,7 +71,7 @@ func TestIsOpenAIOAuthTeamAccount(t *testing.T) {
 			common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlatform, tc.platform)
 			common.SetContextKey(c, constant.ContextKeyUpstreamAccountType, tc.accountType)
 			common.SetContextKey(c, constant.ContextKeyUpstreamAccountPlanType, tc.planType)
-			require.Equal(t, tc.want, isOpenAIOAuthTeamAccount(c))
+			require.Equal(t, tc.want, ShouldSkipContentModerationForOpenAIOAuthTeam(c))
 		})
 	}
 }

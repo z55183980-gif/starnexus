@@ -351,7 +351,7 @@ func ApplyContentModeration(c *gin.Context, request dto.Request, relayFormat typ
 	if !cfg.Enabled {
 		return nil
 	}
-	if cfg.ExcludeOpenAIOAuthTeam && isOpenAIOAuthTeamAccount(c) {
+	if ShouldSkipContentModerationForOpenAIOAuthTeam(c) {
 		return nil
 	}
 
@@ -407,8 +407,16 @@ func ApplyContentModeration(c *gin.Context, request dto.Request, relayFormat typ
 	)
 }
 
-func isOpenAIOAuthTeamAccount(c *gin.Context) bool {
+// ShouldSkipContentModerationForOpenAIOAuthTeam reports whether the selected
+// upstream account is covered by the API content-audit exclusion. It must be
+// evaluated only after account-pool routing has populated the selected account
+// context; evaluating it earlier treats the account metadata as empty.
+func ShouldSkipContentModerationForOpenAIOAuthTeam(c *gin.Context) bool {
 	if c == nil {
+		return false
+	}
+	cfg := setting.GetContentModerationConfig()
+	if !cfg.ExcludeOpenAIOAuthTeam {
 		return false
 	}
 	platform := strings.ToLower(strings.TrimSpace(common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountPlatform)))
