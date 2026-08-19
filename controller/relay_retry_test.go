@@ -32,3 +32,14 @@ func TestShouldRetryKeepsOrdinaryBadGatewayRetryable(t *testing.T) {
 
 	require.True(t, shouldRetry(c, apiErr, 3))
 }
+
+func TestShouldRetryStopsCapacityAfterAccountFailover(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Our servers are currently overloaded. Please try again later.",
+		Type:    "upstream_error",
+		Code:    "server_is_overloaded",
+	}, 529)
+
+	require.False(t, shouldRetry(c, apiErr, 3))
+}

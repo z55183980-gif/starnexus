@@ -26,8 +26,8 @@ const (
 	UpstreamAccountErrorNotHandled UpstreamAccountErrorDisposition = iota
 	UpstreamAccountErrorRetryAccount
 	UpstreamAccountErrorRetryTransport
-	// UpstreamAccountErrorRetrySameAccount is a model-capacity signal. Callers
-	// first retry the selected account with a short backoff, then fail over.
+	// UpstreamAccountErrorRetrySameAccount is reserved for transient failures
+	// that are safe to replay on the selected account before failover.
 	UpstreamAccountErrorRetrySameAccount
 	// UpstreamAccountErrorRetryRequest retries another account for this request
 	// without persisting account or proxy health penalties.
@@ -163,8 +163,10 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 	}
 	// Capacity shedding is request-scoped. It must bypass persistent/custom
 	// account cooldown rules so one overloaded request cannot sweep the pool.
+	// The relay caller immediately fails over to another account for the same
+	// model; retrying the account that just returned 529 only amplifies load.
 	if isUpstreamOverloadError(apiErr) {
-		return UpstreamAccountErrorRetrySameAccount
+		return UpstreamAccountErrorRetryAccount
 	}
 
 	if matched, until, reason := matchUpstreamTempUnschedulableRule(apiErr, loadAccount, &account); matched {

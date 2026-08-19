@@ -97,6 +97,7 @@ type responsesWebSocketTurn struct {
 	replayEnabled          bool
 	requestDispatched      bool
 	upstreamEvent          bool
+	upstreamOutputStarted  bool
 	upstreamEventCount     int
 	capacitySafeEventCount int
 	capacityRetryBlocked   bool
@@ -870,6 +871,9 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 				} else {
 					turn.upstreamEvent = true
 					turn.upstreamEventCount++
+					if openairelay.ResponsesStreamDataStartsClientOutput(string(data), event) {
+						turn.upstreamOutputStarted = true
+					}
 					safePrelude := isResponsesWSCapacitySafePrelude(event, data)
 					if safePrelude {
 						turn.capacitySafeEventCount++
@@ -906,6 +910,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 							turn.replayCount++
 							turn.accumulator = openairelay.NewResponsesEventAccumulator()
 							turn.upstreamEvent = false
+							turn.upstreamOutputStarted = false
 							turn.upstreamEventCount = 0
 							turn.resetCapacityPrelude()
 							s.upstream = nil
@@ -1206,6 +1211,7 @@ func (s *responsesWebSocketSession) retryResponsesWSCapacityTurn(turn *responses
 	turn.upstreamIdentity = responsesWSUpstreamIdentity(turn.ctx, turn.channel)
 	turn.accumulator = openairelay.NewResponsesEventAccumulator()
 	turn.upstreamEvent = false
+	turn.upstreamOutputStarted = false
 	turn.upstreamEventCount = 0
 	turn.resetCapacityPrelude()
 	turn.requestDispatched = false
@@ -1477,6 +1483,9 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn) {
 			return false, consumeErr
 		}
 		turn.upstreamEvent = true
+		if openairelay.ResponsesStreamDataStartsClientOutput(string(data), event) {
+			turn.upstreamOutputStarted = true
+		}
 		turn.clearSSEReplayState()
 		turn.info.ReceivedResponseCount++
 		if openairelay.IsResponsesFirstFrameEvent(event) {
@@ -1558,8 +1567,15 @@ func (s *responsesWebSocketSession) failSSETurn(turn *responsesWebSocketTurn, ap
 }
 
 func (s *responsesWebSocketSession) retrySSETurnWithAnotherAccount(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) (bool, bool) {
-	if turn == nil || apiErr == nil || turn.upstreamEvent || turn.channel == nil ||
+	if turn == nil || apiErr == nil || turn.upstreamOutputStarted || turn.channel == nil ||
 		turn.channel.CredentialSource != appconstant.ChannelCredentialSourceAccountPool {
+		return false, false
+	}
+	// Lifecycle-only Responses events (created/in_progress/empty reasoning
+	// metadata) do not mean that client-visible output has started. Capacity
+	// failures may still fail over after those events; preserve the stricter
+	// acknowledgement rule for other SSE errors.
+	if turn.upstreamEvent && !service.IsUpstreamCapacityError(apiErr) {
 		return false, false
 	}
 	accountId := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId)
@@ -1569,6 +1585,9 @@ func (s *responsesWebSocketSession) retrySSETurnWithAnotherAccount(turn *respons
 		return false, false
 	}
 	recordUpstreamRequestEvent(turn.ctx, "request_error", "error", service.UpstreamAccountErrorSummary(apiErr))
+	if service.IsUpstreamCapacityError(apiErr) {
+		service.RecordUpstreamAccountModelTransientFailure(accountId, turn.info.UpstreamModelName)
+	}
 	if !disposition.RetryWithinPool() || !service.ShouldRetryUpstreamAccount(turn.accountFailovers, turn.failoverStartedAt) {
 		return false, true
 	}
@@ -1601,6 +1620,9 @@ func (s *responsesWebSocketSession) retrySSETurnWithAnotherAccount(turn *respons
 		turn.info.InitChannelMeta(turn.ctx)
 	}
 	turn.accumulator = openairelay.NewResponsesEventAccumulator()
+	turn.upstreamEvent = false
+	turn.upstreamOutputStarted = false
+	turn.upstreamEventCount = 0
 	turn.info.StreamStatus = relaycommon.NewStreamStatus()
 	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket upstream SSE retrying with another local account on channel #%d", turn.channel.Id))
 	s.startSSETurn(turn)

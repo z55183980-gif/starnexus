@@ -272,7 +272,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		addUsedChannel(c, channel.Id)
 		accountFailoverStartedAt := time.Now()
 		accountFailovers := 0
-		capacityRetries := make(map[int]int)
+		capacityFailoverExhausted := false
 		for {
 			bodyStorage, bodyErr := common.GetBodyStorage(c)
 			if bodyErr != nil {
@@ -328,35 +328,37 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
 			if disposition.Handled() {
 				recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(newAPIError))
-				if disposition.RetrySameAccount() && relayInfo.SendResponseCount == 0 {
-					retryCount := capacityRetries[accountId]
-					if delay, ok := service.UpstreamAccountCapacityRetryDelay(retryCount); ok {
-						capacityRetries[accountId] = retryCount + 1
-						recordUpstreamRequestEvent(c, "request_retry", "retry", fmt.Sprintf("model capacity retry on account #%d after %s", accountId, delay))
-						if service.WaitForUpstreamAccountRetry(c.Request.Context(), delay) {
-							service.ClearResponsesHTTPContinuationPersistTarget(c)
-							relayInfo.InitChannelMeta(c)
-							continue
-						}
-					}
+				if service.IsUpstreamCapacityError(newAPIError) {
+					// 529/overload is account/model scoped. Record a model-scoped
+					// transient failure for the failed account, then fail over immediately
+					// to another account serving the same model. Do not replay the
+					// overloaded account.
 					service.RecordUpstreamAccountModelTransientFailure(accountId, relayInfo.UpstreamModelName)
+					capacityFailoverExhausted = true
 				}
 				if disposition.RetryWithinPool() && relayInfo.SendResponseCount == 0 &&
 					service.ShouldRetryUpstreamAccount(accountFailovers, accountFailoverStartedAt) {
+					capacityError := service.IsUpstreamCapacityError(newAPIError)
 					excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
 					if excludedIds == nil {
 						excludedIds = make(map[int]struct{})
 					}
 					excludedIds[accountId] = struct{}{}
 					common.SetContextKey(c, constant.ContextKeyUpstreamAccountExcluded, excludedIds)
+					if capacityError {
+						recordUpstreamRequestEvent(c, "request_retry", "retry", fmt.Sprintf("model capacity failover from account #%d", accountId))
+					}
 					if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr == nil {
 						accountFailovers++
+						capacityFailoverExhausted = false
 						service.ClearResponsesHTTPContinuationPersistTarget(c)
 						relayInfo.InitChannelMeta(c)
 						continue
 					} else {
-						newAPIError = setupErr
-						relayInfo.LastError = setupErr
+						if !capacityError {
+							newAPIError = setupErr
+							relayInfo.LastError = setupErr
+						}
 					}
 				}
 				break
@@ -366,6 +368,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
+		if capacityFailoverExhausted {
+			// The account-pool failover has been exhausted. Do not let the outer
+			// channel retry remap this request to another model or emit a false
+			// "no available channel" error.
+			break
+		}
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
@@ -502,6 +510,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		return false
 	}
 	if retryTimes <= 0 {
+		return false
+	}
+	// Capacity errors are already handled by the account-pool failover loop.
+	// Retrying them in the outer channel loop can remap the request to a
+	// different model and produce a misleading "no available channel" error.
+	if service.IsUpstreamCapacityError(openaiErr) {
 		return false
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {

@@ -155,7 +155,7 @@ func TestApplyUpstreamAccountErrorKeepsCapacityTransient(t *testing.T) {
 	apiErr := types.NewErrorWithStatusCode(errors.New("overloaded"), types.ErrorCodeBadResponseStatusCode, 529)
 	apiErr.SetUpstreamResponse(http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"error":{"message":"Overloaded"}}`))
 
-	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.Nil(t, updated.OverloadUntil)
@@ -176,7 +176,7 @@ func TestApplyUpstreamAccountCapacityBypassesCustomCooldownRule(t *testing.T) {
 		Code:    "server_is_overloaded",
 	}, 529)
 
-	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
 	var unchanged model.UpstreamAccount
 	require.NoError(t, model.DB.First(&unchanged, account.Id).Error)
 	require.Nil(t, unchanged.TempUnschedulableUntil)
@@ -222,7 +222,7 @@ func TestApplyUpstreamAccountErrorRecognizesOpenAIOverloadWrappedAs500(t *testin
 		Code:    "server_is_overloaded",
 	}, http.StatusInternalServerError)
 
-	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.Nil(t, updated.OverloadUntil)
@@ -239,7 +239,7 @@ func TestApplyUpstreamAccountErrorRecognizesCapacityMessageWrappedAs500(t *testi
 		Code:    "server_error",
 	}, http.StatusInternalServerError)
 
-	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.Nil(t, updated.OverloadUntil)
