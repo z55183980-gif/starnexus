@@ -115,9 +115,11 @@ func responsesStreamAddedEventStartsClientOutput(payload []byte, eventType strin
 		}
 		switch strings.TrimSpace(item.Get("type").String()) {
 		case "reasoning":
-			if item.Get("encrypted_content").String() != "" {
-				return true
-			}
+			// encrypted_content is opaque continuation state, not user-visible
+			// output. Keep the event buffered until actual reasoning text, model
+			// output, or a tool call is emitted. If this attempt ends with a
+			// capacity error, the buffered state can be discarded safely before
+			// replaying the request on another account.
 			summary := item.Get("summary")
 			if !summary.IsArray() {
 				return false

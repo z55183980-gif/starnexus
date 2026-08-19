@@ -1611,7 +1611,7 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 				serverErrors <- err
 				return
 			}
-			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}`)); err != nil {
+			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_item.added","item":{"type":"reasoning","summary":[],"encrypted_content":"opaque-capacity-prelude"}}`)); err != nil {
 				serverErrors <- err
 				return
 			}
