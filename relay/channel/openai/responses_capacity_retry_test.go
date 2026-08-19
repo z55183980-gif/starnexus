@@ -144,6 +144,30 @@ func TestResponsesStreamCapacityAfterOutputRewritesFatalCode(t *testing.T) {
 	require.NotContains(t, recorder.Body.String(), "server_is_overloaded")
 }
 
+func TestResponsesStreamDoesNotRetryCapacityAfterUsageWasReported(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelCredentialSource, constant.ChannelCredentialSourceAccountPool)
+	info := &relaycommon.RelayInfo{StartTime: time.Now(), StreamStatus: relaycommon.NewStreamStatus()}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_usage\"}}\n\n" +
+				"data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"server_is_overloaded\",\"message\":\"Our servers are currently overloaded. Please try again later.\"},\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"total_tokens\":0}}}\n\n",
+		)),
+	}
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, response)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Contains(t, recorder.Body.String(), "response.created")
+	require.Contains(t, recorder.Body.String(), "server_is_overloaded")
+	require.NotZero(t, info.SendResponseCount)
+}
+
 func TestResponsesStreamDataStartsClientOutput(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -154,10 +178,16 @@ func TestResponsesStreamDataStartsClientOutput(t *testing.T) {
 		{name: "created", data: `{"type":"response.created","response":{"id":"resp_1"}}`, want: false},
 		{name: "in progress", data: `{"type":"response.in_progress","response":{"id":"resp_1"}}`, want: false},
 		{name: "empty reasoning item", data: `{"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}`, want: false},
+		{name: "empty reasoning item done", data: `{"type":"response.output_item.done","item":{"type":"reasoning","summary":[]}}`, want: false},
 		{name: "encrypted reasoning item", data: `{"type":"response.output_item.added","item":{"type":"reasoning","encrypted_content":"cipher"}}`, want: true},
+		{name: "function call starts output before arguments", data: `{"type":"response.output_item.added","item":{"type":"function_call","name":"lookup","arguments":""}}`, want: true},
+		{name: "custom tool call starts output before input", data: `{"type":"response.output_item.added","item":{"type":"custom_tool_call","name":"exec","input":""}}`, want: true},
 		{name: "empty reasoning part", data: `{"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":""}}`, want: false},
+		{name: "empty reasoning part done", data: `{"type":"response.reasoning_summary_part.done","part":{"type":"summary_text","text":""}}`, want: false},
 		{name: "reasoning part", data: `{"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":"thinking"}}`, want: true},
 		{name: "empty content part", data: `{"type":"response.content_part.added","part":{"type":"output_text","text":""}}`, want: false},
+		{name: "empty content part done", data: `{"type":"response.content_part.done","part":{"type":"output_text","text":""}}`, want: false},
+		{name: "empty text delta", data: `{"type":"response.output_text.delta","delta":""}`, want: false},
 		{name: "text delta", data: `{"type":"response.output_text.delta","delta":"hello"}`, want: true},
 		{name: "capacity error", data: `{"type":"error","error":{"code":"server_is_overloaded","message":"overloaded"}}`, want: false},
 		{name: "slow down error", data: `{"type":"error","error":{"code":"slow_down","message":"slow down"}}`, want: false},

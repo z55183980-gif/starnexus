@@ -926,6 +926,20 @@ func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
 		require.Equal(t, 529, apiErr.StatusCode)
 		require.True(t, shouldRetryResponsesWSCapacity(turn, apiErr))
 	})
+	t.Run("terminal capacity error envelope", func(t *testing.T) {
+		turn, apiErr := newTurn(t, `{"type":"error","error":{"code":"server_error","message":"Selected model is at capacity"}}`)
+		require.Equal(t, 529, apiErr.StatusCode)
+		decision := evaluateResponsesWSCapacityRetry(turn, apiErr)
+		require.True(t, decision.Eligible)
+		require.Equal(t, "allowed", decision.Reason)
+		require.Equal(t, "error", decision.TerminalType)
+	})
+	t.Run("all-zero reported usage blocks replay", func(t *testing.T) {
+		turn, apiErr := newTurn(t, `{"type":"response.failed","response":{"error":{"code":"server_error","message":"Selected model is at capacity"},"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`)
+		decision := evaluateResponsesWSCapacityRetry(turn, apiErr)
+		require.False(t, decision.Eligible)
+		require.Equal(t, "usage_reported", decision.Reason)
+	})
 	t.Run("lifecycle preludes before capacity failure", func(t *testing.T) {
 		turn, apiErr := newTurn(t, capacityEvent)
 		turn.upstreamEventCount = 4
@@ -955,10 +969,6 @@ func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
 			mutate: func(_ *responsesWebSocketTurn, apiErr *types.NewAPIError) {
 				apiErr.StatusCode = 529
 			},
-		},
-		{
-			name:  "terminal error envelope",
-			event: `{"type":"error","error":{"code":"server_error","message":"Selected model is at capacity"}}`,
 		},
 		{
 			name:  "substantive upstream frame before failure",
@@ -1525,17 +1535,57 @@ func TestResponsesWSSSERetriesAnotherLocalAccountBeforeVisibleEvent(t *testing.T
 	session.close()
 }
 
+func TestRecordResponsesWSCapacityRetryDecisionPersistsReason(t *testing.T) {
+	dsn := fmt.Sprintf("file:responses_ws_capacity_decision_%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.UpstreamAccountEvent{}))
+
+	originalDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+	})
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUpstreamAccountId, 123)
+	turn := &responsesWebSocketTurn{
+		ctx:                    ctx,
+		accumulator:            openairelay.NewResponsesEventAccumulator(),
+		capacityRetryCount:     1,
+		accountFailovers:       1,
+		upstreamEventCount:     3,
+		capacitySafeEventCount: 1,
+		capacityRetryBlocked:   true,
+	}
+	recordResponsesWSCapacityRetryDecision(turn, responsesWSCapacityRetryDecision{
+		Reason:       "semantic_output_started",
+		TerminalType: "response.failed",
+	})
+
+	var event model.UpstreamAccountEvent
+	require.NoError(t, db.Where("event_type = ?", "capacity_retry_decision").First(&event).Error)
+	require.Equal(t, "skipped", event.Result)
+	require.Equal(t, "semantic_output_started", event.Message)
+	var metadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(event.Metadata, &metadata))
+	require.Equal(t, "semantic_output_started", metadata["reason"])
+	require.Equal(t, "response.failed", metadata["terminal_type"])
+	require.Equal(t, true, metadata["semantic_output_started"])
+}
+
 func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
-	// This fixture has exactly three accounts and verifies two switches. Keep
-	// its retry budget explicit now that the production default is three.
-	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "2")
+	// Exercise the full production retry budget: three capacity-rejected
+	// accounts must be replaced before the fourth account succeeds.
+	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "3")
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()
 
 	var connections atomic.Int32
-	authorizations := make(chan string, 3)
-	requestBodies := make(chan []byte, 3)
-	serverErrors := make(chan error, 3)
+	authorizations := make(chan string, 4)
+	requestBodies := make(chan []byte, 4)
+	serverErrors := make(chan error, 4)
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		connectionNumber := connections.Add(1)
@@ -1552,7 +1602,7 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 			return
 		}
 		requestBodies <- body
-		if connectionNumber <= 2 {
+		if connectionNumber <= 3 {
 			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.created","response":{"id":"resp_capacity"}}`)); err != nil {
 				serverErrors <- err
 				return
@@ -1569,8 +1619,13 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 				serverErrors <- err
 				return
 			}
-			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)); err != nil {
-				serverErrors <- err
+			if connectionNumber == 1 {
+				// Production may terminate a capacity-rejected turn with only an
+				// error envelope. The gateway must fail over without waiting for a
+				// response.failed event that never arrives.
+				if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)); err != nil {
+					serverErrors <- err
+				}
 				return
 			}
 			err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.failed","response":{"id":"resp_capacity","status":"failed","error":{"code":"server_error","message":"Our servers are currently overloaded. Please try again later."}}}`))
@@ -1627,7 +1682,7 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 	for index, candidate := range []struct {
 		name string
 		key  string
-	}{{name: "native-account-one", key: "native-key-one"}, {name: "native-account-two", key: "native-key-two"}, {name: "native-account-three", key: "native-key-three"}} {
+	}{{name: "native-account-one", key: "native-key-one"}, {name: "native-account-two", key: "native-key-two"}, {name: "native-account-three", key: "native-key-three"}, {name: "native-account-four", key: "native-key-four"}} {
 		input := service.UpstreamAccountCreateInput{
 			Account: model.UpstreamAccount{
 				Id:   entityBaseID + index + 1,
@@ -1644,7 +1699,7 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 	}
 
 	selectedChannel := &model.Channel{
-		Id: entityBaseID + 4, Type: constant.ChannelTypeOpenAI, Name: "native-local-pool",
+		Id: entityBaseID + 5, Type: constant.ChannelTypeOpenAI, Name: "native-local-pool",
 		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
 	}
 	baseCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -1691,23 +1746,35 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, websocket.TextMessage, messageType)
 	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_retried"}}`, string(downstream))
-	require.Equal(t, int32(3), connections.Load())
-	require.Equal(t, 2, turn.capacityRetryCount)
-	require.Equal(t, 2, turn.replayCount)
+	require.Equal(t, int32(4), connections.Load())
+	require.Equal(t, 3, turn.capacityRetryCount)
+	require.Equal(t, 3, turn.replayCount)
 	require.NotEqual(t, initialAccountID, turn.accountID)
+	var decisionEvents int64
+	require.NoError(t, db.Model(&model.UpstreamAccountEvent{}).
+		Where("event_type = ? AND result = ?", "capacity_retry_decision", "allowed").
+		Count(&decisionEvents).Error)
+	require.EqualValues(t, 3, decisionEvents)
+	var retryEvents int64
+	require.NoError(t, db.Model(&model.UpstreamAccountEvent{}).
+		Where("event_type = ? AND result = ?", "request_retry", "retry").
+		Count(&retryEvents).Error)
+	require.EqualValues(t, 3, retryEvents)
 
 	seenAuthorizations := map[string]struct{}{}
-	for range 3 {
+	for range 4 {
 		seenAuthorizations[<-authorizations] = struct{}{}
 	}
 	require.Equal(t, map[string]struct{}{
-		"Bearer native-key-one": {}, "Bearer native-key-two": {}, "Bearer native-key-three": {},
+		"Bearer native-key-one": {}, "Bearer native-key-two": {}, "Bearer native-key-three": {}, "Bearer native-key-four": {},
 	}, seenAuthorizations)
 	firstBody := <-requestBodies
 	secondBody := <-requestBodies
 	thirdBody := <-requestBodies
+	fourthBody := <-requestBodies
 	require.JSONEq(t, string(firstBody), string(secondBody))
 	require.JSONEq(t, string(firstBody), string(thirdBody))
+	require.JSONEq(t, string(firstBody), string(fourthBody))
 	select {
 	case serverErr := <-serverErrors:
 		require.NoError(t, serverErr)

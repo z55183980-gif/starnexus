@@ -587,6 +587,10 @@ func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
 }
 
 func recordUpstreamRequestEvent(c *gin.Context, eventType string, result string, message string) {
+	recordUpstreamRequestEventWithMetadata(c, eventType, result, message, nil)
+}
+
+func recordUpstreamRequestEventWithMetadata(c *gin.Context, eventType string, result string, message string, metadata map[string]any) {
 	if c == nil {
 		return
 	}
@@ -604,6 +608,7 @@ func recordUpstreamRequestEvent(c *gin.Context, eventType string, result string,
 		EventType: eventType,
 		Result:    result,
 		Message:   message,
+		Metadata:  metadata,
 	})
 }
 

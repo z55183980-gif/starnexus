@@ -18,14 +18,15 @@ import (
 )
 
 type ResponsesEventAccumulator struct {
-	usage        dto.Usage
-	outputText   strings.Builder
-	terminal     bool
-	successful   bool
-	failed       bool
-	responseID   string
-	failure      *types.OpenAIError
-	terminalType string
+	usage         dto.Usage
+	usageReported bool
+	outputText    strings.Builder
+	terminal      bool
+	successful    bool
+	failed        bool
+	responseID    string
+	failure       *types.OpenAIError
+	terminalType  string
 
 	// Streamed output reconstruction for non-stream bridges. Codex often emits
 	// text/tool payloads only in delta/item events while response.completed
@@ -78,7 +79,7 @@ func ResponsesStreamDataStartsClientOutput(data string, event *dto.ResponsesStre
 	}
 	eventType := strings.TrimSpace(event.Type)
 	switch eventType {
-	case "response.created", "response.in_progress", "response.failed":
+	case "response.created", "response.in_progress", "response.queued", "response.failed":
 		return false
 	case "error":
 		failure := responsesStreamFailureFromPayload(common.StringToByteSlice(trimmed))
@@ -86,8 +87,16 @@ func ResponsesStreamDataStartsClientOutput(data string, event *dto.ResponsesStre
 			return true
 		}
 		return !service.IsUpstreamCapacityError(types.WithOpenAIError(*failure, http.StatusServiceUnavailable))
-	case dto.ResponsesOutputTypeItemAdded, "response.content_part.added", "response.reasoning_summary_part.added":
+	case dto.ResponsesOutputTypeItemAdded, dto.ResponsesOutputTypeItemDone,
+		"response.content_part.added", "response.content_part.done",
+		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
 		return responsesStreamAddedEventStartsClientOutput(common.StringToByteSlice(trimmed), eventType)
+	case "response.output_text.delta", "response.reasoning_summary_text.delta", "response.refusal.delta":
+		return gjson.Get(trimmed, "delta").String() != ""
+	case "response.output_text.done", "response.reasoning_summary_text.done":
+		return gjson.Get(trimmed, "text").String() != ""
+	case "response.refusal.done":
+		return gjson.Get(trimmed, "refusal").String() != ""
 	default:
 		return true
 	}
@@ -99,7 +108,7 @@ func responsesStreamAddedEventStartsClientOutput(payload []byte, eventType strin
 	}
 
 	switch eventType {
-	case dto.ResponsesOutputTypeItemAdded:
+	case dto.ResponsesOutputTypeItemAdded, dto.ResponsesOutputTypeItemDone:
 		item := gjson.GetBytes(payload, "item")
 		if !item.Exists() || !item.IsObject() {
 			return true
@@ -140,15 +149,17 @@ func responsesStreamAddedEventStartsClientOutput(payload []byte, eventType strin
 			}
 			return false
 		case "function_call":
-			return item.Get("arguments").String() != ""
+			// The call itself is semantic output. Retrying after exposing even an
+			// empty-arguments call can duplicate downstream tool execution.
+			return true
 		case "custom_tool_call":
-			return item.Get("input").String() != ""
+			return true
 		case "compaction":
 			return item.Get("encrypted_content").String() != ""
 		default:
 			return true
 		}
-	case "response.content_part.added":
+	case "response.content_part.added", "response.content_part.done":
 		part := gjson.GetBytes(payload, "part")
 		if !part.Exists() || !part.IsObject() {
 			return true
@@ -161,7 +172,7 @@ func responsesStreamAddedEventStartsClientOutput(payload []byte, eventType strin
 		default:
 			return true
 		}
-	case "response.reasoning_summary_part.added":
+	case "response.reasoning_summary_part.added", "response.reasoning_summary_part.done":
 		part := gjson.GetBytes(payload, "part")
 		if !part.Exists() || !part.IsObject() || strings.TrimSpace(part.Get("type").String()) != "summary_text" {
 			return true
@@ -242,8 +253,13 @@ func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.Re
 	if err := common.Unmarshal(data, &event); err != nil {
 		return nil, err
 	}
-	if event.Response != nil && event.Response.ID != "" {
-		a.responseID = event.Response.ID
+	if event.Response != nil {
+		if event.Response.ID != "" {
+			a.responseID = event.Response.ID
+		}
+		// Usage commits the upstream attempt regardless of which lifecycle
+		// envelope carries it. Do not assume only terminal events report usage.
+		a.applyResponseUsage(event.Response)
 	}
 
 	switch event.Type {
@@ -254,7 +270,6 @@ func (a *ResponsesEventAccumulator) Consume(c *gin.Context, info *relaycommon.Re
 		a.failed = !a.successful
 		if event.Response != nil {
 			a.failure = event.Response.GetOpenAIError()
-			a.applyResponseUsage(event.Response)
 			if event.Response.HasImageGenerationCall() {
 				c.Set("image_generation_call", true)
 				c.Set("image_generation_call_quality", event.Response.GetQuality())
@@ -292,6 +307,7 @@ func (a *ResponsesEventAccumulator) applyResponseUsage(response *dto.OpenAIRespo
 	if response == nil || response.Usage == nil {
 		return
 	}
+	a.usageReported = true
 	a.usage.PromptTokens = response.Usage.InputTokens
 	a.usage.CompletionTokens = response.Usage.OutputTokens
 	a.usage.TotalTokens = response.Usage.TotalTokens
@@ -315,6 +331,13 @@ func (a *ResponsesEventAccumulator) Usage(info *relaycommon.RelayInfo) *dto.Usag
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	}
 	return &usage
+}
+
+// UsageReported distinguishes an absent usage object from an explicitly
+// reported all-zero usage object. Any reported usage commits an upstream
+// attempt for retry-safety purposes, even when its token counters are zero.
+func (a *ResponsesEventAccumulator) UsageReported() bool {
+	return a != nil && a.usageReported
 }
 
 // fallbackCompletionText collects every locally observable output category

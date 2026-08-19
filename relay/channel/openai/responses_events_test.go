@@ -35,6 +35,7 @@ func TestResponsesEventAccumulatorCompletedUsage(t *testing.T) {
 	usage := accumulator.Usage(info)
 	require.True(t, accumulator.Terminal())
 	require.True(t, accumulator.Successful())
+	require.True(t, accumulator.UsageReported())
 	require.Equal(t, "resp_123", accumulator.ResponseID())
 	require.Equal(t, 12, usage.PromptTokens)
 	require.Equal(t, 7, usage.CompletionTokens)
@@ -42,6 +43,28 @@ func TestResponsesEventAccumulatorCompletedUsage(t *testing.T) {
 	require.Equal(t, 5, usage.PromptTokensDetails.CachedTokens)
 	require.Equal(t, 2, usage.PromptTokensDetails.CacheWriteTokens)
 	require.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview].CallCount)
+}
+
+func TestResponsesEventAccumulatorTracksAllZeroUsageAsReported(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	accumulator := NewResponsesEventAccumulator()
+	_, err := accumulator.Consume(ctx, &relaycommon.RelayInfo{}, []byte(`{"type":"response.failed","response":{"error":{"code":"server_error","message":"Selected model is at capacity"},"usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`))
+	require.NoError(t, err)
+	require.True(t, accumulator.UsageReported())
+	require.Zero(t, accumulator.Usage(nil).TotalTokens)
+}
+
+func TestResponsesEventAccumulatorTracksUsageOnNonTerminalEvent(t *testing.T) {
+	t.Parallel()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	accumulator := NewResponsesEventAccumulator()
+	_, err := accumulator.Consume(ctx, &relaycommon.RelayInfo{}, []byte(`{"type":"response.in_progress","response":{"id":"resp_1","usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}}`))
+	require.NoError(t, err)
+	require.False(t, accumulator.Terminal())
+	require.True(t, accumulator.UsageReported())
 }
 
 func TestResponsesEventAccumulatorErrorIsTerminal(t *testing.T) {

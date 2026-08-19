@@ -846,6 +846,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 		var recoveryAPIError *types.NewAPIError
 		var retryCapacity bool
 		var capacityAPIError *types.NewAPIError
+		var capacityDecision *responsesWSCapacityRetryDecision
 		var holdCurrentFrame bool
 		var pendingPrelude []responsesWSBufferedFrame
 		var retryPrelude []responsesWSBufferedFrame
@@ -879,14 +880,11 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 					}
 					var terminalErr *types.NewAPIError
 					capacityRetryEligible := false
-					heldCapacityError := false
 					if event != nil && turn.accumulator.Terminal() && !turn.accumulator.Successful() {
 						terminalErr = responsesWSTerminalAPIError(turn)
-						heldCapacityError = holdCurrentFrame && strings.TrimSpace(event.Type) == "error" &&
-							service.IsUpstreamCapacityError(terminalErr)
-						if !heldCapacityError {
-							capacityRetryEligible = shouldRetryResponsesWSCapacity(turn, terminalErr)
-						}
+						decision := evaluateResponsesWSCapacityRetry(turn, terminalErr)
+						capacityDecision = &decision
+						capacityRetryEligible = decision.Eligible
 					}
 					if event != nil && !safePrelude {
 						if !turn.accumulator.Terminal() {
@@ -901,7 +899,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 					if openairelay.IsResponsesFirstFrameEvent(event) && !capacityRetryEligible {
 						turn.info.SetFirstResponseTime()
 					}
-					if event != nil && turn.accumulator.Terminal() && !heldCapacityError {
+					if event != nil && turn.accumulator.Terminal() {
 						successful = turn.accumulator.Successful()
 						if !successful && shouldRecoverResponsesWSPreviousResponse(turn) {
 							recoveryAPIError = responsesWSTerminalAPIError(turn)
@@ -916,6 +914,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 						} else if !successful {
 							if capacityRetryEligible {
 								recordResponsesWSNativeFailure(turn, terminalErr)
+								recordResponsesWSCapacityRetryDecision(turn, *capacityDecision)
 								turn.capacityRetryCount++
 								turn.replayCount++
 								s.upstream = nil
@@ -931,7 +930,7 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 							finished = turn
 						}
 					}
-					if terminalErr != nil && !capacityRetryEligible && !heldCapacityError &&
+					if terminalErr != nil && !capacityRetryEligible &&
 						service.IsUpstreamCapacityError(terminalErr) {
 						if sanitized, changed := openairelay.SanitizeResponsesCapacityErrorForClient(string(data)); changed {
 							data = []byte(sanitized)
@@ -953,6 +952,9 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 				terminalErr := responsesWSTerminalAPIError(finished)
 				finished.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, terminalErr)
 				recordResponsesWSNativeFailure(finished, terminalErr)
+				if capacityDecision != nil {
+					recordResponsesWSCapacityRetryDecision(finished, *capacityDecision)
+				}
 			}
 			finished.finish(successful)
 			s.activeTurn = nil
@@ -1042,37 +1044,85 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 	}
 }
 
+type responsesWSCapacityRetryDecision struct {
+	Eligible     bool
+	Reason       string
+	TerminalType string
+}
+
 func shouldRetryResponsesWSCapacity(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) bool {
+	return evaluateResponsesWSCapacityRetry(turn, apiErr).Eligible
+}
+
+func evaluateResponsesWSCapacityRetry(turn *responsesWebSocketTurn, apiErr *types.NewAPIError) responsesWSCapacityRetryDecision {
+	decision := responsesWSCapacityRetryDecision{Reason: "invalid_context"}
 	if turn == nil || apiErr == nil || turn.accumulator == nil || turn.channel == nil || turn.originalRequest == nil {
-		return false
+		return decision
 	}
-	if turn.accumulator.TerminalEventType() != "response.failed" || apiErr.StatusCode != 529 {
-		return false
+	terminalType := turn.accumulator.TerminalEventType()
+	decision.TerminalType = terminalType
+	if terminalType != "response.failed" && terminalType != "error" {
+		decision.Reason = "terminal_type_unsupported"
+		return decision
+	}
+	if apiErr.StatusCode != 529 {
+		decision.Reason = "status_not_capacity"
+		return decision
 	}
 	failure := turn.accumulator.FailureError()
 	if failure == nil {
-		return false
+		decision.Reason = "missing_failure"
+		return decision
 	}
 	capacitySignature := strings.ToLower(strings.TrimSpace(fmt.Sprint(failure.Code)) + " " + failure.Type + " " + failure.Message)
 	if !strings.Contains(capacitySignature, "capacity") && !strings.Contains(capacitySignature, "overload") &&
 		!strings.Contains(capacitySignature, "slow_down") {
-		return false
+		decision.Reason = "capacity_signature_mismatch"
+		return decision
 	}
-	if turn.channel.CredentialSource != appconstant.ChannelCredentialSourceAccountPool ||
-		!responsesWSModeUsesUpstreamWebSocket(turn.upstreamMode) {
-		return false
+	if turn.channel.CredentialSource != appconstant.ChannelCredentialSourceAccountPool {
+		decision.Reason = "credential_source_mismatch"
+		return decision
+	}
+	if !responsesWSModeUsesUpstreamWebSocket(turn.upstreamMode) {
+		decision.Reason = "upstream_mode_mismatch"
+		return decision
 	}
 	// Capacity retry is safe while the upstream has emitted only transport or
 	// response lifecycle prelude frames. Response-specific lifecycle frames are
 	// held from the client until real output arrives, so a failed attempt can be
 	// replaced without exposing conflicting response IDs.
-	if turn.capacityRetryBlocked || turn.upstreamEventCount != turn.capacitySafeEventCount+1 ||
-		turn.replayCount != turn.capacityRetryCount ||
-		!service.ShouldRetryUpstreamAccount(turn.accountFailovers, time.Time{}) ||
-		turn.accumulator.Usage(turn.info).TotalTokens != 0 || !turn.replayStateAvailable() {
-		return false
+	if turn.capacityRetryBlocked {
+		decision.Reason = "semantic_output_started"
+		return decision
 	}
-	return turn.failoverStartedAt.IsZero() || time.Since(turn.failoverStartedAt) <= responsesWSCapacityRetryMaxAge
+	if turn.upstreamEventCount != turn.capacitySafeEventCount+1 {
+		decision.Reason = "unsafe_event_sequence"
+		return decision
+	}
+	if turn.replayCount != turn.capacityRetryCount {
+		decision.Reason = "replay_state_conflict"
+		return decision
+	}
+	if !service.ShouldRetryUpstreamAccount(turn.accountFailovers, time.Time{}) {
+		decision.Reason = "retry_budget_exhausted"
+		return decision
+	}
+	if turn.accumulator.UsageReported() {
+		decision.Reason = "usage_reported"
+		return decision
+	}
+	if !turn.replayStateAvailable() {
+		decision.Reason = "replay_state_missing"
+		return decision
+	}
+	if !turn.failoverStartedAt.IsZero() && time.Since(turn.failoverStartedAt) > responsesWSCapacityRetryMaxAge {
+		decision.Reason = "retry_window_exhausted"
+		return decision
+	}
+	decision.Eligible = true
+	decision.Reason = "allowed"
+	return decision
 }
 
 func isResponsesWSCapacitySafePrelude(event *dto.ResponsesStreamResponse, data []byte) bool {
@@ -1082,7 +1132,12 @@ func isResponsesWSCapacitySafePrelude(event *dto.ResponsesStreamResponse, data [
 	switch strings.TrimSpace(event.Type) {
 	case "responsesapi.websocket_timing":
 		return true
-	case "response.failed":
+	case "response.failed", "error":
+		// Both terminal envelopes must remain outside the safe-prelude count.
+		// OpenAI may close a capacity-rejected WebSocket turn after only an
+		// `error` event, without a following `response.failed`. Treating that
+		// error as buffered prelude prevented the request from ever entering
+		// the account failover path.
 		return false
 	default:
 		return !openairelay.ResponsesStreamDataStartsClientOutput(string(data), event)

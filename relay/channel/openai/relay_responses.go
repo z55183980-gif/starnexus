@@ -151,7 +151,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		if stageCapacityPrelude && !clientOutputStarted && accumulator.Terminal() && !accumulator.Successful() {
+		if stageCapacityPrelude && !clientOutputStarted && !accumulator.UsageReported() &&
+			accumulator.Terminal() && !accumulator.Successful() {
 			if failure := accumulator.FailureError(); failure != nil {
 				candidate := types.WithOpenAIError(*failure, http.StatusServiceUnavailable)
 				if service.IsUpstreamCapacityError(candidate) {

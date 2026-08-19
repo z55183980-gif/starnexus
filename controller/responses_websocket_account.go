@@ -34,6 +34,32 @@ func recordResponsesWSNativeFailure(turn *responsesWebSocketTurn, apiErr *types.
 	recordRelayErrorLog(turn.ctx, apiErr)
 }
 
+func recordResponsesWSCapacityRetryDecision(turn *responsesWebSocketTurn, decision responsesWSCapacityRetryDecision) {
+	if turn == nil || turn.ctx == nil {
+		return
+	}
+	result := "skipped"
+	if decision.Eligible {
+		result = "allowed"
+	}
+	recordUpstreamRequestEventWithMetadata(
+		turn.ctx,
+		"capacity_retry_decision",
+		result,
+		decision.Reason,
+		map[string]any{
+			"reason":                  decision.Reason,
+			"terminal_type":           decision.TerminalType,
+			"retry_index":             turn.capacityRetryCount,
+			"account_failovers":       turn.accountFailovers,
+			"upstream_event_count":    turn.upstreamEventCount,
+			"safe_prelude_count":      turn.capacitySafeEventCount,
+			"semantic_output_started": turn.capacityRetryBlocked,
+			"usage_reported":          turn.accumulator != nil && turn.accumulator.UsageReported(),
+		},
+	)
+}
+
 func responsesWSTerminalAPIError(turn *responsesWebSocketTurn) *types.NewAPIError {
 	if turn == nil || turn.accumulator == nil {
 		return types.NewErrorWithStatusCode(errors.New("upstream Responses WebSocket terminal failure"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
