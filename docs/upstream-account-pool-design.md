@@ -89,8 +89,9 @@ GORM migrations and queries must work on SQLite, MySQL 5.7.8+, and PostgreSQL
 
 The scheduler configuration supports the legacy tiered `version=1` mode and the
 load-scored `version=2` mode. `top_k` uses 0 for unlimited or 1-100 for a primary
-candidate set. Load scoring accepts `priority_source=account|member` and defaults
-to account priority for sub2api-compatible scheduling. During mixed-revision
+candidate set. Account priority is the single scheduling source. The legacy
+`priority_source=member` value remains readable but is normalized to `account`.
+During mixed-revision
 rollouts, `version=1` may opt in with `strategy=load_score`; older nodes safely
 ignore the unknown strategy field instead of rejecting the shared pool config.
 Unknown versions and invalid values fail validation rather than silently changing
@@ -126,11 +127,11 @@ inside the execution, refresh, test, and migration boundaries.
 | Field | Notes |
 | --- | --- |
 | `pool_id`, `account_id` | Composite primary key |
-| `priority`, `weight` | Pool-specific scheduling override |
+| `priority`, `weight` | Legacy compatibility snapshot of the account values |
 | `created_at` | Membership audit time |
 
-An account may belong to multiple pools. Its concurrency is global across all
-pools; membership priority and weight are local to each pool.
+An account may belong to multiple pools. Its concurrency, priority, and weight
+are global across all pools; membership rows only define pool inclusion.
 
 ### 4.4 `upstream_proxies`
 
@@ -204,7 +205,7 @@ An account is eligible only when all of these are true:
 - the global account concurrency lease can be acquired;
 - the resolved proxy is usable or a configured fallback can be resolved.
 
-Version 1 orders pool members by ascending membership priority and uses weighted
+Version 1 orders pool members by ascending account priority and uses weighted
 random ordering inside each tier. Lower tiers and candidates outside `top_k`
 remain overflow candidates so spare capacity is never discarded.
 
@@ -213,8 +214,8 @@ approach: normalized priority and current lease load contribute equally to the
 score, `top_k` defines the primary candidate set, and weighted random ordering
 prevents a single highest-scored account from becoming a deterministic hot spot.
 Overflow candidates remain available if the primary set cannot acquire a lease.
-Account priority is the default score input; pool-member priority can be selected
-explicitly for pool-local policies.
+Account priority is always the score input. Legacy pool-member priority values
+are ignored and synchronized to the corresponding account value during migration.
 
 The scheduler reports deterministic exclusion counts such as `inactive`,
 `not_schedulable`, `rate_limited`, `expired`, `concurrency_full`,
@@ -280,7 +281,7 @@ events, or carry a previous account's key/proxy/lease in context.
 
 Runtime bounds are configurable:
 
-- `UPSTREAM_ACCOUNT_MAX_FAILOVERS` defaults to `2` account switches.
+- `UPSTREAM_ACCOUNT_MAX_FAILOVERS` defaults to `3` account switches.
 - `UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS` defaults to `5000` milliseconds.
 - `UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_MS` defaults to `1500` milliseconds.
 - `UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_POLL_MS` defaults to `50` milliseconds.

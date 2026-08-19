@@ -1179,8 +1179,6 @@ function PoolMembersDialog({
         pool.id,
         members.map((member) => ({
           account_id: member.account_id,
-          priority: member.priority,
-          weight: Math.max(1, member.weight),
         }))
       )
       if (!response.success)
@@ -1272,8 +1270,6 @@ function PoolMembersDialog({
             <TableHeader>
               <TableRow>
                 <TableHead>{t('Account')}</TableHead>
-                <TableHead>{t('Priority')}</TableHead>
-                <TableHead>{t('Weight')}</TableHead>
                 <TableHead className='w-12' />
               </TableRow>
             </TableHeader>
@@ -1285,49 +1281,6 @@ function PoolMembersDialog({
                     <div className='text-muted-foreground text-xs'>
                       {member.type} · {member.status}
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      className='w-24'
-                      type='number'
-                      min={0}
-                      value={member.priority}
-                      onChange={(event) =>
-                        setMembers((current) =>
-                          current.map((item) =>
-                            item.account_id === member.account_id
-                              ? {
-                                  ...item,
-                                  priority: Math.max(
-                                    0,
-                                    Number(event.target.value) || 0
-                                  ),
-                                }
-                              : item
-                          )
-                        )
-                      }
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      className='w-24'
-                      type='number'
-                      min={1}
-                      value={member.weight}
-                      onChange={(event) =>
-                        setMembers((current) =>
-                          current.map((item) =>
-                            item.account_id === member.account_id
-                              ? {
-                                  ...item,
-                                  weight: Number(event.target.value) || 1,
-                                }
-                              : item
-                          )
-                        )
-                      }
-                    />
                   </TableCell>
                   <TableCell>
                     <IconButton
@@ -1347,7 +1300,7 @@ function PoolMembersDialog({
               ))}
               {membersQuery.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={4} className='py-6'>
+                  <TableCell colSpan={2} className='py-6'>
                     <Skeleton className='h-8 w-full' />
                   </TableCell>
                 </TableRow>
@@ -1357,7 +1310,7 @@ function PoolMembersDialog({
                 members.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={4}
+                      colSpan={2}
                       className='text-muted-foreground py-8 text-center'
                     >
                       {t('No pool members')}

@@ -661,7 +661,7 @@ func TestUpstreamAccountRouterHonorsSchedulerTopK(t *testing.T) {
 	require.NoError(t, busyLease.Release(context.Background()))
 }
 
-func TestUpstreamAccountRouterTreatsZeroMembershipPriorityAsHighest(t *testing.T) {
+func TestUpstreamAccountRouterUsesAccountPriorityAndIgnoresLegacyMemberPriority(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	pool := model.UpstreamAccountPool{
 		Name: "priority-pool", Platform: constant.UpstreamPlatformOpenAI,
@@ -671,10 +671,16 @@ func TestUpstreamAccountRouterTreatsZeroMembershipPriorityAsHighest(t *testing.T
 	require.NoError(t, CreateUpstreamAccountPool(&pool))
 	zero := createRouterTestAccount(t, "zero", pool.Id, nil)
 	other := createRouterTestAccount(t, "other", pool.Id, nil)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).
+		Where("id = ?", zero.Id).Update("priority", 0).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).
+		Where("id = ?", other.Id).Update("priority", 1).Error)
+	// Leave deliberately conflicting legacy snapshots behind. They must not
+	// affect routing now that account priority is the single source of truth.
 	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
-		Where("pool_id = ? AND account_id = ?", pool.Id, zero.Id).Update("priority", 0).Error)
+		Where("pool_id = ? AND account_id = ?", pool.Id, zero.Id).Update("priority", 9).Error)
 	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
-		Where("pool_id = ? AND account_id = ?", pool.Id, other.Id).Update("priority", 1).Error)
+		Where("pool_id = ? AND account_id = ?", pool.Id, other.Id).Update("priority", 0).Error)
 
 	router, err := NewUpstreamAccountRouter(NewLocalUpstreamAccountLeaseManager(), time.Minute)
 	require.NoError(t, err)
@@ -696,10 +702,10 @@ func TestUpstreamAccountRouterFallsBackWhenHighestPriorityIsFull(t *testing.T) {
 	require.NoError(t, CreateUpstreamAccountPool(&pool))
 	primary := createRouterTestAccount(t, "primary", pool.Id, nil)
 	fallback := createRouterTestAccount(t, "fallback", pool.Id, nil)
-	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
-		Where("pool_id = ? AND account_id = ?", pool.Id, primary.Id).Update("priority", 1).Error)
-	require.NoError(t, model.DB.Model(&model.UpstreamAccountPoolMember{}).
-		Where("pool_id = ? AND account_id = ?", pool.Id, fallback.Id).Update("priority", 2).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).
+		Where("id = ?", primary.Id).Update("priority", 1).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).
+		Where("id = ?", fallback.Id).Update("priority", 2).Error)
 
 	manager := NewLocalUpstreamAccountLeaseManager()
 	busyLease, err := manager.Acquire(context.Background(), primary.Id, primary.Concurrency, time.Minute)

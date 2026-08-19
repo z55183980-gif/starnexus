@@ -119,14 +119,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		response dto.ResponsesStreamResponse
 		data     string
 	}
-	prelude := make([]stagedResponsesEvent, 0, 2)
-	visibleResponse := false
+	prelude := make([]stagedResponsesEvent, 0, 8)
+	clientOutputStarted := false
 	var capacityErr *types.NewAPIError
 	deliver := func(streamResponse dto.ResponsesStreamResponse, data string) error {
 		if err := sendResponsesStreamData(c, streamResponse, data); err != nil {
 			return err
 		}
-		visibleResponse = true
 		info.SendResponseCount++
 		info.SetFirstResponseTime()
 		service.RecordDeliveredResponsesHTTPEvent(c, []byte(data))
@@ -152,20 +151,25 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Error(err)
 			return
 		}
-		if stageCapacityPrelude && !visibleResponse &&
-			(streamResponse.Type == "response.created" || streamResponse.Type == "response.in_progress") {
-			prelude = append(prelude, stagedResponsesEvent{response: *streamResponse, data: data})
-			return
-		}
-		if stageCapacityPrelude && !visibleResponse && accumulator.Terminal() && !accumulator.Successful() {
+		if stageCapacityPrelude && !clientOutputStarted && accumulator.Terminal() && !accumulator.Successful() {
 			if failure := accumulator.FailureError(); failure != nil {
-				candidate := types.WithOpenAIError(*failure, 529)
+				candidate := types.WithOpenAIError(*failure, http.StatusServiceUnavailable)
 				if service.IsUpstreamCapacityError(candidate) {
+					candidate.StatusCode = 529
 					capacityErr = candidate
 					prelude = prelude[:0]
 					sr.Stop(candidate)
 					return
 				}
+			}
+		}
+		if stageCapacityPrelude && !clientOutputStarted && !ResponsesStreamDataStartsClientOutput(data, streamResponse) {
+			prelude = append(prelude, stagedResponsesEvent{response: *streamResponse, data: data})
+			return
+		}
+		if stageCapacityPrelude && clientOutputStarted && accumulator.Terminal() && !accumulator.Successful() {
+			if sanitized, changed := SanitizeResponsesCapacityErrorForClient(data); changed {
+				data = sanitized
 			}
 		}
 		if writeErr := flushPrelude(); writeErr != nil {
@@ -174,7 +178,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 		if writeErr := deliver(*streamResponse, data); writeErr != nil {
 			sr.Stop(writeErr)
+			return
 		}
+		clientOutputStarted = true
 	})
 	if capacityErr != nil {
 		return nil, capacityErr

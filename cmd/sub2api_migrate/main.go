@@ -434,7 +434,7 @@ func importSnapshot(db *gorm.DB, snapshot *sourceSnapshot, runID string) (migrat
 			continue
 		}
 		membersByPool[source.GroupID] = append(membersByPool[source.GroupID], service.UpstreamAccountPoolMemberInput{
-			AccountId: accountID, Priority: source.Priority, Weight: 1,
+			AccountId: accountID,
 		})
 	}
 	for sourcePoolID, destinationPoolID := range poolMap {
@@ -463,10 +463,27 @@ func reconcileImportedPoolMembers(db *gorm.DB, poolID int, desired []service.Ups
 
 		desiredIDs := make(map[int]struct{}, len(desired))
 		for _, input := range desired {
-			if input.AccountId <= 0 || input.Priority < 0 || input.Weight <= 0 {
+			if input.AccountId <= 0 {
 				return fmt.Errorf("invalid imported membership for account %d", input.AccountId)
 			}
 			desiredIDs[input.AccountId] = struct{}{}
+		}
+		var accounts []model.UpstreamAccount
+		if len(desiredIDs) > 0 {
+			accountIDs := make([]int, 0, len(desiredIDs))
+			for accountID := range desiredIDs {
+				accountIDs = append(accountIDs, accountID)
+			}
+			if err := tx.Where("id IN ?", accountIDs).Find(&accounts).Error; err != nil {
+				return err
+			}
+			if len(accounts) != len(desiredIDs) {
+				return errors.New("an imported pool membership references an invalid account")
+			}
+		}
+		accountsByID := make(map[int]model.UpstreamAccount, len(accounts))
+		for _, account := range accounts {
+			accountsByID[account.Id] = account
 		}
 		removeIDs := make([]int, 0)
 		for _, accountID := range importedAccountIDs {
@@ -483,9 +500,11 @@ func reconcileImportedPoolMembers(db *gorm.DB, poolID int, desired []service.Ups
 
 		now := common.GetTimestamp()
 		for _, input := range desired {
+			account := accountsByID[input.AccountId]
+			weight := max(1, account.Weight)
 			member := model.UpstreamAccountPoolMember{
-				PoolId: poolID, AccountId: input.AccountId, Priority: input.Priority,
-				Weight: input.Weight, CreatedAt: now,
+				PoolId: poolID, AccountId: input.AccountId, Priority: account.Priority,
+				Weight: weight, CreatedAt: now,
 			}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "pool_id"}, {Name: "account_id"}},

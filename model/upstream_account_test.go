@@ -38,6 +38,21 @@ func TestUpstreamAccountModelsMigrateOnSQLite(t *testing.T) {
 	require.True(t, db.Migrator().HasColumn(&UpstreamProxy{}, "password"))
 }
 
+func TestSyncUpstreamAccountPoolMemberDefaults(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&UpstreamAccount{}, &UpstreamAccountPoolMember{}))
+	account := UpstreamAccount{Name: "account", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth, Extra: "{}", Concurrency: 1, Priority: 4, Weight: 3, Status: constant.UpstreamStatusActive}
+	require.NoError(t, db.Create(&account).Error)
+	member := UpstreamAccountPoolMember{PoolId: 1, AccountId: account.Id, Priority: 9, Weight: 8, CreatedAt: 1}
+	require.NoError(t, db.Create(&member).Error)
+
+	require.NoError(t, syncUpstreamAccountPoolMemberDefaults(db))
+	require.NoError(t, db.First(&member, "pool_id = ? AND account_id = ?", 1, account.Id).Error)
+	require.Equal(t, account.Priority, member.Priority)
+	require.Equal(t, account.Weight, member.Weight)
+}
+
 func TestUpstreamAccountSchedulableGate(t *testing.T) {
 	now := time.Now().Unix()
 	account := &UpstreamAccount{Status: constant.UpstreamStatusActive, Schedulable: true}
@@ -110,7 +125,7 @@ func TestParseUpstreamAccountSchedulerConfig(t *testing.T) {
 	require.Equal(t, "account", config.PrioritySource)
 	config, err = ParseUpstreamAccountSchedulerConfig(`{"version":2,"priority_source":"member"}`)
 	require.NoError(t, err)
-	require.Equal(t, "member", config.PrioritySource)
+	require.Equal(t, "account", config.PrioritySource)
 	config, err = ParseUpstreamAccountSchedulerConfig(`{"version":2,"session_affinity_enabled":true}`)
 	require.NoError(t, err)
 	require.True(t, config.SessionAffinityEnabled)

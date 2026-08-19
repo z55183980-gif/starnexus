@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -12,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 type ResponsesEventAccumulator struct {
@@ -62,6 +65,164 @@ func IsResponsesFirstOutputEvent(event *dto.ResponsesStreamResponse) bool {
 		return true
 	}
 	return strings.HasPrefix(eventType, "response.output_text") || strings.HasPrefix(eventType, "response.output")
+}
+
+// ResponsesStreamDataStartsClientOutput reports whether a Responses event
+// commits the current upstream attempt. Lifecycle and empty structural events
+// are kept private so a request-scoped capacity failure can still be retried
+// without exposing an abandoned response ID to the client.
+func ResponsesStreamDataStartsClientOutput(data string, event *dto.ResponsesStreamResponse) bool {
+	trimmed := strings.TrimSpace(data)
+	if trimmed == "" || event == nil {
+		return false
+	}
+	eventType := strings.TrimSpace(event.Type)
+	switch eventType {
+	case "response.created", "response.in_progress", "response.failed":
+		return false
+	case "error":
+		failure := responsesStreamFailureFromPayload(common.StringToByteSlice(trimmed))
+		if failure == nil {
+			return true
+		}
+		return !service.IsUpstreamCapacityError(types.WithOpenAIError(*failure, http.StatusServiceUnavailable))
+	case dto.ResponsesOutputTypeItemAdded, "response.content_part.added", "response.reasoning_summary_part.added":
+		return responsesStreamAddedEventStartsClientOutput(common.StringToByteSlice(trimmed), eventType)
+	default:
+		return true
+	}
+}
+
+func responsesStreamAddedEventStartsClientOutput(payload []byte, eventType string) bool {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return true
+	}
+
+	switch eventType {
+	case dto.ResponsesOutputTypeItemAdded:
+		item := gjson.GetBytes(payload, "item")
+		if !item.Exists() || !item.IsObject() {
+			return true
+		}
+		switch strings.TrimSpace(item.Get("type").String()) {
+		case "reasoning":
+			if item.Get("encrypted_content").String() != "" {
+				return true
+			}
+			summary := item.Get("summary")
+			if !summary.IsArray() {
+				return false
+			}
+			for _, part := range summary.Array() {
+				if strings.TrimSpace(part.Get("type").String()) != "summary_text" || part.Get("text").String() != "" {
+					return true
+				}
+			}
+			return false
+		case "message":
+			content := item.Get("content")
+			if !content.IsArray() {
+				return false
+			}
+			for _, part := range content.Array() {
+				switch strings.TrimSpace(part.Get("type").String()) {
+				case "output_text":
+					if part.Get("text").String() != "" {
+						return true
+					}
+				case "refusal":
+					if part.Get("refusal").String() != "" {
+						return true
+					}
+				default:
+					return true
+				}
+			}
+			return false
+		case "function_call":
+			return item.Get("arguments").String() != ""
+		case "custom_tool_call":
+			return item.Get("input").String() != ""
+		case "compaction":
+			return item.Get("encrypted_content").String() != ""
+		default:
+			return true
+		}
+	case "response.content_part.added":
+		part := gjson.GetBytes(payload, "part")
+		if !part.Exists() || !part.IsObject() {
+			return true
+		}
+		switch strings.TrimSpace(part.Get("type").String()) {
+		case "output_text":
+			return part.Get("text").String() != ""
+		case "refusal":
+			return part.Get("refusal").String() != ""
+		default:
+			return true
+		}
+	case "response.reasoning_summary_part.added":
+		part := gjson.GetBytes(payload, "part")
+		if !part.Exists() || !part.IsObject() || strings.TrimSpace(part.Get("type").String()) != "summary_text" {
+			return true
+		}
+		return part.Get("text").String() != ""
+	default:
+		return true
+	}
+}
+
+func responsesStreamFailureFromPayload(payload []byte) *types.OpenAIError {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return nil
+	}
+	code := gjson.GetBytes(payload, "response.error.code").String()
+	message := gjson.GetBytes(payload, "response.error.message").String()
+	errorType := gjson.GetBytes(payload, "response.error.type").String()
+	if !gjson.GetBytes(payload, "response.error").Exists() {
+		code = gjson.GetBytes(payload, "error.code").String()
+		message = gjson.GetBytes(payload, "error.message").String()
+		errorType = gjson.GetBytes(payload, "error.type").String()
+	}
+	if code == "" && message == "" && errorType == "" {
+		return nil
+	}
+	return &types.OpenAIError{Code: code, Message: message, Type: errorType}
+}
+
+// SanitizeResponsesCapacityErrorForClient converts fatal Codex capacity codes
+// to the retryable server_error code after semantic output has made server-side
+// replay unsafe. Messages and non-capacity error codes are preserved.
+func SanitizeResponsesCapacityErrorForClient(data string) (string, bool) {
+	trimmed := strings.TrimSpace(data)
+	payload := common.StringToByteSlice(trimmed)
+	failure := responsesStreamFailureFromPayload(payload)
+	if failure == nil || !service.IsUpstreamCapacityError(types.WithOpenAIError(*failure, http.StatusServiceUnavailable)) {
+		return data, false
+	}
+
+	updated := payload
+	changed := false
+	for _, path := range []string{"response.error.code", "error.code"} {
+		parent := strings.TrimSuffix(path, ".code")
+		if !gjson.GetBytes(updated, parent).Exists() {
+			continue
+		}
+		code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(updated, path).String()))
+		if code != "" && code != "server_is_overloaded" && code != "slow_down" {
+			continue
+		}
+		next, err := sjson.SetBytes(updated, path, "server_error")
+		if err != nil {
+			return data, false
+		}
+		updated = next
+		changed = true
+	}
+	if !changed {
+		return data, false
+	}
+	return string(updated), true
 }
 
 // IsResponsesFirstFrameEvent reports whether an event is the first frame of a

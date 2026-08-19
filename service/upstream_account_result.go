@@ -161,6 +161,11 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 	if isUpstreamHTMLForbidden(apiErr) {
 		return UpstreamAccountErrorRetryRequest
 	}
+	// Capacity shedding is request-scoped. It must bypass persistent/custom
+	// account cooldown rules so one overloaded request cannot sweep the pool.
+	if isUpstreamOverloadError(apiErr) {
+		return UpstreamAccountErrorRetrySameAccount
+	}
 
 	if matched, until, reason := matchUpstreamTempUnschedulableRule(apiErr, loadAccount, &account); matched {
 		updates["temp_unschedulable_until"] = until
@@ -170,8 +175,6 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 	}
 
 	switch {
-	case isUpstreamOverloadError(apiErr):
-		return UpstreamAccountErrorRetrySameAccount
 	case apiErr.StatusCode == 401:
 		if !loadAccount() {
 			return UpstreamAccountErrorNotHandled
@@ -351,7 +354,7 @@ func isUpstreamOverloadError(apiErr *types.NewAPIError) bool {
 		message += " " + strings.ToLower(strings.TrimSpace(upstreamMessage))
 	}
 
-	if strings.Contains(code, "server_is_overloaded") {
+	if strings.Contains(code, "server_is_overloaded") || strings.Contains(code, "slow_down") {
 		return true
 	}
 	return strings.Contains(message, "servers are currently overloaded") ||
@@ -393,7 +396,7 @@ func hasUpstreamHTTPResponse(apiErr *types.NewAPIError) bool {
 }
 
 func ShouldRetryUpstreamAccount(failovers int, startedAt time.Time) bool {
-	maxFailovers := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_MAX_FAILOVERS", 2)
+	maxFailovers := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_MAX_FAILOVERS", 3)
 	if maxFailovers < 0 {
 		maxFailovers = 0
 	}

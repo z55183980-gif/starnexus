@@ -59,7 +59,7 @@ func responsesWSTerminalAPIError(turn *responsesWebSocketTurn) *types.NewAPIErro
 		status = http.StatusTooManyRequests
 	case strings.Contains(combined, "unauthorized") || strings.Contains(combined, "token_invalidated") || strings.Contains(combined, "token_revoked"):
 		status = http.StatusUnauthorized
-	case strings.Contains(combined, "overload") || strings.Contains(combined, "capacity"):
+	case strings.Contains(combined, "overload") || strings.Contains(combined, "capacity") || strings.Contains(combined, "slow_down"):
 		status = 529
 	}
 	return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeBadResponseStatusCode, status, types.ErrOptionWithSkipRetry())

@@ -337,6 +337,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := syncUpstreamAccountPoolMemberDefaults(DB); err != nil {
+		return err
+	}
 	if err := EnsureDefaultRoutingNodes(); err != nil {
 		return err
 	}
@@ -472,6 +475,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := syncUpstreamAccountPoolMemberDefaults(DB); err != nil {
+		return err
+	}
 	if err := EnsureDefaultRoutingNodes(); err != nil {
 		return err
 	}
@@ -514,6 +520,44 @@ func backfillUserConcurrencyDefault() error {
 		return fmt.Errorf("failed to backfill user concurrency default: %w", err)
 	}
 	common.SysLog("user concurrency default backfilled")
+	return nil
+}
+
+func syncUpstreamAccountPoolMemberDefaults(db *gorm.DB) error {
+	type memberDefaults struct {
+		PoolId    int
+		AccountId int
+		Priority  int
+		Weight    int
+	}
+	var rows []memberDefaults
+	if err := db.Table("upstream_account_pool_members AS pool_members").
+		Select("pool_members.pool_id, pool_members.account_id, accounts.priority, accounts.weight").
+		Joins("JOIN upstream_accounts AS accounts ON accounts.id = pool_members.account_id").
+		Where("pool_members.priority <> accounts.priority OR pool_members.weight <> accounts.weight").
+		Scan(&rows).Error; err != nil {
+		return fmt.Errorf("failed to find stale upstream account pool member defaults: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	if err := db.Transaction(func(tx *gorm.DB) error {
+		for _, row := range rows {
+			weight := row.Weight
+			if weight <= 0 {
+				weight = 1
+			}
+			if err := tx.Model(&UpstreamAccountPoolMember{}).
+				Where("pool_id = ? AND account_id = ?", row.PoolId, row.AccountId).
+				Updates(map[string]any{"priority": row.Priority, "weight": weight}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to synchronize upstream account pool member defaults: %w", err)
+	}
+	common.SysLog(fmt.Sprintf("synchronized %d upstream account pool member default(s)", len(rows)))
 	return nil
 }
 

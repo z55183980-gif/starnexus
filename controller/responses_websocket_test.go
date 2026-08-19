@@ -909,6 +909,7 @@ func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
 
 	capacityEvent := `{"type":"response.failed","response":{"id":"resp_capacity","status":"failed","error":{"code":"server_error","message":"Selected model is at capacity. Please try a different model."}}}`
 	overloadEvent := `{"type":"response.failed","response":{"id":"resp_overload","status":"failed","error":{"code":"server_error","message":"Our servers are currently overloaded. Please try again later."}}}`
+	slowDownEvent := `{"type":"response.failed","response":{"id":"resp_slow_down","status":"failed","error":{"code":"slow_down","message":"Please retry later."}}}`
 
 	t.Run("capacity signature", func(t *testing.T) {
 		turn, apiErr := newTurn(t, capacityEvent)
@@ -917,6 +918,11 @@ func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
 	})
 	t.Run("observed overload signature", func(t *testing.T) {
 		turn, apiErr := newTurn(t, overloadEvent)
+		require.Equal(t, 529, apiErr.StatusCode)
+		require.True(t, shouldRetryResponsesWSCapacity(turn, apiErr))
+	})
+	t.Run("slow down signature", func(t *testing.T) {
+		turn, apiErr := newTurn(t, slowDownEvent)
 		require.Equal(t, 529, apiErr.StatusCode)
 		require.True(t, shouldRetryResponsesWSCapacity(turn, apiErr))
 	})
@@ -1520,6 +1526,9 @@ func TestResponsesWSSSERetriesAnotherLocalAccountBeforeVisibleEvent(t *testing.T
 }
 
 func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
+	// This fixture has exactly three accounts and verifies two switches. Keep
+	// its retry budget explicit now that the production default is three.
+	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "2")
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()
 
@@ -1549,6 +1558,18 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 				return
 			}
 			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.in_progress","response":{"id":"resp_capacity"}}`)); err != nil {
+				serverErrors <- err
+				return
+			}
+			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.output_item.added","item":{"type":"reasoning","summary":[]}}`)); err != nil {
+				serverErrors <- err
+				return
+			}
+			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":""}}`)); err != nil {
+				serverErrors <- err
+				return
+			}
+			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}`)); err != nil {
 				serverErrors <- err
 				return
 			}

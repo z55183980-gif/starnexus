@@ -164,6 +164,25 @@ func TestApplyUpstreamAccountErrorKeepsCapacityTransient(t *testing.T) {
 	require.True(t, updated.IsSchedulableAt(time.Now().Unix()))
 }
 
+func TestApplyUpstreamAccountCapacityBypassesCustomCooldownRule(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "capacity-rule-account")
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update(
+		"extra",
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":529,"keywords":["overloaded"],"duration_minutes":60}]}`,
+	).Error)
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Our servers are currently overloaded. Please try again later.",
+		Code:    "server_is_overloaded",
+	}, 529)
+
+	require.Equal(t, UpstreamAccountErrorRetrySameAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var unchanged model.UpstreamAccount
+	require.NoError(t, model.DB.First(&unchanged, account.Id).Error)
+	require.Nil(t, unchanged.TempUnschedulableUntil)
+	require.Empty(t, unchanged.TempUnschedulableReason)
+}
+
 func TestApplyUpstreamAccountErrorDoesNotPenalizeHTMLForbidden(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	account := createRouterTestAccountWithoutPool(t, "html-forbidden-account")
@@ -329,6 +348,21 @@ func TestShouldRetryUpstreamAccountHonorsCountAndBudget(t *testing.T) {
 	require.True(t, ShouldRetryUpstreamAccount(0, time.Now()))
 	require.False(t, ShouldRetryUpstreamAccount(2, time.Now()))
 	require.False(t, ShouldRetryUpstreamAccount(0, time.Now().Add(-time.Second)))
+}
+
+func TestShouldRetryUpstreamAccountDefaultsToThreeFailovers(t *testing.T) {
+	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "")
+	t.Setenv("UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS", "0")
+	require.True(t, ShouldRetryUpstreamAccount(2, time.Time{}))
+	require.False(t, ShouldRetryUpstreamAccount(3, time.Time{}))
+}
+
+func TestIsUpstreamCapacityErrorRecognizesSlowDownCode(t *testing.T) {
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Code:    "slow_down",
+		Message: "Please retry later.",
+	}, http.StatusServiceUnavailable)
+	require.True(t, IsUpstreamCapacityError(apiErr))
 }
 
 func createRouterTestAccountWithoutPool(t *testing.T, name string) model.UpstreamAccount {

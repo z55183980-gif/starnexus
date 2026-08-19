@@ -95,11 +95,9 @@ type UpstreamAccountRouter struct {
 }
 
 type upstreamAccountCandidate struct {
-	account            model.UpstreamAccount
-	membershipPriority int
-	membershipWeight   int
-	currentLoad        int
-	loadRate           float64
+	account     model.UpstreamAccount
+	currentLoad int
+	loadRate    float64
 }
 
 type upstreamAccountSelectionExhaustedError struct {
@@ -659,10 +657,8 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 		return nil, exclusions, nil
 	}
 	accountIds := make([]int, 0, len(members))
-	membersByAccount := make(map[int]model.UpstreamAccountPoolMember, len(members))
 	for _, member := range members {
 		accountIds = append(accountIds, member.AccountId)
-		membersByAccount[member.AccountId] = member
 	}
 	var accounts []model.UpstreamAccount
 	if err := model.DB.Where("id IN ?", accountIds).Find(&accounts).Error; err != nil {
@@ -726,17 +722,8 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 			continue
 		}
 		load := leaseCounts[account.Id]
-		member := membersByAccount[account.Id]
-		priority := member.Priority
-		weight := account.Weight
-		if member.Weight > 0 {
-			weight = member.Weight
-		}
-		if weight <= 0 {
-			weight = 1
-		}
 		candidates = append(candidates, upstreamAccountCandidate{
-			account: account, membershipPriority: priority, membershipWeight: weight,
+			account:     account,
 			currentLoad: load, loadRate: float64(load) / float64(account.EffectiveLoadFactor()),
 		})
 	}
@@ -1042,19 +1029,19 @@ func weightedUpstreamCandidateOrder(candidates []upstreamAccountCandidate, confi
 func tieredUpstreamCandidateOrder(candidates []upstreamAccountCandidate, topK int) []upstreamAccountCandidate {
 	pool := append([]upstreamAccountCandidate(nil), candidates...)
 	sort.SliceStable(pool, func(i, j int) bool {
-		if pool[i].membershipPriority == pool[j].membershipPriority {
+		if pool[i].account.Priority == pool[j].account.Priority {
 			if pool[i].loadRate == pool[j].loadRate {
 				return pool[i].account.Id < pool[j].account.Id
 			}
 			return pool[i].loadRate < pool[j].loadRate
 		}
-		return pool[i].membershipPriority < pool[j].membershipPriority
+		return pool[i].account.Priority < pool[j].account.Priority
 	})
 
 	order := make([]upstreamAccountCandidate, 0, len(pool))
 	for start := 0; start < len(pool); {
 		end := start + 1
-		for end < len(pool) && pool[end].membershipPriority == pool[start].membershipPriority {
+		for end < len(pool) && pool[end].account.Priority == pool[start].account.Priority {
 			end++
 		}
 		tier := pool[start:end]
@@ -1079,12 +1066,7 @@ func scoredUpstreamCandidateOrder(candidates []upstreamAccountCandidate, config 
 	if len(candidates) == 0 {
 		return nil
 	}
-	priorityFor := func(candidate upstreamAccountCandidate) int {
-		if config.PrioritySource == "member" {
-			return candidate.membershipPriority
-		}
-		return candidate.account.Priority
-	}
+	priorityFor := func(candidate upstreamAccountCandidate) int { return candidate.account.Priority }
 	minPriority, maxPriority := priorityFor(candidates[0]), priorityFor(candidates[0])
 	for _, candidate := range candidates[1:] {
 		priority := priorityFor(candidate)
@@ -1152,7 +1134,7 @@ func weightedScoredUpstreamCandidateOrder(candidates []scoredUpstreamCandidate) 
 		}
 		for index, candidate := range pool {
 			weight := (candidate.score - minScore) + 1
-			weight *= float64(candidate.candidate.membershipWeight)
+			weight *= float64(max(1, candidate.candidate.account.Weight))
 			if weight <= 0 || math.IsNaN(weight) || math.IsInf(weight, 0) {
 				weight = 1
 			}
@@ -1194,7 +1176,7 @@ func weightedUpstreamCandidateTierOrder(candidates []upstreamAccountCandidate) [
 			if freeFactor < 0.05 {
 				freeFactor = 0.05
 			}
-			weights[i] = float64(candidate.membershipWeight) * freeFactor
+			weights[i] = float64(max(1, candidate.account.Weight)) * freeFactor
 			total += weights[i]
 		}
 		selected := 0

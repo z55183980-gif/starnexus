@@ -109,8 +109,6 @@ type UpstreamAccountPoolPublishResult struct {
 
 type UpstreamAccountPoolMemberInput struct {
 	AccountId int `json:"account_id"`
-	Priority  int `json:"priority"`
-	Weight    int `json:"weight"`
 }
 
 type UpstreamAccountPoolMemberView struct {
@@ -903,10 +901,10 @@ func ListUpstreamAccountPoolMembers(poolId int) ([]UpstreamAccountPoolMemberView
 	}
 	var views []UpstreamAccountPoolMemberView
 	if err := model.DB.Table("upstream_account_pool_members AS pool_members").
-		Select("pool_members.pool_id, pool_members.account_id, pool_members.priority, pool_members.weight, pool_members.created_at, accounts.name, accounts.platform, accounts.type, accounts.status, accounts.schedulable").
+		Select("pool_members.pool_id, pool_members.account_id, accounts.priority AS priority, accounts.weight AS weight, pool_members.created_at, accounts.name, accounts.platform, accounts.type, accounts.status, accounts.schedulable").
 		Joins("JOIN upstream_accounts AS accounts ON accounts.id = pool_members.account_id").
 		Where("pool_members.pool_id = ?", poolId).
-		Order("pool_members.priority ASC").Order("pool_members.account_id ASC").
+		Order("accounts.priority ASC").Order("pool_members.account_id ASC").
 		Scan(&views).Error; err != nil {
 		return nil, err
 	}
@@ -928,9 +926,6 @@ func ReplaceUpstreamAccountPoolMembers(poolId int, inputs []UpstreamAccountPoolM
 		for _, input := range inputs {
 			if input.AccountId <= 0 {
 				return errors.New("account pool member account_id must be positive")
-			}
-			if input.Priority < 0 {
-				return fmt.Errorf("account %d pool priority cannot be negative", input.AccountId)
 			}
 			if _, exists := seen[input.AccountId]; exists {
 				return fmt.Errorf("account %d is duplicated in the account pool", input.AccountId)
@@ -962,12 +957,12 @@ func ReplaceUpstreamAccountPoolMembers(poolId int, inputs []UpstreamAccountPoolM
 			if pool.CredentialType != "mixed" && account.Type != pool.CredentialType {
 				return fmt.Errorf("account %d credential type does not match pool", input.AccountId)
 			}
-			weight := input.Weight
+			weight := account.Weight
 			if weight <= 0 {
 				weight = 1
 			}
 			members = append(members, model.UpstreamAccountPoolMember{
-				PoolId: poolId, AccountId: input.AccountId, Priority: input.Priority, Weight: weight, CreatedAt: now,
+				PoolId: poolId, AccountId: input.AccountId, Priority: account.Priority, Weight: weight, CreatedAt: now,
 			})
 		}
 
@@ -1312,6 +1307,9 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			if err := replaceUpstreamAccountMemberships(tx, current.Id, poolIds, input.Account.Priority, input.Account.Weight); err != nil {
 				return err
 			}
+		}
+		if err := syncUpstreamAccountMembershipDefaults(tx, current.Id, input.Account.Priority, input.Account.Weight); err != nil {
+			return err
 		}
 		affectedPoolIds := append(append([]int{}, existingPoolIds...), poolIds...)
 		changed, err := syncPublishedAccountPoolChannelsTx(tx, affectedPoolIds)
@@ -1785,6 +1783,15 @@ func replaceUpstreamAccountMemberships(tx *gorm.DB, accountId int, poolIds []int
 		return nil
 	}
 	return tx.Create(&members).Error
+}
+
+func syncUpstreamAccountMembershipDefaults(tx *gorm.DB, accountId int, priority int, weight int) error {
+	if weight <= 0 {
+		weight = 1
+	}
+	return tx.Model(&model.UpstreamAccountPoolMember{}).
+		Where("account_id = ?", accountId).
+		Updates(map[string]any{"priority": priority, "weight": weight}).Error
 }
 
 func listUpstreamAccountPoolIds(db *gorm.DB, accountId int) ([]int, error) {

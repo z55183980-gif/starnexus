@@ -596,7 +596,7 @@ func TestPublishUpstreamAccountPoolChannelRejectsInvalidModelSelection(t *testin
 	require.ErrorContains(t, err, "not available from this account pool")
 }
 
-func TestUpdateUpstreamAccountPreservesExistingPoolMemberOverrides(t *testing.T) {
+func TestUpdateUpstreamAccountSynchronizesPoolMemberDefaults(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	pool := model.UpstreamAccountPool{
 		Name: "primary", Platform: constant.UpstreamPlatformOpenAI, CredentialType: constant.UpstreamAccountTypeAPIKey,
@@ -624,13 +624,15 @@ func TestUpdateUpstreamAccountPreservesExistingPoolMemberOverrides(t *testing.T)
 
 	account := input.Account
 	account.Name = "api-key-updated"
+	account.Priority = 4
+	account.Weight = 5
 	poolIds := []int{pool.Id, secondPool.Id}
 	require.NoError(t, UpdateUpstreamAccount(&UpstreamAccountUpdateInput{Account: account, PoolIds: &poolIds}))
 
 	var primary model.UpstreamAccountPoolMember
 	require.NoError(t, model.DB.Where("pool_id = ? AND account_id = ?", pool.Id, account.Id).First(&primary).Error)
-	require.Equal(t, 7, primary.Priority)
-	require.Equal(t, 9, primary.Weight)
+	require.Equal(t, account.Priority, primary.Priority)
+	require.Equal(t, account.Weight, primary.Weight)
 	var secondary model.UpstreamAccountPoolMember
 	require.NoError(t, model.DB.Where("pool_id = ? AND account_id = ?", secondPool.Id, account.Id).First(&secondary).Error)
 	require.Equal(t, account.Priority, secondary.Priority)
@@ -654,21 +656,21 @@ func TestReplaceUpstreamAccountPoolMembersPreservesCreatedAt(t *testing.T) {
 
 	require.NoError(t, ReplaceUpstreamAccountPoolMembers(pool.Id, []UpstreamAccountPoolMemberInput{{
 		AccountId: account.Id,
-		Priority:  7,
-		Weight:    9,
 	}}))
 
 	var after model.UpstreamAccountPoolMember
 	require.NoError(t, model.DB.Where("pool_id = ? AND account_id = ?", pool.Id, account.Id).First(&after).Error)
 	require.Equal(t, before.CreatedAt, after.CreatedAt)
-	require.Equal(t, 7, after.Priority)
-	require.Equal(t, 9, after.Weight)
+	require.Equal(t, account.Priority, after.Priority)
+	require.Equal(t, account.Weight, after.Weight)
 
 	views, err := ListUpstreamAccountPoolMembers(pool.Id)
 	require.NoError(t, err)
 	require.Len(t, views, 1)
 	require.Equal(t, account.Name, views[0].Name)
 	require.Equal(t, originalCreatedAt, views[0].CreatedAt)
+	require.Equal(t, account.Priority, views[0].Priority)
+	require.Equal(t, account.Weight, views[0].Weight)
 }
 
 func TestUpstreamAccountAdminRejectsIncompatibleTypeChanges(t *testing.T) {

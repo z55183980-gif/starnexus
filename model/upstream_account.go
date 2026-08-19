@@ -98,6 +98,9 @@ func ParseUpstreamAccountSchedulerConfig(raw string) (UpstreamAccountSchedulerCo
 	default:
 		return config, errors.New("scheduler_config priority_source must be account or member")
 	}
+	// Account priority is the single source of truth. Keep accepting the legacy
+	// member value so existing scheduler configs remain readable after upgrade.
+	config.PrioritySource = "account"
 	switch config.ModelRoutingIdSpace {
 	case "", "source", "destination":
 	default:

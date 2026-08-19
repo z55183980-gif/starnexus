@@ -121,7 +121,7 @@ export async function listUpstreamPoolMembers(
 
 export async function replaceUpstreamPoolMembers(
   id: number,
-  members: Array<{ account_id: number; priority: number; weight: number }>
+  members: Array<{ account_id: number }>
 ): Promise<ApiResponse<null>> {
   const response = await api.put(`/api/upstream/account-pools/${id}/members`, {
     members,
