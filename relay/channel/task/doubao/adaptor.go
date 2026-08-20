@@ -331,9 +331,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if a.ChannelType == constant.ChannelTypeZQBAPI && nativeRequestOK {
 		body = nativeRequest.Payload
 		originalModel := body.Model
-		originalImageURLs := zqbapiNativeSeedanceImageURLs(body)
+		originalMediaURLs := zqbapiNativeSeedanceMediaURLs(body)
 		if info.IsModelMapped {
 			body.Model = info.UpstreamModelName
+		}
+		if err := externalizeDoubaoVideo2InlineMedia(c, info, body); err != nil {
+			return nil, err
 		}
 		if err := a.prepareZQBAPIImages(c, info, body); err != nil {
 			return nil, err
@@ -342,7 +345,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			nativeRequest.Raw,
 			body,
 			body.Model != originalModel,
-			!slicesEqual(originalImageURLs, zqbapiNativeSeedanceImageURLs(body)),
+			!zqbapiNativeSeedanceMediaEqual(originalMediaURLs, zqbapiNativeSeedanceMediaURLs(body)),
 		)
 		if err != nil {
 			return nil, errors.Wrap(err, "marshal native Seedance request payload failed")
@@ -426,20 +429,34 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	return bytes.NewReader(data), nil
 }
 
-func zqbapiNativeSeedanceImageURLs(body *requestPayload) []string {
+type zqbapiNativeSeedanceMedia struct {
+	ImageURL string
+	VideoURL string
+	AudioURL string
+}
+
+func zqbapiNativeSeedanceMediaURLs(body *requestPayload) []zqbapiNativeSeedanceMedia {
 	if body == nil {
 		return nil
 	}
-	urls := make([]string, 0, len(body.Content))
+	urls := make([]zqbapiNativeSeedanceMedia, 0, len(body.Content))
 	for _, item := range body.Content {
+		media := zqbapiNativeSeedanceMedia{}
 		if item.ImageURL != nil {
-			urls = append(urls, item.ImageURL.URL)
+			media.ImageURL = item.ImageURL.URL
 		}
+		if item.VideoURL != nil {
+			media.VideoURL = item.VideoURL.URL
+		}
+		if item.AudioURL != nil {
+			media.AudioURL = item.AudioURL.URL
+		}
+		urls = append(urls, media)
 	}
 	return urls
 }
 
-func slicesEqual(left, right []string) bool {
+func zqbapiNativeSeedanceMediaEqual(left, right []zqbapiNativeSeedanceMedia) bool {
 	if len(left) != len(right) {
 		return false
 	}
@@ -472,25 +489,34 @@ func mergeZQBAPINativeSeedancePayload(raw []byte, body *requestPayload, modelCha
 			return nil, err
 		}
 		for index, item := range body.Content {
-			if index >= len(rawContent) || item.ImageURL == nil {
+			if index >= len(rawContent) {
 				continue
 			}
-			media := map[string]json.RawMessage{}
-			if rawImage, exists := rawContent[index]["image_url"]; exists {
-				if err := common.Unmarshal(rawImage, &media); err != nil {
+			for field, media := range map[string]*MediaURL{
+				"image_url": item.ImageURL,
+				"video_url": item.VideoURL,
+				"audio_url": item.AudioURL,
+			} {
+				if media == nil {
+					continue
+				}
+				mediaFields := map[string]json.RawMessage{}
+				if rawMedia, exists := rawContent[index][field]; exists {
+					if err := common.Unmarshal(rawMedia, &mediaFields); err != nil {
+						return nil, err
+					}
+				}
+				urlData, err := common.Marshal(media.URL)
+				if err != nil {
 					return nil, err
 				}
+				mediaFields["url"] = urlData
+				mediaData, err := common.Marshal(mediaFields)
+				if err != nil {
+					return nil, err
+				}
+				rawContent[index][field] = mediaData
 			}
-			urlData, err := common.Marshal(item.ImageURL.URL)
-			if err != nil {
-				return nil, err
-			}
-			media["url"] = urlData
-			imageData, err := common.Marshal(media)
-			if err != nil {
-				return nil, err
-			}
-			rawContent[index]["image_url"] = imageData
 		}
 		contentData, err := common.Marshal(rawContent)
 		if err != nil {

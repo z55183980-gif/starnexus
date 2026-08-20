@@ -33,6 +33,11 @@ const (
 	doubaoVideo2R2MaximumMediaSize = 64 << 20
 )
 
+// DoubaoVideo2MaximumMediaSize is the maximum size accepted by the temporary
+// media URL endpoint. It is shared by multipart uploads and inline-media
+// externalization so both paths enforce the same limit.
+const DoubaoVideo2MaximumMediaSize = doubaoVideo2R2MaximumMediaSize
+
 var doubaoVideo2R2ObjectIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{32}\.[a-z0-9]{2,5}$`)
 
 type doubaoVideo2R2Config struct {
@@ -106,6 +111,29 @@ func StoreDoubaoVideo2InlineMedia(ctx context.Context, source string) (string, e
 	data, contentType, extension, err := decodeDoubaoVideo2InlineMedia(source)
 	if err != nil {
 		return "", err
+	}
+	return storeDoubaoVideo2MediaWithConfig(ctx, config, data, contentType, extension)
+}
+
+// StoreDoubaoVideo2Media stores an authenticated multipart upload and returns
+// a short-lived HTTPS URL suitable for native Seedance video_url/audio_url
+// references. The caller must provide a supported media content type.
+func StoreDoubaoVideo2Media(ctx context.Context, data []byte, contentType string) (string, error) {
+	config, err := loadDoubaoVideo2R2Config()
+	if err != nil {
+		return "", err
+	}
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	extension, ok := doubaoVideo2MediaExtension(contentType)
+	if !ok {
+		return "", fmt.Errorf("media type %q is not supported", contentType)
+	}
+	return storeDoubaoVideo2MediaWithConfig(ctx, config, data, contentType, extension)
+}
+
+func storeDoubaoVideo2MediaWithConfig(ctx context.Context, config doubaoVideo2R2Config, data []byte, contentType, extension string) (string, error) {
+	if len(data) == 0 || len(data) > doubaoVideo2R2MaximumMediaSize {
+		return "", fmt.Errorf("media size must be between 1 and %d bytes", doubaoVideo2R2MaximumMediaSize)
 	}
 	objectToken, err := common.GenerateRandomCharsKey(32)
 	if err != nil {

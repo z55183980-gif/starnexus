@@ -781,6 +781,48 @@ func TestNormalizeZQBAPINativeSeedanceResponseUsesPublicTaskID(t *testing.T) {
 	}
 }
 
+func TestMergeZQBAPINativeSeedancePayloadUpdatesExternalizedMedia(t *testing.T) {
+	raw := []byte(`{
+        "model":"doubao-seedance-2-0-260128",
+        "content":[
+            {"type":"video_url","video_url":{"url":"data:video/mp4;base64,old"},"role":"reference_video","provider_field":"keep"},
+            {"type":"audio_url","audio_url":{"url":"base64,old-audio"},"role":"reference_audio"}
+        ],
+        "priority":0,
+        "camera_fixed":false
+    }`)
+	body := &requestPayload{
+		Model: "doubao-seedance-2-0-260128",
+		Content: []ContentItem{
+			{Type: "video_url", VideoURL: &MediaURL{URL: "https://media.example/video.mp4"}, Role: "reference_video"},
+			{Type: "audio_url", AudioURL: &MediaURL{URL: "https://media.example/audio.mp3"}, Role: "reference_audio"},
+		},
+	}
+	data, err := mergeZQBAPINativeSeedancePayload(raw, body, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	content, ok := payload["content"].([]interface{})
+	if !ok || len(content) != 2 {
+		t.Fatalf("content = %#v", payload["content"])
+	}
+	video := content[0].(map[string]interface{})
+	if video["provider_field"] != "keep" || video["video_url"].(map[string]interface{})["url"] != "https://media.example/video.mp4" {
+		t.Fatalf("video media or provider field was not preserved: %#v", video)
+	}
+	audio := content[1].(map[string]interface{})
+	if audio["audio_url"].(map[string]interface{})["url"] != "https://media.example/audio.mp3" {
+		t.Fatalf("audio media was not externalized: %#v", audio)
+	}
+	if payload["priority"] != float64(0) || payload["camera_fixed"] != false {
+		t.Fatalf("provider scalar fields were not preserved: %#v", payload)
+	}
+}
+
 func TestZQBAPIOpenAIVideoAppliesOpenAIDefaults(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{

@@ -29,6 +29,7 @@ func SetVideoRouter(router *gin.Engine) {
 	directUploadRouter.Use(middleware.RouteTag("relay"))
 	directUploadRouter.Use(middleware.TokenAuth(), middleware.UploadRateLimit())
 	{
+		directUploadRouter.POST("/upload", controller.UploadDoubaoVideo2Input)
 		directUploadRouter.POST("/presign", controller.PresignDoubaoVideo2Upload)
 		directUploadRouter.POST("/complete", controller.CompleteDoubaoVideo2Upload)
 	}
