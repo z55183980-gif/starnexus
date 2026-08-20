@@ -108,6 +108,15 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+// TaskSubmitFailureRecoverer lets a provider perform one safe, provider-owned
+// resubmission when the initial task POST is rejected for a known, material-
+// related reason. The generic relay owns the HTTP retry boundary; the adaptor
+// owns payload conversion and any provider asset-library calls.
+type TaskSubmitFailureRecoverer interface {
+	ShouldRecoverTaskSubmitFailure(c *gin.Context, info *relaycommon.RelayInfo, responseBody []byte) bool
+	RecoverTaskSubmitFailure(c *gin.Context, info *relaycommon.RelayInfo, responseBody []byte) (io.Reader, error)
+}
+
 // TaskBuildError lets provider-specific request preparation classify failures
 // without teaching the generic task relay about individual providers. Local
 // build errors are never retried by the channel failover loop.

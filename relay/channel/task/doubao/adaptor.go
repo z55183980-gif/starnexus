@@ -335,7 +335,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if info.IsModelMapped {
 			body.Model = info.UpstreamModelName
 		}
-		if err := externalizeDoubaoVideo2InlineMedia(c, info, body); err != nil {
+		if err := externalizeInlineMediaToR2(c, info, body); err != nil {
 			return nil, err
 		}
 		if err := a.prepareZQBAPIImages(c, info, body); err != nil {
@@ -396,6 +396,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		info.UpstreamModelName = body.Model
 	}
 	if a.ChannelType == constant.ChannelTypeZQBAPI {
+		// OpenAI-compatible multipart/data media also needs a public URL before
+		// it can participate in video-material recovery. Native Seedance requests
+		// take the same step above; this keeps both protocol paths consistent.
+		if err := externalizeInlineMediaToR2(c, info, body); err != nil {
+			return nil, err
+		}
 		if err := a.prepareZQBAPIImages(c, info, body); err != nil {
 			return nil, err
 		}
@@ -404,7 +410,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
-		if err := externalizeDoubaoVideo2InlineMedia(c, info, body); err != nil {
+		if err := externalizeInlineMediaToR2(c, info, body); err != nil {
 			return nil, err
 		}
 		if err := a.prepareDoubaoVideo2Images(c, info, body); err != nil {
@@ -552,7 +558,7 @@ func doubaoVideo2IsInlineMediaSource(source string) bool {
 		!strings.HasPrefix(source, "asset://")
 }
 
-func externalizeDoubaoVideo2InlineMedia(c *gin.Context, info *relaycommon.RelayInfo, body *requestPayload) error {
+func externalizeInlineMediaToR2(c *gin.Context, info *relaycommon.RelayInfo, body *requestPayload) error {
 	if body == nil || !doubaoVideo2HasInlineMedia(body) {
 		return nil
 	}
@@ -602,7 +608,7 @@ func externalizeDoubaoVideo2InlineMedia(c *gin.Context, info *relaycommon.RelayI
 		return err
 	}
 	info.UpstreamRequestBodySize = int64(len(converted))
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("DoubaoVideo2.0 inline media externalized to R2: upstream_bytes=%d", len(converted)))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("inline video media externalized to R2: upstream_bytes=%d", len(converted)))
 	return nil
 }
 

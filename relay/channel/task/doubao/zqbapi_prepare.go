@@ -81,10 +81,44 @@ func (a *TaskAdaptor) prepareZQBAPIImages(c *gin.Context, info *relaycommon.Rela
 		}
 		item.ImageURL.URL = assetURL
 	}
+	// Video references use the same approved material group and API credentials
+	// as images. We do not attempt to decode video frames in the gateway; when
+	// local preflight is desired, material_mode=always uploads the video before
+	// submission. In face_preflight/retry_only modes the provider's real-person
+	// response is handled by the one-time recovery path.
+	if materialMode == dto.ZQBAPIMaterialModeAlways {
+		for index := range body.Content {
+			item := &body.Content[index]
+			if item.Type != "video_url" || item.VideoURL == nil {
+				continue
+			}
+			source := strings.TrimSpace(item.VideoURL.URL)
+			if source == "" || strings.HasPrefix(source, "asset://") {
+				continue
+			}
+			inspection, err := inspectZQBAPIVideo(c, source)
+			if err != nil {
+				return fmt.Errorf("inspect ZQBAPI video content[%d]: %w", index, err)
+			}
+			if materialConfig == nil {
+				loaded, loadErr := loadZQBAPIMaterialConfig(info.ChannelSetting)
+				if loadErr != nil {
+					return loadErr
+				}
+				loaded.ChannelID = info.ChannelId
+				materialConfig = &loaded
+			}
+			assetURL, err := prepareZQBAPIVideoAsset(c.Request.Context(), *materialConfig, source, inspection)
+			if err != nil {
+				return fmt.Errorf("prepare ZQBAPI video material for content[%d]: %w", index, err)
+			}
+			item.VideoURL.URL = assetURL
+		}
+	}
 
-	// Retain a compact retry request only when every unresolved image is a
-	// public URL. Inline base64 images should have been detected locally; they
-	// are deliberately not persisted in task private data.
+	// Retain a compact retry request only when every unresolved image/video is a
+	// public URL. Inline media should have been externalized or detected
+	// locally; it is deliberately not persisted in task private data.
 	if zqbapiRequestCanRetry(body) {
 		payload, err := common.Marshal(body)
 		if err != nil {
@@ -96,19 +130,30 @@ func (a *TaskAdaptor) prepareZQBAPIImages(c *gin.Context, info *relaycommon.Rela
 }
 
 func zqbapiRequestCanRetry(body *requestPayload) bool {
-	hasUnmaterializedImage := false
+	hasUnmaterializedMedia := false
 	for _, item := range body.Content {
-		if item.Type != "image_url" || item.ImageURL == nil {
+		var source string
+		switch item.Type {
+		case "image_url":
+			if item.ImageURL == nil {
+				continue
+			}
+			source = strings.TrimSpace(item.ImageURL.URL)
+		case "video_url":
+			if item.VideoURL == nil {
+				continue
+			}
+			source = strings.TrimSpace(item.VideoURL.URL)
+		default:
 			continue
 		}
-		source := strings.TrimSpace(item.ImageURL.URL)
 		if source == "" || strings.HasPrefix(source, "asset://") {
 			continue
 		}
 		if !strings.HasPrefix(source, "http://") && !strings.HasPrefix(source, "https://") {
 			return false
 		}
-		hasUnmaterializedImage = true
+		hasUnmaterializedMedia = true
 	}
-	return hasUnmaterializedImage
+	return hasUnmaterializedMedia
 }

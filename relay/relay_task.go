@@ -249,6 +249,33 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
 	if resp != nil && resp.StatusCode != http.StatusOK {
+		// Some Seedance providers reject real-person media during the initial
+		// POST, before a pollable task exists. Give the provider adaptor one
+		// chance to materialize the reference media and resubmit; all billing
+		// remains attached to this single gateway submission.
+		if recoverer, ok := adaptor.(channel.TaskSubmitFailureRecoverer); ok {
+			responseBody, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr == nil && recoverer.ShouldRecoverTaskSubmitFailure(c, info, responseBody) {
+				retryBody, recoverErr := recoverer.RecoverTaskSubmitFailure(c, info, responseBody)
+				if recoverErr != nil {
+					logger.LogWarn(c, fmt.Sprintf("video submit material recovery unavailable: %v", recoverErr))
+					resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+				} else if retryBody != nil {
+					retryResp, retryErr := adaptor.DoRequest(c, info, retryBody)
+					if retryErr != nil {
+						return nil, service.TaskErrorWrapper(retryErr, "do_request_failed", http.StatusInternalServerError)
+					}
+					resp = retryResp
+				} else {
+					resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+				}
+			} else {
+				resp.Body = io.NopCloser(bytes.NewReader(responseBody))
+			}
+		}
+	}
+	if resp != nil && resp.StatusCode != http.StatusOK {
 		if c.GetBool(string(constant.ContextKeyOpenAIVideoRequest)) ||
 			(info.ChannelType == constant.ChannelTypeZQBAPI && c.GetBool(string(constant.ContextKeyZQBAPIOpenAIVideoRequest))) {
 			return nil, openAIVideoSubmitError(c, resp)

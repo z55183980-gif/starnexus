@@ -3,6 +3,7 @@ package doubao
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"image"
 	"image/color"
@@ -142,6 +143,69 @@ func TestPrepareZQBAPIAssetDoesNotRetryCreateAsset(t *testing.T) {
 	var temporary interface{ Temporary() bool }
 	if !errors.As(err, &temporary) || !temporary.Temporary() {
 		t.Fatalf("error should be temporary: %v", err)
+	}
+}
+
+func TestPrepareZQBAPIVideoAssetUsesVideoMaterialType(t *testing.T) {
+	setupZQBAPIAssetTestDB(t)
+	var mu sync.Mutex
+	actions := make([]string, 0, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := r.URL.Query().Get("Action")
+		mu.Lock()
+		actions = append(actions, action)
+		mu.Unlock()
+		switch action {
+		case "UploadAssetFile":
+			if err := r.ParseMultipartForm(1 << 20); err != nil {
+				t.Errorf("parse video upload: %v", err)
+			}
+			if r.FormValue("AssetType") != zqbapiAssetTypeVideo {
+				t.Errorf("video AssetType = %q", r.FormValue("AssetType"))
+			}
+			file, header, err := r.FormFile("file")
+			if err != nil {
+				t.Errorf("video file = %v", err)
+			} else {
+				_ = file.Close()
+				if !strings.HasSuffix(header.Filename, ".mp4") {
+					t.Errorf("video filename = %q", header.Filename)
+				}
+			}
+			_, _ = io.WriteString(w, `{"ResponseMetadata":{"RequestId":"upload-video"},"Result":{"Url":"https://material.example/video.mp4"}}`)
+		case "CreateAsset":
+			body, _ := io.ReadAll(r.Body)
+			if !strings.Contains(string(body), `"AssetType":"Video"`) {
+				t.Errorf("CreateAsset did not use Video: %s", body)
+			}
+			_, _ = io.WriteString(w, `{"ResponseMetadata":{"RequestId":"create-video"},"Result":{"Id":"asset-video-test"}}`)
+		case "GetAsset":
+			_, _ = io.WriteString(w, `{"ResponseMetadata":{"RequestId":"get-video"},"Result":{"Id":"asset-video-test","Status":"Active"}}`)
+		default:
+			http.Error(w, "unexpected action", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	videoURL := "data:video/mp4;base64," + base64.StdEncoding.EncodeToString([]byte("video-bytes"))
+	inspection, err := inspectZQBAPIVideo(nil, videoURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assetURL, err := prepareZQBAPIVideoAsset(context.Background(), zqbapiMaterialConfig{
+		AccessKeyID: "ak-test", SecretKey: "secret-test", GroupID: "group-test",
+		ProjectName: "default", Region: "cn-beijing", ProviderURL: server.URL,
+	}, videoURL, inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assetURL != "asset://asset-video-test" {
+		t.Fatalf("video asset URL = %q", assetURL)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if strings.Join(actions, ",") != "UploadAssetFile,CreateAsset,GetAsset" {
+		t.Fatalf("video actions = %v", actions)
 	}
 }
 

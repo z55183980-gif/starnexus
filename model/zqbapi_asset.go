@@ -16,18 +16,21 @@ const (
 )
 
 // ZQBAPIAsset is the cross-node idempotency registry for provider material.
-// It stores identifiers and state only; source image bytes and URLs are never
+// It stores identifiers and state only; source media bytes and URLs are never
 // persisted here.
 type ZQBAPIAsset struct {
-	ID                   int64  `json:"id" gorm:"primaryKey"`
-	CreatedAt            int64  `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt            int64  `json:"updated_at" gorm:"autoUpdateTime"`
-	CacheKey             string `json:"cache_key" gorm:"type:char(64);uniqueIndex"`
-	ChannelID            int    `json:"channel_id" gorm:"index"`
-	ProviderHash         string `json:"provider_hash" gorm:"type:char(64)"`
-	ProjectName          string `json:"project_name" gorm:"type:varchar(100)"`
-	GroupID              string `json:"group_id" gorm:"type:varchar(160);index"`
+	ID           int64  `json:"id" gorm:"primaryKey"`
+	CreatedAt    int64  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt    int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	CacheKey     string `json:"cache_key" gorm:"type:char(64);uniqueIndex"`
+	ChannelID    int    `json:"channel_id" gorm:"index"`
+	ProviderHash string `json:"provider_hash" gorm:"type:char(64)"`
+	ProjectName  string `json:"project_name" gorm:"type:varchar(100)"`
+	GroupID      string `json:"group_id" gorm:"type:varchar(160);index"`
+	// ImageSHA256 is retained for schema compatibility. It stores the SHA-256
+	// digest of the source media (image or video) used for this registry entry.
 	ImageSHA256          string `json:"image_sha256" gorm:"type:char(64);index"`
+	MediaType            string `json:"media_type" gorm:"type:varchar(16);index"`
 	NormalizationVersion string `json:"normalization_version" gorm:"type:varchar(32)"`
 	AssetID              string `json:"asset_id" gorm:"type:varchar(160);index"`
 	Status               string `json:"status" gorm:"type:varchar(20);index"`

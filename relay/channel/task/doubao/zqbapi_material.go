@@ -28,6 +28,8 @@ import (
 )
 
 const (
+	zqbapiAssetTypeImage        = "Image"
+	zqbapiAssetTypeVideo        = "Video"
 	zqbapiMaterialVersion       = "2024-01-01"
 	zqbapiMaterialService       = "ark"
 	zqbapiMaterialDefaultRegion = "cn-beijing"
@@ -165,13 +167,27 @@ func ValidateZQBAPIMaterialConfiguration(setting dto.ChannelSettings) error {
 	return err
 }
 
-func prepareZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, _ string, inspection *zqbapiImageInspection) (string, error) {
+func prepareZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, source string, inspection *zqbapiImageInspection) (string, error) {
 	if inspection == nil || len(inspection.Data) == 0 {
 		return "", fmt.Errorf("image data is empty")
 	}
-	digest := sha256.Sum256(inspection.Data)
-	imageDigest := hex.EncodeToString(digest[:])
-	cacheKey := zqbapiAssetRegistryKey(config, imageDigest, inspection.NormalizationVersion)
+	return prepareZQBAPIMediaAsset(ctx, config, source, inspection.Data, inspection.MIMEType, inspection.NormalizationVersion, zqbapiAssetTypeImage)
+}
+
+func prepareZQBAPIVideoAsset(ctx context.Context, config zqbapiMaterialConfig, source string, inspection *zqbapiVideoInspection) (string, error) {
+	if inspection == nil || len(inspection.Data) == 0 {
+		return "", fmt.Errorf("video data is empty")
+	}
+	return prepareZQBAPIMediaAsset(ctx, config, source, inspection.Data, inspection.MIMEType, inspection.NormalizationVersion, zqbapiAssetTypeVideo)
+}
+
+func prepareZQBAPIMediaAsset(ctx context.Context, config zqbapiMaterialConfig, _ string, data []byte, mimeType, normalizationVersion, assetType string) (string, error) {
+	if len(data) == 0 {
+		return "", fmt.Errorf("%s data is empty", strings.ToLower(assetType))
+	}
+	digest := sha256.Sum256(data)
+	mediaDigest := hex.EncodeToString(digest[:])
+	cacheKey := zqbapiAssetRegistryKeyForType(config, mediaDigest, normalizationVersion, assetType)
 	if cached, ok := zqbapiAssetCache.Load(cacheKey); ok {
 		entry := cached.(zqbapiAssetCacheEntry)
 		if time.Now().Before(entry.ExpireAt) && entry.AssetID != "" {
@@ -199,8 +215,9 @@ func prepareZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, _ stri
 			ProviderHash:         zqbapiProviderHash(config),
 			ProjectName:          config.ProjectName,
 			GroupID:              config.GroupID,
-			ImageSHA256:          imageDigest,
-			NormalizationVersion: inspection.NormalizationVersion,
+			ImageSHA256:          mediaDigest,
+			MediaType:            assetType,
+			NormalizationVersion: normalizationVersion,
 		}
 		record, owner, claimErr := model.ClaimZQBAPIAsset(record, leaseOwner, zqbapiAssetLeaseTTL)
 		if claimErr != nil {
@@ -251,7 +268,7 @@ func prepareZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, _ stri
 		// Always upload the validated/normalized bytes. Passing the caller's URL
 		// directly would bypass normalization and can fail when the provider cannot
 		// reach an expiring or access-controlled URL.
-		materialURL, uploadErr := uploadZQBAPIAssetFile(ctx, config, inspection.Data, inspection.MIMEType, cacheKey)
+		materialURL, uploadErr := uploadZQBAPIMediaFile(ctx, config, data, mimeType, cacheKey, assetType)
 		if uploadErr != nil {
 			return nil, failOwned(classifyZQBAPIMaterialError("upload", uploadErr))
 		}
@@ -264,7 +281,7 @@ func prepareZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, _ stri
 			return nil, newZQBAPIBuildError(zqbapiErrorMaterialTransient, "registry_lease_renew", renewErr)
 		}
 
-		assetID, createErr := createZQBAPIAsset(ctx, config, materialURL, "starnexus-"+imageDigest[:12])
+		assetID, createErr := createZQBAPIAsset(ctx, config, materialURL, "starnexus-"+mediaDigest[:12], assetType)
 		if createErr != nil {
 			return nil, failOwned(classifyZQBAPIMaterialError("create", createErr))
 		}
@@ -316,6 +333,17 @@ func zqbapiProviderHash(config zqbapiMaterialConfig) string {
 func zqbapiAssetRegistryKey(config zqbapiMaterialConfig, imageDigest, normalizationVersion string) string {
 	return zqbapiSHA256Hex([]byte(strings.Join([]string{
 		zqbapiProviderHash(config), config.GroupID, imageDigest, normalizationVersion,
+	}, "|")))
+}
+
+func zqbapiAssetRegistryKeyForType(config zqbapiMaterialConfig, mediaDigest, normalizationVersion, assetType string) string {
+	if assetType == zqbapiAssetTypeImage {
+		// Preserve the existing image cache namespace so already-active image
+		// assets remain reusable after video support is introduced.
+		return zqbapiAssetRegistryKey(config, mediaDigest, normalizationVersion)
+	}
+	return zqbapiSHA256Hex([]byte(strings.Join([]string{
+		zqbapiProviderHash(config), config.GroupID, assetType, mediaDigest, normalizationVersion,
 	}, "|")))
 }
 
@@ -381,12 +409,16 @@ func waitForZQBAPIRegistryAsset(ctx context.Context, config zqbapiMaterialConfig
 	}
 }
 
-func createZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, materialURL, name string) (string, error) {
+func createZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, materialURL, name string, assetType ...string) (string, error) {
+	typeName := zqbapiAssetTypeImage
+	if len(assetType) > 0 && strings.TrimSpace(assetType[0]) != "" {
+		typeName = strings.TrimSpace(assetType[0])
+	}
 	body, err := common.Marshal(map[string]any{
 		"GroupId":     config.GroupID,
 		"URL":         materialURL,
 		"Name":        name,
-		"AssetType":   "Image",
+		"AssetType":   typeName,
 		"ProjectName": config.ProjectName,
 	})
 	if err != nil {
@@ -410,9 +442,13 @@ func createZQBAPIAsset(ctx context.Context, config zqbapiMaterialConfig, materia
 }
 
 func uploadZQBAPIAssetFile(ctx context.Context, config zqbapiMaterialConfig, data []byte, mimeType, cacheKey string) (string, error) {
+	return uploadZQBAPIMediaFile(ctx, config, data, mimeType, cacheKey, zqbapiAssetTypeImage)
+}
+
+func uploadZQBAPIMediaFile(ctx context.Context, config zqbapiMaterialConfig, data []byte, mimeType, cacheKey, assetType string) (string, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
-	extension := zqbapiImageExtension(mimeType)
+	extension := zqbapiMediaExtension(mimeType)
 	fileSuffix := cacheKey
 	if len(fileSuffix) > 12 {
 		fileSuffix = fileSuffix[:12]
@@ -424,7 +460,7 @@ func uploadZQBAPIAssetFile(ctx context.Context, config zqbapiMaterialConfig, dat
 	if _, err := part.Write(data); err != nil {
 		return "", err
 	}
-	if err := writer.WriteField("AssetType", "Image"); err != nil {
+	if err := writer.WriteField("AssetType", assetType); err != nil {
 		return "", err
 	}
 	if err := writer.Close(); err != nil {
@@ -622,14 +658,32 @@ func zqbapiHMAC(key []byte, data string) []byte {
 }
 
 func zqbapiImageExtension(mimeType string) string {
-	switch strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0])) {
+	return zqbapiMediaExtension(mimeType)
+}
+
+func zqbapiMediaExtension(mimeType string) string {
+	typeName := strings.ToLower(strings.TrimSpace(strings.SplitN(mimeType, ";", 2)[0]))
+	switch typeName {
 	case "image/png":
 		return ".png"
 	case "image/webp":
 		return ".webp"
 	case "image/gif":
 		return ".gif"
+	case "video/webm":
+		return ".webm"
+	case "video/quicktime":
+		return ".mov"
+	case "video/mpeg":
+		return ".mpeg"
+	case "video/x-matroska":
+		return ".mkv"
+	case "video/mp4":
+		return ".mp4"
 	default:
+		if strings.HasPrefix(typeName, "video/") {
+			return ".mp4"
+		}
 		return ".jpg"
 	}
 }
