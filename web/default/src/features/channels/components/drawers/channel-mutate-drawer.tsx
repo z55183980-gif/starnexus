@@ -797,7 +797,7 @@ export function ChannelMutateDrawer({
     if (currentType === 61) {
       const currentBaseUrlValue = form.getValues('base_url')
       if (!currentBaseUrlValue || currentBaseUrlValue === '') {
-        form.setValue('base_url', 'https://ai.zqgame.com')
+        form.setValue('base_url', 'https://aiapi.zqgame.com')
       }
     }
 

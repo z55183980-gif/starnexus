@@ -678,7 +678,7 @@ const EditChannelModal = (props) => {
           localModels = getChannelModels(value);
           setInputs((prevInputs) => ({
             ...prevInputs,
-            base_url: 'https://ai.zqgame.com',
+            base_url: 'https://aiapi.zqgame.com',
           }));
           break;
         case 62:
@@ -998,7 +998,7 @@ const EditChannelModal = (props) => {
         (!data.base_url ||
           (typeof data.base_url === 'string' && data.base_url.trim() === ''))
       ) {
-        data.base_url = 'https://ai.zqgame.com';
+        data.base_url = 'https://aiapi.zqgame.com';
       }
 
       initialBaseUrlRef.current = data.base_url || '';

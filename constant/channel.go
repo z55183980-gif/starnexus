@@ -126,7 +126,7 @@ var ChannelBaseURLs = []string{
 	"",                                          //58
 	"",                                          //59
 	"",                                          //60
-	"https://ai.zqgame.com",                     //61
+	"https://aiapi.zqgame.com",                  //61
 	"https://aiopenapi.kuaizi.cn/ai-open-platform-api", //62
 }
 
