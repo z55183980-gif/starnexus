@@ -1,9 +1,12 @@
 package router
 
 import (
+	"net/http"
+
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,6 +18,14 @@ func SetVideoRouter(router *gin.Engine) {
 	// OpenAI-compatible /v1/videos behavior remains unchanged.
 	nativeSeedanceMarker := func(c *gin.Context) {
 		c.Set(string(constant.ContextKeyZQBAPINativeSeedanceRequest), true)
+		// The native route is outside /v1/videos, so Path2RelayMode cannot
+		// infer the task operation. Set it explicitly for relay info generation
+		// (and, in particular, for GET polling where no distributor runs).
+		if c.Request.Method == http.MethodGet {
+			c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+		} else if c.Request.Method == http.MethodPost {
+			c.Set("relay_mode", relayconstant.RelayModeVideoSubmit)
+		}
 		c.Next()
 	}
 	nativeSeedanceRouter := router.Group("/api/v3")
