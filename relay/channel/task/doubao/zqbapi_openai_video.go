@@ -23,6 +23,7 @@ import (
 )
 
 const zqbapiOpenAIVideoContextKey = "zqbapi_openai_video_context"
+const zqbapiNativeSeedanceRequestContextKey = "zqbapi_native_seedance_request_payload"
 
 const (
 	zqbapiOpenAIDefaultSeconds = 4
@@ -57,6 +58,19 @@ type zqbapiOpenAIVideoRequest struct {
 	FirstFrame     json.RawMessage `json:"first_frame,omitempty"`
 	LastFrame      json.RawMessage `json:"last_frame,omitempty"`
 	Metadata       json.RawMessage `json:"metadata,omitempty"`
+}
+
+type zqbapiNativeSeedanceRequest struct {
+	Raw     []byte
+	Payload *requestPayload
+}
+
+func isZQBAPINativeSeedanceRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	return c.GetBool(string(constant.ContextKeyZQBAPINativeSeedanceRequest)) &&
+		(strings.TrimSuffix(c.Request.URL.Path, "/") == "/api/v3/contents/generations/tasks")
 }
 
 type zqbapiOpenAIReferenceObject struct {
@@ -262,6 +276,105 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 	c.Set("task_request", req)
 	c.Set(zqbapiOpenAIVideoContextKey, ctx)
 	return nil
+}
+
+// validateZQBAPINativeSeedanceRequest keeps the provider's native content
+// protocol intact. Only fields needed for routing, billing and safe task
+// handling are inspected here; provider-owned optional fields remain in Raw
+// and are forwarded unchanged.
+func validateZQBAPINativeSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	if info == nil || info.ChannelType != constant.ChannelTypeZQBAPI {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("native Seedance protocol requires a ZQBAPI channel"), "unsupported_channel", http.StatusBadRequest)
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	raw, err := storage.Bytes()
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	var payload requestPayload
+	if err := common.Unmarshal(raw, &payload); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if strings.TrimSpace(payload.Model) == "" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("model is required"), "invalid_request", http.StatusBadRequest)
+	}
+	if len(payload.Content) == 0 {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("content is required"), "invalid_request", http.StatusBadRequest)
+	}
+	if err := validateDoubaoVideo2ContentItems(payload.Content); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	if payload.Duration != nil {
+		duration := int(*payload.Duration)
+		if duration < 4 || duration > 15 {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and 15 seconds for this video model"), "invalid_duration", http.StatusBadRequest)
+		}
+	}
+
+	var metadata map[string]interface{}
+	if err := common.Unmarshal(raw, &metadata); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	prompt := ""
+	for _, item := range payload.Content {
+		if strings.TrimSpace(item.Type) == "text" {
+			prompt = strings.TrimSpace(item.Text)
+			break
+		}
+	}
+	req := relaycommon.TaskSubmitReq{
+		Prompt:   prompt,
+		Model:    strings.TrimSpace(payload.Model),
+		Metadata: metadata,
+	}
+	if payload.Duration != nil {
+		req.Duration = int(*payload.Duration)
+		req.Seconds = strconv.Itoa(req.Duration)
+	}
+	if payload.Resolution != nil {
+		resolution := strings.TrimSpace(*payload.Resolution)
+		ratio := ""
+		if payload.Ratio != nil {
+			ratio = strings.TrimSpace(*payload.Ratio)
+		}
+		if mapped := zqbapiProviderSizeToOpenAI(resolution, ratio); mapped != "" {
+			req.Size = mapped
+		} else {
+			req.Size = resolution
+		}
+	}
+	c.Set("task_request", req)
+	c.Set(zqbapiNativeSeedanceRequestContextKey, &zqbapiNativeSeedanceRequest{Raw: append([]byte(nil), raw...), Payload: &payload})
+	return nil
+}
+
+func getZQBAPINativeSeedanceRequest(c *gin.Context) (*zqbapiNativeSeedanceRequest, bool) {
+	if c == nil {
+		return nil, false
+	}
+	value, exists := c.Get(zqbapiNativeSeedanceRequestContextKey)
+	if !exists {
+		return nil, false
+	}
+	payload, ok := value.(*zqbapiNativeSeedanceRequest)
+	return payload, ok && payload != nil && payload.Payload != nil
+}
+
+func NormalizeZQBAPINativeSeedanceResponse(raw []byte, publicTaskID string) ([]byte, error) {
+	var payload map[string]interface{}
+	if err := common.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	if _, exists := payload["id"]; exists {
+		payload["id"] = publicTaskID
+	}
+	if _, exists := payload["task_id"]; exists {
+		payload["task_id"] = publicTaskID
+	}
+	return common.Marshal(payload)
 }
 
 func unsupportedZQBAPIOpenAIMediaField(c *gin.Context) (string, error) {

@@ -98,6 +98,12 @@ const (
 	// ContextKeyZQBAPIOpenAIVideoRequest marks only channel type 61 requests
 	// that entered the OpenAI Videos compatibility path.
 	ContextKeyZQBAPIOpenAIVideoRequest ContextKey = "zqbapi_openai_video_request"
+	// ContextKeyZQBAPINativeSeedanceRequest marks requests that use the native
+	// Seedance protocol while still going through starnexus task/billing flow.
+	ContextKeyZQBAPINativeSeedanceRequest ContextKey = "zqbapi_native_seedance_request"
+	// ContextKeyZQBAPINativeSeedanceResponse stores a normalized native
+	// response until the local task row is durable.
+	ContextKeyZQBAPINativeSeedanceResponse ContextKey = "zqbapi_native_seedance_response"
 	// ContextKeyOpenAIVideoResponse stores a successful provider-independent
 	// compatibility response until the local task row is durable.
 	ContextKeyOpenAIVideoResponse ContextKey = "openai_video_response"

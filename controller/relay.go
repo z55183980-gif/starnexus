@@ -854,6 +854,9 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.TokenId = relayInfo.TokenId
 		if relayInfo.ChannelType == constant.ChannelTypeZQBAPI {
 			taskdoubao.ApplyZQBAPIOpenAIVideoTaskProperties(c, task)
+			if c.GetBool(string(constant.ContextKeyZQBAPINativeSeedanceRequest)) {
+				task.Properties.VideoProtocol = "seedance_native"
+			}
 			if task.Properties.OpenAIVideo {
 				task.PrivateData.Key = relayInfo.ApiKey
 			}

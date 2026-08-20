@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
+	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -165,6 +166,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(info)
+	if c.GetBool(string(constant.ContextKeyZQBAPINativeSeedanceRequest)) && info.ChannelType != constant.ChannelTypeZQBAPI {
+		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("native Seedance protocol requires a ZQBAPI channel"), "unsupported_channel", http.StatusBadRequest)
+	}
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
 	}
@@ -291,6 +295,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 	if value, exists := c.Get(string(constant.ContextKeyOpenAIVideoResponse)); exists {
+		if responseBody, ok := value.([]byte); ok && len(responseBody) > 0 {
+			result.ResponseStatus = http.StatusOK
+			result.ResponseBody = append([]byte(nil), responseBody...)
+		}
+	}
+	if value, exists := c.Get(string(constant.ContextKeyZQBAPINativeSeedanceResponse)); exists {
 		if responseBody, ok := value.([]byte); ok && len(responseBody) > 0 {
 			result.ResponseStatus = http.StatusOK
 			result.ResponseBody = append([]byte(nil), responseBody...)
@@ -480,12 +490,17 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isNativeSeedanceAPI := c.GetBool(string(constant.ContextKeyZQBAPINativeSeedanceRequest))
 	isZQBAPI := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeZQBAPI))
 	if isZQBAPI && originTask.Properties.OpenAIVideo {
 		c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoRequest), true)
 	}
 	isDoubaoVideo2 := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo2))
 	isIsolatedOpenAIVideoPlatform := isZQBAPI || isDoubaoVideo2
+	if isNativeSeedanceAPI && (!isZQBAPI || originTask.Properties.VideoProtocol != "seedance_native") {
+		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusNotFound)
+		return
+	}
 	if isOpenAIVideoAPI && isIsolatedOpenAIVideoPlatform && !originTask.Properties.OpenAIVideo {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("video_not_found"), "video_not_found", http.StatusNotFound)
 		return
@@ -496,7 +511,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
-	realtimeResp, realtimeErr := tryRealtimeFetch(c.Request.Context(), originTask, isOpenAIVideoAPI)
+	realtimeResp, realtimeErr := tryRealtimeFetch(c.Request.Context(), originTask, isOpenAIVideoAPI, isNativeSeedanceAPI)
 	if realtimeErr != nil {
 		taskResp = service.TaskErrorWrapper(realtimeErr, "update_task_failed", http.StatusInternalServerError)
 		return
@@ -525,6 +540,13 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
 		return
 	}
+	if isNativeSeedanceAPI {
+		respBody, err = taskdoubao.NormalizeZQBAPINativeSeedanceResponse(originTask.Data, originTask.TaskID)
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "convert_to_native_seedance_response_failed", http.StatusInternalServerError)
+		}
+		return
+	}
 
 	// 通用 TaskDto 格式
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
@@ -539,7 +561,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 
 // tryRealtimeFetch 尝试从上游实时拉取支持的异步视频任务状态。
 // 当非 OpenAI Video API 时，还会构建自定义格式的响应体。
-func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bool) ([]byte, error) {
+func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bool, isNativeSeedanceAPI bool) ([]byte, error) {
 	channelModel, err := model.GetChannelById(task.ChannelId, true)
 	if err != nil {
 		return nil, nil
@@ -599,6 +621,9 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 	// OpenAI Video API 由调用者的 ConvertToOpenAIVideo 分支处理
 	if isOpenAIVideoAPI {
 		return nil, nil
+	}
+	if isNativeSeedanceAPI {
+		return taskdoubao.NormalizeZQBAPINativeSeedanceResponse(body, task.TaskID)
 	}
 
 	// 非 OpenAI Video API: 构建自定义格式响应

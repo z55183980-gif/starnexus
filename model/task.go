@@ -90,6 +90,7 @@ type Properties struct {
 	UpstreamModelName  string `json:"upstream_model_name,omitempty"`
 	OriginModelName    string `json:"origin_model_name,omitempty"`
 	OpenAIVideo        bool   `json:"openai_video,omitempty"`
+	VideoProtocol      string `json:"video_protocol,omitempty"`
 	VideoPrompt        string `json:"video_prompt,omitempty"`
 	VideoSeconds       string `json:"video_seconds,omitempty"`
 	VideoSize          string `json:"video_size,omitempty"`

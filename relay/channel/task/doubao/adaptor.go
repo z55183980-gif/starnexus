@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -84,7 +85,8 @@ const doubaoVideo2InlineRequestMaxBytes = 60 * 1024
 const doubaoVideo2R2RequestCacheContextKey = "doubao_video2_r2_request_cache"
 
 type responsePayload struct {
-	ID string `json:"id"` // task_id
+	ID     string `json:"id"` // task_id
+	TaskID string `json:"task_id,omitempty"`
 }
 
 type responseTask struct {
@@ -139,8 +141,13 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	if a.ChannelType == constant.ChannelTypeZQBAPI && isZQBAPIOpenAIVideoRequest(c) {
-		return validateZQBAPIOpenAIVideoRequest(c, info)
+	if a.ChannelType == constant.ChannelTypeZQBAPI {
+		if isZQBAPINativeSeedanceRequest(c) {
+			return validateZQBAPINativeSeedanceRequest(c, info)
+		}
+		if isZQBAPIOpenAIVideoRequest(c) {
+			return validateZQBAPIOpenAIVideoRequest(c, info)
+		}
 	}
 	if a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
 		return a.validateAndSetDoubaoVideo2Request(c, info)
@@ -320,6 +327,29 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	var body *requestPayload
+	nativeRequest, nativeRequestOK := getZQBAPINativeSeedanceRequest(c)
+	if a.ChannelType == constant.ChannelTypeZQBAPI && nativeRequestOK {
+		body = nativeRequest.Payload
+		originalModel := body.Model
+		originalImageURLs := zqbapiNativeSeedanceImageURLs(body)
+		if info.IsModelMapped {
+			body.Model = info.UpstreamModelName
+		}
+		if err := a.prepareZQBAPIImages(c, info, body); err != nil {
+			return nil, err
+		}
+		data, err := mergeZQBAPINativeSeedancePayload(
+			nativeRequest.Raw,
+			body,
+			body.Model != originalModel,
+			!slicesEqual(originalImageURLs, zqbapiNativeSeedanceImageURLs(body)),
+		)
+		if err != nil {
+			return nil, errors.Wrap(err, "marshal native Seedance request payload failed")
+		}
+		info.UpstreamRequestBodySize = int64(len(data))
+		return bytes.NewReader(data), nil
+	}
 	if videoCtx, ok := getZQBAPIOpenAIVideoContext(c); a.ChannelType == constant.ChannelTypeZQBAPI && ok {
 		if strings.TrimSpace(req.Model) == "" {
 			req.Model = info.OriginModelName
@@ -394,6 +424,81 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		}
 	}
 	return bytes.NewReader(data), nil
+}
+
+func zqbapiNativeSeedanceImageURLs(body *requestPayload) []string {
+	if body == nil {
+		return nil
+	}
+	urls := make([]string, 0, len(body.Content))
+	for _, item := range body.Content {
+		if item.ImageURL != nil {
+			urls = append(urls, item.ImageURL.URL)
+		}
+	}
+	return urls
+}
+
+func slicesEqual(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func mergeZQBAPINativeSeedancePayload(raw []byte, body *requestPayload, modelChanged, contentChanged bool) ([]byte, error) {
+	var fields map[string]json.RawMessage
+	if err := common.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if !modelChanged && !contentChanged {
+		return append([]byte(nil), raw...), nil
+	}
+	if modelChanged {
+		modelData, err := common.Marshal(body.Model)
+		if err != nil {
+			return nil, err
+		}
+		fields["model"] = modelData
+	}
+	if contentChanged {
+		var rawContent []map[string]json.RawMessage
+		if err := common.Unmarshal(fields["content"], &rawContent); err != nil {
+			return nil, err
+		}
+		for index, item := range body.Content {
+			if index >= len(rawContent) || item.ImageURL == nil {
+				continue
+			}
+			media := map[string]json.RawMessage{}
+			if rawImage, exists := rawContent[index]["image_url"]; exists {
+				if err := common.Unmarshal(rawImage, &media); err != nil {
+					return nil, err
+				}
+			}
+			urlData, err := common.Marshal(item.ImageURL.URL)
+			if err != nil {
+				return nil, err
+			}
+			media["url"] = urlData
+			imageData, err := common.Marshal(media)
+			if err != nil {
+				return nil, err
+			}
+			rawContent[index]["image_url"] = imageData
+		}
+		contentData, err := common.Marshal(rawContent)
+		if err != nil {
+			return nil, err
+		}
+		fields["content"] = contentData
+	}
+	return common.Marshal(fields)
 }
 
 func doubaoVideo2HasInlineMedia(body *requestPayload) bool {
@@ -512,6 +617,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	}
 
 	if dResp.ID == "" {
+		dResp.ID = dResp.TaskID
+	}
+	if dResp.ID == "" {
 		taskErr = service.TaskErrorWrapper(fmt.Errorf("task_id is empty"), "invalid_response", http.StatusInternalServerError)
 		return
 	}
@@ -554,6 +662,15 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			// The controller writes this response only after the local task row is
 			// durable, preventing successful-but-unqueryable public task IDs.
 			c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoResponse), responseData)
+			return dResp.ID, responseBody, nil
+		}
+		if _, ok := getZQBAPINativeSeedanceRequest(c); ok {
+			responseData, marshalErr := NormalizeZQBAPINativeSeedanceResponse(responseBody, info.PublicTaskID)
+			if marshalErr != nil {
+				return "", nil, service.TaskErrorWrapper(marshalErr, "marshal_response_failed", http.StatusInternalServerError)
+			}
+			// The controller writes this body only after the local task is durable.
+			c.Set(string(constant.ContextKeyZQBAPINativeSeedanceResponse), responseData)
 			return dResp.ID, responseBody, nil
 		}
 	}

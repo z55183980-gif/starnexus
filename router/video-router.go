@@ -1,6 +1,7 @@
 package router
 
 import (
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 
@@ -8,6 +9,22 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	// Native Seedance protocol. The request body is kept in the upstream
+	// content[] shape and still runs through starnexus auth, billing, task
+	// persistence and polling. The marker is deliberately route-scoped so the
+	// OpenAI-compatible /v1/videos behavior remains unchanged.
+	nativeSeedanceMarker := func(c *gin.Context) {
+		c.Set(string(constant.ContextKeyZQBAPINativeSeedanceRequest), true)
+		c.Next()
+	}
+	nativeSeedanceRouter := router.Group("/api/v3")
+	nativeSeedanceRouter.Use(middleware.RouteTag("relay"))
+	nativeSeedanceRouter.Use(middleware.TokenAuth())
+	{
+		nativeSeedanceRouter.POST("/contents/generations/tasks", nativeSeedanceMarker, middleware.UserConcurrencyLimit(), middleware.RelayConcurrency(), middleware.Distribute(), controller.RelayTask)
+		nativeSeedanceRouter.GET("/contents/generations/tasks/:task_id", nativeSeedanceMarker, middleware.RelayConcurrency(), controller.RelayTaskFetch)
+	}
+
 	directUploadRouter := router.Group("/v1/video-inputs")
 	directUploadRouter.Use(middleware.RouteTag("relay"))
 	directUploadRouter.Use(middleware.TokenAuth(), middleware.UploadRateLimit())

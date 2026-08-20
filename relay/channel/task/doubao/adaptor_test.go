@@ -695,6 +695,92 @@ func TestZQBAPIOpenAIVideoMapsInputReferenceAfterMetadata(t *testing.T) {
 	}
 }
 
+func TestZQBAPINativeSeedanceKeepsVideoContentAndProviderFields(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(`{
+		"model":"doubao-seedance-2-0-260128",
+		"content":[
+			{"type":"video_url","video_url":{"url":"https://example.com/input.mp4"},"role":"reference_video","provider_content_field":"preserve-me"},
+			{"type":"audio_url","audio_url":{"url":"https://example.com/music.mp3"},"role":"reference_audio"},
+			{"type":"text","text":"keep the reference motion"}
+		],
+		"resolution":"480p",
+		"ratio":"16:9",
+		"duration":5,
+		"generate_audio":false,
+		"watermark":false,
+		"return_last_frame":false,
+		"priority":0,
+		"camera_fixed":false,
+		"provider_future_field":{"enabled":true}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(constant.ContextKeyZQBAPINativeSeedanceRequest), true)
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeZQBAPI}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("native validation failed: %+v", taskErr)
+	}
+	body, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["provider_future_field"] == nil {
+		t.Fatalf("provider-owned field was dropped: %s", data)
+	}
+	content, ok := payload["content"].([]interface{})
+	if !ok || len(content) != 3 {
+		t.Fatalf("content was not preserved: %#v", payload["content"])
+	}
+	videoItem, ok := content[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("video content item type = %T", content[0])
+	}
+	videoURL, ok := videoItem["video_url"].(map[string]interface{})
+	if !ok || videoURL["url"] != "https://example.com/input.mp4" {
+		t.Fatalf("video_url was not preserved: %#v", videoItem)
+	}
+	if videoItem["provider_content_field"] != "preserve-me" {
+		t.Fatalf("provider-owned content field was dropped: %#v", videoItem)
+	}
+	for _, field := range []string{"generate_audio", "watermark", "return_last_frame", "camera_fixed"} {
+		if value, exists := payload[field]; !exists || value != false {
+			t.Fatalf("explicit false field %s was not preserved: %#v", field, payload[field])
+		}
+	}
+	if value, exists := payload["priority"]; !exists || value != float64(0) {
+		t.Fatalf("explicit zero field priority was not preserved: %#v", payload["priority"])
+	}
+	if req, err := relaycommon.GetTaskRequest(c); err != nil || req.Prompt != "keep the reference motion" || req.Seconds != "5" {
+		t.Fatalf("task request metadata = %+v, err = %v", req, err)
+	}
+}
+
+func TestNormalizeZQBAPINativeSeedanceResponseUsesPublicTaskID(t *testing.T) {
+	data, err := NormalizeZQBAPINativeSeedanceResponse([]byte(`{"id":"upstream-id","task_id":"upstream-id","status":"queued"}`), "task_public")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["id"] != "task_public" || payload["task_id"] != "task_public" {
+		t.Fatalf("public task id was not applied: %#v", payload)
+	}
+}
+
 func TestZQBAPIOpenAIVideoAppliesOpenAIDefaults(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{
