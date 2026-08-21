@@ -216,6 +216,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredOk {
 		quota = tieredQuota
 	}
+	billable := groupRatio > 0 && (modelRatio > 0 || modelPrice > 0 || tieredOk)
+	quota = applyMinimumTokenConsumeQuota(quota, rawTotalTokens, billable)
 
 	totalTokens := rawTotalTokens
 	var logContent string
@@ -350,6 +352,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if tieredOk {
 		quota = tieredQuota
 	}
+	billable := groupRatio > 0 && (modelRatio > 0 || modelPrice > 0 || tieredOk)
+	quota = applyMinimumTokenConsumeQuota(quota, rawTotalTokens, billable)
 
 	totalTokens := rawTotalTokens
 	var logContent string

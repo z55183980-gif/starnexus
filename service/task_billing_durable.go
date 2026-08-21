@@ -352,7 +352,7 @@ func calculateDurableTaskFinalQuota(task *model.Task, result *relaycommon.TaskIn
 	}
 	textQuota, _ := common.QuotaFromFloatChecked(float64(prompt) * bc.ModelRatio * bc.GroupRatio)
 	videoQuota, _ := common.QuotaFromFloatChecked(float64(completion) * bc.ModelRatio * bc.GroupRatio * videoRatio)
-	return textQuota + videoQuota
+	return applyMinimumTokenConsumeQuota(textQuota+videoQuota, prompt+completion, bc.ModelRatio > 0 && bc.GroupRatio > 0)
 }
 
 func ProcessBillingOutboxOnce(ctx context.Context, limit int) error {

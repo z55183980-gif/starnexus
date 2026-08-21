@@ -451,6 +451,13 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
 		}
 	}
+	// Apply the minimum only when the upstream supplied actual tokens. Keep
+	// the existing no-usage path unchanged so pre-consume can be refunded.
+	if originUsage != nil {
+		billable := summary.GroupRatio > 0 &&
+			(summary.ModelRatio > 0 || summary.ModelPrice > 0 || tieredBillingApplied)
+		summary.Quota = applyMinimumTokenConsumeQuota(summary.Quota, summary.RawTotalTokens, billable)
+	}
 
 	if summary.WebSearchCallCount > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Web Search 调用 %d 次，调用花费 %s", summary.WebSearchCallCount, decimal.NewFromFloat(summary.WebSearchPrice).Mul(decimal.NewFromInt(int64(summary.WebSearchCallCount))).Div(decimal.NewFromInt(1000)).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))

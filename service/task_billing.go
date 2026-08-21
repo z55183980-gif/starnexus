@@ -424,6 +424,7 @@ func RecalculateTaskQuotaByTokenDetails(ctx context.Context, task *model.Task, t
 		}
 		extraOther["video_price_tier"] = resolution + "_" + condition
 	}
+	actualQuota = applyMinimumTokenConsumeQuota(actualQuota, billingTotalTokens, finalGroupRatio > 0 && modelRatio > 0)
 
 	reason := fmt.Sprintf("token重算：tokens=%d, modelRatio=%.2f, groupRatio=%.2f, otherMultiplier=%.4f", billingTotalTokens, modelRatio, finalGroupRatio, otherMultiplier)
 	if tokenPricing := billing_setting.GetEffectiveTokenPricing(tokenPricingCtx); tokenPricing.Enabled {
