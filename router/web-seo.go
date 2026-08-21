@@ -513,7 +513,15 @@ func isLocalHostname(hostname string) bool {
 
 func requestMatchesCanonicalOrigin(c *gin.Context, canonical *url.URL) bool {
 	requestURL := &url.URL{Scheme: requestScheme(c.Request), Host: c.Request.Host}
-	return strings.EqualFold(requestURL.Scheme, canonical.Scheme) && strings.EqualFold(normalizedURLHost(requestURL), canonical.Host)
+	if !strings.EqualFold(normalizedURLHost(requestURL), canonical.Host) {
+		return false
+	}
+	if strings.TrimSpace(c.Request.Header.Get("CF-Ray")) != "" {
+		// Cloudflare has already terminated the client connection. Its origin
+		// protocol may be HTTP even when the public request was HTTPS.
+		return true
+	}
+	return strings.EqualFold(requestURL.Scheme, canonical.Scheme)
 }
 
 func normalizedWebPath(rawPath string) string {

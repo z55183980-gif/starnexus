@@ -179,6 +179,16 @@ func TestCanonicalRedirectUsesCloudflareVisitorScheme(t *testing.T) {
 	if location := recorder.Header().Get("Location"); location != "" {
 		t.Fatalf("Location = %q, want empty", location)
 	}
+
+	recorder = httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Host = "dkby.com"
+	request.Header.Set("X-Forwarded-Proto", "http")
+	request.Header.Set("CF-Ray", "test-ray")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("Cloudflare request status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
 }
 
 func TestSEOEndpointsReturnMachineReadableContent(t *testing.T) {
