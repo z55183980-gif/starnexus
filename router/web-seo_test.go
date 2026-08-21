@@ -140,6 +140,24 @@ func TestCanonicalRedirectNormalizesSchemeAndHost(t *testing.T) {
 	}
 }
 
+func TestCanonicalRedirectAllowsTrustedTunnelOrigin(t *testing.T) {
+	withSEOTestState(t, `{}`)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(webCanonicalRedirect())
+	router.GET("/", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	for _, host := range []string{"origin-s1.dkby.com", "origin-s2.dkby.com", "origin-s3.dkby.com"} {
+		response := performSEORequest(router, http.MethodGet, "/", host, "https")
+		if response.Code != http.StatusNoContent {
+			t.Errorf("%s status = %d, want %d", host, response.Code, http.StatusNoContent)
+		}
+		if location := response.Header().Get("Location"); location != "" {
+			t.Errorf("%s Location = %q, want empty", host, location)
+		}
+	}
+}
+
 func TestCanonicalRedirectDoesNotInterceptAPIOrAssets(t *testing.T) {
 	withSEOTestState(t, `{}`)
 	gin.SetMode(gin.TestMode)

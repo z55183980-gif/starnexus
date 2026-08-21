@@ -513,12 +513,35 @@ func isLocalHostname(hostname string) bool {
 
 func requestMatchesCanonicalOrigin(c *gin.Context, canonical *url.URL) bool {
 	requestURL := &url.URL{Scheme: requestScheme(c.Request), Host: c.Request.Host}
-	if !strings.EqualFold(normalizedURLHost(requestURL), canonical.Host) {
+	requestHost := normalizedURLHost(requestURL)
+	if !strings.EqualFold(requestHost, canonical.Host) && !isTrustedTunnelOriginHost(requestHost, canonical.Host) {
 		return false
 	}
 	// The canonical host is already selected. A reverse proxy may report the
 	// origin hop as HTTP even when the public request was HTTPS; the edge is
 	// responsible for enforcing HTTP-to-HTTPS redirects.
+	return true
+}
+
+// Cloudflare Tunnel can route the public apex through an origin hostname
+// (origin-s1.dkby.com, origin-s2.dkby.com, ...). Those internal hostnames are
+// not public canonical hosts, but they must not trigger a redirect loop while
+// the request is being served through the tunnel.
+func isTrustedTunnelOriginHost(requestHost, canonicalHost string) bool {
+	canonicalHost = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(canonicalHost)), ".")
+	requestHost = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(requestHost)), ".")
+	if canonicalHost != "dkby.com" || !strings.HasPrefix(requestHost, "origin-s") || !strings.HasSuffix(requestHost, ".dkby.com") {
+		return false
+	}
+	serial := strings.TrimSuffix(strings.TrimPrefix(requestHost, "origin-s"), ".dkby.com")
+	if serial == "" {
+		return false
+	}
+	for _, r := range serial {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
 	return true
 }
 
