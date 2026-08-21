@@ -452,6 +452,9 @@ func requestOrigin(c *gin.Context) *url.URL {
 }
 
 func requestScheme(request *http.Request) string {
+	if cloudflareScheme := cloudflareVisitorScheme(request); cloudflareScheme != "" {
+		return cloudflareScheme
+	}
 	if forwarded := firstForwardedValue(request.Header.Get("X-Forwarded-Proto")); forwarded == "http" || forwarded == "https" {
 		return forwarded
 	}
@@ -462,6 +465,25 @@ func requestScheme(request *http.Request) string {
 		return "https"
 	}
 	return "http"
+}
+
+func cloudflareVisitorScheme(request *http.Request) string {
+	raw := strings.TrimSpace(request.Header.Get("CF-Visitor"))
+	if raw == "" {
+		return ""
+	}
+
+	var visitor struct {
+		Scheme string `json:"scheme"`
+	}
+	if err := common.UnmarshalJsonStr(raw, &visitor); err != nil {
+		return ""
+	}
+	scheme := strings.ToLower(strings.TrimSpace(visitor.Scheme))
+	if scheme == "http" || scheme == "https" {
+		return scheme
+	}
+	return ""
 }
 
 func firstForwardedValue(value string) string {

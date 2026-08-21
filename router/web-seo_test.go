@@ -159,6 +159,28 @@ func TestCanonicalRedirectDoesNotInterceptAPIOrAssets(t *testing.T) {
 	}
 }
 
+func TestCanonicalRedirectUsesCloudflareVisitorScheme(t *testing.T) {
+	withSEOTestState(t, `{}`)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(webCanonicalRedirect())
+	router.GET("/", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Host = "dkby.com"
+	request.Header.Set("X-Forwarded-Proto", "http")
+	request.Header.Set("CF-Visitor", `{"scheme":"https"}`)
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if location := recorder.Header().Get("Location"); location != "" {
+		t.Fatalf("Location = %q, want empty", location)
+	}
+}
+
 func TestSEOEndpointsReturnMachineReadableContent(t *testing.T) {
 	withSEOTestState(t, `{"pricing":{"enabled":true,"requireAuth":true},"rankings":{"enabled":false},"about":false}`)
 	gin.SetMode(gin.TestMode)

@@ -9,7 +9,7 @@
 | 节点 | SSH 别名 / 公网 IP | 运行角色 | 对外入口与状态 | 部署位置 |
 | --- | --- | --- | --- | --- |
 | S1 | `starnexus-s1` / `104.194.82.238` | `xingyuapi-prod-1`，`master` | `origin-s1.dkby.com`；2026-08-09 发布后健康、Origin 200 | `/www/wwwroot/starnexus/docker-compose.prod.yml` |
-| S2 | `starnexus-s2` / `149.104.12.60` | `xingyuapi-prod-2`，`slave` | `origin-s2.dkby.com`；2026-08-09 发布后健康、Origin 200 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
+| S2 | `starnexus-s2` / `45.132.74.201` | `xingyuapi-prod-2`，`slave` | `origin-s2.dkby.com`；2026-08-22 更换主机后健康、Origin 200 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
 | S3 | `starnexus-s3` / `95.169.7.175` | `xingyuapi-prod-3`，`slave` | `origin-s3.dkby.com`；2026-08-09 发布后健康、Origin 200 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
 | S4 | `starnexus-s4` / `149.104.11.117` | `xingyuapi-prod-4`，`slave` | `origin-s4.dkby.com`；生产节点，本次发布未包含 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
 | DB6 / SPG | `starnexus-db6` / `67.230.183.84` | 正式 PostgreSQL、PgBouncer、Redis | 正式库路由键 `spg`，启用、可见、监控启用 | `/srv/db-stack/docker-compose.yml` |
