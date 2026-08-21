@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -565,6 +566,23 @@ func TestPublishUpstreamAccountPoolChannelRequiresConcreteModels(t *testing.T) {
 	require.NoError(t, CreateUpstreamAccount(&input))
 	_, err := PublishUpstreamAccountPoolChannel(pool.Id, []string{"default"})
 	require.ErrorContains(t, err, "no concrete account models")
+}
+
+func TestNormalizePublishedChannelGroupsAllowsLongAggregateLists(t *testing.T) {
+	groups := []string{
+		"codex pro",
+		"GPT PRO",
+		"game9722专用",
+		"ZS专用PRO",
+		"KVL专用",
+		"测试",
+		"房奴专用",
+	}
+
+	normalized, err := normalizePublishedChannelGroups(groups)
+	require.NoError(t, err)
+	require.Equal(t, groups, normalized)
+	require.Greater(t, len(strings.Join(normalized, ",")), 64)
 }
 
 func TestPublishUpstreamAccountPoolChannelRejectsInvalidModelSelection(t *testing.T) {

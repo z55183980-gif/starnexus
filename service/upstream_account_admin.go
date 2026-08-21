@@ -492,9 +492,6 @@ func normalizePublishedChannelGroups(groups []string) ([]string, error) {
 	if len(normalized) == 0 {
 		return nil, errors.New("at least one channel group is required")
 	}
-	if len(strings.Join(normalized, ",")) > 64 {
-		return nil, errors.New("published channel groups exceed the supported length")
-	}
 	return normalized, nil
 }
 
