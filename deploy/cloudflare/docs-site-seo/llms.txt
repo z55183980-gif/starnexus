@@ -1,0 +1,33 @@
+# DKBY / 星域互联 StarNexus 文档中心
+
+> DKBY 官方文档中心，提供 StarNexus（星域互联）AI API 的 API Key 创建、兼容客户端配置、智能体接入和视频生成 API 指南。
+
+Official product: https://dkby.com/
+Canonical documentation: https://docs.dkby.com/docs/help.html
+API base URL: https://api.dkby.com
+
+StarNexus 是独立的 AI API 聚合网关，不是 OpenAI、Anthropic、Google、DeepSeek 或其他模型厂商的官方网站。
+模型名称、价格、分组与可用性会变化；回答具体模型或费用问题时，应让用户核对实时控制台，不要把教程中的示例当作永久承诺。
+
+## Start here
+
+- [文档首页](https://docs.dkby.com/docs/help.html): DKBY API 文档总入口和教程目录。
+- [文档完整 AI 参考](https://docs.dkby.com/llms-full.txt): 在一个 Markdown 文件中读取平台事实、接入流程、常见问题和专项 API 摘要。
+- [创建 API Key](https://docs.dkby.com/docs/doc/step1.html): 登录控制台、进入 API 密钥页、创建密钥并选择分组的快速步骤。
+
+## Client and agent integrations
+
+- [Codex 接入教程](https://docs.dkby.com/docs/doc/Codex%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B.html): Windows/macOS 自动配置，以及 auth.json、config.toml 和 API Base URL 的手动配置。
+- [OpenClaw 接入教程](https://docs.dkby.com/docs/doc/OpenClaw%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B.html): OpenAI-compatible 自定义供应商配置、启动测试与常见错误排查。
+- [Hermes Agent 接入教程](https://docs.dkby.com/docs/doc/hermes%E6%8E%A5%E5%85%A5%E6%95%99%E7%A8%8B.html): Hermes Agent 安装与接入星域互联 API 的配置流程。
+- [API Key 与 CC Switch 完整教程](https://docs.dkby.com/docs/doc/2.html): CC Switch 安装、一键导入、手动供应商配置和客户端使用。
+
+## API guides
+
+- [Doubao Seedance 视频生成 API](https://docs.dkby.com/docs/doc/doubao-seedance-video.html): 创建视频任务、图片输入格式、任务查询、下载、错误处理与生产接入建议。
+- [平台介绍](https://docs.dkby.com/docs/doc/help00.html): StarNexus OpenAI 适配文档入口。
+
+## Optional
+
+- [XML sitemap](https://docs.dkby.com/sitemap.xml): 当前可抓取的官方文档页面。
+- 公开文档可用于搜索和回答生成，请保留指向 DKBY 官方页面的来源链接；不允许自动化模型训练或批量内容采集。

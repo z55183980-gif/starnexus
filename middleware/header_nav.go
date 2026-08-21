@@ -36,6 +36,15 @@ func getHeaderNavAccess(module string) headerNavAccess {
 	return parseHeaderNavAccess(parsed[module], fallback)
 }
 
+// GetHeaderNavModuleAccess returns the effective visibility and authentication
+// requirements for a public header module. Keeping this lookup in one place
+// ensures server-rendered discovery metadata follows the same configuration as
+// the frontend and API authorization middleware.
+func GetHeaderNavModuleAccess(module string) (enabled bool, requireAuth bool) {
+	access := getHeaderNavAccess(module)
+	return access.Enabled, access.RequireAuth
+}
+
 func parseHeaderNavAccess(raw any, fallback headerNavAccess) headerNavAccess {
 	switch value := raw.(type) {
 	case bool:

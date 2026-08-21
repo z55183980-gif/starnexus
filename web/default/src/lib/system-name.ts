@@ -32,10 +32,10 @@ export function formatHeaderBrandName(name: string): string {
   return `${name}${HEADER_BRAND_SUFFIX}`
 }
 
-/** Applies localized brand name to document.title (UI only; ignores admin SystemName). */
+/** Applies the localized, search-friendly default title (ignores admin SystemName). */
 export function applySystemDocumentTitle(): void {
   if (typeof document === 'undefined') return
-  const title = getLocalizedDefaultSystemName()
+  const title = i18next.t('StarNexus | Unified AI API Gateway')
   document.title = title
   const metaTitle = document.querySelector(
     'meta[name="title"]'
