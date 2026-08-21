@@ -123,7 +123,7 @@ func TestCanonicalRedirectNormalizesSchemeAndHost(t *testing.T) {
 		wantLocation   string
 	}{
 		{name: "canonical request", host: "dkby.com", forwardedProto: "https", wantStatus: http.StatusNoContent},
-		{name: "http request", host: "dkby.com", forwardedProto: "http", wantStatus: http.StatusMovedPermanently, wantLocation: "https://dkby.com/?source=test"},
+		{name: "proxied http request on canonical host", host: "dkby.com", forwardedProto: "http", wantStatus: http.StatusNoContent},
 		{name: "www request", host: "www.dkby.com", forwardedProto: "https", wantStatus: http.StatusMovedPermanently, wantLocation: "https://dkby.com/?source=test"},
 	}
 

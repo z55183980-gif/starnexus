@@ -516,12 +516,10 @@ func requestMatchesCanonicalOrigin(c *gin.Context, canonical *url.URL) bool {
 	if !strings.EqualFold(normalizedURLHost(requestURL), canonical.Host) {
 		return false
 	}
-	if strings.TrimSpace(c.Request.Header.Get("CF-Ray")) != "" {
-		// Cloudflare has already terminated the client connection. Its origin
-		// protocol may be HTTP even when the public request was HTTPS.
-		return true
-	}
-	return strings.EqualFold(requestURL.Scheme, canonical.Scheme)
+	// The canonical host is already selected. A reverse proxy may report the
+	// origin hop as HTTP even when the public request was HTTPS; the edge is
+	// responsible for enforcing HTTP-to-HTTPS redirects.
+	return true
 }
 
 func normalizedWebPath(rawPath string) string {
