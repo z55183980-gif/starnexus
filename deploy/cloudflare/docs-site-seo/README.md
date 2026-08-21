@@ -1,6 +1,6 @@
 # docs.dkby.com 第一阶段 SEO 部署
 
-`docs.dkby.com` 当前由独立的 Cloudflare R2 静态站点提供，不经过本项目的 Go Web 路由。因此本目录中的四个文件需要上传到该站点绑定的 R2 存储桶根目录：
+`docs.dkby.com` 当前由独立的 Cloudflare R2 静态站点提供，不经过本项目的 Go Web 路由。因此本目录中的四个文件需要上传到 `docs` 桶的 `docs/` 前缀（与现有 `docs/help.html`、`docs/doc/` 对齐）：
 
 - `robots.txt`：`Content-Type: text/plain; charset=utf-8`
 - `sitemap.xml`：`Content-Type: application/xml; charset=utf-8`

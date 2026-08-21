@@ -67,9 +67,6 @@ func webFallbackHandler(assets ThemeAssets) gin.HandlerFunc {
 			}
 			c.Header("Link", strings.Join(links, ", "))
 			page := renderWebIndex(indexPage, indexableHeadMarkup(canonicalURL, canonicalPath))
-			if canonicalPath == "/" && !optionValueIsPresent("HomePageContent") {
-				page = renderPrerenderedHomeContent(page, prerenderedHomeContent(origin))
-			}
 			c.Data(http.StatusOK, "text/html; charset=utf-8", page)
 			return
 		}

@@ -265,10 +265,13 @@ func TestWebFallbackAddsCanonicalNoindexAndReal404(t *testing.T) {
 			t.Errorf("home HTML missing %q", expected)
 		}
 	}
-	for _, expected := range []string{`property="og:url" content="https://dkby.com/"`, `type="application/ld+json"`, `"@type":"WebSite"`, `"@type":"Organization"`, `rel="describedby" href="https://dkby.com/llms.txt"`, `rel="alternate" type="text/markdown" href="https://dkby.com/index.md"`, `一个 API 接入多种 AI 模型`} {
+	for _, expected := range []string{`property="og:url" content="https://dkby.com/"`, `type="application/ld+json"`, `"@type":"WebSite"`, `"@type":"Organization"`, `rel="describedby" href="https://dkby.com/llms.txt"`, `rel="alternate" type="text/markdown" href="https://dkby.com/index.md"`} {
 		if !strings.Contains(home.Body.String(), expected) {
 			t.Errorf("home discovery metadata missing %q", expected)
 		}
+	}
+	if strings.Contains(home.Body.String(), "一个 API 接入多种 AI 模型") {
+		t.Error("home HTML must not contain the optional SEO prerendered product copy")
 	}
 	for _, expected := range []string{`<https://dkby.com/llms.txt>; rel="describedby"`, `<https://dkby.com/index.md>; rel="alternate"; type="text/markdown"`} {
 		if !strings.Contains(home.Header().Get("Link"), expected) {

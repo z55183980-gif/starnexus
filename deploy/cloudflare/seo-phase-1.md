@@ -21,7 +21,7 @@
 
 ## 2. 部署文档站机器可读文件
 
-按照 [`docs-site-seo/README.md`](./docs-site-seo/README.md) 将该目录中的 4 个公开文件上传到 `docs.dkby.com` 对应 R2 桶根目录，并清除相应缓存。
+按照 [`docs-site-seo/README.md`](./docs-site-seo/README.md) 将该目录中的 4 个公开文件上传到 `docs.dkby.com` 对应 R2 `docs/` 前缀，并清除相应缓存。
 
 ## 3. 上线后验收
 
