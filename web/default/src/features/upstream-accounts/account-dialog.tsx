@@ -440,6 +440,8 @@ export function AccountDialog({
   proxies,
   onSaved,
   initialAuthorizeUrl = '',
+  batchAccountIds,
+  onBatchSaved,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -448,8 +450,11 @@ export function AccountDialog({
   proxies: Array<{ id: number; name: string }>
   onSaved: () => void
   initialAuthorizeUrl?: string
+  batchAccountIds?: number[]
+  onBatchSaved?: (patch: Partial<UpstreamAccountPayload>) => Promise<boolean>
 }) {
   const { t } = useTranslation()
+  const isBatch = Boolean(batchAccountIds?.length && onBatchSaved)
   const [draft, setDraft] = useState<AccountDraft>(() => accountDraft(account))
   const [step, setStep] = useState(account ? 2 : 1)
   const [busy, setBusy] = useState(false)
@@ -458,11 +463,13 @@ export function AccountDialog({
   const initialCredentialSettingsRef = useRef<CredentialBackedSettings>(
     credentialBackedSettings(accountDraft(account))
   )
+  const initialDraftRef = useRef<AccountDraft>(accountDraft(account))
 
   useEffect(() => {
     if (!open) return
     const nextDraft = accountDraft(account)
     setDraft(nextDraft)
+    initialDraftRef.current = nextDraft
     initialCredentialSettingsRef.current = credentialBackedSettings(nextDraft)
     setStep(account ? 2 : 1)
     setAuthorizeUrl(initialAuthorizeUrl)
@@ -935,6 +942,186 @@ export function AccountDialog({
     return JSON.stringify(extra)
   }
 
+  const draftChanged = <K extends keyof AccountDraft>(key: K) =>
+    JSON.stringify(draft[key]) !== JSON.stringify(initialDraftRef.current[key])
+
+  const buildBatchExtraPatch = () => {
+    const patch: Record<string, unknown> = {}
+    const setExtra = (key: string, changed: boolean, value: unknown) => {
+      if (changed) patch[key] = value
+    }
+
+    setExtra(
+      'openai_passthrough',
+      draftChanged('openaiPassthrough'),
+      draft.openaiPassthrough ? true : null
+    )
+    setExtra(
+      'openai_long_context_billing_enabled',
+      draftChanged('openaiLongContextBilling'),
+      draft.openaiLongContextBilling ? true : null
+    )
+    if (draft.platform === 'openai') {
+      const websocketKey =
+        draft.type === 'apikey'
+          ? 'openai_apikey_responses_websockets_v2_mode'
+          : 'openai_oauth_responses_websockets_v2_mode'
+      setExtra(
+        websocketKey,
+        draftChanged('openaiWebSocketMode'),
+        draft.openaiWebSocketMode === 'off' ? null : draft.openaiWebSocketMode
+      )
+      setExtra(
+        'codex_cli_only',
+        draftChanged('codexCLIOnly'),
+        draft.codexCLIOnly ? true : null
+      )
+      setExtra(
+        'codex_cli_only_allow_app_server',
+        draftChanged('codexCLIOnlyAllowAppServer'),
+        draft.codexCLIOnlyAllowAppServer ? true : null
+      )
+      setExtra(
+        'codex_fingerprint_mode',
+        draftChanged('codexFingerprintMode'),
+        draft.codexFingerprintMode === 'inherit'
+          ? null
+          : draft.codexFingerprintMode
+      )
+      setExtra(
+        'openai_compact_mode',
+        draftChanged('openaiCompactMode'),
+        draft.openaiCompactMode === 'auto' ? null : draft.openaiCompactMode
+      )
+      setExtra(
+        'openai_responses_mode',
+        draftChanged('openaiResponsesMode'),
+        draft.openaiResponsesMode === 'auto' ? null : draft.openaiResponsesMode
+      )
+    }
+    if (draft.platform === 'anthropic') {
+      setExtra(
+        'anthropic_passthrough',
+        draftChanged('anthropicPassthrough'),
+        draft.anthropicPassthrough ? true : null
+      )
+      setExtra(
+        'anthropic_apikey_auth_scheme',
+        draftChanged('anthropicAPIKeyAuthScheme'),
+        draft.anthropicAPIKeyAuthScheme === 'x_api_key'
+          ? null
+          : draft.anthropicAPIKeyAuthScheme
+      )
+    }
+    if (draftChanged('tempUnschedEnabled')) {
+      patch.temp_unschedulable_enabled = draft.tempUnschedEnabled ? true : null
+      patch.temp_unschedulable_rules = draft.tempUnschedEnabled
+        ? buildTempUnschedRules(draft.tempUnschedRules)
+        : null
+    } else if (draftChanged('tempUnschedRules')) {
+      patch.temp_unschedulable_rules = buildTempUnschedRules(
+        draft.tempUnschedRules
+      )
+    }
+    return patch
+  }
+
+  const buildBatchCredentialPatch = () => {
+    const fullPatch = buildCredentialPatch()
+    const patch: Record<string, unknown> = {}
+    const include = (key: string, ...fields: Array<keyof AccountDraft>) => {
+      if (fields.some((field) => draftChanged(field)) && key in fullPatch) {
+        patch[key] = fullPatch[key]
+      }
+    }
+    include(
+      'model_mapping',
+      'modelRestrictionMode',
+      'allowedModels',
+      'modelMappings'
+    )
+    include('intercept_warmup_requests', 'interceptWarmupRequests')
+    include('temp_unschedulable_enabled', 'tempUnschedEnabled')
+    include(
+      'temp_unschedulable_rules',
+      'tempUnschedEnabled',
+      'tempUnschedRules'
+    )
+    include('header_override_enabled', 'headerOverrideEnabled')
+    include('header_overrides', 'headerOverrideEnabled', 'headerOverrideRows')
+    include('compact_model_mapping', 'compactModelMappings')
+    include('openai_capabilities', 'openaiEndpointCapabilities')
+    include('base_url', 'baseUrl')
+    include(
+      'auth_mode',
+      'bedrockAuthMode',
+      'bedrockRegion',
+      'bedrockApiKey',
+      'bedrockAccessKeyId',
+      'bedrockSecretAccessKey',
+      'bedrockSessionToken'
+    )
+    include(
+      'aws_region',
+      'bedrockRegion',
+      'bedrockAuthMode',
+      'bedrockApiKey',
+      'bedrockAccessKeyId',
+      'bedrockSecretAccessKey',
+      'bedrockSessionToken'
+    )
+    include('api_key', 'apiKey', 'bedrockApiKey')
+    include('aws_access_key_id', 'bedrockAccessKeyId', 'bedrockAuthMode')
+    include(
+      'aws_secret_access_key',
+      'bedrockSecretAccessKey',
+      'bedrockAuthMode'
+    )
+    include('aws_session_token', 'bedrockSessionToken')
+    include('location', 'vertexLocation')
+    include(
+      'service_account_json',
+      'vertexServiceAccountJson',
+      'vertexLocation'
+    )
+    include('project_id', 'vertexServiceAccountJson')
+    include('client_email', 'vertexServiceAccountJson')
+    include('tier_id', 'vertexServiceAccountJson')
+    return patch
+  }
+
+  const buildBatchPatch = (payload: UpstreamAccountPayload) => {
+    const patch: Partial<UpstreamAccountPayload> = {}
+    const changed = <K extends keyof AccountDraft>(key: K) => draftChanged(key)
+    if (changed('name')) patch.name = payload.name
+    if (changed('notes')) patch.notes = payload.notes
+    if (changed('proxyId')) patch.proxy_id = payload.proxy_id
+    if (changed('concurrency')) patch.concurrency = payload.concurrency
+    if (changed('priority')) patch.priority = payload.priority
+    if (changed('weight')) patch.weight = payload.weight
+    if (changed('loadFactor')) patch.load_factor = payload.load_factor
+    if (changed('rateMultiplier'))
+      patch.rate_multiplier = payload.rate_multiplier
+    if (changed('status')) patch.status = payload.status
+    if (changed('schedulable')) patch.schedulable = payload.schedulable
+    if (changed('expiresAt')) patch.expires_at = payload.expires_at
+    if (changed('autoPauseOnExpired')) {
+      patch.auto_pause_on_expired = payload.auto_pause_on_expired
+    }
+    if (changed('starnexusOwnsOAuthRefresh')) {
+      patch.oauth_refresh_owner = payload.oauth_refresh_owner
+    }
+    if (changed('poolIds')) patch.pool_ids = payload.pool_ids
+
+    const extraPatch = buildBatchExtraPatch()
+    const credentialPatch = buildBatchCredentialPatch()
+    if (Object.keys(extraPatch).length > 0) patch.extra_patch = extraPatch
+    if (Object.keys(credentialPatch).length > 0) {
+      patch.credential_patch = credentialPatch
+    }
+    return patch
+  }
+
   const toggleOpenAIEndpointCapability = (
     capability: OpenAIEndpointCapability
   ) => {
@@ -1093,6 +1280,18 @@ export function AccountDialog({
         }
       }
 
+      if (isBatch) {
+        const batchPatch = buildBatchPatch(payload)
+        if (Object.keys(batchPatch).length === 0) {
+          throw new Error(t('Select at least one field to update'))
+        }
+        const applied = await onBatchSaved!(batchPatch)
+        if (!applied) return
+        onSaved()
+        onOpenChange(false)
+        return
+      }
+
       if (oauthType) {
         if (draft.oauthInput.trim() && !draft.starnexusOwnsOAuthRefresh) {
           throw new Error(
@@ -1163,14 +1362,24 @@ export function AccountDialog({
       <DialogContent className='flex max-h-[92vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl'>
         <DialogHeader className='shrink-0 border-b px-6 py-5 pr-12'>
           <DialogTitle>
-            {account ? t('Edit account') : t('Add account')}
+            {isBatch
+              ? t('Batch update accounts')
+              : account
+                ? t('Edit account')
+                : t('Add account')}
           </DialogTitle>
-          <DialogDescription className={account ? 'sr-only' : undefined}>
-            {account
-              ? t('Update account credentials and scheduling settings.')
-              : t(
-                  'Choose an authorization method, then complete the account authorization.'
-                )}
+          <DialogDescription
+            className={account && !isBatch ? 'sr-only' : undefined}
+          >
+            {isBatch
+              ? t('Update {{count}} selected accounts', {
+                  count: batchAccountIds?.length ?? 0,
+                })
+              : account
+                ? t('Update account credentials and scheduling settings.')
+                : t(
+                    'Choose an authorization method, then complete the account authorization.'
+                  )}
           </DialogDescription>
         </DialogHeader>
 
@@ -1441,7 +1650,9 @@ export function AccountDialog({
                           type='button'
                           variant='outline'
                           onClick={startOAuth}
-                          disabled={busy || !draft.starnexusOwnsOAuthRefresh}
+                          disabled={
+                            isBatch || busy || !draft.starnexusOwnsOAuthRefresh
+                          }
                         >
                           <HugeiconsIcon icon={Link01Icon} strokeWidth={2} />
                           {t('Generate authorization URL')}
@@ -1469,7 +1680,9 @@ export function AccountDialog({
                           variant='link'
                           className='h-auto px-0'
                           onClick={startOAuth}
-                          disabled={busy || !draft.starnexusOwnsOAuthRefresh}
+                          disabled={
+                            isBatch || busy || !draft.starnexusOwnsOAuthRefresh
+                          }
                         >
                           {t('Regenerate authorization URL')}
                         </Button>
@@ -1478,6 +1691,7 @@ export function AccountDialog({
                     <Textarea
                       id='oauth-result'
                       rows={4}
+                      disabled={isBatch}
                       value={draft.oauthInput}
                       placeholder={t(
                         'Paste the callback URL, authorization code, or code#state'
