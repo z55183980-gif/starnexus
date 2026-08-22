@@ -110,6 +110,25 @@ func TestUpstreamPatchRequestsCanClearNullableFields(t *testing.T) {
 	require.Nil(t, proxy.BackupProxyId)
 }
 
+func TestApplyAccountExtraPatchMergesAndDeletesKeys(t *testing.T) {
+	account := model.UpstreamAccount{Extra: `{"keep":true,"remove":"old"}`}
+	patch := map[string]any{"remove": nil, "added": "value"}
+	require.NoError(t, applyAccountExtraPatch(&account, &patch))
+
+	var decoded map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(account.Extra, &decoded))
+	require.Equal(t, true, decoded["keep"])
+	require.Equal(t, "value", decoded["added"])
+	_, exists := decoded["remove"]
+	require.False(t, exists)
+}
+
+func TestApplyAccountExtraPatchRejectsInvalidExistingJSON(t *testing.T) {
+	account := model.UpstreamAccount{Extra: "not-json"}
+	patch := map[string]any{"added": true}
+	require.Error(t, applyAccountExtraPatch(&account, &patch))
+}
+
 type upstreamHandlerResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`

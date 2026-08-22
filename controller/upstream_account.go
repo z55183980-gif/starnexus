@@ -33,6 +33,7 @@ type upstreamAccountRequest struct {
 	Credentials        *map[string]any           `json:"credentials"`
 	CredentialPatch    *map[string]any           `json:"credential_patch"`
 	Extra              *string                   `json:"extra"`
+	ExtraPatch         *map[string]any           `json:"extra_patch"`
 	ProxyId            optionalNullable[int]     `json:"proxy_id"`
 	Concurrency        *int                      `json:"concurrency"`
 	Priority           *int                      `json:"priority"`
@@ -45,6 +46,21 @@ type upstreamAccountRequest struct {
 	AutoPauseOnExpired *bool                     `json:"auto_pause_on_expired"`
 	OAuthRefreshOwner  *string                   `json:"oauth_refresh_owner"`
 	PoolIds            *[]int                    `json:"pool_ids"`
+}
+
+// upstreamAccountBatchFilters describes the current account-list filters used
+// by the "filtered results" bulk-edit mode. The filters are resolved on the
+// server so pagination cannot accidentally limit the write to the visible page.
+type upstreamAccountBatchFilters struct {
+	Platform    string `json:"platform"`
+	Type        string `json:"type"`
+	Status      string `json:"status"`
+	Search      string `json:"search"`
+	PoolId      int    `json:"pool_id"`
+	ProxyId     int    `json:"proxy_id"`
+	Schedulable *bool  `json:"schedulable"`
+	SortBy      string `json:"sort_by"`
+	SortOrder   string `json:"sort_order"`
 }
 
 type upstreamProxyRequest struct {
@@ -714,15 +730,33 @@ func CreateUpstreamAccountsBatch(c *gin.Context) {
 
 func UpdateUpstreamAccountsBatch(c *gin.Context) {
 	var request struct {
-		Ids   []int                  `json:"ids"`
-		Patch upstreamAccountRequest `json:"patch"`
+		Ids     []int                        `json:"ids"`
+		Filters *upstreamAccountBatchFilters `json:"filters"`
+		Patch   upstreamAccountRequest       `json:"patch"`
 	}
-	if err := common.DecodeJson(c.Request.Body, &request); err != nil || !validBatchIds(request.Ids) {
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	if request.Filters == nil && !validBatchIds(request.Ids) {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if request.Filters != nil && len(request.Ids) > 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	ids := request.Ids
+	if request.Filters != nil {
+		var err error
+		ids, err = resolveUpstreamAccountBatchIds(*request.Filters)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+	}
 	result := upstreamBatchResult{SuccessIds: []int{}, Failures: []upstreamBatchFailure{}}
-	for _, id := range uniquePositiveIds(request.Ids) {
+	for _, id := range uniquePositiveIds(ids) {
 		current, err := service.GetUpstreamAccount(id)
 		if err != nil {
 			result.Failures = append(result.Failures, upstreamBatchFailure{Id: id, Message: err.Error()})
@@ -730,6 +764,10 @@ func UpdateUpstreamAccountsBatch(c *gin.Context) {
 		}
 		account := current.UpstreamAccount
 		applyAccountRequest(&account, request.Patch)
+		if err := applyAccountExtraPatch(&account, request.Patch.ExtraPatch); err != nil {
+			result.Failures = append(result.Failures, upstreamBatchFailure{Id: id, Message: err.Error()})
+			continue
+		}
 		err = service.UpdateUpstreamAccount(&service.UpstreamAccountUpdateInput{Account: account, Credentials: request.Patch.Credentials, CredentialPatch: request.Patch.CredentialPatch, PoolIds: request.Patch.PoolIds})
 		if err != nil {
 			result.Failures = append(result.Failures, upstreamBatchFailure{Id: id, Message: err.Error()})
@@ -739,6 +777,62 @@ func UpdateUpstreamAccountsBatch(c *gin.Context) {
 	}
 	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("batch updated %d upstream account(s)", len(result.SuccessIds)))
 	common.ApiSuccess(c, result)
+}
+
+const maxUpstreamAccountFilteredBulkTarget = 1000
+
+func resolveUpstreamAccountBatchIds(filters upstreamAccountBatchFilters) ([]int, error) {
+	const pageSize = 100
+	ids := make([]int, 0, pageSize)
+	for page := 1; ; page++ {
+		accounts, total, err := service.ListUpstreamAccounts(service.UpstreamAccountListFilter{
+			Platform: filters.Platform, Type: filters.Type, Status: filters.Status,
+			Search: filters.Search, PoolId: filters.PoolId, ProxyId: filters.ProxyId,
+			Schedulable: filters.Schedulable, SortBy: filters.SortBy, SortOrder: filters.SortOrder,
+			Page: page, PageSize: pageSize,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for _, account := range accounts {
+			ids = append(ids, account.Id)
+		}
+		if len(ids) > maxUpstreamAccountFilteredBulkTarget {
+			return nil, fmt.Errorf("filtered bulk update target exceeds %d accounts", maxUpstreamAccountFilteredBulkTarget)
+		}
+		if len(accounts) == 0 || int64(len(ids)) >= total {
+			return ids, nil
+		}
+	}
+}
+
+func applyAccountExtraPatch(account *model.UpstreamAccount, patch *map[string]any) error {
+	if account == nil || patch == nil {
+		return nil
+	}
+	extra := map[string]any{}
+	if raw := strings.TrimSpace(account.Extra); raw != "" && raw != "{}" {
+		if err := common.UnmarshalJsonStr(raw, &extra); err != nil {
+			return fmt.Errorf("invalid account extra: %w", err)
+		}
+	}
+	for key, value := range *patch {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if value == nil {
+			delete(extra, key)
+			continue
+		}
+		extra[key] = value
+	}
+	encoded, err := common.Marshal(extra)
+	if err != nil {
+		return fmt.Errorf("encode account extra: %w", err)
+	}
+	account.Extra = string(encoded)
+	return nil
 }
 
 func DeleteUpstreamAccountsBatch(c *gin.Context) {

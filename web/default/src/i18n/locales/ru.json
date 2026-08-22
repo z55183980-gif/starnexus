@@ -5908,6 +5908,18 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
+    "Update scope": "Область обновления",
+    "Selected accounts ({{count}})": "Выбранные аккаунты ({{count}})",
+    "All matching accounts ({{count}})": "Все подходящие аккаунты ({{count}})",
+    "Update {{count}} accounts matching the current filters": "Обновить {{count}} аккаунтов, соответствующих текущим фильтрам",
+    "No accounts match the current filters": "Нет аккаунтов, соответствующих текущим фильтрам",
+    "Rate multiplier": "Множитель тарифа",
+    "No proxy": "Без прокси",
+    "Leave empty to clear": "Оставьте пустым, чтобы очистить",
+    "Empty value clears notes": "Пустое значение удаляет заметки",
+    "Credential-backed settings": "Настройки, связанные с учетными данными",
+    "Rate multiplier must be 0 or greater": "Множитель должен быть не меньше 0",
+    "{{field}} must be at least {{minimum}}": "Значение {{field}} должно быть не меньше {{minimum}}",
     "ZQBAPI material settings": "Настройки материалов ZQBAPI"
   }
 }

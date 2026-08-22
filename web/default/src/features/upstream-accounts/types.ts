@@ -308,6 +308,7 @@ export interface UpstreamAccountPayload {
   credentials?: Record<string, unknown>
   credential_patch?: Record<string, unknown>
   extra: string
+  extra_patch?: Record<string, unknown>
   proxy_id?: number | null
   concurrency: number
   priority: number
@@ -320,6 +321,18 @@ export interface UpstreamAccountPayload {
   auto_pause_on_expired: boolean
   oauth_refresh_owner: UpstreamOAuthRefreshOwner
   pool_ids: number[]
+}
+
+export interface UpstreamAccountBatchFilters {
+  search?: string
+  pool_id?: number
+  proxy_id?: number
+  platform?: UpstreamPlatform
+  type?: UpstreamAccountType
+  status?: UpstreamStatus
+  schedulable?: boolean
+  sort_by?: 'priority' | 'schedulable'
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface UpstreamPoolPayload {

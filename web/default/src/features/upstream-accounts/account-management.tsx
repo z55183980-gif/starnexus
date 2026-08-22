@@ -155,6 +155,7 @@ import { PublishPoolChannelDrawer } from './publish-pool-channel-drawer'
 import {
   upstreamOAuthRefreshBlocksScheduling,
   type UpstreamAccount,
+  type UpstreamAccountBatchFilters,
   type UpstreamAccountPayload,
   type UpstreamAccountPool,
   type UpstreamAccountPoolMember,
@@ -1844,6 +1845,27 @@ export function AccountManagement({
     accounts.every((account) => selectedAccountIds.includes(account.id))
   const pools = useMemo(() => poolsQuery.data ?? [], [poolsQuery.data])
   const proxies = proxiesQuery.data?.data ?? []
+  const batchFilters: UpstreamAccountBatchFilters = {
+    search: search || undefined,
+    platform:
+      platformFilter === 'all'
+        ? undefined
+        : (platformFilter as UpstreamAccountBatchFilters['platform']),
+    type:
+      typeFilter === 'all'
+        ? undefined
+        : (typeFilter as UpstreamAccountBatchFilters['type']),
+    status:
+      statusFilter === 'all'
+        ? undefined
+        : (statusFilter as UpstreamAccountBatchFilters['status']),
+    schedulable:
+      schedulableFilter === 'all' ? undefined : schedulableFilter === 'true',
+    pool_id: poolFilter === 'all' ? undefined : Number(poolFilter),
+    proxy_id: proxyFilter === 'all' ? undefined : Number(proxyFilter),
+    sort_by: sortBy ?? undefined,
+    sort_order: sortBy ? sortOrder : undefined,
+  }
   const poolNames = useMemo(
     () => new Map(pools.map((pool) => [pool.id, pool.name])),
     [pools]
@@ -1928,9 +1950,12 @@ export function AccountManagement({
   ) => {
     setSchedulingBusyId(account.id)
     try {
-      const response = await updateUpstreamAccountsBatch([account.id], {
-        schedulable,
-      })
+      const response = await updateUpstreamAccountsBatch(
+        { ids: [account.id] },
+        {
+          schedulable,
+        }
+      )
       if (!response.success || response.data?.failures.length) {
         throw new Error(
           response.data?.failures[0]?.message ||
@@ -1953,7 +1978,10 @@ export function AccountManagement({
   ) => {
     setPriorityBusyId(account.id)
     try {
-      const response = await updateUpstreamAccountsBatch([account.id], patch)
+      const response = await updateUpstreamAccountsBatch(
+        { ids: [account.id] },
+        patch
+      )
       if (!response.success || response.data?.failures.length) {
         throw new Error(
           response.data?.failures[0]?.message ||
@@ -2103,24 +2131,28 @@ export function AccountManagement({
   }
 
   const updateSelectedAccounts = async (
+    target: { ids: number[] } | { filters: UpstreamAccountBatchFilters },
     patch: Partial<UpstreamAccountPayload>
-  ) => {
-    const response = await updateUpstreamAccountsBatch(
-      selectedAccountIds,
-      patch
-    )
+  ): Promise<boolean> => {
+    const actualTarget = 'ids' in target ? { ids: selectedAccountIds } : target
+    const response = await updateUpstreamAccountsBatch(actualTarget, patch)
     if (!response.success) {
       toast.error(response.message || t('Update failed'))
-      return
+      return false
     }
+    const failures = response.data?.failures ?? []
+    const failedIds = failures.flatMap((failure) =>
+      failure.id ? [failure.id] : []
+    )
     toast.success(
       t('Updated {{success}} accounts; {{failed}} failed', {
         success: response.data?.success_ids.length ?? 0,
-        failed: response.data?.failures.length ?? 0,
+        failed: failures.length,
       })
     )
-    setSelectedAccountIds([])
+    setSelectedAccountIds(failedIds)
     refresh()
+    return true
   }
 
   return (
@@ -2985,6 +3017,11 @@ export function AccountManagement({
           open={batchUpdateOpen}
           onOpenChange={setBatchUpdateOpen}
           count={selectedAccountIds.length}
+          selectedIds={selectedAccountIds}
+          filteredCount={accountTotal}
+          filters={batchFilters}
+          proxies={proxies}
+          pools={pools}
           onApply={updateSelectedAccounts}
         />
         {poolDialog && (

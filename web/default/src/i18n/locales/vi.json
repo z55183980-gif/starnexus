@@ -5908,6 +5908,18 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
+    "Update scope": "Phạm vi cập nhật",
+    "Selected accounts ({{count}})": "Tài khoản đã chọn ({{count}})",
+    "All matching accounts ({{count}})": "Tất cả tài khoản phù hợp ({{count}})",
+    "Update {{count}} accounts matching the current filters": "Cập nhật {{count}} tài khoản khớp với bộ lọc hiện tại",
+    "No accounts match the current filters": "Không có tài khoản nào khớp với bộ lọc hiện tại",
+    "Rate multiplier": "Hệ số tính phí",
+    "No proxy": "Không dùng proxy",
+    "Leave empty to clear": "Để trống để xóa",
+    "Empty value clears notes": "Giá trị trống sẽ xóa ghi chú",
+    "Credential-backed settings": "Cài đặt dựa trên thông tin xác thực",
+    "Rate multiplier must be 0 or greater": "Hệ số phải lớn hơn hoặc bằng 0",
+    "{{field}} must be at least {{minimum}}": "{{field}} phải lớn hơn hoặc bằng {{minimum}}",
     "ZQBAPI material settings": "Cài đặt tư liệu ZQBAPI"
   }
 }

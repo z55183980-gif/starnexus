@@ -5908,6 +5908,18 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
+    "Update scope": "Update scope",
+    "Selected accounts ({{count}})": "Selected accounts ({{count}})",
+    "All matching accounts ({{count}})": "All matching accounts ({{count}})",
+    "Update {{count}} accounts matching the current filters": "Update {{count}} accounts matching the current filters",
+    "No accounts match the current filters": "No accounts match the current filters",
+    "Rate multiplier": "Rate multiplier",
+    "No proxy": "No proxy",
+    "Leave empty to clear": "Leave empty to clear",
+    "Empty value clears notes": "Empty value clears notes",
+    "Credential-backed settings": "Credential-backed settings",
+    "Rate multiplier must be 0 or greater": "Rate multiplier must be 0 or greater",
+    "{{field}} must be at least {{minimum}}": "{{field}} must be at least {{minimum}}",
     "ZQBAPI material settings": "ZQBAPI material settings"
   }
 }

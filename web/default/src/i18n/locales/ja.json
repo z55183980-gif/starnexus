@@ -5908,6 +5908,18 @@
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
     "ZQBAPI": "ZQBAPI",
+    "Update scope": "更新範囲",
+    "Selected accounts ({{count}})": "選択したアカウント（{{count}}）",
+    "All matching accounts ({{count}})": "条件に一致するすべてのアカウント（{{count}}）",
+    "Update {{count}} accounts matching the current filters": "現在のフィルターに一致する {{count}} 件のアカウントを更新",
+    "No accounts match the current filters": "現在のフィルターに一致するアカウントはありません",
+    "Rate multiplier": "レート倍率",
+    "No proxy": "プロキシなし",
+    "Leave empty to clear": "空欄でクリア",
+    "Empty value clears notes": "空の値でメモを消去",
+    "Credential-backed settings": "認証情報に紐づく設定",
+    "Rate multiplier must be 0 or greater": "レート倍率は 0 以上で入力してください",
+    "{{field}} must be at least {{minimum}}": "{{field}} は {{minimum}} 以上で入力してください",
     "ZQBAPI material settings": "ZQBAPI 素材設定"
   }
 }

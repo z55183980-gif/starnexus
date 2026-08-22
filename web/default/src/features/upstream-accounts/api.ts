@@ -19,6 +19,7 @@ import type {
   UpstreamAccountPoolMember,
   UpstreamAccountPoolCapabilities,
   UpstreamAccountPayload,
+  UpstreamAccountBatchFilters,
   UpstreamAccountPool,
   UpstreamAccountQuotaResetResult,
   UpstreamAccountPoolPublishResult,
@@ -204,10 +205,13 @@ export async function syncUpstreamAccountsFromCRS(
 }
 
 export async function updateUpstreamAccountsBatch(
-  ids: number[],
+  target: { ids: number[] } | { filters: UpstreamAccountBatchFilters },
   patch: Partial<UpstreamAccountPayload>
 ): Promise<ApiResponse<UpstreamBatchResult>> {
-  const response = await api.put('/api/upstream/accounts/batch', { ids, patch })
+  const response = await api.put('/api/upstream/accounts/batch', {
+    ...target,
+    patch,
+  })
   return response.data
 }
 

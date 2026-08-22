@@ -5908,6 +5908,18 @@
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
     "ZQBAPI": "ZQBAPI",
+    "Update scope": "更新范围",
+    "Selected accounts ({{count}})": "已选账号（{{count}}）",
+    "All matching accounts ({{count}})": "匹配筛选条件的全部账号（{{count}}）",
+    "Update {{count}} accounts matching the current filters": "更新符合当前筛选条件的 {{count}} 个账号",
+    "No accounts match the current filters": "当前筛选条件没有匹配的账号",
+    "Rate multiplier": "倍率",
+    "No proxy": "不使用代理",
+    "Leave empty to clear": "留空以清除",
+    "Empty value clears notes": "留空将清除备注",
+    "Credential-backed settings": "凭据相关设置",
+    "Rate multiplier must be 0 or greater": "倍率必须大于或等于 0",
+    "{{field}} must be at least {{minimum}}": "{{field}} 至少为 {{minimum}}",
     "ZQBAPI material settings": "ZQBAPI 素材设置"
   }
 }
