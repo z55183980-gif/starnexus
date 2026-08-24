@@ -129,7 +129,7 @@ export function DoubaoVideoAccessKeys() {
         <SectionPageLayout.Title>{t('Access Keys')}</SectionPageLayout.Title>
         <SectionPageLayout.Description>
           {t(
-            'Create Volcengine-format AK/SK credentials for the Doubao video material API.'
+            'A dedicated key for accessing the material library, not an API key for calling model services.'
           )}
         </SectionPageLayout.Description>
         <SectionPageLayout.Actions>

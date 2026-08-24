@@ -131,26 +131,141 @@ function AssetPreview({ asset }: { asset: MaterialAsset }) {
   return (
     <div className='flex items-center gap-2'>
       {isImage && !imageFailed ? (
-        <img
-          src={asset.preview_url}
-          alt={asset.name}
-          className='size-10 rounded-md border object-cover'
-          loading='lazy'
-          onError={() => setImageFailed(true)}
-        />
+        <a
+          href={asset.preview_url}
+          target='_blank'
+          rel='noreferrer'
+          aria-label={t('Preview')}
+          className='group focus-visible:ring-ring block rounded-md focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none'
+        >
+          <img
+            src={asset.preview_url}
+            alt={asset.name}
+            className='size-10 cursor-pointer rounded-md border object-cover transition-transform duration-150 ease-out group-hover:scale-105 group-hover:shadow-sm group-active:scale-95'
+            loading='lazy'
+            onError={() => setImageFailed(true)}
+          />
+        </a>
       ) : (
         <Badge variant='secondary'>
           {typeKey ? t(typeKey) : asset.asset_type}
         </Badge>
       )}
-      <Button
-        variant='link'
-        size='xs'
-        render={<a href={asset.preview_url} target='_blank' rel='noreferrer' />}
-      >
-        {t('Preview')}
-      </Button>
     </div>
+  )
+}
+
+function AssetDetailDialog(props: {
+  asset: MaterialAsset | null
+  group?: MaterialGroup
+  onOpenChange: (open: boolean) => void
+}) {
+  const { asset, group, onOpenChange } = props
+  const { t } = useTranslation()
+  const [imageFailed, setImageFailed] = useState(false)
+
+  if (!asset) return null
+
+  const isImage = asset.asset_type.toLowerCase() === 'image'
+  const typeKey = assetTypeTranslationKey(asset.asset_type)
+  const statusKey = assetStatusTranslationKey(asset.status)
+
+  return (
+    <Dialog open={asset !== null} onOpenChange={onOpenChange}>
+      <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
+        <DialogHeader>
+          <DialogTitle>{t('Details')}</DialogTitle>
+        </DialogHeader>
+        <div className='flex min-h-48 items-center justify-center'>
+          {isImage && asset.preview_url && !imageFailed ? (
+            <img
+              src={asset.preview_url}
+              alt={asset.name}
+              className='max-h-72 max-w-full rounded-lg object-contain'
+              onError={() => setImageFailed(true)}
+            />
+          ) : (
+            <Badge variant='secondary'>
+              {typeKey ? t(typeKey) : asset.asset_type}
+            </Badge>
+          )}
+        </div>
+        <div className='overflow-hidden rounded-lg border'>
+          <dl className='divide-y'>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Asset ID')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>{asset.provider_asset_id}</dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Material name')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>{asset.name}</dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Type')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>
+                {typeKey ? t(typeKey) : asset.asset_type}
+              </dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('URL')}
+              </dt>
+              <dd className='px-4 py-3 font-mono text-xs break-all'>
+                {asset.preview_url || '—'}
+              </dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Sync status')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>
+                {asset.last_synced_at > 0
+                  ? t('Synchronized')
+                  : t('Not synchronized yet')}
+              </dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Asset status')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>
+                {statusKey ? t(statusKey) : asset.status}
+              </dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Material group')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>
+                {group ? `${group.name} (${group.provider_group_id})` : '—'}
+              </dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Failure reason')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>
+                {asset.error_message || '—'}
+              </dd>
+            </div>
+            <div className='grid grid-cols-[7rem_minmax(0,1fr)]'>
+              <dt className='bg-muted/40 text-muted-foreground px-4 py-3 text-sm'>
+                {t('Created at')}
+              </dt>
+              <dd className='px-4 py-3 text-sm'>
+                {unixTime(asset.created_at)}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -184,6 +299,7 @@ export function DoubaoVideoMaterialLibrary() {
   const [uploadName, setUploadName] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<MaterialAsset | null>(null)
+  const [detailTarget, setDetailTarget] = useState<MaterialAsset | null>(null)
 
   const groupsQuery = useQuery({
     queryKey: ['doubao-video', 'groups'],
@@ -345,11 +461,6 @@ export function DoubaoVideoMaterialLibrary() {
         <SectionPageLayout.Title>
           {t('Material Library')}
         </SectionPageLayout.Title>
-        <SectionPageLayout.Description>
-          {t(
-            'Upload materials to the DoubaoVideo2.0 upstream library and track review results.'
-          )}
-        </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           <Button
             variant='outline'
@@ -368,46 +479,59 @@ export function DoubaoVideoMaterialLibrary() {
           </Button>
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          {storage && (
-            <Alert
-              variant={
-                storage.remaining_bytes === 0 ? 'destructive' : 'default'
-              }
-            >
-              <AlertTitle>{t('Material library storage')}</AlertTitle>
-              <AlertDescription>
-                <div className='flex flex-col gap-2'>
-                  <Progress value={storagePercent}>
-                    <ProgressLabel>{t('Storage usage')}</ProgressLabel>
-                    <ProgressValue>
-                      {() =>
-                        `${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`
-                      }
-                    </ProgressValue>
-                  </Progress>
-                  <span>
-                    {storage.remaining_bytes === 0
-                      ? t(
-                          'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
-                        )
-                      : t('{{remaining}} remaining', {
-                          remaining: formatBytes(storage.remaining_bytes),
-                        })}
-                  </span>
-                </div>
-              </AlertDescription>
-            </Alert>
-          )}
           <Tabs
             value={activeTab}
             onValueChange={(value) =>
               setActiveTab(value as 'groups' | 'assets')
             }
           >
-            <TabsList>
-              <TabsTrigger value='groups'>{t('Material groups')}</TabsTrigger>
-              <TabsTrigger value='assets'>{t('Materials')}</TabsTrigger>
-            </TabsList>
+            <div className='flex flex-wrap items-center justify-between gap-3'>
+              <TabsList>
+                <TabsTrigger value='groups'>{t('Material groups')}</TabsTrigger>
+                <TabsTrigger value='assets'>{t('Materials')}</TabsTrigger>
+              </TabsList>
+              {storage && (
+                <Alert
+                  variant={
+                    storage.remaining_bytes === 0 ? 'destructive' : 'default'
+                  }
+                  className='w-full max-w-sm gap-1.5 p-3 sm:w-80'
+                >
+                  <div className='flex items-center justify-between gap-3'>
+                    <div className='min-w-0'>
+                      <AlertTitle>{t('Material library storage')}</AlertTitle>
+                      <span className='text-muted-foreground text-xs'>
+                        {t('Storage usage')}
+                      </span>
+                    </div>
+                    <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>
+                      {`${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`}
+                    </span>
+                  </div>
+                  <AlertDescription className='flex flex-col gap-1.5'>
+                    <Progress value={storagePercent} className='gap-1.5'>
+                      <ProgressLabel className='sr-only'>
+                        {t('Storage usage')}
+                      </ProgressLabel>
+                      <ProgressValue className='sr-only'>
+                        {() =>
+                          `${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`
+                        }
+                      </ProgressValue>
+                    </Progress>
+                    <span className='text-xs'>
+                      {storage.remaining_bytes === 0
+                        ? t(
+                            'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
+                          )
+                        : t('{{remaining}} remaining', {
+                            remaining: formatBytes(storage.remaining_bytes),
+                          })}
+                    </span>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </div>
             <TabsContent value='groups' className='mt-3 space-y-3'>
               <div className='bg-card flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3'>
                 <Input
@@ -520,7 +644,9 @@ export function DoubaoVideoMaterialLibrary() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>{t('Asset ID')}</TableHead>
-                        <TableHead>{t('Material name')}</TableHead>
+                        <TableHead className='w-60 max-w-60'>
+                          {t('Material name')}
+                        </TableHead>
                         <TableHead>{t('Resource preview')}</TableHead>
                         <TableHead>{t('Type')}</TableHead>
                         <TableHead>{t('Sync status')}</TableHead>
@@ -541,8 +667,10 @@ export function DoubaoVideoMaterialLibrary() {
                               {asset.provider_asset_id}
                             </code>
                           </TableCell>
-                          <TableCell className='font-medium'>
-                            {asset.name}
+                          <TableCell className='w-60 max-w-60 font-medium'>
+                            <span className='block truncate' title={asset.name}>
+                              {asset.name}
+                            </span>
                           </TableCell>
                           <TableCell>
                             <AssetPreview asset={asset} />
@@ -597,17 +725,26 @@ export function DoubaoVideoMaterialLibrary() {
                           </TableCell>
                           <TableCell>{unixTime(asset.created_at)}</TableCell>
                           <TableCell className='text-right'>
-                            <Button
-                              variant='ghost'
-                              size='sm'
-                              onClick={() => setDeleteTarget(asset)}
-                            >
-                              <HugeiconsIcon
-                                icon={Delete02Icon}
-                                data-icon='inline-start'
-                              />
-                              {t('Delete')}
-                            </Button>
+                            <div className='flex justify-end gap-1'>
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                onClick={() => setDetailTarget(asset)}
+                              >
+                                {t('Details')}
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                onClick={() => setDeleteTarget(asset)}
+                              >
+                                <HugeiconsIcon
+                                  icon={Delete02Icon}
+                                  data-icon='inline-start'
+                                />
+                                {t('Delete')}
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -619,6 +756,15 @@ export function DoubaoVideoMaterialLibrary() {
           </Tabs>
         </SectionPageLayout.Content>
       </SectionPageLayout>
+
+      <AssetDetailDialog
+        key={detailTarget?.id ?? 'empty'}
+        asset={detailTarget}
+        group={
+          detailTarget ? groupsById.get(detailTarget.asset_group_id) : undefined
+        }
+        onOpenChange={(open) => !open && setDetailTarget(null)}
+      />
 
       <Dialog open={groupDialog} onOpenChange={setGroupDialog}>
         <DialogContent>
