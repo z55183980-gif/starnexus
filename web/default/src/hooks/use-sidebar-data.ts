@@ -39,11 +39,12 @@ import {
   Share2,
   Users,
   Wallet,
+  Video,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { type SidebarData } from '@/components/layout/types'
-import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
+import { ROLE } from '@/lib/roles'
+import { type SidebarData } from '@/components/layout/types'
 import { useRoutingNodeAlertUnread } from '@/features/node-routing/use-routing-node-alert-unread'
 
 /**
@@ -106,6 +107,20 @@ export function useSidebarData(): SidebarData {
             title: t('API Keys'),
             url: '/keys',
             icon: Key,
+          },
+          {
+            title: t('Doubao Video'),
+            icon: Video,
+            items: [
+              {
+                title: t('Material Library'),
+                url: '/doubao-video/materials',
+              },
+              {
+                title: t('Access Keys'),
+                url: '/doubao-video/access-keys',
+              },
+            ],
           },
           {
             title: t('Usage Logs'),

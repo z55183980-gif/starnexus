@@ -505,7 +505,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 			AutoBan: &autoBanInt,
 		}, nil
 	}
-	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannelFiltered(retryParam, service.ChannelFilterForRequestPath(c.Request.URL.Path, info.OriginModelName))
+	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannelFiltered(retryParam, service.ChannelFilterForContext(c, c.Request.URL.Path, info.OriginModelName))
 
 	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 
@@ -868,6 +868,9 @@ func RelayTask(c *gin.Context) {
 		}
 		if relayInfo.ChannelType == constant.ChannelTypeDoubaoVideo2 {
 			taskdoubao.ApplyDoubaoVideo2OpenAIVideoTaskProperties(c, task)
+			if c.GetBool(string(constant.ContextKeyZQBAPINativeSeedanceRequest)) {
+				task.Properties.VideoProtocol = "seedance_native"
+			}
 			if payload, exists := c.Get(string(constant.ContextKeyDoubaoVideo2RetryPayload)); exists {
 				if data, ok := payload.([]byte); ok && len(data) > 0 {
 					task.PrivateData.DoubaoVideo2RetryPayload = string(data)

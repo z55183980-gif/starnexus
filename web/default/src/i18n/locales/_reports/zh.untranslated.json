@@ -125,5 +125,7 @@
   "whsec_xxx": "whsec_xxx",
   "Worker URL": "Worker URL",
   "Xinference": "Xinference",
-  "ZQBAPI": "ZQBAPI"
+  "ZQBAPI": "ZQBAPI",
+  "Access Key ID": "Access Key ID",
+  "Secret Access Key": "Secret Access Key"
 }

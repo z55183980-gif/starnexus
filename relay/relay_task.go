@@ -166,8 +166,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("invalid api platform: %s", platform), "invalid_api_platform", http.StatusBadRequest)
 	}
 	adaptor.Init(info)
-	if c.GetBool(string(constant.ContextKeyZQBAPINativeSeedanceRequest)) && info.ChannelType != constant.ChannelTypeZQBAPI {
-		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("native Seedance protocol requires a ZQBAPI channel"), "unsupported_channel", http.StatusBadRequest)
+	if c.GetBool(string(constant.ContextKeyZQBAPINativeSeedanceRequest)) &&
+		info.ChannelType != constant.ChannelTypeZQBAPI && info.ChannelType != constant.ChannelTypeDoubaoVideo2 {
+		return nil, service.TaskErrorWrapperLocal(fmt.Errorf("native Seedance protocol requires a ZQBAPI or DoubaoVideo2.0 channel"), "unsupported_channel", http.StatusBadRequest)
 	}
 	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
 		return nil, taskErr
@@ -524,7 +525,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 	isDoubaoVideo2 := originTask.Platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo2))
 	isIsolatedOpenAIVideoPlatform := isZQBAPI || isDoubaoVideo2
-	if isNativeSeedanceAPI && (!isZQBAPI || originTask.Properties.VideoProtocol != "seedance_native") {
+	if isNativeSeedanceAPI && ((!isZQBAPI && !isDoubaoVideo2) || originTask.Properties.VideoProtocol != "seedance_native") {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusNotFound)
 		return
 	}

@@ -283,8 +283,8 @@ func validateZQBAPIOpenAIVideoRequest(c *gin.Context, info *relaycommon.RelayInf
 // handling are inspected here; provider-owned optional fields remain in Raw
 // and are forwarded unchanged.
 func validateZQBAPINativeSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if info == nil || info.ChannelType != constant.ChannelTypeZQBAPI {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("native Seedance protocol requires a ZQBAPI channel"), "unsupported_channel", http.StatusBadRequest)
+	if info == nil || (info.ChannelType != constant.ChannelTypeZQBAPI && info.ChannelType != constant.ChannelTypeDoubaoVideo2) {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("native Seedance protocol requires a ZQBAPI or DoubaoVideo2.0 channel"), "unsupported_channel", http.StatusBadRequest)
 	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {

@@ -92,6 +92,9 @@ const (
 	// ContextKeyDoubaoVideo2RetryPayload stores a type-62-only provider request
 	// for one material-library recovery attempt.
 	ContextKeyDoubaoVideo2RetryPayload ContextKey = "doubao_video2_retry_payload"
+	// ContextKeyDoubaoVideo2MaterialChannelId pins requests containing a
+	// user-library asset:// reference to the channel/account that owns it.
+	ContextKeyDoubaoVideo2MaterialChannelId ContextKey = "doubao_video2_material_channel_id"
 	// ContextKeyZQBAPIOpenAIVideoResponse stores a successful compatibility
 	// response until the controller has durably inserted the local task.
 	ContextKeyZQBAPIOpenAIVideoResponse ContextKey = "zqbapi_openai_video_response"

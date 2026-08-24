@@ -141,10 +141,12 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 
 // ValidateRequestAndSetAction parses body, validates fields and sets default action.
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	if a.ChannelType == constant.ChannelTypeZQBAPI {
+	if a.ChannelType == constant.ChannelTypeZQBAPI || a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
 		if isZQBAPINativeSeedanceRequest(c) {
 			return validateZQBAPINativeSeedanceRequest(c, info)
 		}
+	}
+	if a.ChannelType == constant.ChannelTypeZQBAPI {
 		if isZQBAPIOpenAIVideoRequest(c) {
 			return validateZQBAPIOpenAIVideoRequest(c, info)
 		}
@@ -328,7 +330,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 	var body *requestPayload
 	nativeRequest, nativeRequestOK := getZQBAPINativeSeedanceRequest(c)
-	if a.ChannelType == constant.ChannelTypeZQBAPI && nativeRequestOK {
+	if (a.ChannelType == constant.ChannelTypeZQBAPI || a.ChannelType == constant.ChannelTypeDoubaoVideo2) && nativeRequestOK {
 		body = nativeRequest.Payload
 		originalModel := body.Model
 		originalMediaURLs := zqbapiNativeSeedanceMediaURLs(body)
@@ -338,8 +340,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err := externalizeInlineMediaToR2(c, info, body); err != nil {
 			return nil, err
 		}
-		if err := a.prepareZQBAPIImages(c, info, body); err != nil {
-			return nil, err
+		if a.ChannelType == constant.ChannelTypeZQBAPI {
+			if err := a.prepareZQBAPIImages(c, info, body); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := a.prepareDoubaoVideo2Images(c, info, body); err != nil {
+				return nil, err
+			}
 		}
 		data, err := mergeZQBAPINativeSeedancePayload(
 			nativeRequest.Raw,
@@ -696,6 +704,8 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 			c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoResponse), responseData)
 			return dResp.ID, responseBody, nil
 		}
+	}
+	if a.ChannelType == constant.ChannelTypeZQBAPI || a.ChannelType == constant.ChannelTypeDoubaoVideo2 {
 		if _, ok := getZQBAPINativeSeedanceRequest(c); ok {
 			responseData, marshalErr := NormalizeZQBAPINativeSeedanceResponse(responseBody, info.PublicTaskID)
 			if marshalErr != nil {

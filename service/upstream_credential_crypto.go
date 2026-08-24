@@ -81,6 +81,10 @@ func (keyring *UpstreamCredentialKeyring) ActiveVersion() int {
 	return keyring.activeVersion
 }
 
+func (keyring *UpstreamCredentialKeyring) IsEncrypted() bool {
+	return keyring != nil && !keyring.plaintext && keyring.activeVersion > 0
+}
+
 func (keyring *UpstreamCredentialKeyring) EncryptJSON(recordKind string, recordId int, credentialVersion int64, value any) (*UpstreamCredentialEnvelope, error) {
 	plaintext, err := common.Marshal(value)
 	if err != nil {

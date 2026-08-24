@@ -1084,6 +1084,15 @@ func GetChannelsByType(startIdx int, num int, idSort bool, channelType int) ([]*
 	return channels, err
 }
 
+// GetEnabledChannelByType returns a complete channel record, including its
+// credential. It is intended for trusted server-side provider operations.
+func GetEnabledChannelByType(channelType int) (*Channel, error) {
+	channel := &Channel{}
+	err := DB.Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).
+		Order("priority desc").Order("id asc").First(channel).Error
+	return channel, err
+}
+
 // Count channels of specific type
 func CountChannelsByType(channelType int) (int64, error) {
 	var count int64

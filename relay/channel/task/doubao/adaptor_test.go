@@ -781,6 +781,42 @@ func TestNormalizeZQBAPINativeSeedanceResponseUsesPublicTaskID(t *testing.T) {
 	}
 }
 
+func TestDoubaoVideo2NativeSeedancePreservesProviderFields(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(`{
+		"model":"doubao-seedance-2-0-260128",
+		"content":[{"type":"text","text":"keep provider fields"}],
+		"duration":5,
+		"priority":0,
+		"provider_future_field":{"enabled":true}
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(constant.ContextKeyZQBAPINativeSeedanceRequest), true)
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("native validation failed: %+v", taskErr)
+	}
+	body, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["provider_future_field"] == nil || payload["priority"] != float64(0) {
+		t.Fatalf("provider fields were not preserved: %s", data)
+	}
+}
+
 func TestMergeZQBAPINativeSeedancePayloadUpdatesExternalizedMedia(t *testing.T) {
 	raw := []byte(`{
         "model":"doubao-seedance-2-0-260128",

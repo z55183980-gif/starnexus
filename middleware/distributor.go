@@ -51,6 +51,15 @@ func Distribute() func(c *gin.Context) {
 			)
 			return
 		}
+		materialChannelID, err := resolveDoubaoVideo2MaterialChannel(c)
+		if err != nil {
+			abortWithOpenAiMessage(c, http.StatusForbidden, err.Error(), types.ErrorCodeInvalidRequest)
+			return
+		}
+		if materialChannelID > 0 {
+			common.SetContextKey(c, constant.ContextKeyDoubaoVideo2MaterialChannelId, materialChannelID)
+		}
+		channelFilter := service.ChannelFilterForContext(c, c.Request.URL.Path, modelRequest.Model)
 		if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
@@ -64,6 +73,10 @@ func Distribute() func(c *gin.Context) {
 			}
 			if channel.Status != common.ChannelStatusEnabled {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+				return
+			}
+			if materialChannelID > 0 && channel.Id != materialChannelID {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, "the selected channel does not own the requested material asset", types.ErrorCodeInvalidRequest)
 				return
 			}
 			if !service.ChannelSupportsRequestPath(channel, c.Request.URL.Path, modelRequest.Model) {
@@ -120,7 +133,7 @@ func Distribute() func(c *gin.Context) {
 
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					preferred, err := model.CacheGetChannel(preferredChannelID)
-					if err == nil && service.ChannelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+					if err == nil && channelFilter(preferred) {
 						if preferred.Status != common.ChannelStatusEnabled {
 							if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 								abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
@@ -152,7 +165,7 @@ func Distribute() func(c *gin.Context) {
 						ModelName:  modelRequest.Model,
 						TokenGroup: usingGroup,
 						Retry:      common.GetPointer(0),
-					}, service.ChannelFilterForRequestPath(c.Request.URL.Path, modelRequest.Model))
+					}, channelFilter)
 					if err != nil {
 						showGroup := usingGroup
 						if usingGroup == "auto" {
@@ -195,6 +208,57 @@ func Distribute() func(c *gin.Context) {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+func resolveDoubaoVideo2MaterialChannel(c *gin.Context) (int, error) {
+	if c == nil || c.Request == nil || !strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json") {
+		return 0, nil
+	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return 0, err
+	}
+	body, err := storage.Bytes()
+	if err != nil {
+		return 0, err
+	}
+	if _, err = storage.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	c.Request.Body = io.NopCloser(storage)
+	var payload any
+	if err := common.Unmarshal(body, &payload); err != nil {
+		return 0, nil
+	}
+	ids := make([]string, 0)
+	seen := map[string]struct{}{}
+	var visit func(any)
+	visit = func(value any) {
+		switch typed := value.(type) {
+		case map[string]any:
+			for _, child := range typed {
+				visit(child)
+			}
+		case []any:
+			for _, child := range typed {
+				visit(child)
+			}
+		case string:
+			if !strings.HasPrefix(typed, "asset://") {
+				return
+			}
+			id := strings.TrimSpace(strings.TrimPrefix(typed, "asset://"))
+			if id == "" {
+				return
+			}
+			if _, exists := seen[id]; !exists {
+				seen[id] = struct{}{}
+				ids = append(ids, id)
+			}
+		}
+	}
+	visit(payload)
+	return model.ResolveDoubaoVideo2UserAssetChannel(c.GetInt("id"), ids)
 }
 
 func compactModelEndpointMismatch(requestPath string, modelName string) bool {

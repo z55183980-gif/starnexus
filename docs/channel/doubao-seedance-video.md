@@ -1,6 +1,6 @@
 # 星域互联（Starnexus）Doubao Seedance 系列视频生成接入规范
 
-**文档版本：** 1.3
+**文档版本：** 1.5
 **适用范围：** DoubaoVideo2.0 渠道（渠道类型 62）的 Seedance 系列视频模型
 **读者：** API 调用方、业务后端、客户端 SDK 和运维人员
 
@@ -24,7 +24,7 @@ flowchart LR
 3. 保存接口返回的公开任务 ID；
 4. 轮询任务状态，并通过内容接口读取结果。
 
-调用方和网关均不需要管理素材组、素材凭据或内部素材引用。公网 URL 必须在上游读取期间保持可用；上传文件则由网关直接转换为数据 URL 后转发。
+普通调用方无需管理素材组或上游素材凭据。需要复用已审核素材时，登录用户可以在“豆包视频 → 素材库”自行上传，随后在生成请求中使用页面显示的 `asset://<Id>`；网关会把请求固定到创建该素材的同一渠道。公网 URL 必须在上游读取期间保持可用；上传文件则由网关直接转换为数据 URL 后转发。
 
 ## 2. 认证
 
@@ -71,7 +71,18 @@ POST /v1/video/generations
 
 创建成功后，响应中的 `id` 或 `task_id` 是公开任务 ID。调用方不得依赖或猜测内部任务标识。
 
-### 3.1 OpenAI Videos 兼容接口
+### 3.1 火山方舟原生 Seedance 接口
+
+DoubaoVideo2.0 支持与 ZQBAPI 相同的原生接口：
+
+```http
+POST /api/v3/contents/generations/tasks
+GET /api/v3/contents/generations/tasks/{task_id}
+```
+
+创建请求使用火山方舟 `model + content[]` 结构。网关只读取路由、校验和计费需要的字段；未识别的上游扩展字段、显式 `false` 和显式 `0` 会原样保留。创建和查询响应保持原生字段结构，仅把上游内部任务 ID 替换为网关公开任务 ID。
+
+### 3.2 OpenAI Videos 兼容接口
 
 ```http
 POST /v1/videos
@@ -172,6 +183,41 @@ DoubaoVideo2.0 的素材配置位于渠道编辑页的“DoubaoVideo2.0 素材�
 
 素材创建是非幂等操作。网关不会在网络结果不确定时自动重复 `CreateAsset`，避免生成重复素材；`GetAsset` 等只读查询允许有限重试。
 
+### 5.2 用户素材库与访问密钥
+
+登录用户可以使用以下菜单：
+
+- “豆包视频 → 素材库”：创建 AIGC 素材组，上传图片、视频或音频，并同步 `Processing`、`Active`、`Rejected`、`Failed` 审核状态；
+- “豆包视频 → 访问密钥”：创建最多两组火山引擎格式的 `AKLT...` Access Key ID 和 Secret Access Key。Secret Access Key 只在创建时显示一次，并使用服务端密钥环加密保存。
+
+用户上传流程为：文件先进入已配置的私有 R2 临时存储，网关获得短期可读 URL 后，使用素材组绑定的类型 62 渠道调用其个性化素材接口。这里有意保留 DoubaoVideo2.0 上游的 `ApiKey` 请求头、`/api/support/v1/asset` 后缀以及 `CreateAssetGroup`、`CreateAsset`、`GetAsset` Action，不会改成 ZQBAPI 的素材上传鉴权。
+
+素材审核通过后，页面显示 `asset://<Id>`。该引用仅能由素材所有者使用，并且生成请求的首次路由和失败重试都会固定到创建素材的渠道；未审核素材、他人素材或来自不同渠道的混合素材会被拒绝。
+
+访问密钥入口提供火山引擎兼容请求形式：
+
+```http
+POST /api/doubao-video/openapi?Action=CreateAsset&Version=2024-01-01
+Authorization: HMAC-SHA256 Credential=AKLT.../<date>/cn-beijing/ark/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=...
+X-Date: <UTC yyyyMMddTHHmmssZ>
+X-Content-Sha256: <请求体 SHA-256>
+```
+
+支持 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets`。这是用户侧兼容入口；它不会向用户暴露类型 62 渠道的 URL 或上游 `ApiKey`。
+
+部署用户素材库还需配置：
+
+```env
+UPSTREAM_ACCOUNT_CREDENTIAL_KEYS={"1":"<32-byte-key 的 Base64>"}
+UPSTREAM_ACCOUNT_ACTIVE_KEY_VERSION=1
+DOUBAO_VIDEO2_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+DOUBAO_VIDEO2_R2_ACCESS_KEY_ID=<R2 S3 access key id>
+DOUBAO_VIDEO2_R2_SECRET_ACCESS_KEY=<R2 S3 secret access key>
+DOUBAO_VIDEO2_R2_BUCKET=starnexus-video-inputs
+```
+
+未配置加密密钥环时禁止创建 Secret Access Key；未配置 R2 时禁止从用户端上传文件。
+
 ## 6. 图片限制
 
 - URL 下载大小受服务端配置限制，默认不超过 64 MB；
@@ -269,4 +315,4 @@ GET /v1/videos/{task_id}/content
 4. 创建成功后立即保存公开任务 ID；
 5. 按 2～5 秒间隔轮询，遇到 `RETRYING` 继续等待；
 6. 完成后通过 `/v1/videos/{task_id}/content` 获取视频；
-7. 不创建或管理素材组、素材凭据、`file_id` 或内部素材引用。
+7. 普通 URL/Base64 接入无需管理素材；需要复用用户素材库时，只使用本人已审核的 `asset://<Id>`。

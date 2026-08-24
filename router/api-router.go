@@ -418,6 +418,24 @@ func SetApiRouter(router *gin.Engine) {
 			tokenRoute.POST("/batch/keys", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetTokenKeysBatch)
 		}
 
+		// User-owned DoubaoVideo2.0 material library. Dashboard operations use
+		// the signed-in session; the OpenAPI endpoint uses Volcengine-style AK/SK
+		// HMAC authentication implemented by the controller.
+		apiRouter.POST("/doubao-video/openapi", middleware.CriticalRateLimit(), controller.DoubaoVideo2MaterialOpenAPI)
+		doubaoVideoRoute := apiRouter.Group("/doubao-video")
+		doubaoVideoRoute.Use(middleware.UserAuth())
+		{
+			doubaoVideoRoute.GET("/material-groups", controller.ListDoubaoVideo2UserAssetGroups)
+			doubaoVideoRoute.POST("/material-groups", middleware.CriticalRateLimit(), controller.CreateDoubaoVideo2UserAssetGroup)
+			doubaoVideoRoute.GET("/materials", controller.ListDoubaoVideo2UserAssets)
+			doubaoVideoRoute.POST("/materials/upload", middleware.UploadRateLimit(), controller.UploadDoubaoVideo2UserAsset)
+			doubaoVideoRoute.POST("/materials/sync", middleware.CriticalRateLimit(), controller.SyncDoubaoVideo2UserAssets)
+			doubaoVideoRoute.GET("/access-keys", controller.ListDoubaoVideo2AccessKeys)
+			doubaoVideoRoute.POST("/access-keys", middleware.CriticalRateLimit(), controller.CreateDoubaoVideo2AccessKey)
+			doubaoVideoRoute.PATCH("/access-keys/:id", middleware.CriticalRateLimit(), controller.UpdateDoubaoVideo2AccessKey)
+			doubaoVideoRoute.DELETE("/access-keys/:id", middleware.CriticalRateLimit(), controller.DeleteDoubaoVideo2AccessKey)
+		}
+
 		usageRoute := apiRouter.Group("/usage")
 		usageRoute.Use(middleware.CORS(), middleware.CriticalRateLimit())
 		{

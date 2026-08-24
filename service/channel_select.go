@@ -40,6 +40,19 @@ func ChannelFilterForRequestPath(requestPath string, modelName string) func(*mod
 	}
 }
 
+// ChannelFilterForContext additionally honors account-scoped material assets.
+// Provider material IDs are not portable between channels, so retries must use
+// the same channel that created an asset:// reference.
+func ChannelFilterForContext(c *gin.Context, requestPath string, modelName string) func(*model.Channel) bool {
+	requiredChannelID := common.GetContextKeyInt(c, constant.ContextKeyDoubaoVideo2MaterialChannelId)
+	return func(channel *model.Channel) bool {
+		if requiredChannelID > 0 && (channel == nil || channel.Id != requiredChannelID) {
+			return false
+		}
+		return ChannelSupportsRequestPath(channel, requestPath, modelName)
+	}
+}
+
 type RetryParam struct {
 	Ctx          *gin.Context
 	TokenGroup   string
