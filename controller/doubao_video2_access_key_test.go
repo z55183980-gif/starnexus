@@ -73,13 +73,51 @@ func TestAuthenticateDoubaoVideo2OpenAPIAcceptsOfficialHMACShape(t *testing.T) {
 
 func TestDoubaoVideo2MaterialPublicURLUsesStableHTTPSEndpoint(t *testing.T) {
 	t.Setenv("DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL", "https://gateway.example.com/base?ignored=1#fragment")
-	materialURL, err := doubaoVideo2MaterialPublicURL("stable-token")
+	materialURL, err := doubaoVideo2MaterialPublicURL("stable-token", "image/png")
 	require.NoError(t, err)
-	require.Equal(t, "https://gateway.example.com/base/api/doubao-video/material-content/stable-token", materialURL)
+	require.Equal(t, "https://gateway.example.com/base/api/doubao-video/material-content/stable-token.png", materialURL)
 
 	t.Setenv("DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL", "http://gateway.example.com")
-	_, err = doubaoVideo2MaterialPublicURL("stable-token")
+	_, err = doubaoVideo2MaterialPublicURL("stable-token", "image/png")
 	require.ErrorContains(t, err, "public HTTPS address")
+}
+
+func TestServeDoubaoVideo2UserAssetContentRequiresOwnership(t *testing.T) {
+	previous := model.DB
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/doubao-material-preview.db"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.DoubaoVideo2UserMedia{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previous
+		_ = sqlDB.Close()
+	})
+	t.Setenv("DOUBAO_VIDEO2_R2_ENDPOINT", "https://r2.example.com")
+	t.Setenv("DOUBAO_VIDEO2_R2_ACCESS_KEY_ID", "access-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_SECRET_ACCESS_KEY", "secret-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_BUCKET", "materials")
+	require.NoError(t, db.Create(&model.DoubaoVideo2UserMedia{
+		UserID: 7, AssetID: 11, TokenHash: strings.Repeat("b", 64),
+		ObjectKey: "doubao-video2-material-library/7/object.png", SizeBytes: 10, ContentType: "image/png",
+	}).Error)
+
+	serve := func(userID int) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		context.Request = httptest.NewRequest(http.MethodGet, "/api/doubao-video/materials/11/content", nil)
+		context.Params = gin.Params{{Key: "id", Value: "11"}}
+		context.Set("id", userID)
+		ServeDoubaoVideo2UserAssetContent(context)
+		return recorder
+	}
+
+	owned := serve(7)
+	require.Equal(t, http.StatusTemporaryRedirect, owned.Code)
+	require.Contains(t, owned.Header().Get("Location"), "X-Amz-Signature=")
+	require.Equal(t, "private, no-store", owned.Header().Get("Cache-Control"))
+	require.Equal(t, http.StatusNotFound, serve(8).Code)
 }
 
 func TestServeDoubaoVideo2MaterialContentStreamsObjectWithoutRedirect(t *testing.T) {
@@ -116,7 +154,7 @@ func TestServeDoubaoVideo2MaterialContentStreamsObjectWithoutRedirect(t *testing
 	router := gin.New()
 	router.GET("/api/doubao-video/material-content/:token", ServeDoubaoVideo2MaterialContent)
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/doubao-video/material-content/"+token, nil))
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/doubao-video/material-content/"+token+".png", nil))
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
 	require.Equal(t, payload, recorder.Body.Bytes())

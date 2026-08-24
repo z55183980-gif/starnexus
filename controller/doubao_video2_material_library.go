@@ -40,6 +40,12 @@ type createDoubaoVideo2UserAssetFromURLRequest struct {
 	AssetType string `json:"AssetType"`
 }
 
+type doubaoVideo2UserAssetResponse struct {
+	*model.DoubaoVideo2UserAsset
+	PreviewURL  string `json:"preview_url,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+}
+
 func ListDoubaoVideo2UserAssetGroups(c *gin.Context) {
 	groups, err := model.ListDoubaoVideo2UserAssetGroups(c.GetInt("id"), c.Query("keyword"))
 	if err != nil {
@@ -129,8 +135,30 @@ func ListDoubaoVideo2UserAssets(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	assetIDs := make([]int64, 0, len(assets))
+	for _, asset := range assets {
+		assetIDs = append(assetIDs, asset.ID)
+	}
+	media, err := model.ListDoubaoVideo2UserMediaByAssetIDs(assetIDs, userID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	mediaByAssetID := make(map[int64]*model.DoubaoVideo2UserMedia, len(media))
+	for _, item := range media {
+		mediaByAssetID[item.AssetID] = item
+	}
+	items := make([]*doubaoVideo2UserAssetResponse, 0, len(assets))
+	for _, asset := range assets {
+		item := &doubaoVideo2UserAssetResponse{DoubaoVideo2UserAsset: asset}
+		if source := mediaByAssetID[asset.ID]; source != nil {
+			item.PreviewURL = fmt.Sprintf("/api/doubao-video/materials/%d/content", asset.ID)
+			item.ContentType = source.ContentType
+		}
+		items = append(items, item)
+	}
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(assets)
+	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -150,6 +178,9 @@ func GetDoubaoVideo2MaterialStorageUsage(c *gin.Context) {
 // material importer does not reliably follow HTTP redirects.
 func ServeDoubaoVideo2MaterialContent(c *gin.Context) {
 	token := strings.TrimSpace(c.Param("token"))
+	if extensionIndex := strings.LastIndexByte(token, '.'); extensionIndex > 0 {
+		token = token[:extensionIndex]
+	}
 	if len(token) < 40 || len(token) > 128 {
 		c.Status(http.StatusNotFound)
 		return
@@ -188,6 +219,29 @@ func ServeDoubaoVideo2MaterialContent(c *gin.Context) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Status(response.StatusCode)
 	_, _ = io.Copy(c.Writer, io.LimitReader(response.Body, service.DoubaoVideo2MaximumMediaSize+1))
+}
+
+// ServeDoubaoVideo2UserAssetContent exposes a short-lived preview only after
+// the signed-in user has been verified as the owner of the material.
+func ServeDoubaoVideo2UserAssetContent(c *gin.Context) {
+	assetID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || assetID <= 0 {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	media, err := model.GetDoubaoVideo2UserMediaByAssetID(assetID, c.GetInt("id"))
+	if err != nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	mediaURL, err := service.PresignDoubaoVideo2PersistentMaterial(c.Request.Context(), media.ObjectKey)
+	if err != nil {
+		common.SysError(fmt.Sprintf("presign DoubaoVideo2.0 user material %d: %v", assetID, err))
+		c.AbortWithStatus(http.StatusServiceUnavailable)
+		return
+	}
+	c.Header("Cache-Control", "private, no-store")
+	c.Redirect(http.StatusTemporaryRedirect, mediaURL)
 }
 
 func UploadDoubaoVideo2UserAsset(c *gin.Context) {
@@ -274,7 +328,7 @@ func UploadDoubaoVideo2UserAsset(c *gin.Context) {
 		return
 	}
 	reserved = false
-	stableURL, err := doubaoVideo2MaterialPublicURL(accessToken)
+	stableURL, err := doubaoVideo2MaterialPublicURL(accessToken, contentType)
 	if err != nil {
 		_ = service.DeleteDoubaoVideo2PersistentMaterial(c.Request.Context(), objectKey)
 		_ = model.DeleteDoubaoVideo2UnboundUserMedia(media.ID, userID)
@@ -392,7 +446,7 @@ func doubaoVideo2MaterialTokenHash(token string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func doubaoVideo2MaterialPublicURL(token string) (string, error) {
+func doubaoVideo2MaterialPublicURL(token, contentType string) (string, error) {
 	baseURL := strings.TrimSpace(os.Getenv("DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL"))
 	if baseURL == "" {
 		baseURL = strings.TrimSpace(system_setting.ServerAddress)
@@ -403,7 +457,36 @@ func doubaoVideo2MaterialPublicURL(token string) (string, error) {
 	}
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
-	return strings.TrimRight(parsed.String(), "/") + "/api/doubao-video/material-content/" + url.PathEscape(token), nil
+	extension, ok := doubaoVideo2MaterialFileExtension(contentType)
+	if !ok {
+		return "", errors.New("DoubaoVideo2.0 material content type is not supported")
+	}
+	return strings.TrimRight(parsed.String(), "/") + "/api/doubao-video/material-content/" + url.PathEscape(token) + "." + extension, nil
+}
+
+func doubaoVideo2MaterialFileExtension(contentType string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0])) {
+	case "image/jpeg":
+		return "jpg", true
+	case "image/png":
+		return "png", true
+	case "image/webp":
+		return "webp", true
+	case "image/gif":
+		return "gif", true
+	case "video/mp4":
+		return "mp4", true
+	case "video/webm":
+		return "webm", true
+	case "audio/mpeg":
+		return "mp3", true
+	case "audio/wav", "audio/x-wav":
+		return "wav", true
+	case "audio/mp4", "audio/x-m4a":
+		return "m4a", true
+	default:
+		return "", false
+	}
 }
 
 func normalizeDoubaoVideo2UserAssetType(assetType string) string {
