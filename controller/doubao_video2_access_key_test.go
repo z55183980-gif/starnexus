@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -79,4 +80,44 @@ func TestDoubaoVideo2MaterialPublicURLUsesStableHTTPSEndpoint(t *testing.T) {
 	t.Setenv("DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL", "http://gateway.example.com")
 	_, err = doubaoVideo2MaterialPublicURL("stable-token")
 	require.ErrorContains(t, err, "public HTTPS address")
+}
+
+func TestServeDoubaoVideo2MaterialContentStreamsObjectWithoutRedirect(t *testing.T) {
+	payload := []byte("persistent-material")
+	r2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(payload)
+	}))
+	defer r2.Close()
+	t.Setenv("DOUBAO_VIDEO2_R2_ENDPOINT", r2.URL)
+	t.Setenv("DOUBAO_VIDEO2_R2_ACCESS_KEY_ID", "access-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_SECRET_ACCESS_KEY", "secret-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_BUCKET", "material-bucket")
+
+	previous := model.DB
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/doubao-material-content.db"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.DoubaoVideo2UserMedia{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previous
+		_ = sqlDB.Close()
+	})
+	token := strings.Repeat("stable-token-", 4)
+	require.NoError(t, db.Create(&model.DoubaoVideo2UserMedia{
+		UserID: 1, TokenHash: doubaoVideo2MaterialTokenHash(token),
+		ObjectKey: "doubao-video2-material-library/1/object.png", SizeBytes: int64(len(payload)), ContentType: "image/png",
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/doubao-video/material-content/:token", ServeDoubaoVideo2MaterialContent)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/doubao-video/material-content/"+token, nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
+	require.Equal(t, payload, recorder.Body.Bytes())
 }

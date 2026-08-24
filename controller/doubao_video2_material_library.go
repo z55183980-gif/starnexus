@@ -145,7 +145,9 @@ func GetDoubaoVideo2MaterialStorageUsage(c *gin.Context) {
 
 // ServeDoubaoVideo2MaterialContent is intentionally unauthenticated: the
 // upstream API-key account and its preview UI must be able to fetch it. The
-// random URL token is the bearer credential and only its hash is stored.
+// random URL token is the bearer credential and only its hash is stored. The
+// response streams the object instead of redirecting because the provider's
+// material importer does not reliably follow HTTP redirects.
 func ServeDoubaoVideo2MaterialContent(c *gin.Context) {
 	token := strings.TrimSpace(c.Param("token"))
 	if len(token) < 40 || len(token) > 128 {
@@ -163,8 +165,29 @@ func ServeDoubaoVideo2MaterialContent(c *gin.Context) {
 		c.Status(http.StatusServiceUnavailable)
 		return
 	}
+	request, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, mediaURL, nil)
+	if err != nil {
+		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+	if rangeHeader := strings.TrimSpace(c.GetHeader("Range")); rangeHeader != "" {
+		request.Header.Set("Range", rangeHeader)
+	}
+	response, err := (&http.Client{Timeout: 2 * time.Minute}).Do(request)
+	if err != nil {
+		common.SysError(fmt.Sprintf("read persistent DoubaoVideo2.0 material %d: %v", media.ID, err))
+		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+	defer response.Body.Close()
+	for _, headerName := range []string{"Accept-Ranges", "Content-Length", "Content-Range", "Content-Type", "ETag", "Last-Modified"} {
+		if value := response.Header.Get(headerName); value != "" {
+			c.Header(headerName, value)
+		}
+	}
 	c.Header("Cache-Control", "private, no-store")
-	c.Redirect(http.StatusTemporaryRedirect, mediaURL)
+	c.Status(response.StatusCode)
+	_, _ = io.Copy(c.Writer, io.LimitReader(response.Body, service.DoubaoVideo2MaximumMediaSize+1))
 }
 
 func UploadDoubaoVideo2UserAsset(c *gin.Context) {
