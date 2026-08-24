@@ -5207,7 +5207,7 @@
     "The import file must not exceed 5 MB": "导入文件不能超过 5 MB",
     "The input price above is the Default/720p base. Other resolution and with-video cells are billed relative to that base.": "上方输入价格即默认/720p 基准价。其它分辨率与「含视频输入」单元格按相对该基准的比例计费。",
     "The mapped upstream model(s)": "映射的上游模型",
-    "The material library has reached its limit. Delete existing materials or contact support to adjust it.": "素材库达到限额，请删除已有素材或联系客服调整",
+    "The material library has reached its limit. Delete existing materials or contact support to adjust it.": "素材库达到限额请删除已有素材或联系客服调整",
     "The material will be deleted from the upstream API key account and its storage will be released. This action cannot be undone.": "素材将从上游 API Key 账户删除并释放所占容量，此操作无法撤销。",
     "The model you're looking for doesn't exist.": "您查找的模型不存在。",
     "The name displayed across the application": "在整个应用程序中显示的名称",

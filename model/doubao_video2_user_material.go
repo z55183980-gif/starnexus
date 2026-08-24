@@ -19,7 +19,7 @@ const (
 	DoubaoVideo2AccessKeyStatusActive   = 1
 )
 
-var ErrDoubaoVideo2MaterialStorageLimit = errors.New("素材库达到限额，请删除已有素材或联系客服调整")
+var ErrDoubaoVideo2MaterialStorageLimit = errors.New("素材库达到限额请删除已有素材或联系客服调整")
 
 // DoubaoVideo2UserAssetGroup maps one user-owned material group to the exact
 // channel/account that created it upstream. Assets must remain pinned to that
