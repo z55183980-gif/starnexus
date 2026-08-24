@@ -214,12 +214,11 @@ DOUBAO_VIDEO2_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 DOUBAO_VIDEO2_R2_ACCESS_KEY_ID=<R2 S3 access key id>
 DOUBAO_VIDEO2_R2_SECRET_ACCESS_KEY=<R2 S3 secret access key>
 DOUBAO_VIDEO2_R2_BUCKET=starnexus-video-inputs
-DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL=https://<用户和上游均可访问的网关域名>
 ```
 
 未配置加密密钥环时禁止创建 Secret Access Key；未配置 R2 时禁止从用户端上传文件。
 
-用户素材库默认容量为 3 GiB。上传文件永久保留到对应素材从上游 API Key 账户删除；删除素材时同时删除 R2 原文件并释放容量。达到限额时返回“素材库达到限额，请删除已有素材或联系客服调整”。单个用户需要扩容时，可由运维调整 `users.doubao_video2_material_limit_bytes`；值为 `0` 时使用默认 3 GiB。
+用户素材库默认容量为 3 GiB。上传文件永久保留到对应素材从上游 API Key 账户删除；提交上游时使用短期签名的 R2 地址，用户端预览则按需生成新签名地址。删除素材时同时删除 R2 原文件并释放容量。达到限额时返回“素材库达到限额，请删除已有素材或联系客服调整”。单个用户需要扩容时，可由运维调整 `users.doubao_video2_material_limit_bytes`；值为 `0` 时使用默认 3 GiB。
 
 ## 6. 图片限制
 

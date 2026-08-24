@@ -328,14 +328,14 @@ func UploadDoubaoVideo2UserAsset(c *gin.Context) {
 		return
 	}
 	reserved = false
-	stableURL, err := doubaoVideo2MaterialPublicURL(accessToken, contentType)
+	upstreamURL, err := service.PresignDoubaoVideo2PersistentMaterial(c.Request.Context(), objectKey)
 	if err != nil {
 		_ = service.DeleteDoubaoVideo2PersistentMaterial(c.Request.Context(), objectKey)
 		_ = model.DeleteDoubaoVideo2UnboundUserMedia(media.ID, userID)
 		common.ApiError(c, err)
 		return
 	}
-	asset, err := createDoubaoVideo2UserAssetFromURLWithMedia(c.Request.Context(), userID, group, stableURL, name, assetType, media.ID)
+	asset, err := createDoubaoVideo2UserAssetFromURLWithMedia(c.Request.Context(), userID, group, upstreamURL, name, assetType, media.ID)
 	if err != nil {
 		if doubaorelay.IsDoubaoVideo2MaterialCreateAmbiguous(err) {
 			common.SysError(fmt.Sprintf("retain ambiguous DoubaoVideo2.0 material source media_id=%d user_id=%d: %v", media.ID, userID, err))
