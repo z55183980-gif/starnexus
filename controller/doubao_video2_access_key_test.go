@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -158,4 +161,101 @@ func TestServeDoubaoVideo2MaterialContentStreamsObjectWithoutRedirect(t *testing
 	require.Equal(t, http.StatusOK, recorder.Code)
 	require.Equal(t, "image/png", recorder.Header().Get("Content-Type"))
 	require.Equal(t, payload, recorder.Body.Bytes())
+}
+
+func TestDeleteDoubaoVideo2UserAssetDeletesR2BeforeReleasingStorage(t *testing.T) {
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		require.Equal(t, http.MethodPost, request.Method)
+		require.Equal(t, "DeleteAsset", request.URL.Query().Get("Action"))
+		require.Equal(t, "upstream-api-key", request.Header.Get("ApiKey"))
+		upstreamCalls++
+		w.Header().Set("Content-Type", "application/json")
+		if upstreamCalls == 1 {
+			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"delete-request"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"delete-retry","Error":{"Code":"ResourceNotFound","Message":"asset does not exist"}}}`))
+	}))
+	defer upstream.Close()
+
+	r2Calls := 0
+	r2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		require.Equal(t, http.MethodDelete, request.Method)
+		require.Contains(t, request.URL.EscapedPath(), "doubao-video2-material-library")
+		r2Calls++
+		if r2Calls == 1 {
+			http.Error(w, "temporary failure", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer r2.Close()
+	t.Setenv("DOUBAO_VIDEO2_R2_ENDPOINT", r2.URL)
+	t.Setenv("DOUBAO_VIDEO2_R2_ACCESS_KEY_ID", "access-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_SECRET_ACCESS_KEY", "secret-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_BUCKET", "materials")
+
+	previous := model.DB
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/doubao-material-delete.db"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.User{},
+		&model.Channel{},
+		&model.DoubaoVideo2UserAssetGroup{},
+		&model.DoubaoVideo2UserAsset{},
+		&model.DoubaoVideo2UserMedia{},
+	))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previous
+		_ = sqlDB.Close()
+	})
+
+	user := &model.User{Username: "material-delete-user", Password: "not-a-real-password", DoubaoVideo2MaterialBytes: 10}
+	require.NoError(t, db.Create(user).Error)
+	channel := &model.Channel{
+		Type: constant.ChannelTypeDoubaoVideo2, Status: common.ChannelStatusEnabled,
+		Name: "doubao-material-delete", Key: "upstream-api-key", BaseURL: common.GetPointer(upstream.URL),
+	}
+	require.NoError(t, db.Create(channel).Error)
+	group := &model.DoubaoVideo2UserAssetGroup{
+		UserID: user.Id, ChannelID: channel.Id, ProviderGroupID: "group-delete", Name: "group",
+		GroupType: "AIGC", Status: model.DoubaoVideo2UserMaterialStatusActive, AssetCount: 1,
+	}
+	require.NoError(t, db.Create(group).Error)
+	asset := &model.DoubaoVideo2UserAsset{
+		UserID: user.Id, AssetGroupID: group.ID, ChannelID: channel.Id,
+		ProviderAssetID: "asset-delete", Name: "asset", AssetType: "Image", Status: model.DoubaoVideo2UserMaterialStatusActive,
+	}
+	require.NoError(t, db.Create(asset).Error)
+	media := &model.DoubaoVideo2UserMedia{
+		UserID: user.Id, AssetID: asset.ID, TokenHash: strings.Repeat("d", 64),
+		ObjectKey: "doubao-video2-material-library/1/object.png", SizeBytes: 10, ContentType: "image/png",
+	}
+	require.NoError(t, db.Create(media).Error)
+
+	err = deleteDoubaoVideo2UserAsset(t.Context(), user.Id, asset)
+	require.ErrorContains(t, err, "delete R2 object returned HTTP 503")
+	_, err = model.GetDoubaoVideo2UserAsset(asset.ID, user.Id)
+	require.NoError(t, err, "database record must remain while R2 deletion is incomplete")
+	usage, err := model.GetDoubaoVideo2StorageUsage(user.Id)
+	require.NoError(t, err)
+	require.Equal(t, int64(10), usage.UsedBytes, "storage must not be released before R2 deletion succeeds")
+
+	require.NoError(t, deleteDoubaoVideo2UserAsset(t.Context(), user.Id, asset))
+	require.Equal(t, 2, upstreamCalls)
+	require.Equal(t, 2, r2Calls)
+	_, err = model.GetDoubaoVideo2UserAsset(asset.ID, user.Id)
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound))
+	_, err = model.GetDoubaoVideo2UserMediaByAssetID(asset.ID, user.Id)
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound))
+	usage, err = model.GetDoubaoVideo2StorageUsage(user.Id)
+	require.NoError(t, err)
+	require.Zero(t, usage.UsedBytes)
+	group, err = model.GetDoubaoVideo2UserAssetGroup(group.ID, user.Id)
+	require.NoError(t, err)
+	require.Zero(t, group.AssetCount)
 }
