@@ -76,7 +76,6 @@
     "{{n}} model(s) selected": "Đã chọn {{n}} model",
     "{{ready}} available / {{total}} total": "{{ready}} khả dụng / tổng {{total}}",
     "{{ready}} ready / {{total}} total": "{{ready}} sẵn sàng / tổng {{total}}",
-    "{{remaining}} remaining": "Còn lại {{remaining}}",
     "{{success}} of {{total}} user operations completed": "Đã hoàn tất {{success}} trên {{total}} thao tác người dùng",
     "{{success}} success / {{errors}} errors": "{{success}} thành công / {{errors}} lỗi",
     "{{tier}} price for {{model}}": "Giá {{tier}} cho {{model}}",

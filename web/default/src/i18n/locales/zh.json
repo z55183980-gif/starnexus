@@ -76,7 +76,6 @@
     "{{n}} model(s) selected": "已选 {{n}} 个模型",
     "{{ready}} available / {{total}} total": "{{ready}} 个可调度 / 共 {{total}} 个",
     "{{ready}} ready / {{total}} total": "{{ready}} 个就绪 / 共 {{total}} 个",
-    "{{remaining}} remaining": "剩余 {{remaining}}",
     "{{success}} of {{total}} user operations completed": "已完成 {{total}} 个用户操作中的 {{success}} 个",
     "{{success}} success / {{errors}} errors": "{{success}} 次成功 / {{errors}} 次错误",
     "{{tier}} price for {{model}}": "{{model}} 的 {{tier}} 价格",

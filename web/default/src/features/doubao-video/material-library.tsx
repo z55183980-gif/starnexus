@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react'
 import dayjs from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  ArrowLeft01Icon,
   Delete02Icon,
   Edit02Icon,
   FileUploadIcon,
@@ -69,7 +70,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout'
 import {
@@ -288,7 +288,6 @@ export function DoubaoVideoMaterialLibrary() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [keyword, setKeyword] = useState('')
-  const [activeTab, setActiveTab] = useState<'groups' | 'assets'>('groups')
   const [assetGroupId, setAssetGroupId] = useState<number | null>(null)
   const [groupDialog, setGroupDialog] = useState(false)
   const [editingGroup, setEditingGroup] = useState<MaterialGroup | null>(null)
@@ -479,23 +478,14 @@ export function DoubaoVideoMaterialLibrary() {
           </Button>
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <Tabs
-            value={activeTab}
-            onValueChange={(value) =>
-              setActiveTab(value as 'groups' | 'assets')
-            }
-          >
-            <div className='flex flex-wrap items-center justify-between gap-3'>
-              <TabsList>
-                <TabsTrigger value='groups'>{t('Material groups')}</TabsTrigger>
-                <TabsTrigger value='assets'>{t('Materials')}</TabsTrigger>
-              </TabsList>
-              {storage && (
+          <div className='flex flex-col gap-3'>
+            {storage && (
+              <div className='flex justify-end'>
                 <Alert
                   variant={
                     storage.remaining_bytes === 0 ? 'destructive' : 'default'
                   }
-                  className='w-full max-w-sm gap-1.5 p-3 sm:w-80'
+                  className='w-full max-w-sm sm:w-80'
                 >
                   <div className='flex items-center justify-between gap-3'>
                     <div className='min-w-0'>
@@ -519,20 +509,21 @@ export function DoubaoVideoMaterialLibrary() {
                         }
                       </ProgressValue>
                     </Progress>
-                    <span className='text-xs'>
-                      {storage.remaining_bytes === 0
-                        ? t(
-                            'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
-                          )
-                        : t('{{remaining}} remaining', {
-                            remaining: formatBytes(storage.remaining_bytes),
-                          })}
-                    </span>
+                    {storage.remaining_bytes === 0 && (
+                      <span className='text-xs'>
+                        {t(
+                          'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
+                        )}
+                      </span>
+                    )}
                   </AlertDescription>
                 </Alert>
-              )}
-            </div>
-            <TabsContent value='groups' className='mt-3 space-y-3'>
+              </div>
+            )}
+            <div
+              id='doubao-video-material-groups'
+              className='flex flex-col gap-3'
+            >
               <div className='bg-card flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3'>
                 <Input
                   className='max-w-xs'
@@ -602,7 +593,12 @@ export function DoubaoVideoMaterialLibrary() {
                                 className='text-primary h-8 px-2'
                                 onClick={() => {
                                   setAssetGroupId(group.id)
-                                  setActiveTab('assets')
+                                  document
+                                    .getElementById('doubao-video-materials')
+                                    ?.scrollIntoView({
+                                      behavior: 'smooth',
+                                      block: 'start',
+                                    })
                                 }}
                               >
                                 <HugeiconsIcon icon={FolderOpenIcon} />
@@ -625,8 +621,34 @@ export function DoubaoVideoMaterialLibrary() {
                   </Table>
                 )}
               </div>
-            </TabsContent>
-            <TabsContent value='assets' className='mt-3'>
+            </div>
+            <div id='doubao-video-materials' className='flex flex-col gap-3'>
+              {assetGroupId !== null && (
+                <div className='flex items-center justify-between gap-3'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => {
+                      setAssetGroupId(null)
+                      document
+                        .getElementById('doubao-video-material-groups')
+                        ?.scrollIntoView({
+                          behavior: 'smooth',
+                          block: 'start',
+                        })
+                    }}
+                  >
+                    <HugeiconsIcon
+                      icon={ArrowLeft01Icon}
+                      data-icon='inline-start'
+                    />
+                    {t('Back')}
+                  </Button>
+                  <span className='text-muted-foreground text-sm'>
+                    {groupsById.get(assetGroupId)?.name ?? t('Material group')}
+                  </span>
+                </div>
+              )}
               <div className='bg-card overflow-hidden rounded-xl border'>
                 {assets.length === 0 ? (
                   <Empty className='min-h-52 border-0'>
@@ -752,8 +774,8 @@ export function DoubaoVideoMaterialLibrary() {
                   </Table>
                 )}
               </div>
-            </TabsContent>
-          </Tabs>
+            </div>
+          </div>
         </SectionPageLayout.Content>
       </SectionPageLayout>
 

@@ -76,7 +76,6 @@
     "{{n}} model(s) selected": "{{n}} 件のモデルを選択済み",
     "{{ready}} available / {{total}} total": "利用可能 {{ready}} / 合計 {{total}}",
     "{{ready}} ready / {{total}} total": "準備完了 {{ready}} / 合計 {{total}}",
-    "{{remaining}} remaining": "残り {{remaining}}",
     "{{success}} of {{total}} user operations completed": "{{total}} 件中 {{success}} 件のユーザー操作が完了しました",
     "{{success}} success / {{errors}} errors": "成功 {{success}} 件 / エラー {{errors}} 件",
     "{{tier}} price for {{model}}": "{{model}} の {{tier}} 価格",

@@ -76,7 +76,6 @@
     "{{n}} model(s) selected": "Выбрано моделей: {{n}}",
     "{{ready}} available / {{total}} total": "Доступно: {{ready}} / всего: {{total}}",
     "{{ready}} ready / {{total}} total": "Готово: {{ready}} / всего: {{total}}",
-    "{{remaining}} remaining": "Осталось {{remaining}}",
     "{{success}} of {{total}} user operations completed": "Выполнено {{success}} из {{total}} операций с пользователями",
     "{{success}} success / {{errors}} errors": "Успешно: {{success}} / ошибок: {{errors}}",
     "{{tier}} price for {{model}}": "Цена {{tier}} для {{model}}",

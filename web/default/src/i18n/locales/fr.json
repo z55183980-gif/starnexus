@@ -76,7 +76,6 @@
     "{{n}} model(s) selected": "{{n}} modèle(s) sélectionné(s)",
     "{{ready}} available / {{total}} total": "{{ready}} disponibles / {{total}} au total",
     "{{ready}} ready / {{total}} total": "{{ready}} prêts / {{total}} au total",
-    "{{remaining}} remaining": "{{remaining}} restants",
     "{{success}} of {{total}} user operations completed": "{{success}} opérations utilisateur sur {{total}} terminées",
     "{{success}} success / {{errors}} errors": "{{success}} succès / {{errors}} erreurs",
     "{{tier}} price for {{model}}": "Prix {{tier}} pour {{model}}",
