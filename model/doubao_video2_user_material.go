@@ -19,7 +19,10 @@ const (
 	DoubaoVideo2AccessKeyStatusActive   = 1
 )
 
-var ErrDoubaoVideo2MaterialStorageLimit = errors.New("素材库达到限额请删除已有素材或联系客服调整")
+var (
+	ErrDoubaoVideo2MaterialStorageLimit  = errors.New("素材库达到限额请删除已有素材或联系客服调整")
+	ErrDoubaoVideo2MaterialGroupNotEmpty = errors.New("material group still contains materials")
+)
 
 // DoubaoVideo2UserAssetGroup maps one user-owned material group to the exact
 // channel/account that created it upstream. Assets must remain pinned to that
@@ -130,6 +133,36 @@ func UpdateDoubaoVideo2UserAssetGroup(id int64, userID int, updates map[string]a
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func ListDoubaoVideo2UserAssetsByGroup(userID int, groupID int64) ([]*DoubaoVideo2UserAsset, error) {
+	assets := make([]*DoubaoVideo2UserAsset, 0)
+	err := DB.Where("user_id = ? AND asset_group_id = ?", userID, groupID).
+		Order("id asc").Find(&assets).Error
+	return assets, err
+}
+
+func DeleteDoubaoVideo2UserAssetGroup(id int64, userID int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var assetCount int64
+		if err := tx.Model(&DoubaoVideo2UserAsset{}).
+			Where("user_id = ? AND asset_group_id = ?", userID, id).
+			Count(&assetCount).Error; err != nil {
+			return err
+		}
+		if assetCount > 0 {
+			return ErrDoubaoVideo2MaterialGroupNotEmpty
+		}
+		result := tx.Where("id = ? AND user_id = ?", id, userID).
+			Delete(&DoubaoVideo2UserAssetGroup{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func ListDoubaoVideo2UserAssets(userID int, groupID int64, keyword string, offset, limit int) ([]*DoubaoVideo2UserAsset, int64, error) {

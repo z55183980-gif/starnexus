@@ -47,6 +47,13 @@ export async function updateMaterialGroup(
   return response.data
 }
 
+export async function deleteMaterialGroup(id: number) {
+  const response = await api.delete<
+    ApiResponse<{ deleted: boolean; deleted_assets: number }>
+  >(`/api/doubao-video/material-groups/${id}`)
+  return response.data
+}
+
 export async function listMaterials(params: {
   groupId?: number
   keyword?: string

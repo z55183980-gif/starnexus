@@ -5991,6 +5991,10 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "Cài đặt tư liệu ZQBAPI"
+    "ZQBAPI material settings": "Cài đặt tư liệu ZQBAPI",
+    "Delete material group?": "Xóa nhóm tư liệu?",
+    "All materials in this group will be deleted from the upstream API key account, their storage will be released, and the material group will be permanently removed. This action cannot be undone.": "Tất cả tư liệu trong nhóm này sẽ bị xóa khỏi tài khoản khóa API thượng nguồn, dung lượng lưu trữ sẽ được giải phóng và nhóm tư liệu sẽ bị xóa vĩnh viễn. Không thể hoàn tác thao tác này.",
+    "Material group deleted": "Đã xóa nhóm tư liệu",
+    "Failed to delete material group": "Không thể xóa nhóm tư liệu"
   }
 }

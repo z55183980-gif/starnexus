@@ -5991,6 +5991,10 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "Настройки материалов ZQBAPI"
+    "ZQBAPI material settings": "Настройки материалов ZQBAPI",
+    "Delete material group?": "Удалить группу материалов?",
+    "All materials in this group will be deleted from the upstream API key account, their storage will be released, and the material group will be permanently removed. This action cannot be undone.": "Все материалы в этой группе будут удалены из учётной записи API-ключа поставщика, занимаемое ими место будет освобождено, а группа материалов будет удалена безвозвратно. Это действие нельзя отменить.",
+    "Material group deleted": "Группа материалов удалена",
+    "Failed to delete material group": "Не удалось удалить группу материалов"
   }
 }

@@ -430,6 +430,7 @@ func SetApiRouter(router *gin.Engine) {
 			doubaoVideoRoute.GET("/material-groups", controller.ListDoubaoVideo2UserAssetGroups)
 			doubaoVideoRoute.POST("/material-groups", middleware.CriticalRateLimit(), controller.CreateDoubaoVideo2UserAssetGroup)
 			doubaoVideoRoute.PATCH("/material-groups/:id", middleware.CriticalRateLimit(), controller.UpdateDoubaoVideo2UserAssetGroup)
+			doubaoVideoRoute.DELETE("/material-groups/:id", middleware.CriticalRateLimit(), controller.DeleteDoubaoVideo2UserAssetGroup)
 			doubaoVideoRoute.GET("/materials", controller.ListDoubaoVideo2UserAssets)
 			doubaoVideoRoute.GET("/materials/storage", controller.GetDoubaoVideo2MaterialStorageUsage)
 			doubaoVideoRoute.POST("/materials/upload", middleware.UploadRateLimit(), controller.UploadDoubaoVideo2UserAsset)

@@ -125,6 +125,41 @@ func UpdateDoubaoVideo2UserAssetGroup(c *gin.Context) {
 	common.ApiSuccess(c, group)
 }
 
+func DeleteDoubaoVideo2UserAssetGroup(c *gin.Context) {
+	groupID, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || groupID <= 0 {
+		common.ApiError(c, errors.New("invalid material group ID"))
+		return
+	}
+	deletedAssets, err := deleteDoubaoVideo2UserAssetGroup(c.Request.Context(), c.GetInt("id"), groupID)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"deleted": true, "deleted_assets": deletedAssets})
+}
+
+func deleteDoubaoVideo2UserAssetGroup(ctx context.Context, userID int, groupID int64) (int, error) {
+	if _, err := model.GetDoubaoVideo2UserAssetGroup(groupID, userID); err != nil {
+		return 0, err
+	}
+	assets, err := model.ListDoubaoVideo2UserAssetsByGroup(userID, groupID)
+	if err != nil {
+		return 0, err
+	}
+	deletedAssets := 0
+	for _, asset := range assets {
+		if err := deleteDoubaoVideo2UserAsset(ctx, userID, asset); err != nil {
+			return deletedAssets, fmt.Errorf("delete material %q from group after deleting %d material(s): %w", asset.Name, deletedAssets, err)
+		}
+		deletedAssets++
+	}
+	if err := model.DeleteDoubaoVideo2UserAssetGroup(groupID, userID); err != nil {
+		return deletedAssets, err
+	}
+	return deletedAssets, nil
+}
+
 func ListDoubaoVideo2UserAssets(c *gin.Context) {
 	userID := c.GetInt("id")
 	_ = syncPendingDoubaoVideo2UserAssets(c.Request.Context(), userID, 20)

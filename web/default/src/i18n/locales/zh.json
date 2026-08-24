@@ -5991,6 +5991,10 @@
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "ZQBAPI 素材设置"
+    "ZQBAPI material settings": "ZQBAPI 素材设置",
+    "Delete material group?": "删除素材组？",
+    "All materials in this group will be deleted from the upstream API key account, their storage will be released, and the material group will be permanently removed. This action cannot be undone.": "该素材组内的所有素材将从上游 API Key 账户同步删除，所占存储空间将被释放，素材组也会被永久移除。此操作无法撤销。",
+    "Material group deleted": "素材组已删除",
+    "Failed to delete material group": "删除素材组失败"
   }
 }

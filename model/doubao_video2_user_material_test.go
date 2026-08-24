@@ -65,6 +65,33 @@ func TestDoubaoVideo2MaterialStorageLimitAndDeletion(t *testing.T) {
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
+func TestDeleteDoubaoVideo2UserAssetGroupRequiresAnEmptyOwnedGroup(t *testing.T) {
+	setupDoubaoVideo2UserMaterialTestDB(t)
+	user := &User{Username: "material-group-delete-user", Password: "not-a-real-password"}
+	require.NoError(t, DB.Create(user).Error)
+	group := &DoubaoVideo2UserAssetGroup{
+		UserID: user.Id, ChannelID: 62, ProviderGroupID: "group-delete", Name: "group",
+		GroupType: "AIGC", Status: DoubaoVideo2UserMaterialStatusActive, AssetCount: 1,
+	}
+	require.NoError(t, CreateDoubaoVideo2UserAssetGroup(group))
+	asset := &DoubaoVideo2UserAsset{
+		UserID: user.Id, AssetGroupID: group.ID, ChannelID: 62, ProviderAssetID: "asset-delete",
+		Name: "asset", AssetType: "Image", Status: DoubaoVideo2UserMaterialStatusActive,
+	}
+	require.NoError(t, DB.Create(asset).Error)
+
+	assets, err := ListDoubaoVideo2UserAssetsByGroup(user.Id, group.ID)
+	require.NoError(t, err)
+	require.Len(t, assets, 1)
+	require.ErrorIs(t, DeleteDoubaoVideo2UserAssetGroup(group.ID, user.Id), ErrDoubaoVideo2MaterialGroupNotEmpty)
+	require.ErrorIs(t, DeleteDoubaoVideo2UserAssetGroup(group.ID, user.Id+1), gorm.ErrRecordNotFound)
+
+	require.NoError(t, DB.Delete(asset).Error)
+	require.NoError(t, DeleteDoubaoVideo2UserAssetGroup(group.ID, user.Id))
+	_, err = GetDoubaoVideo2UserAssetGroup(group.ID, user.Id)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
 func TestResolveDoubaoVideo2UserAssetChannelEnforcesOwnershipStatusAndChannel(t *testing.T) {
 	setupDoubaoVideo2UserMaterialTestDB(t)
 	assets := []*DoubaoVideo2UserAsset{
