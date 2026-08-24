@@ -51,3 +51,31 @@ func TestRespondTaskErrorUsesOpenAIVideoEnvelope(t *testing.T) {
 		t.Fatalf("legacy task error fields leaked: %s", recorder.Body.String())
 	}
 }
+
+func TestRespondTaskErrorUsesNativeSeedanceEnvelope(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", nil)
+
+	respondTaskError(c, &dto.TaskError{
+		Code:       "invalid_duration",
+		Message:    "duration is invalid",
+		StatusCode: http.StatusBadRequest,
+	})
+
+	var response map[string]any
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	errorObject, ok := response["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("native Seedance error envelope missing: %s", recorder.Body.String())
+	}
+	if errorObject["code"] != "InvalidParameter.Duration" {
+		t.Fatalf("native Seedance error code = %#v", errorObject["code"])
+	}
+	if _, exists := response["data"]; exists {
+		t.Fatalf("legacy task error fields leaked: %s", recorder.Body.String())
+	}
+}

@@ -950,6 +950,10 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr == nil {
 		return
 	}
+	if isNativeSeedancePublicRequest(c) {
+		writeNativeSeedanceError(c, taskErr)
+		return
+	}
 	isOpenAIVideoRequest := isOpenAIVideoPublicRequest(c)
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		if isOpenAIVideoRequest {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -814,6 +815,61 @@ func TestDoubaoVideo2NativeSeedancePreservesProviderFields(t *testing.T) {
 	}
 	if payload["provider_future_field"] == nil || payload["priority"] != float64(0) {
 		t.Fatalf("provider fields were not preserved: %s", data)
+	}
+}
+
+func TestDoubaoVideo2NativeSeedanceAcceptsOfficialDurationValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    string
+		duration int
+	}{
+		{name: "seedance 2.0 auto duration", model: "doubao-seedance-2-0-260128", duration: -1},
+		{name: "seedance 2.5 thirty seconds", model: "doubao-seedance-2-5-260628", duration: 30},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			body := fmt.Sprintf(`{"model":%q,"content":[{"type":"text","text":"make a video"}],"duration":%d}`, test.model, test.duration)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+			c.Set(string(constant.ContextKeyZQBAPINativeSeedanceRequest), true)
+			t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2}}
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+				t.Fatalf("official duration was rejected: %+v", taskErr)
+			}
+		})
+	}
+}
+
+func TestDoubaoVideo2NativeSeedanceAcceptsDraftTaskContent(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	raw := `{"model":"doubao-seedance-2-0-260128","content":[{"type":"draft_task","draft_task":{"id":"cgt-draft"}}],"duration":-1}`
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v3/contents/generations/tasks", strings.NewReader(raw))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set(string(constant.ContextKeyZQBAPINativeSeedanceRequest), true)
+	t.Cleanup(func() { common.CleanupBodyStorage(c) })
+
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeDoubaoVideo2}}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	if taskErr := adaptor.ValidateRequestAndSetAction(c, info); taskErr != nil {
+		t.Fatalf("official draft_task content was rejected: %+v", taskErr)
+	}
+	body, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != raw {
+		t.Fatalf("draft_task payload changed:\n got: %s\nwant: %s", data, raw)
 	}
 }
 

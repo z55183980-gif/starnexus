@@ -309,8 +309,10 @@ func validateZQBAPINativeSeedanceRequest(c *gin.Context, info *relaycommon.Relay
 	}
 	if payload.Duration != nil {
 		duration := int(*payload.Duration)
-		if duration < 4 || duration > 15 {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and 15 seconds for this video model"), "invalid_duration", http.StatusBadRequest)
+		if duration != -1 {
+			if limits, ok := doubaoVideo2Limits[strings.TrimSpace(payload.Model)]; ok && (duration < 4 || duration > limits.maxDuration) {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be 4-%d or -1 for model %s", limits.maxDuration, payload.Model), "invalid_duration", http.StatusBadRequest)
+			}
 		}
 	}
 

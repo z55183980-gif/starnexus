@@ -604,6 +604,13 @@ func validateDoubaoVideo2ContentItems(content []ContentItem) error {
 			if role := strings.TrimSpace(item.Role); role != "" && role != "reference_audio" {
 				return fmt.Errorf("content[%d].role %q is not supported for audio_url", index, item.Role)
 			}
+		case "draft_task":
+			if item.DraftTask == nil || strings.TrimSpace(item.DraftTask.ID) == "" {
+				return fmt.Errorf("content[%d].draft_task.id is required", index)
+			}
+			if strings.TrimSpace(item.Role) != "" {
+				return fmt.Errorf("content[%d].role is not supported for draft_task", index)
+			}
 		default:
 			return fmt.Errorf("content[%d].type %q is not supported", index, item.Type)
 		}

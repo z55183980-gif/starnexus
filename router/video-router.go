@@ -12,6 +12,13 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	// Volcengine-compatible material OpenAPI. Keep the historical /api alias
+	// for existing clients, while also accepting the official root Action URL
+	// so an SDK only needs to replace the host and recompute its signature.
+	rootMaterialOpenAPI := router.Group("/")
+	rootMaterialOpenAPI.Use(middleware.RouteTag("api"))
+	rootMaterialOpenAPI.POST("", middleware.CriticalRateLimit(), controller.DoubaoVideo2MaterialOpenAPI)
+
 	// Native Seedance protocol. The request body is kept in the upstream
 	// content[] shape and still runs through starnexus auth, billing, task
 	// persistence and polling. The marker is deliberately route-scoped so the

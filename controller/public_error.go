@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/gin-gonic/gin"
 )
 
@@ -37,6 +38,64 @@ func isOpenAIVideoPublicRequest(c *gin.Context) bool {
 	}
 	channelType := common.GetContextKeyInt(c, constant.ContextKeyChannelType)
 	return channelType == constant.ChannelTypeZQBAPI || channelType == constant.ChannelTypeDoubaoVideo2
+}
+
+func isNativeSeedancePublicRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	path := strings.TrimSuffix(c.Request.URL.Path, "/")
+	return path == "/api/v3/contents/generations/tasks" ||
+		strings.HasPrefix(path, "/api/v3/contents/generations/tasks/")
+}
+
+func nativeSeedancePublicErrorCode(taskErr *dto.TaskError) string {
+	if taskErr == nil {
+		return "InternalServiceError"
+	}
+	switch taskErr.StatusCode {
+	case http.StatusUnauthorized:
+		return "AuthenticationError"
+	case http.StatusForbidden:
+		return "PermissionDenied"
+	case http.StatusNotFound:
+		return "NotFound"
+	case http.StatusTooManyRequests:
+		return "QuotaExceeded"
+	}
+	if taskErr.StatusCode >= http.StatusInternalServerError {
+		return "InternalServiceError"
+	}
+	switch taskErr.Code {
+	case "invalid_duration", "unsupported_duration":
+		return "InvalidParameter.Duration"
+	case "invalid_content":
+		return "InvalidParameter.Content"
+	case "unsupported_model", "model_mapping_failed":
+		return "InvalidParameter.Model"
+	case "task_not_exist", "video_not_found":
+		return "NotFound"
+	case "read_request_body_failed":
+		if taskErr.StatusCode == http.StatusRequestEntityTooLarge {
+			return "RequestTooLarge"
+		}
+		return "InvalidRequest"
+	case "invalid_request", "unsupported_channel":
+		return "InvalidParameter"
+	default:
+		if strings.TrimSpace(taskErr.Code) != "" {
+			return taskErr.Code
+		}
+		return "InvalidRequest"
+	}
+}
+
+func writeNativeSeedanceError(c *gin.Context, taskErr *dto.TaskError) {
+	message := sanitizePublicErrorMessage(taskErr.Message)
+	if taskErr.StatusCode >= http.StatusInternalServerError {
+		message = "The video request could not be completed because of an internal error."
+	}
+	writeOpenAIVideoError(c, taskErr.StatusCode, nativeSeedancePublicErrorCode(taskErr), "", message)
 }
 
 func openAIVideoErrorType(status int) string {

@@ -34,10 +34,11 @@ type createDoubaoVideo2UserAssetGroupRequest struct {
 }
 
 type createDoubaoVideo2UserAssetFromURLRequest struct {
-	GroupID   string `json:"GroupId"`
-	URL       string `json:"URL"`
-	Name      string `json:"Name"`
-	AssetType string `json:"AssetType"`
+	GroupID     string `json:"GroupId"`
+	URL         string `json:"URL"`
+	Name        string `json:"Name"`
+	AssetType   string `json:"AssetType"`
+	ProjectName string `json:"ProjectName,omitempty"`
 }
 
 type doubaoVideo2UserAssetResponse struct {

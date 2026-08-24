@@ -42,8 +42,8 @@ func TestAuthenticateDoubaoVideo2OpenAPIAcceptsOfficialHMACShape(t *testing.T) {
 	created, err := service.CreateDoubaoVideo2AccessKey(9, "sdk")
 	require.NoError(t, err)
 
-	body := []byte(`{"GroupId":"group-1","URL":"https://example.com/a.png","Name":"a","AssetType":"Image"}`)
-	request := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/api/doubao-video/openapi?Action=CreateAsset&Version=2024-01-01", bytes.NewReader(body))
+	body := []byte(`{"GroupId":"group-1","URL":"https://example.com/a.png","Name":"a","AssetType":"Image","ProjectName":"default"}`)
+	request := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/?Action=CreateAsset&Version=2024-01-01", bytes.NewReader(body))
 	xDate := time.Now().UTC().Format("20060102T150405Z")
 	date := xDate[:8]
 	payloadHash := sha256.Sum256(body)
@@ -71,6 +71,9 @@ func TestAuthenticateDoubaoVideo2OpenAPIAcceptsOfficialHMACShape(t *testing.T) {
 	authenticated, err := authenticateDoubaoVideo2OpenAPI(request, body)
 	require.NoError(t, err)
 	require.Equal(t, created.Key.ID, authenticated.ID)
+	var parsed createDoubaoVideo2UserAssetFromURLRequest
+	require.NoError(t, common.Unmarshal(body, &parsed))
+	require.Equal(t, "default", parsed.ProjectName)
 	_, err = authenticateDoubaoVideo2OpenAPI(request, []byte(strings.ReplaceAll(string(body), "a.png", "b.png")))
 	require.ErrorContains(t, err, "does not match")
 }

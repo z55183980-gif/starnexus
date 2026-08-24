@@ -167,7 +167,7 @@ func dispatchDoubaoVideo2MaterialOpenAPI(ctx context.Context, userID int, action
 		if err := model.CreateDoubaoVideo2UserAssetGroup(group); err != nil {
 			return nil, err
 		}
-		return gin.H{"Id": group.ProviderGroupID, "Status": group.Status}, nil
+		return gin.H{"Id": group.ProviderGroupID}, nil
 	case "ListAssetGroups":
 		groups, err := model.ListDoubaoVideo2UserAssetGroups(userID, "")
 		if err != nil {
@@ -198,7 +198,7 @@ func dispatchDoubaoVideo2MaterialOpenAPI(ctx context.Context, userID int, action
 		if err != nil {
 			return nil, err
 		}
-		return gin.H{"Id": asset.ProviderAssetID, "Status": asset.Status}, nil
+		return gin.H{"Id": asset.ProviderAssetID}, nil
 	case "GetAsset":
 		var request struct {
 			ID string `json:"Id"`
