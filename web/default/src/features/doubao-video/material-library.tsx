@@ -605,7 +605,12 @@ export function DoubaoVideoMaterialLibrary() {
                           <TableCell>{group.asset_count}</TableCell>
                           <TableCell>
                             <Badge variant={statusBadge(group.status)}>
-                              {group.status}
+                              {(() => {
+                                const key = assetStatusTranslationKey(
+                                  group.status
+                                )
+                                return key ? t(key) : group.status
+                              })()}
                             </Badge>
                           </TableCell>
                           <TableCell>{unixTime(group.created_at)}</TableCell>
@@ -948,7 +953,7 @@ export function DoubaoVideoMaterialLibrary() {
             <DialogTitle>{t('Upload material')}</DialogTitle>
             <DialogDescription>
               {t(
-                'The file is retained while the matching upstream material exists, then submitted to the selected upstream material group for review.'
+                'Submit the material for review. It will be stored long term.'
               )}
             </DialogDescription>
           </DialogHeader>
