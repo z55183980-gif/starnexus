@@ -6,7 +6,7 @@ it under the terms of the GNU Affero General Public License as
 published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -298,6 +298,7 @@ export function DoubaoVideoMaterialLibrary() {
   const [uploadGroup, setUploadGroup] = useState('')
   const [uploadName, setUploadName] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const uploadFileInputRef = useRef<HTMLInputElement>(null)
   const [deleteGroupTarget, setDeleteGroupTarget] =
     useState<MaterialGroup | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<MaterialAsset | null>(null)
@@ -364,7 +365,7 @@ export function DoubaoVideoMaterialLibrary() {
   })
   const updateMutation = useMutation({
     mutationFn: () => {
-      if (!editingGroup) throw new Error(t('Select a material group'))
+      if (!editingGroup) throw new Error(t('Select material group'))
       return updateMaterialGroup(editingGroup.id, {
         name: groupName,
         description: groupDescription,
@@ -466,6 +467,13 @@ export function DoubaoVideoMaterialLibrary() {
     setGroupDescription(group.description)
     setGroupDialog(true)
   }
+  const openUploadDialog = (groupId?: number) => {
+    setUploadGroup(groupId ? String(groupId) : '')
+    setUploadName('')
+    setUploadFile(null)
+    if (uploadFileInputRef.current) uploadFileInputRef.current.value = ''
+    setUploadDialog(true)
+  }
   const submitGroup = () => {
     if (!groupName.trim() || groupMutationPending) return
     if (editingGroup) updateMutation.mutate()
@@ -478,49 +486,44 @@ export function DoubaoVideoMaterialLibrary() {
         <SectionPageLayout.Title>
           {t('Material Library')}
         </SectionPageLayout.Title>
+        {assetGroupId === null && storage && (
+          <SectionPageLayout.Actions>
+            <Alert
+              variant={
+                storage.remaining_bytes === 0 ? 'destructive' : 'default'
+              }
+              className='w-72 max-w-full py-1.5'
+            >
+              <div className='flex items-center justify-between gap-3'>
+                <AlertTitle>{t('Material library storage')}</AlertTitle>
+                <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>
+                  {`${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`}
+                </span>
+              </div>
+              <AlertDescription className='flex flex-col gap-1'>
+                <Progress value={storagePercent} className='gap-0'>
+                  <ProgressLabel className='sr-only'>
+                    {t('Storage usage')}
+                  </ProgressLabel>
+                  <ProgressValue className='sr-only'>
+                    {() =>
+                      `${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`
+                    }
+                  </ProgressValue>
+                </Progress>
+                {storage.remaining_bytes === 0 && (
+                  <span className='text-xs'>
+                    {t(
+                      'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
+                    )}
+                  </span>
+                )}
+              </AlertDescription>
+            </Alert>
+          </SectionPageLayout.Actions>
+        )}
         <SectionPageLayout.Content>
           <div className='flex flex-col gap-3'>
-            {assetGroupId === null && storage && (
-              <div className='flex justify-end'>
-                <Alert
-                  variant={
-                    storage.remaining_bytes === 0 ? 'destructive' : 'default'
-                  }
-                  className='w-full max-w-sm sm:w-80'
-                >
-                  <div className='flex items-center justify-between gap-3'>
-                    <div className='min-w-0'>
-                      <AlertTitle>{t('Material library storage')}</AlertTitle>
-                      <span className='text-muted-foreground text-xs'>
-                        {t('Storage usage')}
-                      </span>
-                    </div>
-                    <span className='text-muted-foreground shrink-0 text-xs tabular-nums'>
-                      {`${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`}
-                    </span>
-                  </div>
-                  <AlertDescription className='flex flex-col gap-1.5'>
-                    <Progress value={storagePercent} className='gap-1.5'>
-                      <ProgressLabel className='sr-only'>
-                        {t('Storage usage')}
-                      </ProgressLabel>
-                      <ProgressValue className='sr-only'>
-                        {() =>
-                          `${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`
-                        }
-                      </ProgressValue>
-                    </Progress>
-                    {storage.remaining_bytes === 0 && (
-                      <span className='text-xs'>
-                        {t(
-                          'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
-                        )}
-                      </span>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              </div>
-            )}
             <div className='flex flex-col gap-3' hidden={assetGroupId !== null}>
               <div className='bg-card flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3'>
                 <Input
@@ -534,7 +537,7 @@ export function DoubaoVideoMaterialLibrary() {
                     {t('Create material group')}
                   </Button>
                   <Button
-                    onClick={() => setUploadDialog(true)}
+                    onClick={() => openUploadDialog()}
                     disabled={groups.length === 0}
                   >
                     <HugeiconsIcon
@@ -661,17 +664,31 @@ export function DoubaoVideoMaterialLibrary() {
                     : (groupsById.get(assetGroupId)?.name ??
                       t('Material group'))}
                 </span>
-                <Button
-                  variant='outline'
-                  size='sm'
-                  onClick={() => setAssetGroupId(null)}
-                >
-                  <HugeiconsIcon
-                    icon={ArrowLeft01Icon}
-                    data-icon='inline-start'
-                  />
-                  {t('Back')}
-                </Button>
+                <div className='flex items-center gap-2'>
+                  <Button
+                    size='sm'
+                    onClick={() =>
+                      assetGroupId !== null && openUploadDialog(assetGroupId)
+                    }
+                  >
+                    <HugeiconsIcon
+                      icon={FileUploadIcon}
+                      data-icon='inline-start'
+                    />
+                    {t('Upload material')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => setAssetGroupId(null)}
+                  >
+                    <HugeiconsIcon
+                      icon={ArrowLeft01Icon}
+                      data-icon='inline-start'
+                    />
+                    {t('Back')}
+                  </Button>
+                </div>
               </div>
               <div className='bg-card overflow-hidden rounded-xl border'>
                 {assets.length === 0 ? (
@@ -976,10 +993,33 @@ export function DoubaoVideoMaterialLibrary() {
             </Field>
             <Field>
               <FieldLabel htmlFor='doubao-upload-file'>{t('File')}</FieldLabel>
-              <Input
+              <div className='border-input bg-background flex min-h-12 items-center justify-between gap-3 rounded-lg border p-2'>
+                <span
+                  className='text-muted-foreground min-w-0 flex-1 truncate text-sm'
+                  title={uploadFile?.name}
+                >
+                  {uploadFile?.name ?? t('No file selected')}
+                </span>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className='shrink-0'
+                  onClick={() => uploadFileInputRef.current?.click()}
+                >
+                  <HugeiconsIcon
+                    icon={FileUploadIcon}
+                    data-icon='inline-start'
+                  />
+                  {t('Choose file')}
+                </Button>
+              </div>
+              <input
+                ref={uploadFileInputRef}
                 id='doubao-upload-file'
                 type='file'
                 accept='image/*,video/*,audio/*'
+                className='hidden'
                 onChange={(event) =>
                   setUploadFile(event.target.files?.[0] ?? null)
                 }
