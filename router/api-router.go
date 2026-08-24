@@ -423,6 +423,7 @@ func SetApiRouter(router *gin.Engine) {
 		// HMAC authentication implemented by the controller.
 		apiRouter.POST("/doubao-video/openapi", middleware.CriticalRateLimit(), controller.DoubaoVideo2MaterialOpenAPI)
 		apiRouter.GET("/doubao-video/material-content/:token", controller.ServeDoubaoVideo2MaterialContent)
+		apiRouter.GET("/doubao-video/materials/:id/content", middleware.TokenOrUserAuth(), controller.ServeDoubaoVideo2UserAssetContent)
 		doubaoVideoRoute := apiRouter.Group("/doubao-video")
 		doubaoVideoRoute.Use(middleware.UserAuth())
 		{

@@ -5,6 +5,7 @@
   "{{hits}} / {{total}}": "{{hits}} / {{total}}",
   "/status/": "/status/",
   "/your/endpoint": "/your/endpoint",
+  "Access Key ID": "Access Key ID",
   "AccessKey / SecretAccessKey": "AccessKey / SecretAccessKey",
   "Add a PayMethods entry with type \"usdt\" and enabled \"true\" to show USDT in the wallet": "在 PayMethods 中添加 type 为 \"usdt\" 且 enabled 为 \"true\" 的条目，以在钱包中显示 USDT",
   "AI Proxy": "AI Proxy",
@@ -100,6 +101,7 @@
   "Replicate": "Replicate",
   "Responses WebSocket v2": "Responses WebSocket v2",
   "Save EpUSDT settings": "保存 EpUSDT 设置",
+  "Secret Access Key": "Secret Access Key",
   "Setup Token": "Setup Token",
   "SiliconFlow": "SiliconFlow",
   "smtp.example.com": "smtp.example.com",
@@ -125,7 +127,5 @@
   "whsec_xxx": "whsec_xxx",
   "Worker URL": "Worker URL",
   "Xinference": "Xinference",
-  "ZQBAPI": "ZQBAPI",
-  "Access Key ID": "Access Key ID",
-  "Secret Access Key": "Secret Access Key"
+  "ZQBAPI": "ZQBAPI"
 }

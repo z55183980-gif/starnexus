@@ -46,6 +46,13 @@ func TestDoubaoVideo2MaterialStorageLimitAndDeletion(t *testing.T) {
 		UserID: user.Id, AssetGroupID: group.ID, ChannelID: 62, ProviderAssetID: "asset-1", Name: "asset", AssetType: "Image", Status: DoubaoVideo2UserMaterialStatusActive,
 	}
 	require.NoError(t, CreateDoubaoVideo2UserAssetWithMedia(asset, media.ID))
+	mediaItems, err := ListDoubaoVideo2UserMediaByAssetIDs([]int64{asset.ID}, user.Id)
+	require.NoError(t, err)
+	require.Len(t, mediaItems, 1)
+	require.Equal(t, "image/png", mediaItems[0].ContentType)
+	foreignMediaItems, err := ListDoubaoVideo2UserMediaByAssetIDs([]int64{asset.ID}, user.Id+1)
+	require.NoError(t, err)
+	require.Empty(t, foreignMediaItems)
 	require.NoError(t, DeleteDoubaoVideo2UserAssetAndMedia(asset.ID, user.Id))
 
 	usage, err = GetDoubaoVideo2StorageUsage(user.Id)

@@ -93,6 +93,67 @@ function statusBadge(status: string) {
   return 'warning' as const
 }
 
+function assetTypeTranslationKey(assetType: string) {
+  switch (assetType.toLowerCase()) {
+    case 'image':
+      return 'Image'
+    case 'video':
+      return 'Video'
+    case 'audio':
+      return 'Audio'
+    default:
+      return null
+  }
+}
+
+function assetStatusTranslationKey(status: string) {
+  switch (status.toLowerCase()) {
+    case 'active':
+      return 'Approved'
+    case 'processing':
+      return 'Under review'
+    case 'rejected':
+      return 'Rejected'
+    case 'failed':
+      return 'Failed'
+    default:
+      return null
+  }
+}
+
+function AssetPreview({ asset }: { asset: MaterialAsset }) {
+  const { t } = useTranslation()
+  const [imageFailed, setImageFailed] = useState(false)
+  if (!asset.preview_url) return '—'
+
+  const typeKey = assetTypeTranslationKey(asset.asset_type)
+  const isImage = asset.asset_type.toLowerCase() === 'image'
+  return (
+    <div className='flex items-center gap-2'>
+      {isImage && !imageFailed ? (
+        <img
+          src={asset.preview_url}
+          alt={asset.name}
+          className='size-10 rounded-md border object-cover'
+          loading='lazy'
+          onError={() => setImageFailed(true)}
+        />
+      ) : (
+        <Badge variant='secondary'>
+          {typeKey ? t(typeKey) : asset.asset_type}
+        </Badge>
+      )}
+      <Button
+        variant='link'
+        size='xs'
+        render={<a href={asset.preview_url} target='_blank' rel='noreferrer' />}
+      >
+        {t('Preview')}
+      </Button>
+    </div>
+  )
+}
+
 function unixTime(value: number) {
   return value > 0 ? dayjs.unix(value).format('YYYY-MM-DD HH:mm') : '—'
 }
@@ -139,6 +200,10 @@ export function DoubaoVideoMaterialLibrary() {
   const groups = useMemo(
     () => groupsQuery.data?.data ?? [],
     [groupsQuery.data?.data]
+  )
+  const groupsById = useMemo(
+    () => new Map(groups.map((group) => [group.id, group])),
+    [groups]
   )
   const assets = assetsQuery.data?.data?.items ?? []
   const storage = storageQuery.data?.data
@@ -454,12 +519,15 @@ export function DoubaoVideoMaterialLibrary() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>{t('Material name')}</TableHead>
                         <TableHead>{t('Asset ID')}</TableHead>
+                        <TableHead>{t('Material name')}</TableHead>
+                        <TableHead>{t('Resource preview')}</TableHead>
                         <TableHead>{t('Type')}</TableHead>
-                        <TableHead>{t('Status')}</TableHead>
-                        <TableHead>{t('Last synchronized')}</TableHead>
-                        <TableHead>{t('Review result')}</TableHead>
+                        <TableHead>{t('Sync status')}</TableHead>
+                        <TableHead>{t('Failure reason')}</TableHead>
+                        <TableHead>{t('Asset status')}</TableHead>
+                        <TableHead>{t('Material group')}</TableHead>
+                        <TableHead>{t('Created at')}</TableHead>
                         <TableHead className='text-right'>
                           {t('Actions')}
                         </TableHead>
@@ -468,26 +536,66 @@ export function DoubaoVideoMaterialLibrary() {
                     <TableBody>
                       {assets.map((asset) => (
                         <TableRow key={asset.id}>
+                          <TableCell>
+                            <code className='text-xs'>
+                              {asset.provider_asset_id}
+                            </code>
+                          </TableCell>
                           <TableCell className='font-medium'>
                             {asset.name}
                           </TableCell>
                           <TableCell>
-                            <code className='text-xs'>
-                              asset://{asset.provider_asset_id}
-                            </code>
+                            <AssetPreview asset={asset} />
                           </TableCell>
-                          <TableCell>{asset.asset_type}</TableCell>
                           <TableCell>
-                            <Badge variant={statusBadge(asset.status)}>
-                              {asset.status}
+                            <Badge variant='secondary'>
+                              {(() => {
+                                const key = assetTypeTranslationKey(
+                                  asset.asset_type
+                                )
+                                return key ? t(key) : asset.asset_type
+                              })()}
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            {unixTime(asset.last_synced_at)}
+                            <Badge
+                              variant={
+                                asset.last_synced_at > 0 ? 'success' : 'warning'
+                              }
+                            >
+                              {asset.last_synced_at > 0
+                                ? t('Synchronized')
+                                : t('Not synchronized yet')}
+                            </Badge>
                           </TableCell>
-                          <TableCell className='max-w-xs text-sm'>
+                          <TableCell className='max-w-xs whitespace-normal'>
                             {asset.error_message || '—'}
                           </TableCell>
+                          <TableCell>
+                            <Badge variant={statusBadge(asset.status)}>
+                              {(() => {
+                                const key = assetStatusTranslationKey(
+                                  asset.status
+                                )
+                                return key ? t(key) : asset.status
+                              })()}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            {(() => {
+                              const group = groupsById.get(asset.asset_group_id)
+                              if (!group) return '—'
+                              return (
+                                <div className='flex flex-col gap-0.5'>
+                                  <span>{group.name}</span>
+                                  <span className='text-muted-foreground font-mono text-xs'>
+                                    {group.provider_group_id}
+                                  </span>
+                                </div>
+                              )
+                            })()}
+                          </TableCell>
+                          <TableCell>{unixTime(asset.created_at)}</TableCell>
                           <TableCell className='text-right'>
                             <Button
                               variant='ghost'

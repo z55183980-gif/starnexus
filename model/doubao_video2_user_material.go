@@ -283,6 +283,15 @@ func GetDoubaoVideo2UserMediaByAssetID(assetID int64, userID int) (*DoubaoVideo2
 	return media, err
 }
 
+func ListDoubaoVideo2UserMediaByAssetIDs(assetIDs []int64, userID int) ([]*DoubaoVideo2UserMedia, error) {
+	media := make([]*DoubaoVideo2UserMedia, 0)
+	if userID <= 0 || len(assetIDs) == 0 {
+		return media, nil
+	}
+	err := DB.Where("asset_id IN ? AND user_id = ?", assetIDs, userID).Find(&media).Error
+	return media, err
+}
+
 func DeleteDoubaoVideo2UnboundUserMedia(mediaID int64, userID int) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		media := &DoubaoVideo2UserMedia{}

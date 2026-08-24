@@ -34,6 +34,8 @@ export type MaterialAsset = {
   error_message: string
   last_synced_at: number
   created_at: number
+  preview_url?: string
+  content_type?: string
 }
 
 export type PageData<T> = {
