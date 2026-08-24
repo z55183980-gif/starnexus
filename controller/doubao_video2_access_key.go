@@ -22,6 +22,7 @@ import (
 	doubaorelay "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const (
@@ -209,8 +210,13 @@ func dispatchDoubaoVideo2MaterialOpenAPI(ctx context.Context, userID int, action
 		if err != nil {
 			return nil, err
 		}
-		_ = syncOneDoubaoVideo2UserAsset(ctx, asset)
-		asset, _ = getDoubaoVideo2UserAssetForOpenAPI(userID, request.ID)
+		if syncErr := syncOneDoubaoVideo2UserAsset(ctx, asset); syncErr != nil && doubaorelay.IsDoubaoVideo2MaterialNotFound(syncErr) {
+			return nil, gorm.ErrRecordNotFound
+		}
+		asset, err = getDoubaoVideo2UserAssetForOpenAPI(userID, request.ID)
+		if err != nil {
+			return nil, err
+		}
 		group, groupErr := model.GetDoubaoVideo2UserAssetGroup(asset.AssetGroupID, userID)
 		if groupErr != nil {
 			return nil, groupErr
@@ -219,6 +225,21 @@ func dispatchDoubaoVideo2MaterialOpenAPI(ctx context.Context, userID int, action
 			"Id": asset.ProviderAssetID, "GroupId": group.ProviderGroupID, "Name": asset.Name,
 			"AssetType": asset.AssetType, "Status": asset.Status, "ErrorMessage": asset.ErrorMessage,
 		}, nil
+	case "DeleteAsset":
+		var request struct {
+			ID string `json:"Id"`
+		}
+		if err := common.Unmarshal(body, &request); err != nil {
+			return nil, err
+		}
+		asset, err := getDoubaoVideo2UserAssetForOpenAPI(userID, request.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := deleteDoubaoVideo2UserAsset(ctx, userID, asset); err != nil {
+			return nil, err
+		}
+		return gin.H{"Deleted": true}, nil
 	case "ListAssets":
 		assets, total, err := model.ListDoubaoVideo2UserAssets(userID, 0, "", 0, 100)
 		if err != nil {
@@ -351,6 +372,20 @@ func syncOneDoubaoVideo2UserAsset(ctx context.Context, asset *model.DoubaoVideo2
 		return err
 	}
 	result, err := client.GetAsset(ctx, asset.ProviderAssetID)
+	if err != nil && doubaorelay.IsDoubaoVideo2MaterialNotFound(err) {
+		media, mediaErr := model.GetDoubaoVideo2UserMediaByAssetID(asset.ID, asset.UserID)
+		if mediaErr == nil {
+			if deleteErr := service.DeleteDoubaoVideo2PersistentMaterial(ctx, media.ObjectKey); deleteErr != nil {
+				return deleteErr
+			}
+		} else if !errors.Is(mediaErr, gorm.ErrRecordNotFound) {
+			return mediaErr
+		}
+		if deleteErr := model.DeleteDoubaoVideo2UserAssetAndMedia(asset.ID, asset.UserID); deleteErr != nil {
+			return deleteErr
+		}
+		return err
+	}
 	updates := map[string]any{"last_synced_at": time.Now().Unix()}
 	if err != nil {
 		updates["error_message"] = err.Error()

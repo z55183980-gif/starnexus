@@ -69,6 +69,21 @@ func TestDoubaoVideo2CreateAssetIsNotBlindlyRetried(t *testing.T) {
 	if !errors.As(classified, &buildErr) || buildErr.Kind != doubaoVideo2ErrorMaterialAmbiguous || buildErr.Temporary() {
 		t.Fatalf("classified error = %#v", classified)
 	}
+	if !IsDoubaoVideo2MaterialCreateAmbiguous(classified) {
+		t.Fatal("ambiguous CreateAsset error was not detected")
+	}
+}
+
+func TestDoubaoVideo2MaterialNotFoundClassification(t *testing.T) {
+	if !IsDoubaoVideo2MaterialNotFound(&doubaoVideo2MaterialCallError{StatusCode: http.StatusNotFound}) {
+		t.Fatal("HTTP 404 was not classified as missing material")
+	}
+	if !IsDoubaoVideo2MaterialNotFound(&doubaoVideo2MaterialCallError{StatusCode: http.StatusOK, Code: "ResourceNotFound", Message: "asset does not exist"}) {
+		t.Fatal("provider metadata error was not classified as missing material")
+	}
+	if IsDoubaoVideo2MaterialNotFound(errors.New("timeout")) {
+		t.Fatal("unrelated error was classified as missing material")
+	}
 }
 
 func TestDoubaoVideo2RetryPrecheckStoresOnlyPublicURLs(t *testing.T) {

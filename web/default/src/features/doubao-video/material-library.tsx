@@ -9,10 +9,27 @@ License, or (at your option) any later version.
 import { useMemo, useState } from 'react'
 import dayjs from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FileUploadIcon, RefreshIcon } from '@hugeicons/core-free-icons'
+import {
+  Delete02Icon,
+  Edit02Icon,
+  FileUploadIcon,
+  FolderOpenIcon,
+  RefreshIcon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -31,6 +48,11 @@ import {
 } from '@/components/ui/empty'
 import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Progress,
+  ProgressLabel,
+  ProgressValue,
+} from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -52,11 +74,15 @@ import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout'
 import {
   createMaterialGroup,
+  deleteMaterial,
+  getMaterialStorageUsage,
   listMaterialGroups,
   listMaterials,
   syncMaterials,
+  updateMaterialGroup,
   uploadMaterial,
 } from './api'
+import type { MaterialAsset, MaterialGroup } from './types'
 
 function statusBadge(status: string) {
   const normalized = status.toLowerCase()
@@ -71,28 +97,54 @@ function unixTime(value: number) {
   return value > 0 ? dayjs.unix(value).format('YYYY-MM-DD HH:mm') : '—'
 }
 
+function formatBytes(value: number) {
+  if (value <= 0) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  const index = Math.min(
+    Math.floor(Math.log(value) / Math.log(1024)),
+    units.length - 1
+  )
+  const amount = value / 1024 ** index
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(amount)} ${units[index]}`
+}
+
 export function DoubaoVideoMaterialLibrary() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [keyword, setKeyword] = useState('')
+  const [activeTab, setActiveTab] = useState<'groups' | 'assets'>('groups')
+  const [assetGroupId, setAssetGroupId] = useState<number | null>(null)
   const [groupDialog, setGroupDialog] = useState(false)
+  const [editingGroup, setEditingGroup] = useState<MaterialGroup | null>(null)
   const [uploadDialog, setUploadDialog] = useState(false)
   const [groupName, setGroupName] = useState('')
   const [groupDescription, setGroupDescription] = useState('')
   const [uploadGroup, setUploadGroup] = useState('')
   const [uploadName, setUploadName] = useState('')
   const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<MaterialAsset | null>(null)
 
   const groupsQuery = useQuery({
     queryKey: ['doubao-video', 'groups'],
     queryFn: () => listMaterialGroups(),
   })
   const assetsQuery = useQuery({
-    queryKey: ['doubao-video', 'assets'],
-    queryFn: () => listMaterials({}),
+    queryKey: ['doubao-video', 'assets', assetGroupId],
+    queryFn: () => listMaterials({ groupId: assetGroupId ?? undefined }),
   })
-  const groups = groupsQuery.data?.data ?? []
+  const storageQuery = useQuery({
+    queryKey: ['doubao-video', 'storage'],
+    queryFn: getMaterialStorageUsage,
+  })
+  const groups = useMemo(
+    () => groupsQuery.data?.data ?? [],
+    [groupsQuery.data?.data]
+  )
   const assets = assetsQuery.data?.data?.items ?? []
+  const storage = storageQuery.data?.data
+  const storagePercent = storage
+    ? Math.min(100, (storage.used_bytes / storage.limit_bytes) * 100)
+    : 0
   const filteredGroups = useMemo(() => {
     const query = keyword.trim().toLowerCase()
     return query
@@ -108,6 +160,7 @@ export function DoubaoVideoMaterialLibrary() {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['doubao-video', 'groups'] }),
       queryClient.invalidateQueries({ queryKey: ['doubao-video', 'assets'] }),
+      queryClient.invalidateQueries({ queryKey: ['doubao-video', 'storage'] }),
     ])
   }
 
@@ -118,15 +171,43 @@ export function DoubaoVideoMaterialLibrary() {
       if (!response.success) return
       toast.success(t('Material group created'))
       setGroupDialog(false)
+      setEditingGroup(null)
       setGroupName('')
       setGroupDescription('')
       await refresh()
     },
+    onError: (error) => toast.error(error.message),
+  })
+  const updateMutation = useMutation({
+    mutationFn: () => {
+      if (!editingGroup) throw new Error(t('Select a material group'))
+      return updateMaterialGroup(editingGroup.id, {
+        name: groupName,
+        description: groupDescription,
+      })
+    },
+    onSuccess: async (response) => {
+      if (!response.success) return
+      toast.success(t('Material group updated'))
+      setGroupDialog(false)
+      setEditingGroup(null)
+      setGroupName('')
+      setGroupDescription('')
+      await refresh()
+    },
+    onError: (error) => toast.error(error.message),
   })
   const uploadMutation = useMutation({
     mutationFn: () => {
       if (!uploadFile || !uploadGroup)
         throw new Error(t('Select a material group and file'))
+      if (storage && uploadFile.size > storage.remaining_bytes) {
+        throw new Error(
+          t(
+            'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
+          )
+        )
+      }
       return uploadMaterial({
         groupId: Number(uploadGroup),
         name: uploadName || uploadFile.name,
@@ -134,12 +215,33 @@ export function DoubaoVideoMaterialLibrary() {
       })
     },
     onSuccess: async (response) => {
-      if (!response.success) return
+      if (!response.success) {
+        toast.error(
+          response.message ||
+            t(
+              'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
+            )
+        )
+        return
+      }
       toast.success(t('Material uploaded and submitted for review'))
       setUploadDialog(false)
       setUploadGroup('')
       setUploadName('')
       setUploadFile(null)
+      await refresh()
+    },
+    onError: (error) => toast.error(error.message),
+  })
+  const deleteMutation = useMutation({
+    mutationFn: (id: number) => deleteMaterial(id),
+    onSuccess: async (response) => {
+      if (!response.success) {
+        toast.error(response.message || t('Failed to delete material'))
+        return
+      }
+      toast.success(t('Material deleted'))
+      setDeleteTarget(null)
       await refresh()
     },
     onError: (error) => toast.error(error.message),
@@ -152,6 +254,25 @@ export function DoubaoVideoMaterialLibrary() {
       await refresh()
     },
   })
+  const groupMutationPending =
+    createMutation.isPending || updateMutation.isPending
+  const openCreateGroupDialog = () => {
+    setEditingGroup(null)
+    setGroupName('')
+    setGroupDescription('')
+    setGroupDialog(true)
+  }
+  const openEditGroupDialog = (group: MaterialGroup) => {
+    setEditingGroup(group)
+    setGroupName(group.name)
+    setGroupDescription(group.description)
+    setGroupDialog(true)
+  }
+  const submitGroup = () => {
+    if (!groupName.trim() || groupMutationPending) return
+    if (editingGroup) updateMutation.mutate()
+    else createMutation.mutate()
+  }
 
   return (
     <>
@@ -182,7 +303,42 @@ export function DoubaoVideoMaterialLibrary() {
           </Button>
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
-          <Tabs defaultValue='groups'>
+          {storage && (
+            <Alert
+              variant={
+                storage.remaining_bytes === 0 ? 'destructive' : 'default'
+              }
+            >
+              <AlertTitle>{t('Material library storage')}</AlertTitle>
+              <AlertDescription>
+                <div className='flex flex-col gap-2'>
+                  <Progress value={storagePercent}>
+                    <ProgressLabel>{t('Storage usage')}</ProgressLabel>
+                    <ProgressValue>
+                      {() =>
+                        `${formatBytes(storage.used_bytes)} / ${formatBytes(storage.limit_bytes)}`
+                      }
+                    </ProgressValue>
+                  </Progress>
+                  <span>
+                    {storage.remaining_bytes === 0
+                      ? t(
+                          'The material library has reached its limit. Delete existing materials or contact support to adjust it.'
+                        )
+                      : t('{{remaining}} remaining', {
+                          remaining: formatBytes(storage.remaining_bytes),
+                        })}
+                  </span>
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+          <Tabs
+            value={activeTab}
+            onValueChange={(value) =>
+              setActiveTab(value as 'groups' | 'assets')
+            }
+          >
             <TabsList>
               <TabsTrigger value='groups'>{t('Material groups')}</TabsTrigger>
               <TabsTrigger value='assets'>{t('Materials')}</TabsTrigger>
@@ -195,7 +351,7 @@ export function DoubaoVideoMaterialLibrary() {
                   onChange={(event) => setKeyword(event.target.value)}
                   placeholder={t('Search group name or ID')}
                 />
-                <Button onClick={() => setGroupDialog(true)}>
+                <Button onClick={openCreateGroupDialog}>
                   {t('Create material group')}
                 </Button>
               </div>
@@ -216,21 +372,27 @@ export function DoubaoVideoMaterialLibrary() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>{t('Group name')}</TableHead>
+                        <TableHead>{t('Description')}</TableHead>
                         <TableHead>{t('Group ID')}</TableHead>
                         <TableHead>{t('Type')}</TableHead>
                         <TableHead>{t('Assets')}</TableHead>
                         <TableHead>{t('Status')}</TableHead>
                         <TableHead>{t('Created at')}</TableHead>
+                        <TableHead className='text-right'>
+                          {t('Actions')}
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredGroups.map((group) => (
                         <TableRow key={group.id}>
-                          <TableCell>
-                            <div className='font-medium'>{group.name}</div>
-                            <div className='text-muted-foreground text-xs'>
+                          <TableCell className='font-medium'>
+                            {group.name}
+                          </TableCell>
+                          <TableCell className='max-w-sm text-sm'>
+                            <span className='line-clamp-2'>
                               {group.description || '—'}
-                            </div>
+                            </span>
                           </TableCell>
                           <TableCell className='font-mono text-xs'>
                             {group.provider_group_id}
@@ -243,6 +405,31 @@ export function DoubaoVideoMaterialLibrary() {
                             </Badge>
                           </TableCell>
                           <TableCell>{unixTime(group.created_at)}</TableCell>
+                          <TableCell>
+                            <div className='flex justify-end gap-1'>
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                className='text-primary h-8 px-2'
+                                onClick={() => {
+                                  setAssetGroupId(group.id)
+                                  setActiveTab('assets')
+                                }}
+                              >
+                                <HugeiconsIcon icon={FolderOpenIcon} />
+                                {t('View materials')}
+                              </Button>
+                              <Button
+                                variant='ghost'
+                                size='sm'
+                                className='text-primary h-8 px-2'
+                                onClick={() => openEditGroupDialog(group)}
+                              >
+                                <HugeiconsIcon icon={Edit02Icon} />
+                                {t('Edit')}
+                              </Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -273,6 +460,9 @@ export function DoubaoVideoMaterialLibrary() {
                         <TableHead>{t('Status')}</TableHead>
                         <TableHead>{t('Last synchronized')}</TableHead>
                         <TableHead>{t('Review result')}</TableHead>
+                        <TableHead className='text-right'>
+                          {t('Actions')}
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -298,6 +488,19 @@ export function DoubaoVideoMaterialLibrary() {
                           <TableCell className='max-w-xs text-sm'>
                             {asset.error_message || '—'}
                           </TableCell>
+                          <TableCell className='text-right'>
+                            <Button
+                              variant='ghost'
+                              size='sm'
+                              onClick={() => setDeleteTarget(asset)}
+                            >
+                              <HugeiconsIcon
+                                icon={Delete02Icon}
+                                data-icon='inline-start'
+                              />
+                              {t('Delete')}
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -312,10 +515,14 @@ export function DoubaoVideoMaterialLibrary() {
       <Dialog open={groupDialog} onOpenChange={setGroupDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('Create material group')}</DialogTitle>
+            <DialogTitle>
+              {editingGroup
+                ? t('Edit material group')
+                : t('Create material group')}
+            </DialogTitle>
             <DialogDescription>
               {t(
-                'The group is created in the configured DoubaoVideo2.0 upstream account.'
+                'Create a material group to organize and manage your materials.'
               )}
             </DialogDescription>
           </DialogHeader>
@@ -348,14 +555,42 @@ export function DoubaoVideoMaterialLibrary() {
               {t('Cancel')}
             </Button>
             <Button
-              onClick={() => createMutation.mutate()}
-              disabled={!groupName.trim() || createMutation.isPending}
+              onClick={submitGroup}
+              disabled={!groupName.trim() || groupMutationPending}
             >
-              {t('Create')}
+              {editingGroup ? t('Update') : t('Create')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('Delete material?')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                'The material will be deleted from the upstream API key account and its storage will be released. This action cannot be undone.'
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              variant='destructive'
+              disabled={deleteMutation.isPending}
+              onClick={() =>
+                deleteTarget && deleteMutation.mutate(deleteTarget.id)
+              }
+            >
+              {t('Delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={uploadDialog} onOpenChange={setUploadDialog}>
         <DialogContent>
@@ -363,7 +598,7 @@ export function DoubaoVideoMaterialLibrary() {
             <DialogTitle>{t('Upload material')}</DialogTitle>
             <DialogDescription>
               {t(
-                'The file is stored temporarily, then submitted to the selected upstream material group for review.'
+                'The file is retained while the matching upstream material exists, then submitted to the selected upstream material group for review.'
               )}
             </DialogDescription>
           </DialogHeader>

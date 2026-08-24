@@ -69,3 +69,14 @@ func TestAuthenticateDoubaoVideo2OpenAPIAcceptsOfficialHMACShape(t *testing.T) {
 	_, err = authenticateDoubaoVideo2OpenAPI(request, []byte(strings.ReplaceAll(string(body), "a.png", "b.png")))
 	require.ErrorContains(t, err, "does not match")
 }
+
+func TestDoubaoVideo2MaterialPublicURLUsesStableHTTPSEndpoint(t *testing.T) {
+	t.Setenv("DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL", "https://gateway.example.com/base?ignored=1#fragment")
+	materialURL, err := doubaoVideo2MaterialPublicURL("stable-token")
+	require.NoError(t, err)
+	require.Equal(t, "https://gateway.example.com/base/api/doubao-video/material-content/stable-token", materialURL)
+
+	t.Setenv("DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL", "http://gateway.example.com")
+	_, err = doubaoVideo2MaterialPublicURL("stable-token")
+	require.ErrorContains(t, err, "public HTTPS address")
+}

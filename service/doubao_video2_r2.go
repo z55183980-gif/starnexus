@@ -25,7 +25,10 @@ import (
 )
 
 const (
-	doubaoVideo2R2Prefix           = "doubao-video2/"
+	doubaoVideo2R2Prefix = "doubao-video2/"
+	// Keep persistent material-library objects outside the temporary
+	// doubao-video2/ prefix so its 24-hour lifecycle rule cannot delete them.
+	doubaoVideo2R2MaterialPrefix   = "doubao-video2-material-library/"
 	doubaoVideo2R2DefaultTTL       = 24 * time.Hour
 	doubaoVideo2R2MaximumTTL       = 48 * time.Hour
 	doubaoVideo2R2UploadTTL        = 15 * time.Minute
@@ -129,6 +132,70 @@ func StoreDoubaoVideo2Media(ctx context.Context, data []byte, contentType string
 		return "", fmt.Errorf("media type %q is not supported", contentType)
 	}
 	return storeDoubaoVideo2MediaWithConfig(ctx, config, data, contentType, extension)
+}
+
+// StoreDoubaoVideo2PersistentMaterial stores a user-library source object
+// without a time-based lifecycle. Its deletion is driven by the matching
+// upstream API-key asset lifecycle, not by temporary-media cleanup.
+func StoreDoubaoVideo2PersistentMaterial(ctx context.Context, userID int, data []byte, contentType string) (string, error) {
+	if userID <= 0 {
+		return "", errors.New("material owner is required")
+	}
+	config, err := loadDoubaoVideo2R2Config()
+	if err != nil {
+		return "", err
+	}
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	extension, ok := doubaoVideo2MediaExtension(contentType)
+	if !ok {
+		return "", fmt.Errorf("media type %q is not supported", contentType)
+	}
+	if len(data) == 0 || len(data) > doubaoVideo2R2MaximumMediaSize {
+		return "", fmt.Errorf("media size must be between 1 and %d bytes", doubaoVideo2R2MaximumMediaSize)
+	}
+	objectToken, err := common.GenerateRandomCharsKey(32)
+	if err != nil {
+		return "", fmt.Errorf("generate persistent material object key: %w", err)
+	}
+	objectKey := fmt.Sprintf("%s%d/%s.%s", doubaoVideo2R2MaterialPrefix, userID, objectToken, extension)
+	request, err := newDoubaoVideo2R2Request(ctx, config, http.MethodPut, objectKey, data)
+	if err != nil {
+		return "", err
+	}
+	request.Header.Set("Content-Type", contentType)
+	request.Header.Set("Cache-Control", "private, no-store")
+	response, err := (&http.Client{Timeout: 60 * time.Second}).Do(request)
+	if err != nil {
+		return "", fmt.Errorf("upload persistent DoubaoVideo2.0 material to R2: %w", err)
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("upload persistent DoubaoVideo2.0 material to R2 returned HTTP %d", response.StatusCode)
+	}
+	return objectKey, nil
+}
+
+func PresignDoubaoVideo2PersistentMaterial(ctx context.Context, objectKey string) (string, error) {
+	if !strings.HasPrefix(strings.TrimSpace(objectKey), doubaoVideo2R2MaterialPrefix) {
+		return "", errors.New("persistent material object key is invalid")
+	}
+	config, err := loadDoubaoVideo2R2Config()
+	if err != nil {
+		return "", err
+	}
+	return presignDoubaoVideo2R2Object(ctx, config, objectKey)
+}
+
+func DeleteDoubaoVideo2PersistentMaterial(ctx context.Context, objectKey string) error {
+	if !strings.HasPrefix(strings.TrimSpace(objectKey), doubaoVideo2R2MaterialPrefix) {
+		return errors.New("persistent material object key is invalid")
+	}
+	config, err := loadDoubaoVideo2R2Config()
+	if err != nil {
+		return err
+	}
+	return deleteDoubaoVideo2R2Object(ctx, config, objectKey)
 }
 
 func storeDoubaoVideo2MediaWithConfig(ctx context.Context, config doubaoVideo2R2Config, data []byte, contentType, extension string) (string, error) {

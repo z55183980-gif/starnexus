@@ -12,7 +12,7 @@ import (
 )
 
 func TestDoubaoVideo2UserMaterialClientPreservesCustomUpstreamProtocol(t *testing.T) {
-	actions := make([]string, 0, 3)
+	actions := make([]string, 0, 4)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		require.Equal(t, "/api/support/v1/asset", request.URL.Path)
 		require.Equal(t, "upstream-api-key", request.Header.Get("ApiKey"))
@@ -26,6 +26,8 @@ func TestDoubaoVideo2UserMaterialClientPreservesCustomUpstreamProtocol(t *testin
 			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"asset-request"},"Result":{"Id":"asset-456"}}`))
 		case "GetAsset":
 			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"get-request"},"Result":{"Status":"Approved"}}`))
+		case "DeleteAsset":
+			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"delete-request"},"Result":{"Deleted":true}}`))
 		default:
 			http.Error(w, "unexpected action", http.StatusBadRequest)
 		}
@@ -48,5 +50,6 @@ func TestDoubaoVideo2UserMaterialClientPreservesCustomUpstreamProtocol(t *testin
 	status, err := client.GetAsset(t.Context(), asset.ID)
 	require.NoError(t, err)
 	require.Equal(t, model.DoubaoVideo2UserMaterialStatusActive, status.Status)
-	require.Equal(t, []string{"CreateAssetGroup", "CreateAsset", "GetAsset"}, actions)
+	require.NoError(t, client.DeleteAsset(t.Context(), asset.ID))
+	require.Equal(t, []string{"CreateAssetGroup", "CreateAsset", "GetAsset", "DeleteAsset"}, actions)
 }

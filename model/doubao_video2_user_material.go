@@ -8,6 +8,8 @@ import (
 )
 
 const (
+	DoubaoVideo2DefaultUserStorageLimit int64 = 3 << 30
+
 	DoubaoVideo2UserMaterialStatusProcessing = "Processing"
 	DoubaoVideo2UserMaterialStatusActive     = "Active"
 	DoubaoVideo2UserMaterialStatusRejected   = "Rejected"
@@ -16,6 +18,8 @@ const (
 	DoubaoVideo2AccessKeyStatusDisabled = 0
 	DoubaoVideo2AccessKeyStatusActive   = 1
 )
+
+var ErrDoubaoVideo2MaterialStorageLimit = errors.New("素材库达到限额，请删除已有素材或联系客服调整")
 
 // DoubaoVideo2UserAssetGroup maps one user-owned material group to the exact
 // channel/account that created it upstream. Assets must remain pinned to that
@@ -49,6 +53,27 @@ type DoubaoVideo2UserAsset struct {
 	LastSyncedAt    int64  `json:"last_synced_at" gorm:"index"`
 	CreatedAt       int64  `json:"created_at" gorm:"autoCreateTime;index"`
 	UpdatedAt       int64  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+// DoubaoVideo2UserMedia keeps the original object available for exactly as
+// long as the matching upstream API-key asset exists. Public access uses a
+// random bearer token; only its SHA-256 digest is persisted.
+type DoubaoVideo2UserMedia struct {
+	ID          int64  `json:"id" gorm:"primaryKey"`
+	UserID      int    `json:"user_id" gorm:"not null;index"`
+	AssetID     int64  `json:"-" gorm:"not null;default:0;index"`
+	TokenHash   string `json:"-" gorm:"type:char(64);not null;uniqueIndex"`
+	ObjectKey   string `json:"-" gorm:"type:varchar(255);not null;uniqueIndex"`
+	SizeBytes   int64  `json:"size_bytes" gorm:"not null"`
+	ContentType string `json:"content_type" gorm:"type:varchar(128);not null"`
+	CreatedAt   int64  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt   int64  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
+type DoubaoVideo2StorageUsage struct {
+	UsedBytes      int64 `json:"used_bytes"`
+	LimitBytes     int64 `json:"limit_bytes"`
+	RemainingBytes int64 `json:"remaining_bytes"`
 }
 
 // DoubaoVideo2AccessKey uses the same public AK shape as Volcengine. The SK is
@@ -92,6 +117,19 @@ func GetDoubaoVideo2UserAssetGroupByProviderID(providerGroupID string, userID in
 
 func CreateDoubaoVideo2UserAssetGroup(group *DoubaoVideo2UserAssetGroup) error {
 	return DB.Create(group).Error
+}
+
+func UpdateDoubaoVideo2UserAssetGroup(id int64, userID int, updates map[string]any) error {
+	result := DB.Model(&DoubaoVideo2UserAssetGroup{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func ListDoubaoVideo2UserAssets(userID int, groupID int64, keyword string, offset, limit int) ([]*DoubaoVideo2UserAsset, int64, error) {
@@ -155,13 +193,143 @@ func ResolveDoubaoVideo2UserAssetChannel(userID int, providerAssetIDs []string) 
 }
 
 func CreateDoubaoVideo2UserAsset(asset *DoubaoVideo2UserAsset) error {
+	return CreateDoubaoVideo2UserAssetWithMedia(asset, 0)
+}
+
+func CreateDoubaoVideo2UserAssetWithMedia(asset *DoubaoVideo2UserAsset, mediaID int64) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(asset).Error; err != nil {
 			return err
 		}
+		if mediaID > 0 {
+			result := tx.Model(&DoubaoVideo2UserMedia{}).
+				Where("id = ? AND user_id = ? AND asset_id = ?", mediaID, asset.UserID, 0).
+				UpdateColumn("asset_id", asset.ID)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				return gorm.ErrRecordNotFound
+			}
+		}
 		return tx.Model(&DoubaoVideo2UserAssetGroup{}).
 			Where("id = ? AND user_id = ?", asset.AssetGroupID, asset.UserID).
 			UpdateColumn("asset_count", gorm.Expr("asset_count + ?", 1)).Error
+	})
+}
+
+func GetDoubaoVideo2StorageUsage(userID int) (*DoubaoVideo2StorageUsage, error) {
+	var user struct {
+		UsedBytes  int64 `gorm:"column:doubao_video2_material_bytes"`
+		LimitBytes int64 `gorm:"column:doubao_video2_material_limit_bytes"`
+	}
+	if err := DB.Model(&User{}).Select("doubao_video2_material_bytes", "doubao_video2_material_limit_bytes").
+		Where("id = ?", userID).Take(&user).Error; err != nil {
+		return nil, err
+	}
+	limit := user.LimitBytes
+	if limit <= 0 {
+		limit = DoubaoVideo2DefaultUserStorageLimit
+	}
+	remaining := limit - user.UsedBytes
+	if remaining < 0 {
+		remaining = 0
+	}
+	return &DoubaoVideo2StorageUsage{UsedBytes: user.UsedBytes, LimitBytes: limit, RemainingBytes: remaining}, nil
+}
+
+// ReserveDoubaoVideo2Storage performs the limit check and increment in one
+// UPDATE so concurrent uploads cannot jointly exceed the user's allowance.
+func ReserveDoubaoVideo2Storage(userID int, sizeBytes int64) error {
+	if userID <= 0 || sizeBytes <= 0 {
+		return errors.New("material storage reservation is invalid")
+	}
+	result := DB.Model(&User{}).
+		Where("id = ? AND doubao_video2_material_bytes <= (CASE WHEN doubao_video2_material_limit_bytes > 0 THEN doubao_video2_material_limit_bytes ELSE ? END) - ?",
+			userID, DoubaoVideo2DefaultUserStorageLimit, sizeBytes).
+		UpdateColumn("doubao_video2_material_bytes", gorm.Expr("doubao_video2_material_bytes + ?", sizeBytes))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrDoubaoVideo2MaterialStorageLimit
+	}
+	return nil
+}
+
+func ReleaseDoubaoVideo2Storage(userID int, sizeBytes int64) error {
+	if userID <= 0 || sizeBytes <= 0 {
+		return nil
+	}
+	return DB.Model(&User{}).Where("id = ?", userID).UpdateColumn(
+		"doubao_video2_material_bytes",
+		gorm.Expr("CASE WHEN doubao_video2_material_bytes >= ? THEN doubao_video2_material_bytes - ? ELSE 0 END", sizeBytes, sizeBytes),
+	).Error
+}
+
+func CreateDoubaoVideo2UserMedia(media *DoubaoVideo2UserMedia) error {
+	return DB.Create(media).Error
+}
+
+func GetDoubaoVideo2UserMediaByTokenHash(tokenHash string) (*DoubaoVideo2UserMedia, error) {
+	media := &DoubaoVideo2UserMedia{}
+	err := DB.Where("token_hash = ?", strings.TrimSpace(tokenHash)).First(media).Error
+	return media, err
+}
+
+func GetDoubaoVideo2UserMediaByAssetID(assetID int64, userID int) (*DoubaoVideo2UserMedia, error) {
+	media := &DoubaoVideo2UserMedia{}
+	err := DB.Where("asset_id = ? AND user_id = ?", assetID, userID).First(media).Error
+	return media, err
+}
+
+func DeleteDoubaoVideo2UnboundUserMedia(mediaID int64, userID int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		media := &DoubaoVideo2UserMedia{}
+		if err := tx.Where("id = ? AND user_id = ? AND asset_id = ?", mediaID, userID, 0).First(media).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(media).Error; err != nil {
+			return err
+		}
+		return tx.Model(&User{}).Where("id = ?", userID).UpdateColumn(
+			"doubao_video2_material_bytes",
+			gorm.Expr("CASE WHEN doubao_video2_material_bytes >= ? THEN doubao_video2_material_bytes - ? ELSE 0 END", media.SizeBytes, media.SizeBytes),
+		).Error
+	})
+}
+
+func DeleteDoubaoVideo2UserAssetAndMedia(assetID int64, userID int) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		asset := &DoubaoVideo2UserAsset{}
+		if err := tx.Where("id = ? AND user_id = ?", assetID, userID).First(asset).Error; err != nil {
+			return err
+		}
+		media := &DoubaoVideo2UserMedia{}
+		mediaErr := tx.Where("asset_id = ? AND user_id = ?", asset.ID, userID).First(media).Error
+		if mediaErr != nil && !errors.Is(mediaErr, gorm.ErrRecordNotFound) {
+			return mediaErr
+		}
+		if err := tx.Delete(asset).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&DoubaoVideo2UserAssetGroup{}).
+			Where("id = ? AND user_id = ?", asset.AssetGroupID, userID).
+			UpdateColumn("asset_count", gorm.Expr("CASE WHEN asset_count > 0 THEN asset_count - 1 ELSE 0 END")).Error; err != nil {
+			return err
+		}
+		if mediaErr == nil {
+			if err := tx.Delete(media).Error; err != nil {
+				return err
+			}
+			if err := tx.Model(&User{}).Where("id = ?", userID).UpdateColumn(
+				"doubao_video2_material_bytes",
+				gorm.Expr("CASE WHEN doubao_video2_material_bytes >= ? THEN doubao_video2_material_bytes - ? ELSE 0 END", media.SizeBytes, media.SizeBytes),
+			).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -176,6 +344,15 @@ func ListPendingDoubaoVideo2UserAssets(userID int, limit int) ([]*DoubaoVideo2Us
 	assets := make([]*DoubaoVideo2UserAsset, 0)
 	err := DB.Where("user_id = ? AND status = ?", userID, DoubaoVideo2UserMaterialStatusProcessing).
 		Order("last_synced_at asc").Limit(limit).Find(&assets).Error
+	return assets, err
+}
+
+func ListDoubaoVideo2UserAssetsForSync(userID int, limit int) ([]*DoubaoVideo2UserAsset, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	assets := make([]*DoubaoVideo2UserAsset, 0)
+	err := DB.Where("user_id = ?", userID).Order("last_synced_at asc, id asc").Limit(limit).Find(&assets).Error
 	return assets, err
 }
 

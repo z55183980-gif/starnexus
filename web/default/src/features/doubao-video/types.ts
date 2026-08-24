@@ -41,6 +41,12 @@ export type PageData<T> = {
   total: number
 }
 
+export type MaterialStorageUsage = {
+  used_bytes: number
+  limit_bytes: number
+  remaining_bytes: number
+}
+
 export type AccessKey = {
   id: number
   name: string

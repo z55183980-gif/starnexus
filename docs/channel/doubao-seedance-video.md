@@ -203,7 +203,7 @@ X-Date: <UTC yyyyMMddTHHmmssZ>
 X-Content-Sha256: <请求体 SHA-256>
 ```
 
-支持 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets`。这是用户侧兼容入口；它不会向用户暴露类型 62 渠道的 URL 或上游 `ApiKey`。
+支持 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets`、`DeleteAsset`。这是用户侧兼容入口；它不会向用户暴露类型 62 渠道的 URL 或上游 `ApiKey`。
 
 部署用户素材库还需配置：
 
@@ -214,9 +214,12 @@ DOUBAO_VIDEO2_R2_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
 DOUBAO_VIDEO2_R2_ACCESS_KEY_ID=<R2 S3 access key id>
 DOUBAO_VIDEO2_R2_SECRET_ACCESS_KEY=<R2 S3 secret access key>
 DOUBAO_VIDEO2_R2_BUCKET=starnexus-video-inputs
+DOUBAO_VIDEO2_MATERIAL_PUBLIC_BASE_URL=https://<用户和上游均可访问的网关域名>
 ```
 
 未配置加密密钥环时禁止创建 Secret Access Key；未配置 R2 时禁止从用户端上传文件。
+
+用户素材库默认容量为 3 GiB。上传文件永久保留到对应素材从上游 API Key 账户删除；删除素材时同时删除 R2 原文件并释放容量。达到限额时返回“素材库达到限额，请删除已有素材或联系客服调整”。单个用户需要扩容时，可由运维调整 `users.doubao_video2_material_limit_bytes`；值为 `0` 时使用默认 3 GiB。
 
 ## 6. 图片限制
 
@@ -239,7 +242,7 @@ DOUBAO_VIDEO2_R2_BUCKET=starnexus-video-inputs
 DOUBAO_VIDEO2_R2_URL_TTL_SECONDS=86400
 ```
 
-Bucket 保持私有。网关使用 S3 SigV4 上传并生成默认 24 小时有效的 R2 GET URL；应为 `doubao-video2/` 前缀配置 24 小时生命周期删除规则。对象名使用加密随机值，日志不记录对象内容、凭证或完整预签名 URL。
+Bucket 保持私有。网关使用 S3 SigV4 上传并生成默认 24 小时有效的 R2 GET URL；应仅为 `doubao-video2/` 临时前缀配置 24 小时生命周期删除规则。长期素材库使用独立的 `doubao-video2-material-library/` 前缀，绝不能应用临时清理规则。对象名使用加密随机值，日志不记录对象内容、凭证或完整预签名 URL。
 
 客户端完全直传流程：
 

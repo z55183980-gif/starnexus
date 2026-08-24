@@ -13,6 +13,7 @@ import type {
   CreatedAccessKey,
   MaterialAsset,
   MaterialGroup,
+  MaterialStorageUsage,
   PageData,
 } from './types'
 
@@ -30,6 +31,17 @@ export async function createMaterialGroup(input: {
 }) {
   const response = await api.post<ApiResponse<MaterialGroup>>(
     '/api/doubao-video/material-groups',
+    input
+  )
+  return response.data
+}
+
+export async function updateMaterialGroup(
+  id: number,
+  input: { name: string; description: string }
+) {
+  const response = await api.patch<ApiResponse<MaterialGroup>>(
+    `/api/doubao-video/material-groups/${id}`,
     input
   )
   return response.data
@@ -65,6 +77,20 @@ export async function uploadMaterial(input: {
   const response = await api.post<ApiResponse<MaterialAsset>>(
     '/api/doubao-video/materials/upload',
     form
+  )
+  return response.data
+}
+
+export async function getMaterialStorageUsage() {
+  const response = await api.get<ApiResponse<MaterialStorageUsage>>(
+    '/api/doubao-video/materials/storage'
+  )
+  return response.data
+}
+
+export async function deleteMaterial(id: number) {
+  const response = await api.delete<ApiResponse<{ deleted: boolean }>>(
+    `/api/doubao-video/materials/${id}`
   )
   return response.data
 }

@@ -537,6 +537,30 @@ func classifyDoubaoVideo2CreateError(err error) error {
 	return doubaoVideo2WrapError("create", err)
 }
 
+// IsDoubaoVideo2MaterialCreateAmbiguous reports whether CreateAsset may have
+// succeeded even though the provider response was lost. Callers must retain
+// the submitted source URL in this case so a created upstream asset does not
+// lose its preview source.
+func IsDoubaoVideo2MaterialCreateAmbiguous(err error) bool {
+	var buildErr *doubaoVideo2BuildError
+	return errors.As(err, &buildErr) && buildErr.Kind == doubaoVideo2ErrorMaterialAmbiguous
+}
+
+// IsDoubaoVideo2MaterialNotFound makes delete and lifecycle synchronization
+// idempotent across provider HTTP and metadata error shapes.
+func IsDoubaoVideo2MaterialNotFound(err error) bool {
+	var callErr *doubaoVideo2MaterialCallError
+	if !errors.As(err, &callErr) {
+		return false
+	}
+	if callErr.StatusCode == http.StatusNotFound {
+		return true
+	}
+	text := strings.ToLower(callErr.Code + " " + callErr.Message)
+	return strings.Contains(text, "notfound") || strings.Contains(text, "not found") ||
+		strings.Contains(text, "does not exist") || strings.Contains(text, "不存在")
+}
+
 func doubaoVideo2SHA256(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])

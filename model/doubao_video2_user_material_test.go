@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -12,7 +13,7 @@ func setupDoubaoVideo2UserMaterialTestDB(t *testing.T) {
 	previous := DB
 	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/doubao-video2-user-material.db"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&DoubaoVideo2UserAssetGroup{}, &DoubaoVideo2UserAsset{}, &DoubaoVideo2AccessKey{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &DoubaoVideo2UserAssetGroup{}, &DoubaoVideo2UserAsset{}, &DoubaoVideo2UserMedia{}, &DoubaoVideo2AccessKey{}))
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	DB = db
@@ -20,6 +21,41 @@ func setupDoubaoVideo2UserMaterialTestDB(t *testing.T) {
 		DB = previous
 		_ = sqlDB.Close()
 	})
+}
+
+func TestDoubaoVideo2MaterialStorageLimitAndDeletion(t *testing.T) {
+	setupDoubaoVideo2UserMaterialTestDB(t)
+	user := &User{Username: "material-user", Password: "not-a-real-password", DoubaoVideo2MaterialLimitBytes: 10}
+	require.NoError(t, DB.Create(user).Error)
+	group := &DoubaoVideo2UserAssetGroup{
+		UserID: user.Id, ChannelID: 62, ProviderGroupID: "group-1", Name: "group", GroupType: "AIGC", Status: DoubaoVideo2UserMaterialStatusActive,
+	}
+	require.NoError(t, CreateDoubaoVideo2UserAssetGroup(group))
+
+	require.NoError(t, ReserveDoubaoVideo2Storage(user.Id, 7))
+	require.ErrorIs(t, ReserveDoubaoVideo2Storage(user.Id, 4), ErrDoubaoVideo2MaterialStorageLimit)
+	usage, err := GetDoubaoVideo2StorageUsage(user.Id)
+	require.NoError(t, err)
+	require.Equal(t, DoubaoVideo2StorageUsage{UsedBytes: 7, LimitBytes: 10, RemainingBytes: 3}, *usage)
+
+	media := &DoubaoVideo2UserMedia{
+		UserID: user.Id, TokenHash: strings.Repeat("a", 64), ObjectKey: "doubao-video2-material-library/1/object.png", SizeBytes: 7, ContentType: "image/png",
+	}
+	require.NoError(t, CreateDoubaoVideo2UserMedia(media))
+	asset := &DoubaoVideo2UserAsset{
+		UserID: user.Id, AssetGroupID: group.ID, ChannelID: 62, ProviderAssetID: "asset-1", Name: "asset", AssetType: "Image", Status: DoubaoVideo2UserMaterialStatusActive,
+	}
+	require.NoError(t, CreateDoubaoVideo2UserAssetWithMedia(asset, media.ID))
+	require.NoError(t, DeleteDoubaoVideo2UserAssetAndMedia(asset.ID, user.Id))
+
+	usage, err = GetDoubaoVideo2StorageUsage(user.Id)
+	require.NoError(t, err)
+	require.Zero(t, usage.UsedBytes)
+	updatedGroup, err := GetDoubaoVideo2UserAssetGroup(group.ID, user.Id)
+	require.NoError(t, err)
+	require.Zero(t, updatedGroup.AssetCount)
+	_, err = GetDoubaoVideo2UserMediaByAssetID(asset.ID, user.Id)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 }
 
 func TestResolveDoubaoVideo2UserAssetChannelEnforcesOwnershipStatusAndChannel(t *testing.T) {

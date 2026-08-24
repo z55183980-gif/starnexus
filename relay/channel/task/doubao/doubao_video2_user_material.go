@@ -182,6 +182,31 @@ func (client *DoubaoVideo2UserMaterialClient) GetAsset(ctx context.Context, asse
 	}, nil
 }
 
+func (client *DoubaoVideo2UserMaterialClient) DeleteAsset(ctx context.Context, assetID string) error {
+	if client == nil {
+		return errors.New("DoubaoVideo2.0 material client is required")
+	}
+	assetID = strings.TrimSpace(assetID)
+	if assetID == "" {
+		return errors.New("asset ID is required")
+	}
+	body, err := common.Marshal(map[string]any{"Id": assetID})
+	if err != nil {
+		return err
+	}
+	responseBody, err := callDoubaoVideo2Material(ctx, client.config, "DeleteAsset", body)
+	if err != nil {
+		return err
+	}
+	var response struct {
+		ResponseMetadata doubaoVideo2MaterialMetadata `json:"ResponseMetadata"`
+	}
+	if err := common.Unmarshal(responseBody, &response); err != nil {
+		return fmt.Errorf("decode DeleteAsset response: %w", err)
+	}
+	return doubaoVideo2MetadataError(response.ResponseMetadata)
+}
+
 func normalizeDoubaoVideo2UserAssetType(assetType string) string {
 	switch strings.ToLower(strings.TrimSpace(assetType)) {
 	case "image":

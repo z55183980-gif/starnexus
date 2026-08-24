@@ -151,3 +151,28 @@ func TestCreateDoubaoVideo2DirectUploadRejectsBadChecksumAndOversize(t *testing.
 		t.Fatal("oversized direct upload was accepted")
 	}
 }
+
+func TestDoubaoVideo2PersistentMaterialPrefixIsOutsideTemporaryLifecycle(t *testing.T) {
+	if strings.HasPrefix(doubaoVideo2R2MaterialPrefix, doubaoVideo2R2Prefix) {
+		t.Fatalf("persistent prefix %q must not be covered by temporary lifecycle prefix %q", doubaoVideo2R2MaterialPrefix, doubaoVideo2R2Prefix)
+	}
+}
+
+func TestPresignDoubaoVideo2PersistentMaterial(t *testing.T) {
+	t.Setenv("DOUBAO_VIDEO2_R2_ENDPOINT", "https://example.r2.cloudflarestorage.com")
+	t.Setenv("DOUBAO_VIDEO2_R2_ACCESS_KEY_ID", "access-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_SECRET_ACCESS_KEY", "secret-key")
+	t.Setenv("DOUBAO_VIDEO2_R2_BUCKET", "starnexus-video-inputs")
+
+	objectKey := doubaoVideo2R2MaterialPrefix + "42/object.png"
+	mediaURL, err := PresignDoubaoVideo2PersistentMaterial(t.Context(), objectKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(mediaURL, "/"+objectKey) || !strings.Contains(mediaURL, "X-Amz-Signature=") {
+		t.Fatalf("persistent material URL is not correctly presigned: %s", mediaURL)
+	}
+	if _, err := PresignDoubaoVideo2PersistentMaterial(t.Context(), doubaoVideo2R2Prefix+"temporary.png"); err == nil {
+		t.Fatal("temporary object key was accepted as persistent material")
+	}
+}
