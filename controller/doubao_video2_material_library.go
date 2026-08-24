@@ -387,7 +387,7 @@ func deleteDoubaoVideo2UserAsset(ctx context.Context, userID int, asset *model.D
 	media, mediaErr := model.GetDoubaoVideo2UserMediaByAssetID(asset.ID, userID)
 	if mediaErr == nil {
 		if err := service.DeleteDoubaoVideo2PersistentMaterial(ctx, media.ObjectKey); err != nil {
-			return err
+			return fmt.Errorf("delete material source from R2: %w", err)
 		}
 	} else if !errors.Is(mediaErr, gorm.ErrRecordNotFound) {
 		return mediaErr
