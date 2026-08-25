@@ -44,29 +44,7 @@ func TestAuthenticateDoubaoVideo2OpenAPIAcceptsOfficialHMACShape(t *testing.T) {
 
 	body := []byte(`{"GroupId":"group-1","URL":"https://example.com/a.png","Name":"a","AssetType":"Image","ProjectName":"default"}`)
 	request := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/?Action=CreateAsset&Version=2024-01-01", bytes.NewReader(body))
-	xDate := time.Now().UTC().Format("20060102T150405Z")
-	date := xDate[:8]
-	payloadHash := sha256.Sum256(body)
-	payloadHashHex := hex.EncodeToString(payloadHash[:])
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Date", xDate)
-	request.Header.Set("X-Content-Sha256", payloadHashHex)
-	signedHeaders := "content-type;host;x-content-sha256;x-date"
-	canonicalHeaders := "content-type:application/json\n" +
-		"host:" + request.Host + "\n" +
-		"x-content-sha256:" + payloadHashHex + "\n" +
-		"x-date:" + xDate + "\n"
-	canonicalRequest := request.Method + "\n" + request.URL.EscapedPath() + "\n" + request.URL.Query().Encode() + "\n" +
-		canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHashHex
-	canonicalHash := sha256.Sum256([]byte(canonicalRequest))
-	scope := date + "/cn-beijing/ark/request"
-	stringToSign := "HMAC-SHA256\n" + xDate + "\n" + scope + "\n" + hex.EncodeToString(canonicalHash[:])
-	dateKey := doubaoVideo2OpenAPIHMAC([]byte(created.SecretAccessKey), date)
-	regionKey := doubaoVideo2OpenAPIHMAC(dateKey, "cn-beijing")
-	serviceKey := doubaoVideo2OpenAPIHMAC(regionKey, "ark")
-	signingKey := doubaoVideo2OpenAPIHMAC(serviceKey, "request")
-	signature := hex.EncodeToString(doubaoVideo2OpenAPIHMAC(signingKey, stringToSign))
-	request.Header.Set("Authorization", "HMAC-SHA256 Credential="+created.Key.AccessKeyID+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
+	signDoubaoVideo2OpenAPIRequest(request, body, created.Key.AccessKeyID, created.SecretAccessKey)
 
 	authenticated, err := authenticateDoubaoVideo2OpenAPI(request, body)
 	require.NoError(t, err)
@@ -76,6 +54,58 @@ func TestAuthenticateDoubaoVideo2OpenAPIAcceptsOfficialHMACShape(t *testing.T) {
 	require.Equal(t, "default", parsed.ProjectName)
 	_, err = authenticateDoubaoVideo2OpenAPI(request, []byte(strings.ReplaceAll(string(body), "a.png", "b.png")))
 	require.ErrorContains(t, err, "does not match")
+
+	// A client may sign the official root endpoint and send the historical
+	// /api alias (or vice versa). Both routes are the same operation, so the
+	// verifier accepts the other fixed path as a compatibility fallback.
+	aliasRequest := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/api/doubao-video/openapi?Action=CreateAsset&Version=2024-01-01", bytes.NewReader(body))
+	aliasRequest.Header = request.Header.Clone()
+	authenticated, err = authenticateDoubaoVideo2OpenAPI(aliasRequest, body)
+	require.NoError(t, err)
+	require.Equal(t, created.Key.ID, authenticated.ID)
+
+	aliasSignedRequest := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/api/doubao-video/openapi?Action=CreateAsset&Version=2024-01-01", bytes.NewReader(body))
+	signDoubaoVideo2OpenAPIRequest(aliasSignedRequest, body, created.Key.AccessKeyID, created.SecretAccessKey)
+	rootWithAliasSignature := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/?Action=CreateAsset&Version=2024-01-01", bytes.NewReader(body))
+	rootWithAliasSignature.Header = aliasSignedRequest.Header.Clone()
+	authenticated, err = authenticateDoubaoVideo2OpenAPI(rootWithAliasSignature, body)
+	require.NoError(t, err)
+	require.Equal(t, created.Key.ID, authenticated.ID)
+
+	unknownPathRequest := httptest.NewRequest(http.MethodPost, "https://gateway.example.com/unexpected?Action=CreateAsset&Version=2024-01-01", bytes.NewReader(body))
+	unknownPathRequest.Header = request.Header.Clone()
+	_, err = authenticateDoubaoVideo2OpenAPI(unknownPathRequest, body)
+	require.ErrorContains(t, err, "request signature is invalid")
+}
+
+func signDoubaoVideo2OpenAPIRequest(request *http.Request, body []byte, accessKeyID, secretAccessKey string) {
+	xDate := time.Now().UTC().Format("20060102T150405Z")
+	date := xDate[:8]
+	payloadHash := sha256.Sum256(body)
+	payloadHashHex := hex.EncodeToString(payloadHash[:])
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Date", xDate)
+	request.Header.Set("X-Content-Sha256", payloadHashHex)
+	signedHeaders := "content-type;host;x-content-sha256;x-date"
+	canonicalURI := request.URL.EscapedPath()
+	if canonicalURI == "" {
+		canonicalURI = "/"
+	}
+	canonicalHeaders := "content-type:application/json\n" +
+		"host:" + request.Host + "\n" +
+		"x-content-sha256:" + payloadHashHex + "\n" +
+		"x-date:" + xDate + "\n"
+	canonicalRequest := request.Method + "\n" + canonicalURI + "\n" + request.URL.Query().Encode() + "\n" +
+		canonicalHeaders + "\n" + signedHeaders + "\n" + payloadHashHex
+	canonicalHash := sha256.Sum256([]byte(canonicalRequest))
+	scope := date + "/cn-beijing/ark/request"
+	stringToSign := "HMAC-SHA256\n" + xDate + "\n" + scope + "\n" + hex.EncodeToString(canonicalHash[:])
+	dateKey := doubaoVideo2OpenAPIHMAC([]byte(secretAccessKey), date)
+	regionKey := doubaoVideo2OpenAPIHMAC(dateKey, "cn-beijing")
+	serviceKey := doubaoVideo2OpenAPIHMAC(regionKey, "ark")
+	signingKey := doubaoVideo2OpenAPIHMAC(serviceKey, "request")
+	signature := hex.EncodeToString(doubaoVideo2OpenAPIHMAC(signingKey, stringToSign))
+	request.Header.Set("Authorization", "HMAC-SHA256 Credential="+accessKeyID+"/"+scope+", SignedHeaders="+signedHeaders+", Signature="+signature)
 }
 
 func TestDoubaoVideo2MaterialPublicURLUsesStableHTTPSEndpoint(t *testing.T) {

@@ -30,6 +30,7 @@ const (
 	doubaoVideo2OpenAPIRegion  = "cn-beijing"
 	doubaoVideo2OpenAPIService = "ark"
 	doubaoVideo2OpenAPIMaxBody = 2 << 20
+	doubaoVideo2OpenAPIAliasPath = "/api/doubao-video/openapi"
 )
 
 type createDoubaoVideo2AccessKeyRequest struct {
@@ -328,15 +329,7 @@ func authenticateDoubaoVideo2OpenAPI(request *http.Request, body []byte) (*model
 		}
 		canonicalHeaders.WriteString(headerName + ":" + value + "\n")
 	}
-	canonicalURI := request.URL.EscapedPath()
-	if canonicalURI == "" {
-		canonicalURI = "/"
-	}
-	canonicalRequest := request.Method + "\n" + canonicalURI + "\n" + request.URL.Query().Encode() + "\n" +
-		canonicalHeaders.String() + "\n" + strings.Join(signedHeaders, ";") + "\n" + payloadHashHex
-	canonicalHash := sha256.Sum256([]byte(canonicalRequest))
 	credentialScope := strings.Join(credentialParts[1:], "/")
-	stringToSign := "HMAC-SHA256\n" + xDate + "\n" + credentialScope + "\n" + hex.EncodeToString(canonicalHash[:])
 	secret, err := service.DecryptDoubaoVideo2AccessKeySecret(key)
 	if err != nil {
 		return nil, err
@@ -345,12 +338,35 @@ func authenticateDoubaoVideo2OpenAPI(request *http.Request, body []byte) (*model
 	regionKey := doubaoVideo2OpenAPIHMAC(dateKey, credentialParts[2])
 	serviceKey := doubaoVideo2OpenAPIHMAC(regionKey, credentialParts[3])
 	signingKey := doubaoVideo2OpenAPIHMAC(serviceKey, "request")
-	expectedSignature := hex.EncodeToString(doubaoVideo2OpenAPIHMAC(signingKey, stringToSign))
 	providedSignature := strings.ToLower(strings.TrimSpace(attributes["Signature"]))
-	if subtle.ConstantTimeCompare([]byte(providedSignature), []byte(expectedSignature)) != 1 {
-		return nil, errors.New("request signature is invalid")
+	for _, canonicalURI := range doubaoVideo2OpenAPICanonicalURIs(request.URL.EscapedPath()) {
+		canonicalRequest := request.Method + "\n" + canonicalURI + "\n" + request.URL.Query().Encode() + "\n" +
+			canonicalHeaders.String() + "\n" + strings.Join(signedHeaders, ";") + "\n" + payloadHashHex
+		canonicalHash := sha256.Sum256([]byte(canonicalRequest))
+		stringToSign := "HMAC-SHA256\n" + xDate + "\n" + credentialScope + "\n" + hex.EncodeToString(canonicalHash[:])
+		expectedSignature := hex.EncodeToString(doubaoVideo2OpenAPIHMAC(signingKey, stringToSign))
+		if subtle.ConstantTimeCompare([]byte(providedSignature), []byte(expectedSignature)) == 1 {
+			return key, nil
+		}
 	}
-	return key, nil
+	return nil, errors.New("request signature is invalid")
+}
+
+// doubaoVideo2OpenAPICanonicalURIs keeps the official root endpoint and the
+// historical /api alias compatible without accepting arbitrary path changes in
+// the HMAC signature. The first URI is always the path used by the request.
+func doubaoVideo2OpenAPICanonicalURIs(requestPath string) []string {
+	if requestPath == "" {
+		requestPath = "/"
+	}
+	switch requestPath {
+	case "/":
+		return []string{"/", doubaoVideo2OpenAPIAliasPath}
+	case doubaoVideo2OpenAPIAliasPath:
+		return []string{doubaoVideo2OpenAPIAliasPath, "/"}
+	default:
+		return []string{requestPath}
+	}
 }
 
 func doubaoVideo2OpenAPIHMAC(key []byte, value string) []byte {
