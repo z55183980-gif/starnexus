@@ -95,6 +95,7 @@ export type ContentModerationConfigView = {
   groups: string[]
   model_filter: ContentModerationModelFilter
   exclude_openai_oauth_team: boolean
+  exclude_user_ids: number[]
   thresholds: Record<string, number>
   keys_configured?: boolean
 }
@@ -116,6 +117,7 @@ export const DEFAULT_CONTENT_MODERATION_CONFIG: ContentModerationConfigView = {
     models: [],
   },
   exclude_openai_oauth_team: false,
+  exclude_user_ids: [],
   thresholds: { ...DEFAULT_CONTENT_MODERATION_THRESHOLDS },
   keys_configured: false,
 }
@@ -168,6 +170,24 @@ function normalizeStringList(value: unknown): string[] {
     if (seen.has(key)) continue
     seen.add(key)
     out.push(trimmed)
+  }
+  return out
+}
+
+export function normalizeContentModerationUserIds(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const seen = new Set<number>()
+  const out: number[] = []
+  for (const item of value) {
+    const userId =
+      typeof item === 'number' ? item : Number(String(item ?? '').trim())
+    if (!Number.isSafeInteger(userId) || userId <= 0 || seen.has(userId)) {
+      continue
+    }
+    seen.add(userId)
+    out.push(userId)
   }
   return out
 }
@@ -240,6 +260,9 @@ export function parseContentModerationConfig(
       groups,
       model_filter: normalizeModelFilter(parsed.model_filter),
       exclude_openai_oauth_team: Boolean(parsed.exclude_openai_oauth_team),
+      exclude_user_ids: normalizeContentModerationUserIds(
+        parsed.exclude_user_ids
+      ),
       thresholds,
       keys_configured: Boolean(parsed.keys_configured ?? apiKeys.length > 0),
     }
@@ -266,6 +289,9 @@ export function stringifyContentModerationConfig(
     groups: config.all_groups ? [] : normalizeStringList(config.groups),
     model_filter: modelFilter,
     exclude_openai_oauth_team: Boolean(config.exclude_openai_oauth_team),
+    exclude_user_ids: normalizeContentModerationUserIds(
+      config.exclude_user_ids
+    ),
     thresholds: config.thresholds,
   })
 }

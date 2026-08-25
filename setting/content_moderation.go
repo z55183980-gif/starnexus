@@ -35,6 +35,7 @@ const (
 	maxContentModerationTimeoutMS     = 30000
 	maxContentModerationScopeGroups   = 1000
 	maxContentModerationScopeModels   = 1000
+	maxContentModerationScopeUsers    = 10000
 	maxContentModerationScopeItemLen  = 200
 )
 
@@ -64,41 +65,43 @@ type ContentModerationModelFilter struct {
 // 「审计范围」: which request groups and models are subject to content audit.
 // Groups are StarNexus string channel/request groups (not numeric IDs).
 type ContentModerationConfig struct {
-	Enabled          bool                         `json:"enabled"`
-	Mode             string                       `json:"mode"`
-	ObserveHitAction string                       `json:"observe_hit_action"`
-	ModelType        string                       `json:"model_type"`
-	Provider         string                       `json:"provider,omitempty"`
-	BaseURL          string                       `json:"base_url"`
-	Model            string                       `json:"model"`
-	APIKeys          []string                     `json:"api_keys,omitempty"`
-	TimeoutMS        int                          `json:"timeout_ms"`
-	AllGroups        bool                         `json:"all_groups"`
-	Groups           []string                     `json:"groups"`
-	ModelFilter      ContentModerationModelFilter `json:"model_filter"`
-	ExcludeOpenAIOAuthTeam bool                    `json:"exclude_openai_oauth_team"`
-	Thresholds       map[string]float64           `json:"thresholds"`
+	Enabled                bool                         `json:"enabled"`
+	Mode                   string                       `json:"mode"`
+	ObserveHitAction       string                       `json:"observe_hit_action"`
+	ModelType              string                       `json:"model_type"`
+	Provider               string                       `json:"provider,omitempty"`
+	BaseURL                string                       `json:"base_url"`
+	Model                  string                       `json:"model"`
+	APIKeys                []string                     `json:"api_keys,omitempty"`
+	TimeoutMS              int                          `json:"timeout_ms"`
+	AllGroups              bool                         `json:"all_groups"`
+	Groups                 []string                     `json:"groups"`
+	ModelFilter            ContentModerationModelFilter `json:"model_filter"`
+	ExcludeOpenAIOAuthTeam bool                         `json:"exclude_openai_oauth_team"`
+	ExcludeUserIds         []int                        `json:"exclude_user_ids"`
+	Thresholds             map[string]float64           `json:"thresholds"`
 }
 
 // ContentModerationConfigView is the admin-facing DTO with masked API keys.
 type ContentModerationConfigView struct {
-	Enabled          bool                         `json:"enabled"`
-	Mode             string                       `json:"mode"`
-	ObserveHitAction string                       `json:"observe_hit_action"`
-	ModelType        string                       `json:"model_type"`
-	Provider         string                       `json:"provider,omitempty"`
-	BaseURL          string                       `json:"base_url"`
-	Model            string                       `json:"model"`
-	APIKeyCount      int                          `json:"api_key_count"`
-	APIKeyMasks      []string                     `json:"api_key_masks"`
-	APIKeys          []string                     `json:"api_keys"`
-	TimeoutMS        int                          `json:"timeout_ms"`
-	AllGroups        bool                         `json:"all_groups"`
-	Groups           []string                     `json:"groups"`
-	ModelFilter      ContentModerationModelFilter `json:"model_filter"`
-	ExcludeOpenAIOAuthTeam bool                    `json:"exclude_openai_oauth_team"`
-	Thresholds       map[string]float64           `json:"thresholds"`
-	KeysConfigured   bool                         `json:"keys_configured"`
+	Enabled                bool                         `json:"enabled"`
+	Mode                   string                       `json:"mode"`
+	ObserveHitAction       string                       `json:"observe_hit_action"`
+	ModelType              string                       `json:"model_type"`
+	Provider               string                       `json:"provider,omitempty"`
+	BaseURL                string                       `json:"base_url"`
+	Model                  string                       `json:"model"`
+	APIKeyCount            int                          `json:"api_key_count"`
+	APIKeyMasks            []string                     `json:"api_key_masks"`
+	APIKeys                []string                     `json:"api_keys"`
+	TimeoutMS              int                          `json:"timeout_ms"`
+	AllGroups              bool                         `json:"all_groups"`
+	Groups                 []string                     `json:"groups"`
+	ModelFilter            ContentModerationModelFilter `json:"model_filter"`
+	ExcludeOpenAIOAuthTeam bool                         `json:"exclude_openai_oauth_team"`
+	ExcludeUserIds         []int                        `json:"exclude_user_ids"`
+	Thresholds             map[string]float64           `json:"thresholds"`
+	KeysConfigured         bool                         `json:"keys_configured"`
 }
 
 var (
@@ -146,7 +149,8 @@ func defaultContentModerationConfig() ContentModerationConfig {
 			Models: nil,
 		},
 		ExcludeOpenAIOAuthTeam: false,
-		Thresholds: ContentModerationDefaultThresholds(),
+		ExcludeUserIds:         nil,
+		Thresholds:             ContentModerationDefaultThresholds(),
 	}
 }
 
@@ -229,23 +233,24 @@ func ContentModerationConfigToView(cfg ContentModerationConfig) ContentModeratio
 		placeholders = append(placeholders, maskSecretPlaceholder(key))
 	}
 	return ContentModerationConfigView{
-		Enabled:          cfg.Enabled,
-		Mode:             cfg.Mode,
-		ObserveHitAction: cfg.ObserveHitAction,
-		ModelType:        cfg.ModelType,
-		Provider:         cfg.Provider,
-		BaseURL:          cfg.BaseURL,
-		Model:            cfg.Model,
-		APIKeyCount:      len(cfg.APIKeys),
-		APIKeyMasks:      masks,
-		APIKeys:          placeholders,
-		TimeoutMS:        cfg.TimeoutMS,
-		AllGroups:        cfg.AllGroups,
-		Groups:           append([]string(nil), cfg.Groups...),
-		ModelFilter:      cloneContentModerationModelFilter(cfg.ModelFilter),
+		Enabled:                cfg.Enabled,
+		Mode:                   cfg.Mode,
+		ObserveHitAction:       cfg.ObserveHitAction,
+		ModelType:              cfg.ModelType,
+		Provider:               cfg.Provider,
+		BaseURL:                cfg.BaseURL,
+		Model:                  cfg.Model,
+		APIKeyCount:            len(cfg.APIKeys),
+		APIKeyMasks:            masks,
+		APIKeys:                placeholders,
+		TimeoutMS:              cfg.TimeoutMS,
+		AllGroups:              cfg.AllGroups,
+		Groups:                 append([]string(nil), cfg.Groups...),
+		ModelFilter:            cloneContentModerationModelFilter(cfg.ModelFilter),
 		ExcludeOpenAIOAuthTeam: cfg.ExcludeOpenAIOAuthTeam,
-		Thresholds:       cloneFloatMap(cfg.Thresholds),
-		KeysConfigured:   len(cfg.APIKeys) > 0,
+		ExcludeUserIds:         append([]int(nil), cfg.ExcludeUserIds...),
+		Thresholds:             cloneFloatMap(cfg.Thresholds),
+		KeysConfigured:         len(cfg.APIKeys) > 0,
 	}
 }
 
@@ -313,6 +318,7 @@ func (cfg *ContentModerationConfig) normalize() {
 		cfg.Groups = nil
 	}
 	cfg.ModelFilter = normalizeContentModerationModelFilter(cfg.ModelFilter)
+	cfg.ExcludeUserIds = normalizeContentModerationUserIds(cfg.ExcludeUserIds)
 	cfg.Thresholds = mergeContentModerationThresholds(ContentModerationDefaultThresholds(), cfg.Thresholds)
 }
 
@@ -350,22 +356,37 @@ func (cfg *ContentModerationConfig) IncludesModel(modelName string) bool {
 	}
 }
 
+// ExcludesUser reports whether the authenticated user is excluded from the
+// global API content audit. Non-positive IDs never match an exclusion.
+func (cfg *ContentModerationConfig) ExcludesUser(userId int) bool {
+	if cfg == nil || userId <= 0 {
+		return false
+	}
+	for _, excluded := range cfg.ExcludeUserIds {
+		if excluded == userId {
+			return true
+		}
+	}
+	return false
+}
+
 func contentModerationConfigFromView(view ContentModerationConfigView) ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:          view.Enabled,
-		Mode:             view.Mode,
-		ObserveHitAction: view.ObserveHitAction,
-		ModelType:        view.ModelType,
-		Provider:         view.Provider,
-		BaseURL:          view.BaseURL,
-		Model:            view.Model,
-		APIKeys:          view.APIKeys,
-		TimeoutMS:        view.TimeoutMS,
-		AllGroups:        view.AllGroups,
-		Groups:           view.Groups,
-		ModelFilter:      view.ModelFilter,
+		Enabled:                view.Enabled,
+		Mode:                   view.Mode,
+		ObserveHitAction:       view.ObserveHitAction,
+		ModelType:              view.ModelType,
+		Provider:               view.Provider,
+		BaseURL:                view.BaseURL,
+		Model:                  view.Model,
+		APIKeys:                view.APIKeys,
+		TimeoutMS:              view.TimeoutMS,
+		AllGroups:              view.AllGroups,
+		Groups:                 view.Groups,
+		ModelFilter:            view.ModelFilter,
 		ExcludeOpenAIOAuthTeam: view.ExcludeOpenAIOAuthTeam,
-		Thresholds:       view.Thresholds,
+		ExcludeUserIds:         view.ExcludeUserIds,
+		Thresholds:             view.Thresholds,
 	}
 }
 
@@ -434,20 +455,21 @@ func mergeContentModerationThresholds(defaults, overrides map[string]float64) ma
 
 func cloneContentModerationConfig(cfg ContentModerationConfig) ContentModerationConfig {
 	return ContentModerationConfig{
-		Enabled:          cfg.Enabled,
-		Mode:             cfg.Mode,
-		ObserveHitAction: cfg.ObserveHitAction,
-		ModelType:        cfg.ModelType,
-		Provider:         cfg.Provider,
-		BaseURL:          cfg.BaseURL,
-		Model:            cfg.Model,
-		APIKeys:          append([]string(nil), cfg.APIKeys...),
-		TimeoutMS:        cfg.TimeoutMS,
-		AllGroups:        cfg.AllGroups,
-		Groups:           append([]string(nil), cfg.Groups...),
-		ModelFilter:      cloneContentModerationModelFilter(cfg.ModelFilter),
+		Enabled:                cfg.Enabled,
+		Mode:                   cfg.Mode,
+		ObserveHitAction:       cfg.ObserveHitAction,
+		ModelType:              cfg.ModelType,
+		Provider:               cfg.Provider,
+		BaseURL:                cfg.BaseURL,
+		Model:                  cfg.Model,
+		APIKeys:                append([]string(nil), cfg.APIKeys...),
+		TimeoutMS:              cfg.TimeoutMS,
+		AllGroups:              cfg.AllGroups,
+		Groups:                 append([]string(nil), cfg.Groups...),
+		ModelFilter:            cloneContentModerationModelFilter(cfg.ModelFilter),
 		ExcludeOpenAIOAuthTeam: cfg.ExcludeOpenAIOAuthTeam,
-		Thresholds:       cloneFloatMap(cfg.Thresholds),
+		ExcludeUserIds:         append([]int(nil), cfg.ExcludeUserIds...),
+		Thresholds:             cloneFloatMap(cfg.Thresholds),
 	}
 }
 
@@ -507,6 +529,25 @@ func normalizeContentModerationScopeList(values []string, maxItems int) []string
 		seen[key] = struct{}{}
 		out = append(out, item)
 		if len(out) >= maxItems {
+			break
+		}
+	}
+	return out
+}
+
+func normalizeContentModerationUserIds(values []int) []int {
+	out := make([]int, 0, len(values))
+	seen := make(map[int]struct{}, len(values))
+	for _, userId := range values {
+		if userId <= 0 {
+			continue
+		}
+		if _, ok := seen[userId]; ok {
+			continue
+		}
+		seen[userId] = struct{}{}
+		out = append(out, userId)
+		if len(out) >= maxContentModerationScopeUsers {
 			break
 		}
 	}

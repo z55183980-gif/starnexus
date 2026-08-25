@@ -36,6 +36,9 @@ func TestParseContentModerationConfigJSONDefaults(t *testing.T) {
 	if len(cfg.Thresholds) == 0 {
 		t.Fatal("expected default thresholds")
 	}
+	if len(cfg.ExcludeUserIds) != 0 {
+		t.Fatalf("expected no excluded users by default, got %#v", cfg.ExcludeUserIds)
+	}
 }
 
 func TestMergeContentModerationAPIKeysKeepsMasked(t *testing.T) {
@@ -176,6 +179,34 @@ func TestParseContentModerationConfigJSONAuditScope(t *testing.T) {
 	}
 }
 
+func TestContentModerationExcludedUsersNormalizeAndRoundTrip(t *testing.T) {
+	cfg, err := ParseContentModerationConfigJSON(`{
+		"enabled":true,
+		"exclude_user_ids":[42,42,0,-7,7]
+	}`, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ExcludeUserIds) != 2 || cfg.ExcludeUserIds[0] != 42 || cfg.ExcludeUserIds[1] != 7 {
+		t.Fatalf("unexpected excluded users: %#v", cfg.ExcludeUserIds)
+	}
+	if !cfg.ExcludesUser(42) || !cfg.ExcludesUser(7) || cfg.ExcludesUser(8) || cfg.ExcludesUser(0) {
+		t.Fatalf("unexpected excluded-user matching: %#v", cfg.ExcludeUserIds)
+	}
+
+	out := ContentModerationConfigJSON(cfg)
+	if !strings.Contains(out, `"exclude_user_ids":[42,7]`) {
+		t.Fatalf("persist JSON dropped excluded users: %s", out)
+	}
+	cfg2, err := ParseContentModerationConfigJSON(out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg2.ExcludeUserIds) != 2 || cfg2.ExcludeUserIds[0] != 42 || cfg2.ExcludeUserIds[1] != 7 {
+		t.Fatalf("reload lost excluded users: %#v", cfg2.ExcludeUserIds)
+	}
+}
+
 func TestContentModerationConfigJSONRoundTripAuditScope(t *testing.T) {
 	in := `{
 		"enabled":true,
@@ -241,6 +272,13 @@ func TestContentModerationConfigJSONRoundTripAuditScope(t *testing.T) {
 	}
 	if !strings.Contains(viewJSON, `"vip"`) {
 		t.Fatalf("view JSON dropped groups: %s", viewJSON)
+	}
+
+	viewExcluded := ContentModerationConfigToView(ContentModerationConfig{
+		ExcludeUserIds: []int{42, 42, 0, 7},
+	})
+	if len(viewExcluded.ExcludeUserIds) != 2 || viewExcluded.ExcludeUserIds[0] != 42 || viewExcluded.ExcludeUserIds[1] != 7 {
+		t.Fatalf("view lost normalized excluded users: %#v", viewExcluded.ExcludeUserIds)
 	}
 }
 

@@ -55,6 +55,7 @@ import { getGroups } from '@/features/users/api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import {
+  normalizeContentModerationUserIds,
   parseContentModerationConfig,
   stringifyContentModerationConfig,
 } from './content-moderation-utils'
@@ -75,6 +76,21 @@ const contentModerationSchema = z
     model_filter_type: z.enum(['all', 'include', 'exclude']),
     model_filter_models_text: z.string().optional(),
     exclude_openai_oauth_team: z.boolean(),
+    exclude_user_ids_text: z
+      .string()
+      .refine(
+        (value) =>
+          !value ||
+          value
+            .split(/[\s,]+/)
+            .filter(Boolean)
+            .every(
+              (item) =>
+                /^[1-9]\d*$/.test(item) && Number.isSafeInteger(Number(item))
+            ),
+        'User IDs must be positive integers separated by commas or new lines.'
+      )
+      .optional(),
   })
   .superRefine((values, ctx) => {
     if (
@@ -114,6 +130,7 @@ function toFormValues(raw: string): ContentModerationFormValues {
     model_filter_type: config.model_filter.type,
     model_filter_models_text: config.model_filter.models.join('\n'),
     exclude_openai_oauth_team: config.exclude_openai_oauth_team,
+    exclude_user_ids_text: config.exclude_user_ids.join('\n'),
   }
 }
 
@@ -169,6 +186,12 @@ export function ContentModerationSection({
       .map((line) => line.trim())
       .filter(Boolean)
     const groups = values.all_groups ? [] : (values.groups ?? [])
+    const excludeUserIds = normalizeContentModerationUserIds(
+      (values.exclude_user_ids_text ?? '')
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .map(Number)
+    )
     const payload = stringifyContentModerationConfig({
       enabled: values.enabled,
       mode: values.mode,
@@ -186,6 +209,7 @@ export function ContentModerationSection({
         models: values.model_filter_type === 'all' ? [] : filterModels,
       },
       exclude_openai_oauth_team: values.exclude_openai_oauth_team,
+      exclude_user_ids: excludeUserIds,
       thresholds,
     })
     await updateOption.mutateAsync({
@@ -368,10 +392,10 @@ export function ContentModerationSection({
                 <FormDescription>
                   {modelType === 'general'
                     ? t(
-                        'Recommended for full account-risk coverage, including fraud, cyber abuse, privacy abuse, intellectual property, and safeguard evasion.'
+                        'Uses the fixed focused policy: third-party cyber abuse or safeguard bypass, batch account abuse, real-person intimate deepfakes, doxxing, and violent threats.'
                       )
                     : t(
-                        'Dedicated moderation covers core safety categories only. Use a general-purpose model for full upstream account-risk coverage.'
+                        'Uses broad provider safety categories and does not apply the focused ownership and authorization policy.'
                       )}
                 </FormDescription>
                 <FormMessage />
@@ -757,8 +781,34 @@ export function ContentModerationSection({
                   </FormDescription>
                 </div>
                 <FormControl>
-                  <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
                 </FormControl>
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='exclude_user_ids_text'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Excluded user IDs')}</FormLabel>
+                <FormControl>
+                  <Textarea
+                    {...field}
+                    rows={3}
+                    placeholder={t('One user ID per line')}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Requests from these users skip API content audit. User-level security audit rules still apply.'
+                  )}
+                </FormDescription>
+                <FormMessage />
               </FormItem>
             )}
           />
