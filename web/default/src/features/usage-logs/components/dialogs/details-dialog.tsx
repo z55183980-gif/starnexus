@@ -59,7 +59,6 @@ import {
   getFirstResponseTimeColor,
   getLogUseTimeSeconds,
   getResponseTimeColor,
-  formatModelName,
 } from '../../lib/format'
 import {
   getLogTypeConfig,
@@ -523,7 +522,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const { copiedText, copyToClipboard } = useCopyToClipboard({ notify: false })
   const details = props.log.content ?? ''
   const other = parseLogOther(props.log.other)
-  const modelInfo = formatModelName(props.log)
   const useTime = getLogUseTimeSeconds(props.log)
   const typeConfig = getLogTypeConfig(props.log.type)
 
@@ -951,22 +949,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
                   />
                 }
               />
-            )}
-
-            {/* Model mapping */}
-            {modelInfo.isMapped && modelInfo.actualModel && (
-              <DetailSection label={t('Model Mapping')}>
-                <DetailRow
-                  label={t('Request Model')}
-                  value={props.log.model_name}
-                  mono
-                />
-                <DetailRow
-                  label={t('Actual Model')}
-                  value={modelInfo.actualModel}
-                  mono
-                />
-              </DetailSection>
             )}
 
             {/* Token breakdown (for consume/error types with token data) */}

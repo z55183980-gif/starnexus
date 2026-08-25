@@ -52,7 +52,6 @@ import { getRoutingNodes } from '@/features/node-routing/api'
 import { getUserNodeBinding, updateUserNodeBinding } from '../../api'
 import type { UsageLog } from '../../data/schema'
 import {
-  formatModelName,
   getFirstResponseTimeColor,
   getLogUseTimeSeconds,
   getResponseTimeColor,
@@ -683,14 +682,9 @@ export function useCommonLogsColumns(
         const log = row.original
         if (!isDisplayableLogType(log.type)) return null
 
-        const modelInfo = formatModelName(log)
-
         return (
           <div className='flex max-w-[220px] flex-col gap-0.5'>
-            <ModelBadge
-              modelName={modelInfo.name}
-              actualModel={modelInfo.actualModel}
-            />
+            <ModelBadge modelName={log.model_name} />
           </div>
         )
       },
