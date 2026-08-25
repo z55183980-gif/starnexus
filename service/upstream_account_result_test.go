@@ -285,6 +285,24 @@ func TestApplyUpstreamAccountErrorMatchesTempUnschedulableRules(t *testing.T) {
 	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
 }
 
+func TestApplyUpstreamAccountErrorUsesSecondDuration(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "temp-unsched-seconds-account")
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update(
+		"extra",
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate limit"],"duration_seconds":7,"description":"rate limit rule"}]}`,
+	).Error)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited by upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.TempUnschedulableUntil)
+	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+7)
+	require.Nil(t, updated.RateLimitResetAt)
+}
+
 func TestApplyUpstreamAccountErrorTempUnschedulableRulesPreferCredentials(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	input := UpstreamAccountCreateInput{

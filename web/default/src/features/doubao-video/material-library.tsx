@@ -124,14 +124,15 @@ function assetStatusTranslationKey(status: string) {
 
 function AssetPreview({ asset }: { asset: MaterialAsset }) {
   const { t } = useTranslation()
-  const [imageFailed, setImageFailed] = useState(false)
+  const [previewFailed, setPreviewFailed] = useState(false)
   if (!asset.preview_url) return '—'
 
   const typeKey = assetTypeTranslationKey(asset.asset_type)
   const isImage = asset.asset_type.toLowerCase() === 'image'
+  const isVideo = asset.asset_type.toLowerCase() === 'video'
   return (
     <div className='flex items-center gap-2'>
-      {isImage && !imageFailed ? (
+      {isImage && !previewFailed ? (
         <a
           href={asset.preview_url}
           target='_blank'
@@ -144,7 +145,25 @@ function AssetPreview({ asset }: { asset: MaterialAsset }) {
             alt={asset.name}
             className='size-10 cursor-pointer rounded-md border object-cover transition-transform duration-150 ease-out group-hover:scale-105 group-hover:shadow-sm group-active:scale-95'
             loading='lazy'
-            onError={() => setImageFailed(true)}
+            onError={() => setPreviewFailed(true)}
+          />
+        </a>
+      ) : isVideo && !previewFailed ? (
+        <a
+          href={asset.preview_url}
+          target='_blank'
+          rel='noreferrer'
+          aria-label={t('Preview')}
+          className='group focus-visible:ring-ring block rounded-md focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none'
+        >
+          <video
+            src={asset.preview_url}
+            aria-label={asset.name}
+            className='size-10 cursor-pointer rounded-md border object-cover transition-transform duration-150 ease-out group-hover:scale-105 group-hover:shadow-sm group-active:scale-95'
+            muted
+            playsInline
+            preload='metadata'
+            onError={() => setPreviewFailed(true)}
           />
         </a>
       ) : (
@@ -163,11 +182,12 @@ function AssetDetailDialog(props: {
 }) {
   const { asset, group, onOpenChange } = props
   const { t } = useTranslation()
-  const [imageFailed, setImageFailed] = useState(false)
+  const [previewFailed, setPreviewFailed] = useState(false)
 
   if (!asset) return null
 
   const isImage = asset.asset_type.toLowerCase() === 'image'
+  const isVideo = asset.asset_type.toLowerCase() === 'video'
   const typeKey = assetTypeTranslationKey(asset.asset_type)
   const statusKey = assetStatusTranslationKey(asset.status)
 
@@ -178,12 +198,22 @@ function AssetDetailDialog(props: {
           <DialogTitle>{t('Details')}</DialogTitle>
         </DialogHeader>
         <div className='flex min-h-48 items-center justify-center'>
-          {isImage && asset.preview_url && !imageFailed ? (
+          {isImage && asset.preview_url && !previewFailed ? (
             <img
               src={asset.preview_url}
               alt={asset.name}
               className='max-h-72 max-w-full rounded-lg object-contain'
-              onError={() => setImageFailed(true)}
+              onError={() => setPreviewFailed(true)}
+            />
+          ) : isVideo && asset.preview_url && !previewFailed ? (
+            <video
+              src={asset.preview_url}
+              aria-label={asset.name}
+              className='max-h-96 max-w-full rounded-lg'
+              controls
+              playsInline
+              preload='metadata'
+              onError={() => setPreviewFailed(true)}
             />
           ) : (
             <Badge variant='secondary'>

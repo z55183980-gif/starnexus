@@ -35,6 +35,19 @@ Content-Type: application/json
 
 API Key 仅用于星域互联（Starnexus）服务。不要把管理员密钥、素材凭据或其他内部配置发送给最终用户。
 
+### 2.1 火山官方客户端替换配置
+
+已经按照火山方舟官方视频生成文档开发的下游，可以保留 `model + content[]` 请求体和异步任务查询流程，只替换服务地址和 Key：
+
+| 火山方舟配置 | 星域互联配置 |
+|---|---|
+| `https://ark.cn-beijing.volces.com` | `https://api.dkby.com` |
+| `https://ark.cn-beijing.volces.com/api/v3` | `https://api.dkby.com/api/v3` |
+| 火山方舟视频 API Key | 星域互联普通 API Key |
+| 火山素材库 AK/SK | “豆包视频 → 访问密钥”生成的独立 AK/SK |
+
+如果客户端会自动追加 `/contents/generations/tasks`，Base URL 应填写到 `/api/v3` 为止，不要填写完整任务路径。视频接口使用普通 Bearer API Key；素材库 Action 接口使用独立的 HMAC-SHA256 AK/SK，两类 Key 不可混用。
+
 ## 3. 创建视频任务
 
 ```http
@@ -204,6 +217,8 @@ X-Content-Sha256: <请求体 SHA-256>
 ```
 
 支持 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets`、`DeleteAsset`。这是用户侧兼容入口；它不会向用户暴露类型 62 渠道的 URL 或上游 `ApiKey`。
+
+火山官方 SDK 使用根路径 `/?Action=...&Version=2024-01-01` 时，也可以把 Endpoint 替换为星域互联域名并使用上述独立 AK/SK。只有本段列出的 Action 属于当前兼容范围；调用其他火山素材 Action 前必须先确认网关已经支持。
 
 部署用户素材库还需配置：
 

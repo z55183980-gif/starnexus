@@ -408,7 +408,8 @@ function accountStatusCountdown(
   const minutes = Math.floor((seconds % 3_600) / 60)
   if (days > 0) return `${days}d ${hours}h`
   if (hours > 0) return `${hours}h ${minutes}m`
-  return `${Math.max(1, minutes)}m`
+  if (minutes > 0) return `${minutes}m`
+  return `${seconds}s`
 }
 
 function accountStatusDateTime(timestamp: number | null | undefined) {
@@ -477,6 +478,14 @@ export function AccountStatusCell({ account }: { account: UpstreamAccount }) {
     account.auto_pause_on_expired && account.expires_at
   )
   const expiredForScheduling = accountExpiredForScheduling(account, now)
+  const needsSecondPrecision = [
+    account.rate_limit_reset_at,
+    account.overload_until,
+    account.temp_unschedulable_until,
+  ].some(
+    (timestamp) =>
+      timestamp && timestamp * 1000 > now && timestamp * 1000 - now < 60_000
+  )
 
   useEffect(() => {
     if (
@@ -486,9 +495,18 @@ export function AccountStatusCell({ account }: { account: UpstreamAccount }) {
       !tracksExpiration
     )
       return
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
+    const timer = window.setInterval(
+      () => setNow(Date.now()),
+      needsSecondPrecision ? 1_000 : 60_000
+    )
     return () => window.clearInterval(timer)
-  }, [overloaded, rateLimited, temporaryWindowActive, tracksExpiration])
+  }, [
+    needsSecondPrecision,
+    overloaded,
+    rateLimited,
+    temporaryWindowActive,
+    tracksExpiration,
+  ])
 
   if (rateLimited) {
     const countdown = accountStatusCountdown(account.rate_limit_reset_at, now)

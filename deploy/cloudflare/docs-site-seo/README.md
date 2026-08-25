@@ -1,11 +1,13 @@
 # docs.dkby.com 第一阶段 SEO 部署
 
-`docs.dkby.com` 当前由独立的 Cloudflare R2 静态站点提供，不经过本项目的 Go Web 路由。因此本目录中的四个文件需要上传到 `docs` 桶的 `docs/` 前缀（与现有 `docs/help.html`、`docs/doc/` 对齐）：
+`docs.dkby.com` 当前由独立的 Cloudflare R2 静态站点提供，不经过本项目的 Go Web 路由。因此本目录中的公开文件需要上传到 `docs` 桶的 `docs/` 前缀（与现有 `docs/help.html`、`docs/doc/` 对齐）：
 
 - `robots.txt`：`Content-Type: text/plain; charset=utf-8`
 - `sitemap.xml`：`Content-Type: application/xml; charset=utf-8`
 - `llms.txt`：`Content-Type: text/plain; charset=utf-8`
 - `llms-full.txt`：`Content-Type: text/plain; charset=utf-8`
+- `doubao-seedance-video.html`：上传为 `docs/doc/doubao-seedance-video.html`，`Content-Type: text/html; charset=utf-8`
+- `help.html`：文档目录外壳；为频繁更新的 iframe 文档附加修订号，上传为 `docs/help.html`
 
 上传后清除这四个 URL 的 Cloudflare 缓存，并逐项确认：
 

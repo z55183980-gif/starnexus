@@ -24,7 +24,7 @@ StarNexus 是独立的 AI API 聚合网关，不是 OpenAI、Anthropic、Google�
 
 ## API guides
 
-- [Doubao Seedance 视频生成 API](https://docs.dkby.com/docs/doc/doubao-seedance-video.html): 创建视频任务、图片输入格式、任务查询、下载、错误处理与生产接入建议。
+- [Doubao Seedance 视频与素材库 API](https://docs.dkby.com/docs/doc/doubao-seedance-video.html): 火山官方客户端 URL/Key 替换、原生任务路径、统一与 OpenAI Videos 接口、素材库、任务查询和下载。
 - [平台介绍](https://docs.dkby.com/docs/doc/help00.html): StarNexus OpenAI 适配文档入口。
 
 ## Optional

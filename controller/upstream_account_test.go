@@ -11,13 +11,15 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func TestCreateUpstreamAccountAndProxyReturnPersistedIds(t *testing.T) {
+func setupUpstreamControllerTestDB(t *testing.T) {
+	t.Helper()
 	t.Setenv("UPSTREAM_ACCOUNT_CREDENTIAL_KEYS", `{"1":"`+base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))+`"}`)
 	t.Setenv("UPSTREAM_ACCOUNT_ACTIVE_KEY_VERSION", "1")
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -41,6 +43,10 @@ func TestCreateUpstreamAccountAndProxyReturnPersistedIds(t *testing.T) {
 		common.RedisEnabled = originalRedisEnabled
 	})
 	gin.SetMode(gin.TestMode)
+}
+
+func TestCreateUpstreamAccountAndProxyReturnPersistedIds(t *testing.T) {
+	setupUpstreamControllerTestDB(t)
 
 	accountResponse := invokeUpstreamHandler(t, CreateUpstreamAccount, `{
 		"name":"api account","platform":"openai","type":"apikey",
@@ -62,6 +68,108 @@ func TestCreateUpstreamAccountAndProxyReturnPersistedIds(t *testing.T) {
 	var proxy model.UpstreamProxy
 	require.NoError(t, common.Unmarshal(proxyResponse.Data, &proxy))
 	require.Positive(t, proxy.Id)
+}
+
+func TestUpdateUpstreamAccountsBatchOverwritesTempUnschedulableSettings(t *testing.T) {
+	setupUpstreamControllerTestDB(t)
+
+	createAccount := func(name string, errorCode int, durationSeconds int) int {
+		t.Helper()
+		rules := []map[string]any{{
+			"error_code": errorCode, "keywords": []string{"old"},
+			"duration_seconds": durationSeconds, "description": "old rule",
+		}}
+		extra, err := common.Marshal(map[string]any{
+			"temp_unschedulable_enabled": true,
+			"temp_unschedulable_rules":   rules,
+		})
+		require.NoError(t, err)
+		body, err := common.Marshal(map[string]any{
+			"name": name, "platform": "openai", "type": "apikey",
+			"credentials": map[string]any{
+				"api_key": "sk-" + name, "temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules": rules,
+			},
+			"extra": string(extra), "concurrency": 1, "priority": 50,
+			"weight": 1, "status": "active", "schedulable": true,
+		})
+		require.NoError(t, err)
+		response := invokeUpstreamHandler(t, CreateUpstreamAccount, string(body))
+		require.True(t, response.Success, response.Message)
+		var account model.UpstreamAccount
+		require.NoError(t, common.Unmarshal(response.Data, &account))
+		return account.Id
+	}
+
+	selectedIds := []int{
+		createAccount("selected-one", 429, 30),
+		createAccount("selected-two", 503, 60),
+	}
+	unselectedId := createAccount("unselected", 401, 90)
+	newRules := []map[string]any{{
+		"error_code": 529, "keywords": []string{"overloaded", "busy"},
+		"duration_seconds": 7, "description": "batch rule",
+	}}
+	requestBody, err := common.Marshal(map[string]any{
+		"ids": selectedIds,
+		"patch": map[string]any{
+			"extra_patch": map[string]any{
+				"temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules":   newRules,
+			},
+			"credential_patch": map[string]any{
+				"temp_unschedulable_enabled": true,
+				"temp_unschedulable_rules":   newRules,
+			},
+		},
+	})
+	require.NoError(t, err)
+	response := invokeUpstreamHandler(t, UpdateUpstreamAccountsBatch, string(requestBody))
+	require.True(t, response.Success, response.Message)
+	var result upstreamBatchResult
+	require.NoError(t, common.Unmarshal(response.Data, &result))
+	require.ElementsMatch(t, selectedIds, result.SuccessIds)
+	require.Empty(t, result.Failures)
+
+	wantRules := []model.TempUnschedulableRule{{
+		ErrorCode: 529, Keywords: []string{"overloaded", "busy"},
+		DurationSeconds: 7, Description: "batch rule",
+	}}
+	for _, id := range selectedIds {
+		account, err := service.GetUpstreamAccount(id)
+		require.NoError(t, err)
+		require.True(t, account.Metadata.TempUnschedulableEnabled)
+		require.Equal(t, wantRules, account.Metadata.TempUnschedulableRules)
+	}
+
+	disableBody, err := common.Marshal(map[string]any{
+		"ids": selectedIds,
+		"patch": map[string]any{
+			"extra_patch": map[string]any{
+				"temp_unschedulable_enabled": nil,
+				"temp_unschedulable_rules":   nil,
+			},
+			"credential_patch": map[string]any{
+				"temp_unschedulable_enabled": nil,
+				"temp_unschedulable_rules":   nil,
+			},
+		},
+	})
+	require.NoError(t, err)
+	disableResponse := invokeUpstreamHandler(t, UpdateUpstreamAccountsBatch, string(disableBody))
+	require.True(t, disableResponse.Success, disableResponse.Message)
+	for _, id := range selectedIds {
+		account, err := service.GetUpstreamAccount(id)
+		require.NoError(t, err)
+		require.False(t, account.Metadata.TempUnschedulableEnabled)
+		require.Empty(t, account.Metadata.TempUnschedulableRules)
+	}
+
+	unselected, err := service.GetUpstreamAccount(unselectedId)
+	require.NoError(t, err)
+	require.True(t, unselected.Metadata.TempUnschedulableEnabled)
+	require.Equal(t, 401, unselected.Metadata.TempUnschedulableRules[0].ErrorCode)
+	require.Equal(t, 90, unselected.Metadata.TempUnschedulableRules[0].DurationSeconds)
 }
 
 func TestValidBatchIdsRejectsNonPositiveValues(t *testing.T) {

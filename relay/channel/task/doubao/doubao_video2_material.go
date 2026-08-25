@@ -148,6 +148,7 @@ type doubaoVideo2GetAssetResponse struct {
 	Result           struct {
 		ID     string `json:"Id"`
 		Status string `json:"Status"`
+		URL    string `json:"URL"`
 		Error  *struct {
 			Code    any    `json:"Code"`
 			Message string `json:"Message"`

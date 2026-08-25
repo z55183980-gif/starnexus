@@ -25,7 +25,7 @@ func TestDoubaoVideo2UserMaterialClientPreservesCustomUpstreamProtocol(t *testin
 		case "CreateAsset":
 			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"asset-request"},"Result":{"Id":"asset-456"}}`))
 		case "GetAsset":
-			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"get-request"},"Result":{"Status":"Approved"}}`))
+			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"get-request"},"Result":{"Status":"Approved","URL":"https://ark-asset.example.com/asset-456.mp4"}}`))
 		case "DeleteAsset":
 			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"delete-request"},"Result":{"Deleted":true}}`))
 		default:
@@ -50,6 +50,7 @@ func TestDoubaoVideo2UserMaterialClientPreservesCustomUpstreamProtocol(t *testin
 	status, err := client.GetAsset(t.Context(), asset.ID)
 	require.NoError(t, err)
 	require.Equal(t, model.DoubaoVideo2UserMaterialStatusActive, status.Status)
+	require.Equal(t, "https://ark-asset.example.com/asset-456.mp4", status.URL)
 	require.NoError(t, client.DeleteAsset(t.Context(), asset.ID))
 	require.Equal(t, []string{"CreateAssetGroup", "CreateAsset", "GetAsset", "DeleteAsset"}, actions)
 }

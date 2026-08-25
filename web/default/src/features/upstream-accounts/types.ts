@@ -133,7 +133,8 @@ export interface UpstreamAccount {
     temp_unschedulable_rules?: Array<{
       error_code: number
       keywords: string[]
-      duration_minutes: number
+      duration_seconds?: number
+      duration_minutes?: number
       description: string
     }>
     header_override_enabled: boolean

@@ -49,6 +49,7 @@ type DoubaoVideo2UserAsset struct {
 	ProviderAssetID string `json:"provider_asset_id" gorm:"type:varchar(160);not null;index;uniqueIndex:idx_doubao2_user_provider_asset,priority:3"`
 	Name            string `json:"name" gorm:"type:varchar(128);not null;index"`
 	AssetType       string `json:"asset_type" gorm:"type:varchar(16);not null;index"`
+	SourceURL       string `json:"-" gorm:"type:text"`
 	Status          string `json:"status" gorm:"type:varchar(32);not null;index"`
 	ErrorCode       string `json:"error_code" gorm:"type:varchar(128)"`
 	ErrorMessage    string `json:"error_message" gorm:"type:text"`

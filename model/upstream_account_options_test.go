@@ -90,7 +90,7 @@ func TestParseUpstreamAccountOptionsWithCredentialsRejectsInvalidCompactWildcard
 
 func TestParseUpstreamAccountOptionsWithCredentialsTreatsNullAsUnset(t *testing.T) {
 	options, err := ParseUpstreamAccountOptionsWithCredentials(
-		`{"intercept_warmup_requests":true,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"],"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate"],"duration_minutes":10,"description":"x"}]}`,
+		`{"intercept_warmup_requests":true,"compact_model_mapping":{"legacy":"legacy"},"openai_capabilities":["embeddings"],"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate"],"duration_seconds":600,"description":"x"}]}`,
 		map[string]any{
 			"intercept_warmup_requests":  nil,
 			"compact_model_mapping":      nil,
@@ -116,7 +116,7 @@ func TestParseUpstreamAccountOptionsTempUnschedulableRules(t *testing.T) {
 				map[string]any{
 					"error_code":       float64(529),
 					"keywords":         []any{"overloaded", " too many "},
-					"duration_minutes": float64(60),
+					"duration_seconds": float64(3600),
 					"description":      " Service overload ",
 				},
 				map[string]any{
@@ -132,8 +132,20 @@ func TestParseUpstreamAccountOptionsTempUnschedulableRules(t *testing.T) {
 	require.Equal(t, []TempUnschedulableRule{{
 		ErrorCode:       529,
 		Keywords:        []string{"overloaded", "too many"},
-		DurationMinutes: 60,
+		DurationSeconds: 3600,
 		Description:     "Service overload",
+	}}, options.TempUnschedulableRules)
+}
+
+func TestParseUpstreamAccountOptionsConvertsLegacyMinuteRules(t *testing.T) {
+	options, err := ParseUpstreamAccountOptions(
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate limit"],"duration_minutes":10}]}`,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []TempUnschedulableRule{{
+		ErrorCode:       429,
+		Keywords:        []string{"rate limit"},
+		DurationSeconds: 600,
 	}}, options.TempUnschedulableRules)
 }
 

@@ -93,7 +93,7 @@ func TestServeDoubaoVideo2UserAssetContentRequiresOwnership(t *testing.T) {
 	previous := model.DB
 	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/doubao-material-preview.db"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.DoubaoVideo2UserMedia{}))
+	require.NoError(t, db.AutoMigrate(&model.DoubaoVideo2UserAsset{}, &model.DoubaoVideo2UserMedia{}))
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	model.DB = db
@@ -123,6 +123,41 @@ func TestServeDoubaoVideo2UserAssetContentRequiresOwnership(t *testing.T) {
 	owned := serve(7)
 	require.Equal(t, http.StatusTemporaryRedirect, owned.Code)
 	require.Contains(t, owned.Header().Get("Location"), "X-Amz-Signature=")
+	require.Equal(t, "private, no-store", owned.Header().Get("Cache-Control"))
+	require.Equal(t, http.StatusNotFound, serve(8).Code)
+}
+
+func TestServeDoubaoVideo2UserAssetContentRedirectsToOwnedSourceURL(t *testing.T) {
+	previous := model.DB
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/doubao-material-source-preview.db"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.DoubaoVideo2UserAsset{}, &model.DoubaoVideo2UserMedia{}))
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previous
+		_ = sqlDB.Close()
+	})
+	asset := &model.DoubaoVideo2UserAsset{
+		UserID: 7, AssetGroupID: 3, ChannelID: 5, ProviderAssetID: "video-asset",
+		Name: "video", AssetType: "Video", SourceURL: "https://media.example.com/video.mp4", Status: "Active",
+	}
+	require.NoError(t, db.Create(asset).Error)
+
+	serve := func(userID int) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		context, _ := gin.CreateTestContext(recorder)
+		context.Request = httptest.NewRequest(http.MethodGet, "/api/doubao-video/materials/1/content", nil)
+		context.Params = gin.Params{{Key: "id", Value: strconv.FormatInt(asset.ID, 10)}}
+		context.Set("id", userID)
+		ServeDoubaoVideo2UserAssetContent(context)
+		return recorder
+	}
+
+	owned := serve(7)
+	require.Equal(t, http.StatusTemporaryRedirect, owned.Code)
+	require.Equal(t, asset.SourceURL, owned.Header().Get("Location"))
 	require.Equal(t, "private, no-store", owned.Header().Get("Cache-Control"))
 	require.Equal(t, http.StatusNotFound, serve(8).Code)
 }

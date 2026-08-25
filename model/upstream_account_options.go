@@ -12,8 +12,12 @@ import (
 type TempUnschedulableRule struct {
 	ErrorCode       int      `json:"error_code"`
 	Keywords        []string `json:"keywords"`
-	DurationMinutes int      `json:"duration_minutes"`
-	Description     string   `json:"description"`
+	DurationSeconds int      `json:"duration_seconds,omitempty"`
+	// DurationMinutes is retained only to read configurations written before
+	// rule durations were changed to seconds. NormalizeTempUnschedulableRules
+	// converts it to DurationSeconds and omits it from normalized output.
+	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	Description     string `json:"description"`
 }
 
 const (
@@ -158,6 +162,7 @@ func ParseTempUnschedulableRules(raw any) ([]TempUnschedulableRule, error) {
 			parsed = append(parsed, TempUnschedulableRule{
 				ErrorCode:       parseTempUnschedInt(entry["error_code"]),
 				Keywords:        parseTempUnschedStrings(entry["keywords"]),
+				DurationSeconds: parseTempUnschedInt(entry["duration_seconds"]),
 				DurationMinutes: parseTempUnschedInt(entry["duration_minutes"]),
 				Description:     parseTempUnschedString(entry["description"]),
 			})
@@ -189,13 +194,17 @@ func NormalizeTempUnschedulableRules(rules []TempUnschedulableRule) []TempUnsche
 				keywords = append(keywords, keyword)
 			}
 		}
-		if rule.ErrorCode < 100 || rule.ErrorCode > 599 || rule.DurationMinutes <= 0 || len(keywords) == 0 {
+		durationSeconds := rule.DurationSeconds
+		if durationSeconds <= 0 && rule.DurationMinutes > 0 {
+			durationSeconds = rule.DurationMinutes * 60
+		}
+		if rule.ErrorCode < 100 || rule.ErrorCode > 599 || durationSeconds <= 0 || len(keywords) == 0 {
 			continue
 		}
 		normalized = append(normalized, TempUnschedulableRule{
 			ErrorCode:       rule.ErrorCode,
 			Keywords:        keywords,
-			DurationMinutes: rule.DurationMinutes,
+			DurationSeconds: durationSeconds,
 			Description:     strings.TrimSpace(rule.Description),
 		})
 	}

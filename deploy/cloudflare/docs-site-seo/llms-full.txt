@@ -93,11 +93,18 @@ CC Switch 教程包括安装、一键导入和手动配置：
 - 鉴权：`Authorization: Bearer <用户自己的 API Key>`
 - 创建任务：`POST /v1/video/generations`
 - 查询任务：`GET /v1/video/generations/{task_id}`
+- 火山方舟原生创建路径：`POST /api/v3/contents/generations/tasks`
+- 火山方舟原生查询路径：`GET /api/v3/contents/generations/tasks/{task_id}`
+- 已按火山官方视频文档开发的客户端，可把 `https://ark.cn-beijing.volces.com` 替换为 `https://api.dkby.com`，并把火山视频 API Key 替换为星域互联普通 API Key；请求体不需要改成统一接口格式。
+- 如果客户端配置的是带版本路径的 Base URL，应把 `https://ark.cn-beijing.volces.com/api/v3` 替换为 `https://api.dkby.com/api/v3`，不要把完整任务路径填入 Base URL。
 - 创建成功后必须保存响应中的 `id` 或 `task_id`，用于后续查询和下载。
 - 图片可使用无需登录即可访问的稳定 HTTPS URL、带 MIME 前缀的数据 URL 或纯 Base64。
 - 推荐数据 URL 以便识别格式；公网 URL 在任务完成前必须持续有效。
 - 支持的常见光栅格式包括 JPEG、PNG、WebP 和 GIF；HEIC/HEIF、BMP、TIFF、SVG、PDF 等格式不属于文档声明的支持范围。
 - 具体模型名、多图数量、视频时长、分辨率和宽高比能力以实时模型列表与文档为准。
+- 素材审核通过后可以在官方 `content[]` 中使用 `asset://<asset_id>`；素材必须属于当前用户且来自同一上游渠道。
+- 素材库 Action 接口使用“豆包视频 → 访问密钥”生成的独立 HMAC-SHA256 AK/SK，不使用普通视频 Bearer Token。
+- 当前素材 Action 兼容范围为 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets` 和 `DeleteAsset`；`CreateAsset` 返回 ID 后仍需轮询到 `Status=Active`。
 
 官方来源：https://docs.dkby.com/docs/doc/doubao-seedance-video.html
 

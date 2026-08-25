@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="StarNexus Doubao Seedance 视频生成、火山方舟原生接口与素材库兼容接入指南" />
+  <title>星域互联 Doubao Seedance 系列视频与素材库接入规范</title>
+  <style>
+    :root{--bg:#f4f7fb;--surface:#fff;--border:#e2e8f0;--text:#0f172a;--muted:#475569;--primary:#2563eb;--soft:#eff6ff;--warn:#fff7ed;--warn-border:#f97316;--code:#172033;--code-text:#e2e8f0;--radius:14px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--text);font-family:"Segoe UI","PingFang SC","Microsoft YaHei UI",sans-serif;font-size:15px;line-height:1.72}.layout{display:grid;grid-template-columns:230px minmax(0,1fr);gap:22px;max-width:1240px;margin:0 auto;padding:24px;align-items:start}.toc{position:sticky;top:20px;padding:16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}.toc strong{display:block;margin:0 8px 8px;font-size:13px;color:var(--muted)}.toc a{display:block;padding:7px 9px;border-radius:8px;color:var(--muted);text-decoration:none;font-size:14px}.toc a:hover{color:var(--primary);background:var(--soft)}.main{min-width:0}.card{margin-bottom:18px;padding:24px 28px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius)}.hero h1{margin:0 0 10px;font-size:clamp(1.55rem,3vw,2rem);line-height:1.3}.hero p{margin:0;color:var(--muted)}.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.badge{padding:4px 10px;border:1px solid #bfdbfe;border-radius:999px;color:#1d4ed8;background:var(--soft);font-size:13px;font-weight:600}h2{margin:0 0 14px;font-size:1.25rem}h3{margin:20px 0 8px;font-size:1.05rem}p{margin:7px 0 12px}ul,ol{margin:8px 0 12px 1.25rem;padding:0}li{margin:5px 0}code{padding:2px 6px;border-radius:5px;background:#f1f5f9;color:#be185d;font-family:Consolas,"SFMono-Regular",monospace}pre{overflow:auto;margin:12px 0;padding:16px;border-radius:10px;background:var(--code);color:var(--code-text);line-height:1.55}pre code{padding:0;color:inherit;background:transparent}table{width:100%;border-collapse:collapse;margin:12px 0}th,td{padding:10px 12px;border:1px solid var(--border);text-align:left;vertical-align:top}th{background:#f8fafc;font-weight:650}.note,.warning{margin:14px 0;padding:12px 14px;border-left:4px solid var(--primary);border-radius:8px;background:var(--soft);color:#1e3a8a}.warning{border-left-color:var(--warn-border);background:var(--warn);color:#9a3412}.lang-en{display:none}@media(max-width:820px){.layout{display:block;padding:14px}.toc{position:static;margin-bottom:14px}.card{padding:20px 18px}table{display:block;overflow-x:auto;white-space:nowrap}}
+  </style>
+</head>
+<body>
+  <div class="lang-zh"><div class="layout">
+    <aside class="toc" aria-label="目录"><strong>目录</strong><a href="#zh-overview">接入结论</a><a href="#zh-config">URL 与 Key 配置</a><a href="#zh-endpoints">接口路径</a><a href="#zh-create">创建视频</a><a href="#zh-material">素材库</a><a href="#zh-input">媒体输入</a><a href="#zh-status">查询与下载</a><a href="#zh-limits">限制与错误</a></aside>
+    <main class="main">
+      <header class="card hero"><h1>星域互联（StarNexus）Doubao Seedance 视频与素材库接入规范</h1><p>支持星域互联统一视频接口、OpenAI Videos 兼容接口，以及火山方舟 Seedance 原生视频路径。下游可保留火山官方视频请求格式，仅替换服务地址和 Key。</p><div class="badges"><span class="badge">Seedance 原生路径</span><span class="badge">OpenAI Videos</span><span class="badge">asset:// 素材</span><span class="badge">异步任务</span></div></header>
+
+      <section class="card" id="zh-overview"><h2>一、接入结论</h2><p>如果下游已经按照火山方舟官方视频生成文档开发，可继续使用官方的 <code>model + content[]</code> 请求和任务查询方式，只需将火山地址替换为星域互联地址，并将火山 API Key 替换为星域互联 API Key。</p><div class="note">API 基础地址：<code>https://api.dkby.com</code></div><p>视频生成与任务查询支持这种仅替换配置的接入。素材库 Action 接口也支持火山 V4 HMAC-SHA256 请求形态，但应使用“豆包视频 → 访问密钥”中生成的独立 Access Key ID 和 Secret Access Key，不使用普通视频 Bearer Token。</p></section>
+
+      <section class="card" id="zh-config"><h2>二、URL 与 Key 如何替换</h2><table><thead><tr><th>下游原配置</th><th>替换为</th></tr></thead><tbody><tr><td><code>https://ark.cn-beijing.volces.com</code></td><td><code>https://api.dkby.com</code></td></tr><tr><td><code>https://ark.cn-beijing.volces.com/api/v3</code></td><td><code>https://api.dkby.com/api/v3</code></td></tr><tr><td>火山方舟视频 API Key</td><td>星域互联控制台创建的普通 API Key</td></tr><tr><td>火山素材库 AK/SK</td><td>星域互联“豆包视频 → 访问密钥”生成的 AK/SK</td></tr></tbody></table><div class="warning">不要把完整任务路径填写到 Base URL 中。如果客户端会自动追加 <code>/contents/generations/tasks</code>，Base URL 应填写到 <code>/api/v3</code> 为止。</div><h3>视频鉴权</h3><pre><code>Authorization: Bearer sk-your-starnexus-api-key
+Content-Type: application/json</code></pre></section>
+
+      <section class="card" id="zh-endpoints"><h2>三、支持的接口路径</h2><table><thead><tr><th>协议</th><th>创建</th><th>查询</th></tr></thead><tbody><tr><td>火山方舟原生（官方客户端优先）</td><td><code>POST /api/v3/contents/generations/tasks</code></td><td><code>GET /api/v3/contents/generations/tasks/{task_id}</code></td></tr><tr><td>星域互联统一接口</td><td><code>POST /v1/video/generations</code></td><td><code>GET /v1/video/generations/{task_id}</code></td></tr><tr><td>OpenAI Videos 兼容</td><td><code>POST /v1/videos</code></td><td><code>GET /v1/videos/{task_id}</code></td></tr></tbody></table><p>三种创建方式使用相同的星域互联 Bearer API Key。一个客户端应选择其中一种协议，不要在同一任务流程中混用内部或上游任务 ID。</p></section>
+
+      <section class="card" id="zh-create"><h2>四、按火山官方格式创建视频</h2><pre><code>POST https://api.dkby.com/api/v3/contents/generations/tasks
+Authorization: Bearer sk-your-starnexus-api-key
+Content-Type: application/json
+
+{
+  "model": "doubao-seedance-2-0-260128",
+  "content": [
+    {"type": "text", "text": "人物轻微转头，保持面部稳定，固定机位"},
+    {
+      "type": "image_url",
+      "image_url": {"url": "https://cdn.example.com/portrait.jpg"},
+      "role": "first_frame"
+    }
+  ],
+  "duration": 5,
+  "resolution": "720p",
+  "watermark": false
+}</code></pre><p>创建成功会返回公开任务 ID：</p><pre><code>{"id":"cgt-..."}</code></pre><p>未识别的上游扩展字段以及显式传入的 <code>0</code>、<code>false</code> 会被保留。模型名称、时长、分辨率、比例和素材数量必须符合当前所选模型能力。</p><h3>统一接口示例</h3><pre><code>POST https://api.dkby.com/v1/video/generations
+
+{
+  "model": "doubao-seedance-2-0-260128",
+  "prompt": "人物轻微转头，保持面部稳定，固定机位",
+  "images": ["https://cdn.example.com/portrait.jpg"],
+  "seconds": "5",
+  "metadata": {"resolution": "720p"}
+}</code></pre></section>
+
+      <section class="card" id="zh-material"><h2>五、素材库和 <code>asset://</code></h2><p>需要重复使用已审核素材时，可在控制台“豆包视频 → 素材库”创建 AIGC 素材组并上传图片、视频或音频。素材状态变为 <code>Active</code> 后，页面会显示 <code>asset://&lt;Id&gt;</code>。</p><pre><code>{
+  "type": "image_url",
+  "image_url": {"url": "asset://asset-..."},
+  "role": "reference_image"
+}</code></pre><p>素材只能由其所有者使用；一个请求中的素材必须来自同一上游渠道。未审核、属于其他用户或跨渠道混用的素材会被拒绝。</p><h3>火山 Action 兼容入口</h3><pre><code>POST https://api.dkby.com/?Action=CreateAsset&Version=2024-01-01
+Authorization: HMAC-SHA256 Credential=AKLT.../&lt;date&gt;/cn-beijing/ark/request, ...
+X-Date: &lt;UTC yyyyMMddTHHmmssZ&gt;
+X-Content-Sha256: &lt;请求体 SHA-256&gt;
+Content-Type: application/json</code></pre><p>目前支持 <code>CreateAssetGroup</code>、<code>ListAssetGroups</code>、<code>CreateAsset</code>、<code>GetAsset</code>、<code>ListAssets</code> 和 <code>DeleteAsset</code>。下游使用火山官方 SDK 时，需要把 Endpoint 换成星域互联域名，并把 AK/SK 换成星域互联素材访问密钥。调用其他火山素材 Action 前请先确认本页支持列表。</p><div class="warning"><code>CreateAsset</code> 是异步操作。返回 ID 不代表素材已经可用，必须轮询 <code>GetAsset</code>，仅 <code>Status=Active</code> 后才能用于生成。</div></section>
+
+      <section class="card" id="zh-input"><h2>六、媒体输入方式</h2><ul><li>火山原生接口和 <code>/v1/video/generations</code> 使用 JSON，可传稳定 HTTP(S) URL、数据 URL、纯 Base64 或 <code>asset://</code>；</li><li><code>/v1/videos</code> 额外支持名为 <code>input_reference</code> 的 multipart 文件；</li><li>可通过 <code>/v1/video-inputs/presign</code> 与 <code>/v1/video-inputs/complete</code> 进行客户端直传。</li></ul><p>公网 URL 应无需 Cookie、登录态或自定义请求头，在任务完成前持续有效，并返回正确的媒体 <code>Content-Type</code>。生产环境优先使用稳定 HTTPS URL、素材库引用或客户端直传。</p><div class="warning">未启用媒体外置时，Base64 会直接进入上游 JSON；过大的内联请求可能返回 HTTP 413。不要把大型视频或音频作为 Base64 放入 JSON。</div></section>
+
+      <section class="card" id="zh-status"><h2>七、查询任务与读取视频</h2><h3>火山原生查询</h3><pre><code>GET https://api.dkby.com/api/v3/contents/generations/tasks/{task_id}
+Authorization: Bearer sk-your-starnexus-api-key</code></pre><h3>统一接口查询</h3><pre><code>GET https://api.dkby.com/v1/video/generations/{task_id}</code></pre><p>建议每 2～5 秒查询一次。常见处理中状态包括 <code>queued</code>、<code>SUBMITTED</code>、<code>in_progress</code> 和 <code>RETRYING</code>。遇到 <code>RETRYING</code> 应继续等待，不要重复创建任务。</p><h3>读取视频内容</h3><pre><code>GET https://api.dkby.com/v1/videos/{task_id}/content</code></pre><p>内容接口需要 API Key 或有效登录态，并支持 HTTP Range，可用于断点下载和播放器拖动。</p></section>
+
+      <section class="card" id="zh-limits"><h2>八、限制、错误与接入建议</h2><ul><li>Seedance 2.0、Fast、Mini 当前网关校验的最长时长为 15 秒；Seedance 2.5 最长为 30 秒；通常最低为 4 秒，具体仍以实时模型能力为准。</li><li>入口常见图片格式包括 JPEG、PNG、WebP、GIF；模型上游可能有更严格的尺寸、比例和内容要求。</li><li>创建请求超时且没有收到完整响应时，不要立即重放，以免形成重复计费任务。</li><li>创建成功后立即保存返回的公开任务 ID；不要依赖或猜测内部任务 ID。</li></ul><table><thead><tr><th>错误</th><th>含义</th><th>建议</th></tr></thead><tbody><tr><td><code>invalid_image</code></td><td>格式、尺寸、比例或解码失败</td><td>更换或重新编码素材</td></tr><tr><td><code>unsupported_duration</code></td><td>时长不符合模型限制</td><td>按当前模型范围调整</td></tr><tr><td><code>invalid_reference_role</code></td><td>首尾帧或参考角色组合无效</td><td>检查 <code>content[].role</code></td></tr><tr><td><code>reference_image_download_failed</code></td><td>上游无法读取 URL</td><td>改用稳定 URL、素材库或直传</td></tr><tr><td><code>material_not_configured</code></td><td>素材能力未配置完整</td><td>联系管理员</td></tr></tbody></table></section>
+    </main>
+  </div></div>
+
+  <div class="lang-en"><div class="layout">
+    <aside class="toc"><strong>Contents</strong><a href="#en-overview">Compatibility</a><a href="#en-config">URL and keys</a><a href="#en-video">Video API</a><a href="#en-assets">Asset library</a><a href="#en-status">Status and content</a></aside>
+    <main class="main">
+      <header class="card hero"><h1>StarNexus Doubao Seedance Video and Asset Guide</h1><p>Use the Volcengine Ark Seedance request shape with StarNexus by replacing the service URL and credentials.</p><div class="badges"><span class="badge">Ark-compatible paths</span><span class="badge">OpenAI Videos</span><span class="badge">asset:// references</span></div></header>
+      <section class="card" id="en-overview"><h2>1. Compatibility</h2><p>Clients implemented against the official Ark video-generation documentation can keep the <code>model + content[]</code> body and polling flow. Replace the Ark URL with <code>https://api.dkby.com</code> and use a StarNexus API key.</p><div class="note">Video submission and polling work with configuration-only replacement. Asset Actions use separate HMAC-SHA256 AK/SK credentials created under “Doubao Video → Access Keys”.</div></section>
+      <section class="card" id="en-config"><h2>2. URL and credentials</h2><table><thead><tr><th>Original</th><th>StarNexus</th></tr></thead><tbody><tr><td><code>https://ark.cn-beijing.volces.com</code></td><td><code>https://api.dkby.com</code></td></tr><tr><td><code>https://ark.cn-beijing.volces.com/api/v3</code></td><td><code>https://api.dkby.com/api/v3</code></td></tr><tr><td>Ark video API key</td><td>StarNexus Bearer API key</td></tr><tr><td>Ark asset AK/SK</td><td>StarNexus Doubao Video access AK/SK</td></tr></tbody></table></section>
+      <section class="card" id="en-video"><h2>3. Video API</h2><pre><code>POST https://api.dkby.com/api/v3/contents/generations/tasks
+Authorization: Bearer sk-your-starnexus-api-key
+Content-Type: application/json
+
+{"model":"doubao-seedance-2-0-260128","content":[{"type":"text","text":"A fixed camera shot"}],"duration":5}</code></pre><p>Poll with <code>GET /api/v3/contents/generations/tasks/{task_id}</code>. StarNexus also provides <code>POST /v1/video/generations</code> and OpenAI-compatible <code>POST /v1/videos</code>.</p></section>
+      <section class="card" id="en-assets"><h2>4. Asset library</h2><p>After an asset reaches <code>Active</code>, reference it as <code>asset://&lt;asset_id&gt;</code> in the official <code>content[]</code> structure.</p><pre><code>POST https://api.dkby.com/?Action=CreateAsset&Version=2024-01-01
+Authorization: HMAC-SHA256 Credential=AKLT.../&lt;date&gt;/cn-beijing/ark/request, ...
+X-Date: &lt;UTC timestamp&gt;
+X-Content-Sha256: &lt;body SHA-256&gt;</code></pre><p>Supported Actions: <code>CreateAssetGroup</code>, <code>ListAssetGroups</code>, <code>CreateAsset</code>, <code>GetAsset</code>, <code>ListAssets</code>, and <code>DeleteAsset</code>. <code>CreateAsset</code> is asynchronous; poll until <code>Status=Active</code>.</p></section>
+      <section class="card" id="en-status"><h2>5. Inputs, status, and content</h2><p>JSON endpoints accept stable HTTP(S) URLs, data URLs, plain Base64, and owned <code>asset://</code> references. <code>/v1/videos</code> additionally accepts a multipart <code>input_reference</code>. Poll every 2–5 seconds and keep waiting during <code>RETRYING</code>.</p><pre><code>GET https://api.dkby.com/v1/videos/{task_id}/content</code></pre><p>The content endpoint requires an API key or authenticated session and supports HTTP Range.</p></section>
+    </main>
+  </div></div>
+  <script>(function(){const K="starnexus-api-doc-lang";function apply(lang){const en=lang==="en";document.documentElement.lang=en?"en":"zh-CN";document.title=en?"StarNexus Doubao Seedance Video and Asset Guide":"星域互联 Doubao Seedance 系列视频与素材库接入规范";document.querySelector(".lang-zh").style.display=en?"none":"block";document.querySelector(".lang-en").style.display=en?"block":"none"}window.addEventListener("message",e=>{if(e.data&&e.data.type==="set-lang")apply(e.data.lang)});window.addEventListener("storage",e=>{if(e.key===K)apply(e.newValue||"zh")});apply(localStorage.getItem(K)||"zh")})();</script>
+</body>
+</html>

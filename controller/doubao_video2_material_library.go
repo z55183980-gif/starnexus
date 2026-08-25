@@ -190,6 +190,8 @@ func ListDoubaoVideo2UserAssets(c *gin.Context) {
 		if source := mediaByAssetID[asset.ID]; source != nil {
 			item.PreviewURL = fmt.Sprintf("/api/doubao-video/materials/%d/content", asset.ID)
 			item.ContentType = source.ContentType
+		} else if strings.TrimSpace(asset.SourceURL) != "" {
+			item.PreviewURL = fmt.Sprintf("/api/doubao-video/materials/%d/content", asset.ID)
 		}
 		items = append(items, item)
 	}
@@ -265,14 +267,30 @@ func ServeDoubaoVideo2UserAssetContent(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	media, err := model.GetDoubaoVideo2UserMediaByAssetID(assetID, c.GetInt("id"))
-	if err != nil {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-	mediaURL, err := service.PresignDoubaoVideo2PersistentMaterial(c.Request.Context(), media.ObjectKey)
-	if err != nil {
-		common.SysError(fmt.Sprintf("presign DoubaoVideo2.0 user material %d: %v", assetID, err))
+	userID := c.GetInt("id")
+	media, mediaErr := model.GetDoubaoVideo2UserMediaByAssetID(assetID, userID)
+	mediaURL := ""
+	if mediaErr == nil {
+		mediaURL, err = service.PresignDoubaoVideo2PersistentMaterial(c.Request.Context(), media.ObjectKey)
+		if err != nil {
+			common.SysError(fmt.Sprintf("presign DoubaoVideo2.0 user material %d: %v", assetID, err))
+			c.AbortWithStatus(http.StatusServiceUnavailable)
+			return
+		}
+	} else if errors.Is(mediaErr, gorm.ErrRecordNotFound) {
+		asset, assetErr := model.GetDoubaoVideo2UserAsset(assetID, userID)
+		if assetErr != nil {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		mediaURL = strings.TrimSpace(asset.SourceURL)
+		parsed, parseErr := url.Parse(mediaURL)
+		if parseErr != nil || parsed.Host == "" || (parsed.Scheme != "https" && parsed.Scheme != "http") {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+	} else {
+		common.SysError(fmt.Sprintf("load DoubaoVideo2.0 user material %d: %v", assetID, mediaErr))
 		c.AbortWithStatus(http.StatusServiceUnavailable)
 		return
 	}
@@ -471,6 +489,9 @@ func createDoubaoVideo2UserAssetFromURLWithMedia(ctx context.Context, userID int
 		ProviderAssetID: result.ID, Name: strings.TrimSpace(name), AssetType: assetType,
 		Status: result.Status, RequestID: result.RequestID, LastSyncedAt: time.Now().Unix(),
 	}
+	if mediaID == 0 {
+		asset.SourceURL = strings.TrimSpace(sourceURL)
+	}
 	if err := model.CreateDoubaoVideo2UserAssetWithMedia(asset, mediaID); err != nil {
 		return nil, err
 	}
@@ -592,6 +613,9 @@ func syncDoubaoVideo2UserAssets(ctx context.Context, userID, limit int, includeA
 			updates["status"] = result.Status
 			updates["request_id"] = result.RequestID
 			updates["error_message"] = result.Reason
+			if parsed, parseErr := url.Parse(strings.TrimSpace(result.URL)); parseErr == nil && parsed.Host != "" && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+				updates["source_url"] = strings.TrimSpace(result.URL)
+			}
 			if result.Status == model.DoubaoVideo2UserMaterialStatusRejected || result.Status == model.DoubaoVideo2UserMaterialStatusFailed {
 				updates["error_code"] = strings.ToLower(result.Status)
 			} else {

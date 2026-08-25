@@ -175,7 +175,7 @@ export type CredentialBackedSettings = {
   tempUnschedRules: Array<{
     error_code: string
     keywords: string
-    duration_minutes: string
+    duration_seconds: string
     description: string
   }>
   compactModelMappings: ModelMappingRow[]

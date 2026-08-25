@@ -292,7 +292,7 @@ func matchUpstreamTempUnschedulableRule(
 		if matchedKeyword == "" {
 			continue
 		}
-		until := common.GetTimestamp() + int64(rule.DurationMinutes)*60
+		until := common.GetTimestamp() + int64(rule.DurationSeconds)
 		reason := strings.TrimSpace(rule.Description)
 		if reason == "" {
 			reason = matchedKeyword

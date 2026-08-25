@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>星域互联帮助文档</title>
+  <style>
+    :root{--bg:#f5f7fb;--card:#fff;--border:#d0d7de;--text:#1f2328;--muted:#57606a;--primary:#2563eb;--primary-soft:#eff6ff}*{box-sizing:border-box}body{margin:0;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);overflow:hidden}.topbar{height:72px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:rgba(255,255,255,.92);border-bottom:1px solid var(--border)}.brand{display:flex;align-items:center;gap:12px;min-width:0;text-decoration:none;color:inherit;cursor:pointer}.brand:hover .brand-title{color:var(--primary)}.brand-mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#3b82f6,#0ea5e9);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0}.brand-title{font-size:15px;font-weight:700;line-height:1.1;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.brand-sub{font-size:12px;line-height:1.1;color:#64748b;margin-top:4px}.lang-switch{display:inline-flex;padding:4px;background:#f8fafc;border:1px solid var(--border);border-radius:999px}.lang-btn{border:0;background:transparent;color:var(--muted);font:inherit;font-size:13px;font-weight:600;padding:7px 12px;border-radius:999px;cursor:pointer}.lang-btn.active{background:#fff;color:var(--primary);box-shadow:0 1px 2px rgba(15,23,42,.1)}.layout{display:grid;grid-template-columns:260px 1fr;gap:14px;height:calc(100vh - 72px);padding:14px}.sidebar{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;overflow:auto}.title{font-size:16px;font-weight:700;margin-bottom:4px}.nav{display:grid;gap:6px}.nav a{text-decoration:none;color:var(--text);border:1px solid transparent;border-radius:8px;padding:9px 10px;font-size:14px;display:block}.nav a:hover{border-color:var(--border);background:#f8fafc}.nav a.active{color:var(--primary);border-color:#bfdbfe;background:var(--primary-soft);font-weight:600}.viewer{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;min-width:0}iframe{width:100%;height:100%;border:0;display:block;background:#fff}@media(max-width:760px){.topbar{height:60px;padding:0 12px}.layout{grid-template-columns:1fr;height:calc(100vh - 60px);padding:8px}.sidebar{max-height:180px}.brand-title{font-size:13px}}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="https://dkby.com" title="返回主页"><div class="brand-mark">SN</div><div><div class="brand-title">星域互联 STARNEXUS</div><div class="brand-sub" id="brandSub">API 接口文档</div></div></a>
+    <div class="lang-switch" role="group" aria-label="Language"><button type="button" class="lang-btn active" data-lang="zh">中文</button><button type="button" class="lang-btn" data-lang="en">English</button></div>
+  </header>
+  <div class="layout">
+    <aside class="sidebar"><div class="title" id="dirTitle">星域互联文档目录</div><nav class="nav" id="nav">
+      <a href="#./doc/help00.html" data-file="./doc/help00.html" data-i18n-zh="基础配置" data-i18n-en="Basic Configuration" class="active">基础配置</a>
+      <a href="#./doc/step1.html" data-file="./doc/step1.html" data-i18n-zh="创建你的API KEY" data-i18n-en="Create Your API Key">创建你的API KEY</a>
+      <a href="#./doc/Codex接入教程.html" data-file="./doc/Codex接入教程.html" data-i18n-zh="Codex接入教程" data-i18n-en="Codex Integration Guide">Codex接入教程</a>
+      <a href="#./doc/hermes接入教程.html" data-file="./doc/hermes接入教程.html" data-i18n-zh="Hermes接入教程" data-i18n-en="Hermes Integration Guide">Hermes接入教程</a>
+      <a href="#./doc/OpenClaw接入教程.html" data-file="./doc/OpenClaw接入教程.html" data-i18n-zh="OpenClaw接入教程" data-i18n-en="OpenClaw Integration Guide">OpenClaw接入教程</a>
+      <a href="#./doc/2.html" data-file="./doc/2.html" data-i18n-zh="CC switch密钥管理工具" data-i18n-en="API Key Config Tool (CC Switch)">CC switch密钥管理工具</a>
+      <a href="#./doc/doubao-seedance-video.html" data-file="./doc/doubao-seedance-video.html" data-i18n-zh="Doubao Seedance 视频与素材库" data-i18n-en="Doubao Seedance Video & Assets">Doubao Seedance 视频与素材库</a>
+    </nav></aside>
+    <main class="viewer"><iframe id="docFrame" src="./doc/help00.html" title="文档预览"></iframe></main>
+  </div>
+  <script>
+    (function(){
+      const LANG_KEY="starnexus-api-doc-lang";
+      const frame=document.getElementById("docFrame");
+      const links=Array.from(document.querySelectorAll("#nav a"));
+      const langBtns=Array.from(document.querySelectorAll(".lang-btn"));
+      const allowed=new Set(["doc/2.html","doc/help00.html","doc/step1.html","doc/Codex接入教程.html","doc/hermes接入教程.html","doc/OpenClaw接入教程.html","doc/doubao-seedance-video.html"]);
+      const revisions={"doc/doubao-seedance-video.html":"20260825-2"};
+      const state={lang:localStorage.getItem(LANG_KEY)||"zh"};
+      const i18n={zh:{brandSub:"API 接口文档",dirTitle:"星域互联文档目录"},en:{brandSub:"API Documentation",dirTitle:"STARNEXUS Docs"}};
+      function syncLangToFrame(){try{frame.contentWindow.postMessage({type:"set-lang",lang:state.lang},"*")}catch(e){}}
+      function applyLang(lang){state.lang=lang==="en"?"en":"zh";localStorage.setItem(LANG_KEY,state.lang);const t=i18n[state.lang];document.documentElement.lang=state.lang==="zh"?"zh-CN":"en";document.getElementById("brandSub").textContent=t.brandSub;document.getElementById("dirTitle").textContent=t.dirTitle;links.forEach(a=>{a.textContent=a.dataset[state.lang==="zh"?"i18nZh":"i18nEn"]||a.textContent});langBtns.forEach(btn=>btn.classList.toggle("active",btn.dataset.lang===state.lang));syncLangToFrame()}
+      function setActive(file){links.forEach(a=>{const navFile=(a.dataset.file||"").replace(/^\.\/+/,"");a.classList.toggle("active",navFile===file)})}
+      function openFile(file,updateHash){const normalized=(file||"").replace(/^\.\/+/,"").split("?")[0];const target=allowed.has(normalized)?normalized:"doc/help00.html";const revision=revisions[target];frame.src="./"+target+(revision?"?v="+encodeURIComponent(revision):"");setActive(target);if(updateHash)location.hash="./"+target}
+      function getHashFile(){const raw=(location.hash||"").replace(/^#/,"");if(!raw)return"";try{return decodeURIComponent(raw)}catch(e){return raw}}
+      frame.addEventListener("load",syncLangToFrame);langBtns.forEach(btn=>btn.addEventListener("click",()=>applyLang(btn.dataset.lang)));links.forEach(a=>a.addEventListener("click",e=>{e.preventDefault();openFile(a.dataset.file,true)}));const fromHash=getHashFile();openFile(fromHash||"doc/help00.html",false);applyLang(state.lang);window.addEventListener("hashchange",()=>openFile(getHashFile()||"doc/help00.html",false));
+    })();
+  </script>
+</body>
+</html>

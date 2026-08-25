@@ -18,6 +18,7 @@ type DoubaoVideo2UserMaterialClient struct {
 type DoubaoVideo2UserMaterialResult struct {
 	ID        string
 	Status    string
+	URL       string
 	Reason    string
 	RequestID string
 }
@@ -178,7 +179,7 @@ func (client *DoubaoVideo2UserMaterialClient) GetAsset(ctx context.Context, asse
 	}
 	return &DoubaoVideo2UserMaterialResult{
 		ID: assetID, Status: normalizeDoubaoVideo2UserMaterialStatus(response.Result.Status),
-		Reason: reason, RequestID: response.ResponseMetadata.RequestID,
+		URL: strings.TrimSpace(response.Result.URL), Reason: reason, RequestID: response.ResponseMetadata.RequestID,
 	}, nil
 }
 

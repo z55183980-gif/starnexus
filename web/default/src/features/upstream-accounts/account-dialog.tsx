@@ -101,7 +101,7 @@ type ModelMapping = { from: string; to: string }
 type TempUnschedRuleDraft = {
   error_code: string
   keywords: string
-  duration_minutes: string
+  duration_seconds: string
   description: string
 }
 
@@ -124,6 +124,9 @@ type AccountExtra = {
   temp_unschedulable_rules?: Array<{
     error_code?: number
     keywords?: string[] | string
+    duration_seconds?: number
+    // Legacy account data used minutes. It is converted when loaded and is
+    // rewritten as seconds when the account is saved.
     duration_minutes?: number
     description?: string
   }>
@@ -230,6 +233,7 @@ function loadTempUnschedRules(
   rules?: Array<{
     error_code?: number
     keywords?: string[] | string
+    duration_seconds?: number
     duration_minutes?: number
     description?: string
   }> | null
@@ -241,11 +245,14 @@ function loadTempUnschedRules(
         ? String(rule.error_code)
         : '',
     keywords: formatTempUnschedKeywords(rule.keywords),
-    duration_minutes:
-      typeof rule.duration_minutes === 'number' &&
-      Number.isFinite(rule.duration_minutes)
-        ? String(rule.duration_minutes)
-        : '',
+    duration_seconds:
+      typeof rule.duration_seconds === 'number' &&
+      Number.isFinite(rule.duration_seconds)
+        ? String(rule.duration_seconds)
+        : typeof rule.duration_minutes === 'number' &&
+            Number.isFinite(rule.duration_minutes)
+          ? String(rule.duration_minutes * 60)
+          : '',
     description: typeof rule.description === 'string' ? rule.description : '',
   }))
 }
@@ -254,12 +261,12 @@ function buildTempUnschedRules(rules: TempUnschedRuleDraft[]) {
   const out: Array<{
     error_code: number
     keywords: string[]
-    duration_minutes: number
+    duration_seconds: number
     description: string
   }> = []
   for (const rule of rules) {
     const errorCode = Number(rule.error_code)
-    const duration = Number(rule.duration_minutes)
+    const duration = Number(rule.duration_seconds)
     const keywords = rule.keywords
       .split(',')
       .map((item) => item.trim())
@@ -272,7 +279,7 @@ function buildTempUnschedRules(rules: TempUnschedRuleDraft[]) {
     out.push({
       error_code: Math.trunc(errorCode),
       keywords,
-      duration_minutes: Math.trunc(duration),
+      duration_seconds: Math.trunc(duration),
       description: rule.description.trim(),
     })
   }
@@ -283,7 +290,7 @@ function emptyTempUnschedRule(): TempUnschedRuleDraft {
   return {
     error_code: '',
     keywords: '',
-    duration_minutes: '',
+    duration_seconds: '',
     description: '',
   }
 }
@@ -2742,9 +2749,9 @@ export function AccountDialog({
                           rule: {
                             error_code: '529',
                             keywords: 'overloaded, too many',
-                            duration_minutes: '60',
+                            duration_seconds: '3600',
                             description: t(
-                              'Service overload - pause 60 minutes'
+                              'Service overload - pause 3600 seconds'
                             ),
                           },
                         },
@@ -2753,8 +2760,8 @@ export function AccountDialog({
                           rule: {
                             error_code: '429',
                             keywords: 'rate limit, too many requests',
-                            duration_minutes: '10',
-                            description: t('Rate limited - pause 10 minutes'),
+                            duration_seconds: '600',
+                            description: t('Rate limited - pause 600 seconds'),
                           },
                         },
                         {
@@ -2762,9 +2769,9 @@ export function AccountDialog({
                           rule: {
                             error_code: '503',
                             keywords: 'unavailable, maintenance',
-                            duration_minutes: '30',
+                            duration_seconds: '1800',
                             description: t(
-                              'Service unavailable - pause 30 minutes'
+                              'Service unavailable - pause 1800 seconds'
                             ),
                           },
                         },
@@ -2882,17 +2889,17 @@ export function AccountDialog({
                           />
                         </Field>
                         <Field>
-                          <FieldLabel>{t('Duration (minutes)')}</FieldLabel>
+                          <FieldLabel>{t('Duration (seconds)')}</FieldLabel>
                           <Input
                             type='number'
                             min={1}
-                            value={rule.duration_minutes}
+                            value={rule.duration_seconds}
                             placeholder={t('e.g. 30')}
                             onChange={(event) => {
                               const next = [...draft.tempUnschedRules]
                               next[index] = {
                                 ...rule,
-                                duration_minutes: event.target.value,
+                                duration_seconds: event.target.value,
                               }
                               set('tempUnschedRules', next)
                             }}
