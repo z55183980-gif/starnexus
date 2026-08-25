@@ -54,11 +54,22 @@ Content-Type: application/json
   "type": "image_url",
   "image_url": {"url": "asset://asset-..."},
   "role": "reference_image"
-}</code></pre><p>素材只能由其所有者使用；一个请求中的素材必须来自同一上游渠道。未审核、属于其他用户或跨渠道混用的素材会被拒绝。</p><h3>火山 Action 兼容入口</h3><pre><code>POST https://api.dkby.com/?Action=CreateAsset&Version=2024-01-01
-Authorization: HMAC-SHA256 Credential=AKLT.../&lt;date&gt;/cn-beijing/ark/request, ...
+}</code></pre><p>素材只能由其所有者使用；一个请求中的素材必须来自同一上游渠道。未审核、属于其他用户或跨渠道混用的素材会被拒绝。</p><h3>火山 Action 兼容入口</h3>
+       <p>官方 SDK 推荐使用根路径；控制台复制的访问密钥页面还提供等价的 <code>/api/doubao-video/openapi</code> 兼容路径。</p>
+       <pre><code>POST https://api.dkby.com/?Action=CreateAssetGroup&amp;Version=2024-01-01
+Authorization: HMAC-SHA256 Credential=AKLT.../&lt;date&gt;/cn-beijing/ark/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=&lt;64位十六进制签名&gt;
 X-Date: &lt;UTC yyyyMMddTHHmmssZ&gt;
-X-Content-Sha256: &lt;请求体 SHA-256&gt;
-Content-Type: application/json</code></pre><p>目前支持 <code>CreateAssetGroup</code>、<code>ListAssetGroups</code>、<code>CreateAsset</code>、<code>GetAsset</code>、<code>ListAssets</code> 和 <code>DeleteAsset</code>。下游使用火山官方 SDK 时，需要把 Endpoint 换成星域互联域名，并把 AK/SK 换成星域互联素材访问密钥。调用其他火山素材 Action 前请先确认本页支持列表。</p><div class="warning"><code>CreateAsset</code> 是异步操作。返回 ID 不代表素材已经可用，必须轮询 <code>GetAsset</code>，仅 <code>Status=Active</code> 后才能用于生成。</div></section>
+X-Content-Sha256: &lt;最终发送请求体的 SHA-256&gt;
+Content-Type: application/json</code></pre>
+       <pre><code>POST https://api.dkby.com/api/doubao-video/openapi?Action=CreateAssetGroup&amp;Version=2024-01-01
+Authorization: HMAC-SHA256 Credential=AKLT.../&lt;date&gt;/cn-beijing/ark/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=&lt;64位十六进制签名&gt;
+X-Date: &lt;UTC yyyyMMddTHHmmssZ&gt;
+X-Content-Sha256: &lt;最终发送请求体的 SHA-256&gt;
+Content-Type: application/json</code></pre>
+       <p>根路径 <code>/</code> 与 <code>/api/doubao-video/openapi</code> 均受支持。签名时 <code>CanonicalURI</code> 必须使用实际发送的请求路径，不要发送一个路径却按另一个路径生成签名。<code>Action</code> 和 <code>Version</code> 组成规范查询串，按名称排序并进行 URL 编码；示例结果为 <code>Action=CreateAssetGroup&amp;Version=2024-01-01</code>。</p>
+       <p>手动实现签名时，<code>SignedHeaders</code> 至少必须是按小写字典序排列的 <code>content-type;host;x-content-sha256;x-date</code>；<code>Host</code> 只填写 <code>api.dkby.com</code>，不要填写 <code>https://</code> 或凭空添加端口；<code>X-Content-Sha256</code> 必须对最终发送的请求体字节计算，计算后不要再次序列化 JSON；<code>X-Date</code> 使用 UTC 格式且请求时间须在服务端前后 5 分钟内。</p>
+       <p>签名密钥派生顺序为 <code>dateKey = HMAC(SK, YYYYMMDD)</code>、<code>regionKey = HMAC(dateKey, cn-beijing)</code>、<code>serviceKey = HMAC(regionKey, ark)</code>、<code>signingKey = HMAC(serviceKey, request)</code>。<code>CanonicalRequest</code> 按换行依次包含 HTTP 方法、规范 URI、规范查询串、规范请求头、SignedHeaders 和请求体 SHA-256；最终使用 <code>signingKey</code> 对 <code>HMAC-SHA256\nX-Date\n&lt;date&gt;/cn-beijing/ark/request\nSHA256(CanonicalRequest)</code> 计算签名。</p>
+       <p>目前支持 <code>CreateAssetGroup</code>、<code>ListAssetGroups</code>、<code>CreateAsset</code>、<code>GetAsset</code>、<code>ListAssets</code> 和 <code>DeleteAsset</code>。下游使用火山官方 SDK 时，需要把 Endpoint 换成星域互联域名，并把 AK/SK 换成星域互联素材访问密钥。调用其他火山素材 Action 前请先确认本页支持列表。</p><div class="warning"><code>CreateAsset</code> 是异步操作。返回 ID 不代表素材已经可用，必须轮询 <code>GetAsset</code>，仅 <code>Status=Active</code> 后才能用于生成。</div></section>
 
       <section class="card" id="zh-input"><h2>六、媒体输入方式</h2><ul><li>火山原生接口和 <code>/v1/video/generations</code> 使用 JSON，可传稳定 HTTP(S) URL、数据 URL、纯 Base64 或 <code>asset://</code>；</li><li><code>/v1/videos</code> 额外支持名为 <code>input_reference</code> 的 multipart 文件；</li><li>可通过 <code>/v1/video-inputs/presign</code> 与 <code>/v1/video-inputs/complete</code> 进行客户端直传。</li></ul><p>公网 URL 应无需 Cookie、登录态或自定义请求头，在任务完成前持续有效，并返回正确的媒体 <code>Content-Type</code>。生产环境优先使用稳定 HTTPS URL、素材库引用或客户端直传。</p><div class="warning">未启用媒体外置时，Base64 会直接进入上游 JSON；过大的内联请求可能返回 HTTP 413。不要把大型视频或音频作为 Base64 放入 JSON。</div></section>
 
@@ -80,10 +91,11 @@ Authorization: Bearer sk-your-starnexus-api-key
 Content-Type: application/json
 
 {"model":"doubao-seedance-2-0-260128","content":[{"type":"text","text":"A fixed camera shot"}],"duration":5}</code></pre><p>Poll with <code>GET /api/v3/contents/generations/tasks/{task_id}</code>. StarNexus also provides <code>POST /v1/video/generations</code> and OpenAI-compatible <code>POST /v1/videos</code>.</p></section>
-      <section class="card" id="en-assets"><h2>4. Asset library</h2><p>After an asset reaches <code>Active</code>, reference it as <code>asset://&lt;asset_id&gt;</code> in the official <code>content[]</code> structure.</p><pre><code>POST https://api.dkby.com/?Action=CreateAsset&Version=2024-01-01
-Authorization: HMAC-SHA256 Credential=AKLT.../&lt;date&gt;/cn-beijing/ark/request, ...
-X-Date: &lt;UTC timestamp&gt;
-X-Content-Sha256: &lt;body SHA-256&gt;</code></pre><p>Supported Actions: <code>CreateAssetGroup</code>, <code>ListAssetGroups</code>, <code>CreateAsset</code>, <code>GetAsset</code>, <code>ListAssets</code>, and <code>DeleteAsset</code>. <code>CreateAsset</code> is asynchronous; poll until <code>Status=Active</code>.</p></section>
+       <section class="card" id="en-assets"><h2>4. Asset library</h2><p>After an asset reaches <code>Active</code>, reference it as <code>asset://&lt;asset_id&gt;</code> in the official <code>content[]</code> structure.</p><p>Use the root path with official SDKs, or the equivalent console path shown on the Access Keys page.</p><pre><code>POST https://api.dkby.com/?Action=CreateAssetGroup&amp;Version=2024-01-01
+Authorization: HMAC-SHA256 Credential=AKLT.../&lt;date&gt;/cn-beijing/ark/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=&lt;64-hex signature&gt;
+X-Date: &lt;UTC yyyyMMddTHHmmssZ&gt;
+X-Content-Sha256: &lt;SHA-256 of the exact request body bytes&gt;
+Content-Type: application/json</code></pre><pre><code>POST https://api.dkby.com/api/doubao-video/openapi?Action=CreateAssetGroup&amp;Version=2024-01-01</code></pre><p>Both paths are supported, but <code>CanonicalURI</code> must match the path actually sent. Use the exact sorted signed-header list <code>content-type;host;x-content-sha256;x-date</code>, sign <code>Host: api.dkby.com</code>, and hash the final body bytes without re-serializing JSON. Keep <code>X-Date</code> in UTC and within five minutes of server time. The signing-key chain is <code>dateKey → regionKey → serviceKey → signingKey</code> for <code>YYYYMMDD</code>, <code>cn-beijing</code>, <code>ark</code>, and <code>request</code>. Supported Actions: <code>CreateAssetGroup</code>, <code>ListAssetGroups</code>, <code>CreateAsset</code>, <code>GetAsset</code>, <code>ListAssets</code>, and <code>DeleteAsset</code>. <code>CreateAsset</code> is asynchronous; poll until <code>Status=Active</code>.</p></section>
       <section class="card" id="en-status"><h2>5. Inputs, status, and content</h2><p>JSON endpoints accept stable HTTP(S) URLs, data URLs, plain Base64, and owned <code>asset://</code> references. <code>/v1/videos</code> additionally accepts a multipart <code>input_reference</code>. Poll every 2–5 seconds and keep waiting during <code>RETRYING</code>.</p><pre><code>GET https://api.dkby.com/v1/videos/{task_id}/content</code></pre><p>The content endpoint requires an API key or authenticated session and supports HTTP Range.</p></section>
     </main>
   </div></div>

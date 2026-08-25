@@ -207,16 +207,31 @@ DoubaoVideo2.0 的素材配置位于渠道编辑页的“DoubaoVideo2.0 素材�
 
 素材审核通过后，页面显示 `asset://<Id>`。该引用仅能由素材所有者使用，并且生成请求的首次路由和失败重试都会固定到创建素材的渠道；未审核素材、他人素材或来自不同渠道的混合素材会被拒绝。
 
-访问密钥入口提供火山引擎兼容请求形式：
+访问密钥入口提供火山引擎兼容请求形式。官方 SDK 推荐使用根路径；控制台复制的访问密钥页面还提供一个等价的 `/api/doubao-video/openapi` 兼容路径：
 
 ```http
-POST /api/doubao-video/openapi?Action=CreateAsset&Version=2024-01-01
+POST https://api.dkby.com/?Action=CreateAssetGroup&Version=2024-01-01
 Authorization: HMAC-SHA256 Credential=AKLT.../<date>/cn-beijing/ark/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=...
 X-Date: <UTC yyyyMMddTHHmmssZ>
 X-Content-Sha256: <请求体 SHA-256>
+Content-Type: application/json
 ```
 
-支持 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets`、`DeleteAsset`。这是用户侧兼容入口；它不会向用户暴露类型 62 渠道的 URL 或上游 `ApiKey`。
+控制台兼容路径的完整写法为：
+
+```http
+POST https://api.dkby.com/api/doubao-video/openapi?Action=CreateAssetGroup&Version=2024-01-01
+Authorization: HMAC-SHA256 Credential=AKLT.../<date>/cn-beijing/ark/request, SignedHeaders=content-type;host;x-content-sha256;x-date, Signature=...
+X-Date: <UTC yyyyMMddTHHmmssZ>
+X-Content-Sha256: <请求体 SHA-256>
+Content-Type: application/json
+```
+
+根路径 `/` 与 `/api/doubao-video/openapi` 均受支持。签名时 `CanonicalURI` 应使用实际发送的请求路径：根路径使用 `/`，兼容路径使用 `/api/doubao-video/openapi`，不要发送一个路径却按另一个路径生成签名。`Action` 和 `Version` 组成规范查询串，按名称排序并进行 URL 编码；本示例的结果为 `Action=CreateAssetGroup&Version=2024-01-01`。
+
+手动实现签名时，`SignedHeaders` 至少必须是按小写字典序排列的 `content-type;host;x-content-sha256;x-date`；`Host` 只填写实际主机名 `api.dkby.com`，不要填写 `https://` 或凭空添加端口；`X-Content-Sha256` 必须对最终发送的请求体字节计算，JSON 计算哈希后不要再次序列化。`X-Date` 使用 UTC 格式 `yyyyMMddTHHmmssZ`，且请求时间须在服务端当前时间前后 5 分钟内。
+
+签名密钥派生顺序为 `dateKey = HMAC(SK, YYYYMMDD)`、`regionKey = HMAC(dateKey, cn-beijing)`、`serviceKey = HMAC(regionKey, ark)`、`signingKey = HMAC(serviceKey, request)`。`CanonicalRequest` 按换行依次包含 HTTP 方法、规范 URI、规范查询串、规范请求头、SignedHeaders 和请求体 SHA-256；最终使用 `signingKey` 对 `HMAC-SHA256\nX-Date\n<date>/cn-beijing/ark/request\nSHA256(CanonicalRequest)` 计算签名。支持 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets`、`DeleteAsset`。这是用户侧兼容入口；它不会向用户暴露类型 62 渠道的 URL 或上游 `ApiKey`。
 
 火山官方 SDK 使用根路径 `/?Action=...&Version=2024-01-01` 时，也可以把 Endpoint 替换为星域互联域名并使用上述独立 AK/SK。只有本段列出的 Action 属于当前兼容范围；调用其他火山素材 Action 前必须先确认网关已经支持。
 

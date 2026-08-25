@@ -104,6 +104,8 @@ CC Switch 教程包括安装、一键导入和手动配置：
 - 具体模型名、多图数量、视频时长、分辨率和宽高比能力以实时模型列表与文档为准。
 - 素材审核通过后可以在官方 `content[]` 中使用 `asset://<asset_id>`；素材必须属于当前用户且来自同一上游渠道。
 - 素材库 Action 接口使用“豆包视频 → 访问密钥”生成的独立 HMAC-SHA256 AK/SK，不使用普通视频 Bearer Token。
+- 素材 Action 推荐使用 `POST https://api.dkby.com/?Action=CreateAssetGroup&Version=2024-01-01`；控制台访问密钥页面显示的 `/api/doubao-video/openapi` 是等价兼容路径，签名时 `CanonicalURI` 必须与实际发送路径一致。
+- HMAC 请求必须包含按字典序排列的 `content-type;host;x-content-sha256;x-date`，`Host` 为 `api.dkby.com`，规范查询串按名称排序并 URL 编码，`X-Content-Sha256` 针对最终发送的请求体计算，`X-Date` 使用 UTC 且与服务端相差不超过 5 分钟；`CanonicalRequest` 的 URI 必须与实际发送路径一致。
 - 当前素材 Action 兼容范围为 `CreateAssetGroup`、`ListAssetGroups`、`CreateAsset`、`GetAsset`、`ListAssets` 和 `DeleteAsset`；`CreateAsset` 返回 ID 后仍需轮询到 `Status=Active`。
 
 官方来源：https://docs.dkby.com/docs/doc/doubao-seedance-video.html

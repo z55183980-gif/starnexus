@@ -32,7 +32,7 @@
       const links=Array.from(document.querySelectorAll("#nav a"));
       const langBtns=Array.from(document.querySelectorAll(".lang-btn"));
       const allowed=new Set(["doc/2.html","doc/help00.html","doc/step1.html","doc/Codex接入教程.html","doc/hermes接入教程.html","doc/OpenClaw接入教程.html","doc/doubao-seedance-video.html"]);
-      const revisions={"doc/doubao-seedance-video.html":"20260825-2"};
+      const revisions={"doc/doubao-seedance-video.html":"20260825-3"};
       const state={lang:localStorage.getItem(LANG_KEY)||"zh"};
       const i18n={zh:{brandSub:"API 接口文档",dirTitle:"星域互联文档目录"},en:{brandSub:"API Documentation",dirTitle:"STARNEXUS Docs"}};
       function syncLangToFrame(){try{frame.contentWindow.postMessage({type:"set-lang",lang:state.lang},"*")}catch(e){}}
