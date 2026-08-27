@@ -76,30 +76,6 @@ const modelSchema = z.object({
       })
     }
   }),
-  CacheBillingOffsetBps: z.string().superRefine((value, ctx) => {
-    const result = validateJsonString(value, {
-      predicate: (parsed) =>
-        !!parsed &&
-        typeof parsed === 'object' &&
-        !Array.isArray(parsed) &&
-        Object.entries(parsed).every(
-          ([modelName, offsetBps]) =>
-            modelName.trim() === modelName &&
-            modelName.length > 0 &&
-            Number.isInteger(offsetBps) &&
-            Number(offsetBps) >= 0 &&
-            Number(offsetBps) <= 10000
-        ),
-      predicateMessage:
-        'Expected a JSON object of model names to integer basis points between 0 and 10000',
-    })
-    if (!result.valid) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: result.message || 'Invalid JSON',
-      })
-    }
-  }),
   CompletionRatio: z.string().superRefine((value, ctx) => {
     const result = validateJsonString(value)
     if (!result.valid) {
@@ -283,9 +259,6 @@ export function RatioSettingsCard({
     ModelRatio: normalizeJsonString(modelDefaults.ModelRatio),
     CacheRatio: normalizeJsonString(modelDefaults.CacheRatio),
     CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
-    CacheBillingOffsetBps: normalizeJsonString(
-      modelDefaults.CacheBillingOffsetBps
-    ),
     CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
     ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
     AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
@@ -319,9 +292,6 @@ export function RatioSettingsCard({
       ModelRatio: formatJsonForTextarea(modelDefaults.ModelRatio),
       CacheRatio: formatJsonForTextarea(modelDefaults.CacheRatio),
       CreateCacheRatio: formatJsonForTextarea(modelDefaults.CreateCacheRatio),
-      CacheBillingOffsetBps: formatJsonForTextarea(
-        modelDefaults.CacheBillingOffsetBps
-      ),
       CompletionRatio: formatJsonForTextarea(modelDefaults.CompletionRatio),
       ImageRatio: formatJsonForTextarea(modelDefaults.ImageRatio),
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
@@ -358,9 +328,6 @@ export function RatioSettingsCard({
       ModelRatio: normalizeJsonString(modelDefaults.ModelRatio),
       CacheRatio: normalizeJsonString(modelDefaults.CacheRatio),
       CreateCacheRatio: normalizeJsonString(modelDefaults.CreateCacheRatio),
-      CacheBillingOffsetBps: normalizeJsonString(
-        modelDefaults.CacheBillingOffsetBps
-      ),
       CompletionRatio: normalizeJsonString(modelDefaults.CompletionRatio),
       ImageRatio: normalizeJsonString(modelDefaults.ImageRatio),
       AudioRatio: normalizeJsonString(modelDefaults.AudioRatio),
@@ -381,9 +348,6 @@ export function RatioSettingsCard({
       ModelRatio: formatJsonForTextarea(modelDefaults.ModelRatio),
       CacheRatio: formatJsonForTextarea(modelDefaults.CacheRatio),
       CreateCacheRatio: formatJsonForTextarea(modelDefaults.CreateCacheRatio),
-      CacheBillingOffsetBps: formatJsonForTextarea(
-        modelDefaults.CacheBillingOffsetBps
-      ),
       CompletionRatio: formatJsonForTextarea(modelDefaults.CompletionRatio),
       ImageRatio: formatJsonForTextarea(modelDefaults.ImageRatio),
       AudioRatio: formatJsonForTextarea(modelDefaults.AudioRatio),
@@ -431,9 +395,6 @@ export function RatioSettingsCard({
         ModelRatio: normalizeJsonString(values.ModelRatio),
         CacheRatio: normalizeJsonString(values.CacheRatio),
         CreateCacheRatio: normalizeJsonString(values.CreateCacheRatio),
-        CacheBillingOffsetBps: normalizeJsonString(
-          values.CacheBillingOffsetBps
-        ),
         CompletionRatio: normalizeJsonString(values.CompletionRatio),
         ImageRatio: normalizeJsonString(values.ImageRatio),
         AudioRatio: normalizeJsonString(values.AudioRatio),
@@ -447,7 +408,6 @@ export function RatioSettingsCard({
       const apiKeyMap: Record<string, string> = {
         BillingMode: 'billing_setting.billing_mode',
         BillingExpr: 'billing_setting.billing_expr',
-        CacheBillingOffsetBps: 'billing_setting.cache_billing_offset_bps',
       }
 
       const updates = (

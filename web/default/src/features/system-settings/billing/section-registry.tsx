@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { parseCurrencyDisplayType } from '@/lib/currency'
+import { Separator } from '@/components/ui/separator'
 import { CheckinSettingsSection } from '../general/checkin-settings-section'
 import { PricingSection } from '../general/pricing-section'
 import { QuotaSettingsSection } from '../general/quota-settings-section'
@@ -29,6 +30,8 @@ import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
 import { AffiliateRebateSettingsSection } from './affiliate-rebate-settings-section'
+import { parseCacheBillingDefaults } from './cache-billing-settings'
+import { CacheBillingSettingsSection } from './cache-billing-settings-section'
 import {
   parseTokenPricingDefaults,
   TokenPricingSettingsSection,
@@ -47,7 +50,6 @@ const getModelDefaults = (settings: BillingSettings) => ({
   ExposeRatioEnabled: settings.ExposeRatioEnabled,
   BillingMode: settings['billing_setting.billing_mode'],
   BillingExpr: settings['billing_setting.billing_expr'],
-  CacheBillingOffsetBps: settings['billing_setting.cache_billing_offset_bps'],
 })
 
 const getGroupDefaults = (settings: BillingSettings) => ({
@@ -177,12 +179,20 @@ const BILLING_SECTIONS = [
     descriptionKey:
       'Adjust billable token counts while preserving raw token audit data for administrators',
     build: (settings: BillingSettings) => (
-      <TokenPricingSettingsSection
-        defaultValues={parseTokenPricingDefaults(
-          settings['billing_setting.token_pricing']
-        )}
-        groupOptions={getTokenPricingGroupOptions(settings)}
-      />
+      <div className='flex flex-col gap-8'>
+        <TokenPricingSettingsSection
+          defaultValues={parseTokenPricingDefaults(
+            settings['billing_setting.token_pricing']
+          )}
+          groupOptions={getTokenPricingGroupOptions(settings)}
+        />
+        <Separator />
+        <CacheBillingSettingsSection
+          defaultValues={parseCacheBillingDefaults(
+            settings['billing_setting.cache_billing_offset_bps']
+          )}
+        />
+      </div>
     ),
   },
   {

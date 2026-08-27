@@ -77,7 +77,6 @@ type ModelRatioVisualEditorProps = {
   modelRatio: string
   cacheRatio: string
   createCacheRatio: string
-  cacheBillingOffsetBps: string
   completionRatio: string
   imageRatio: string
   audioRatio: string
@@ -94,7 +93,6 @@ type ModelRow = {
   ratio?: string
   cacheRatio?: string
   createCacheRatio?: string
-  cacheBillingOffset?: string
   completionRatio?: string
   imageRatio?: string
   audioRatio?: string
@@ -207,7 +205,6 @@ export const ModelRatioVisualEditor = memo(
     modelRatio,
     cacheRatio,
     createCacheRatio,
-    cacheBillingOffsetBps,
     completionRatio,
     imageRatio,
     audioRatio,
@@ -286,10 +283,6 @@ export const ModelRatioVisualEditor = memo(
         createCacheRatio,
         { fallback: {}, context: 'create cache ratios' }
       )
-      const cacheBillingOffsetMap = safeJsonParse<Record<string, number>>(
-        cacheBillingOffsetBps,
-        { fallback: {}, context: 'cache billing offsets' }
-      )
       const completionMap = safeJsonParse<Record<string, number>>(
         completionRatio,
         { fallback: {}, context: 'completion ratios' }
@@ -330,7 +323,6 @@ export const ModelRatioVisualEditor = memo(
         ...Object.keys(ratioMap),
         ...Object.keys(cacheMap),
         ...Object.keys(createCacheMap),
-        ...Object.keys(cacheBillingOffsetMap),
         ...Object.keys(completionMap),
         ...Object.keys(imageMap),
         ...Object.keys(audioMap),
@@ -345,12 +337,6 @@ export const ModelRatioVisualEditor = memo(
         const ratio = ratioMap[name]?.toString() || ''
         const cache = cacheMap[name]?.toString() || ''
         const createCache = createCacheMap[name]?.toString() || ''
-        const cacheBillingOffsetValue = cacheBillingOffsetMap[name]
-        const cacheBillingOffset =
-          typeof cacheBillingOffsetValue === 'number' &&
-          Number.isFinite(cacheBillingOffsetValue)
-            ? formatPricingNumber(cacheBillingOffsetValue / 100)
-            : ''
         const completion = completionMap[name]?.toString() || ''
         const image = imageMap[name]?.toString() || ''
         const audio = audioMap[name]?.toString() || ''
@@ -374,7 +360,6 @@ export const ModelRatioVisualEditor = memo(
             ratio,
             cacheRatio: cache,
             createCacheRatio: createCache,
-            cacheBillingOffset,
             completionRatio: completion,
             imageRatio: image,
             audioRatio: audio,
@@ -390,7 +375,6 @@ export const ModelRatioVisualEditor = memo(
           ratio,
           cacheRatio: cache,
           createCacheRatio: createCache,
-          cacheBillingOffset,
           completionRatio: completion,
           imageRatio: image,
           audioRatio: audio,
@@ -415,7 +399,6 @@ export const ModelRatioVisualEditor = memo(
       modelRatio,
       cacheRatio,
       createCacheRatio,
-      cacheBillingOffsetBps,
       completionRatio,
       imageRatio,
       audioRatio,
@@ -454,7 +437,6 @@ export const ModelRatioVisualEditor = memo(
           ratio: model.ratio,
           cacheRatio: model.cacheRatio,
           createCacheRatio: model.createCacheRatio,
-          cacheBillingOffset: model.cacheBillingOffset,
           completionRatio: model.completionRatio,
           imageRatio: model.imageRatio,
           audioRatio: model.audioRatio,
@@ -521,10 +503,6 @@ export const ModelRatioVisualEditor = memo(
           createCacheRatio,
           { fallback: {}, silent: true }
         )
-        const cacheBillingOffsetMap = safeJsonParse<Record<string, number>>(
-          cacheBillingOffsetBps,
-          { fallback: {}, silent: true }
-        )
         const completionMap = safeJsonParse<Record<string, number>>(
           completionRatio,
           { fallback: {}, silent: true }
@@ -558,7 +536,6 @@ export const ModelRatioVisualEditor = memo(
         delete ratioMap[name]
         delete cacheMap[name]
         delete createCacheMap[name]
-        delete cacheBillingOffsetMap[name]
         delete completionMap[name]
         delete imageMap[name]
         delete audioMap[name]
@@ -571,10 +548,6 @@ export const ModelRatioVisualEditor = memo(
         onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
         onChange('CacheRatio', JSON.stringify(cacheMap, null, 2))
         onChange('CreateCacheRatio', JSON.stringify(createCacheMap, null, 2))
-        onChange(
-          'billing_setting.cache_billing_offset_bps',
-          JSON.stringify(cacheBillingOffsetMap, null, 2)
-        )
         onChange('CompletionRatio', JSON.stringify(completionMap, null, 2))
         onChange('ImageRatio', JSON.stringify(imageMap, null, 2))
         onChange('AudioRatio', JSON.stringify(audioMap, null, 2))
@@ -597,7 +570,6 @@ export const ModelRatioVisualEditor = memo(
         modelRatio,
         cacheRatio,
         createCacheRatio,
-        cacheBillingOffsetBps,
         completionRatio,
         imageRatio,
         audioRatio,
@@ -773,10 +745,6 @@ export const ModelRatioVisualEditor = memo(
           createCacheRatio,
           { fallback: {}, silent: true }
         )
-        const cacheBillingOffsetMap = safeJsonParse<Record<string, number>>(
-          cacheBillingOffsetBps,
-          { fallback: {}, silent: true }
-        )
         const completionMap = safeJsonParse<Record<string, number>>(
           completionRatio,
           { fallback: {}, silent: true }
@@ -821,7 +789,6 @@ export const ModelRatioVisualEditor = memo(
           delete ratioMap[name]
           delete cacheMap[name]
           delete createCacheMap[name]
-          delete cacheBillingOffsetMap[name]
           delete completionMap[name]
           delete imageMap[name]
           delete audioMap[name]
@@ -857,15 +824,6 @@ export const ModelRatioVisualEditor = memo(
             setIfPresent(ratioMap, name, data.ratio)
             setIfPresent(cacheMap, name, data.cacheRatio)
             setIfPresent(createCacheMap, name, data.createCacheRatio)
-            const offsetPercentagePoints = Number(data.cacheBillingOffset || '')
-            if (
-              Number.isFinite(offsetPercentagePoints) &&
-              offsetPercentagePoints > 0
-            ) {
-              cacheBillingOffsetMap[name] = Math.round(
-                offsetPercentagePoints * 100
-              )
-            }
             setIfPresent(completionMap, name, data.completionRatio)
             setIfPresent(imageMap, name, data.imageRatio)
             setIfPresent(audioMap, name, data.audioRatio)
@@ -884,10 +842,6 @@ export const ModelRatioVisualEditor = memo(
         onChange('ModelRatio', JSON.stringify(ratioMap, null, 2))
         onChange('CacheRatio', JSON.stringify(cacheMap, null, 2))
         onChange('CreateCacheRatio', JSON.stringify(createCacheMap, null, 2))
-        onChange(
-          'billing_setting.cache_billing_offset_bps',
-          JSON.stringify(cacheBillingOffsetMap, null, 2)
-        )
         onChange('CompletionRatio', JSON.stringify(completionMap, null, 2))
         onChange('ImageRatio', JSON.stringify(imageMap, null, 2))
         onChange('AudioRatio', JSON.stringify(audioMap, null, 2))
@@ -910,7 +864,6 @@ export const ModelRatioVisualEditor = memo(
         modelRatio,
         cacheRatio,
         createCacheRatio,
-        cacheBillingOffsetBps,
         completionRatio,
         imageRatio,
         audioRatio,
@@ -1117,7 +1070,6 @@ export const ModelRatioVisualEditor = memo(
       prevProps.modelRatio === nextProps.modelRatio &&
       prevProps.cacheRatio === nextProps.cacheRatio &&
       prevProps.createCacheRatio === nextProps.createCacheRatio &&
-      prevProps.cacheBillingOffsetBps === nextProps.cacheBillingOffsetBps &&
       prevProps.completionRatio === nextProps.completionRatio &&
       prevProps.imageRatio === nextProps.imageRatio &&
       prevProps.audioRatio === nextProps.audioRatio &&

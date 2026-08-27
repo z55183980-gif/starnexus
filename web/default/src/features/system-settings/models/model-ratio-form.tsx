@@ -39,7 +39,6 @@ type ModelFormValues = {
   ModelRatio: string
   CacheRatio: string
   CreateCacheRatio: string
-  CacheBillingOffsetBps: string
   CompletionRatio: string
   ImageRatio: string
   AudioRatio: string
@@ -108,7 +107,6 @@ export const ModelRatioForm = memo(function ModelRatioForm({
               modelRatio={form.watch('ModelRatio')}
               cacheRatio={form.watch('CacheRatio')}
               createCacheRatio={form.watch('CreateCacheRatio')}
-              cacheBillingOffsetBps={form.watch('CacheBillingOffsetBps')}
               completionRatio={form.watch('CompletionRatio')}
               imageRatio={form.watch('ImageRatio')}
               audioRatio={form.watch('AudioRatio')}
@@ -120,8 +118,6 @@ export const ModelRatioForm = memo(function ModelRatioForm({
                 const fieldMap: Record<string, keyof ModelFormValues> = {
                   'billing_setting.billing_mode': 'BillingMode',
                   'billing_setting.billing_expr': 'BillingExpr',
-                  'billing_setting.cache_billing_offset_bps':
-                    'CacheBillingOffsetBps',
                 }
                 const formField =
                   fieldMap[field] || (field as keyof ModelFormValues)
@@ -237,25 +233,6 @@ export const ModelRatioForm = memo(function ModelRatioForm({
                   <FormDescription>
                     {t(
                       'Ratio applied when creating cache entries for supported models.'
-                    )}
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name='CacheBillingOffsetBps'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>{t('Internal cache billing offsets')}</FormLabel>
-                  <FormControl>
-                    <Textarea rows={8} {...field} />
-                  </FormControl>
-                  <FormDescription>
-                    {t(
-                      'Root-only JSON map of model to basis points deducted from cache-read eligibility.'
                     )}
                   </FormDescription>
                   <FormMessage />
