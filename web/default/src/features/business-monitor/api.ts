@@ -14,6 +14,7 @@ export async function getBusinessMonitorCacheHitRate(): Promise<{
   data?: {
     input_tokens: number
     cache_read_tokens: number
+    billing_cache_read_tokens: number
     cache_creation_tokens: number
     window_seconds: number
   }

@@ -327,6 +327,98 @@ func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheReadFromPromptBilling(
 	require.Equal(t, 798, summary.Quota)
 }
 
+func TestCalculateTextQuotaSummaryAppliesCacheBillingOffsetWithoutChangingVisibleCacheTokens(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-cache-billing-test",
+		PriceData: types.PriceData{
+			ModelRatio:            1,
+			CompletionRatio:       1,
+			CacheRatio:            0.1,
+			CacheBillingOffsetBps: 300,
+			GroupRatioInfo:        types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens: 10000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 9391,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.Equal(t, 9391, summary.CacheTokens)
+	require.Equal(t, 9091, summary.BillingCacheTokens)
+	require.Equal(t, 300, summary.CacheReclassifiedTokens)
+	require.Equal(t, 10000, summary.CacheBillingTotalInputTokens)
+	require.Equal(t, 300, summary.CacheBillingOffsetBps)
+	require.True(t, summary.CacheBillingApplied)
+	// 609 ordinary + 300 reclassified + 9,091*0.1 = 1,818.1.
+	require.Equal(t, 1818, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryAppliesCacheBillingOffsetToAnthropicBuckets(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		FinalRequestRelayFormat: types.RelayFormatClaude,
+		OriginModelName:         "claude-cache-billing-test",
+		PriceData: types.PriceData{
+			ModelRatio:            1,
+			CompletionRatio:       1,
+			CacheRatio:            0.1,
+			CacheBillingOffsetBps: 300,
+			GroupRatioInfo:        types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens: 609,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 9391,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.True(t, summary.IsClaudeUsageSemantic)
+	require.Equal(t, 9391, summary.CacheTokens)
+	require.Equal(t, 9091, summary.BillingCacheTokens)
+	require.Equal(t, 300, summary.CacheReclassifiedTokens)
+	require.Equal(t, 1818, summary.Quota)
+}
+
+func TestCalculateTextQuotaSummaryIgnoresCacheBillingOffsetForFixedPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "fixed-cache-billing-test",
+		PriceData: types.PriceData{
+			UsePrice:              true,
+			ModelPrice:            0.001,
+			CacheBillingOffsetBps: 300,
+			GroupRatioInfo:        types.GroupRatioInfo{GroupRatio: 1},
+		},
+		StartTime: time.Now(),
+	}
+	usage := &dto.Usage{
+		PromptTokens: 10000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 9391,
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+
+	require.False(t, summary.CacheBillingApplied)
+	require.Equal(t, 9391, summary.CacheTokens)
+	require.Equal(t, 9391, summary.BillingCacheTokens)
+	require.Zero(t, summary.CacheReclassifiedTokens)
+}
+
 func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheCreationFromPromptBilling(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()

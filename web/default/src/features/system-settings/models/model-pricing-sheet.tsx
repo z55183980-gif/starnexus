@@ -82,6 +82,17 @@ const createModelPricingSchema = (t: (key: string) => string) =>
     ratio: z.string().optional(),
     cacheRatio: z.string().optional(),
     createCacheRatio: z.string().optional(),
+    cacheBillingOffset: z
+      .string()
+      .optional()
+      .refine(
+        (value) =>
+          !value ||
+          (/^\d+(\.\d{0,2})?$/.test(value) &&
+            Number(value) >= 0 &&
+            Number(value) <= 100),
+        t('Cache billing reduction must be between 0 and 100.')
+      ),
     completionRatio: z.string().optional(),
     imageRatio: z.string().optional(),
     audioRatio: z.string().optional(),
@@ -107,6 +118,7 @@ export type ModelRatioData = {
   ratio?: string
   cacheRatio?: string
   createCacheRatio?: string
+  cacheBillingOffset?: string
   completionRatio?: string
   imageRatio?: string
   audioRatio?: string
@@ -354,6 +366,13 @@ function buildPreviewRows(
           : t('Empty'),
     },
     {
+      key: 'cacheBillingOffset',
+      label: t('Internal cache billing reduction'),
+      value: values.cacheBillingOffset
+        ? `${values.cacheBillingOffset} ${t('percentage points')}`
+        : t('Disabled'),
+    },
+    {
       key: 'image',
       label: t('Image input price'),
       value:
@@ -446,6 +465,7 @@ export function ModelPricingEditorPanel({
       ratio: '',
       cacheRatio: '',
       createCacheRatio: '',
+      cacheBillingOffset: '',
       completionRatio: '',
       imageRatio: '',
       audioRatio: '',
@@ -463,6 +483,7 @@ export function ModelPricingEditorPanel({
         ratio: editData.ratio || '',
         cacheRatio: editData.cacheRatio || '',
         createCacheRatio: editData.createCacheRatio || '',
+        cacheBillingOffset: editData.cacheBillingOffset || '',
         completionRatio: editData.completionRatio || '',
         imageRatio: editData.imageRatio || '',
         audioRatio: editData.audioRatio || '',
@@ -491,6 +512,7 @@ export function ModelPricingEditorPanel({
         ratio: '',
         cacheRatio: '',
         createCacheRatio: '',
+        cacheBillingOffset: '',
         completionRatio: '',
         imageRatio: '',
         audioRatio: '',
@@ -668,6 +690,7 @@ export function ModelPricingEditorPanel({
         editData.completionRatio,
         editData.cacheRatio,
         editData.createCacheRatio,
+        editData.cacheBillingOffset,
         editData.imageRatio,
         editData.audioRatio,
         editData.audioCompletionRatio,
@@ -736,6 +759,8 @@ export function ModelPricingEditorPanel({
       ratio: values.ratio || '',
       cacheRatio: values.cacheRatio || '',
       createCacheRatio: values.createCacheRatio || '',
+      cacheBillingOffset:
+        pricingMode === 'per-token' ? values.cacheBillingOffset || '' : '',
       completionRatio: values.completionRatio || '',
       imageRatio: values.imageRatio || '',
       audioRatio: values.audioRatio || '',
@@ -875,6 +900,42 @@ export function ModelPricingEditorPanel({
                         )
                       })}
                     </div>
+
+                    <FormField
+                      control={form.control}
+                      name='cacheBillingOffset'
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t('Internal cache billing reduction')}
+                          </FormLabel>
+                          <FormControl>
+                            <InputGroup>
+                              <InputGroupInput
+                                inputMode='decimal'
+                                placeholder='3'
+                                {...field}
+                                onChange={(event) => {
+                                  const value = event.target.value
+                                  if (numericDraftRegex.test(value)) {
+                                    field.onChange(value)
+                                  }
+                                }}
+                              />
+                              <InputGroupAddon align='inline-end'>
+                                {t('percentage points')}
+                              </InputGroupAddon>
+                            </InputGroup>
+                          </FormControl>
+                          <FormDescription>
+                            {t(
+                              'Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.'
+                            )}
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
                     {showVideoTokenPricing && (
                       <VideoTokenPricingFields

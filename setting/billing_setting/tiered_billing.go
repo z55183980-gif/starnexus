@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	BillingModeRatio      = "ratio"
-	BillingModeTieredExpr = "tiered_expr"
-	BillingModeField      = "billing_mode"
-	BillingExprField      = "billing_expr"
-	TokenPricingField     = "token_pricing"
+	BillingModeRatio           = "ratio"
+	BillingModeTieredExpr      = "tiered_expr"
+	BillingModeField           = "billing_mode"
+	BillingExprField           = "billing_expr"
+	TokenPricingField          = "token_pricing"
+	CacheBillingOffsetBpsField = "cache_billing_offset_bps"
 )
 
 type TokenPricingSetting struct {
@@ -50,16 +51,19 @@ type EffectiveTokenPricing struct {
 }
 
 // BillingSetting is managed by config.GlobalConfig.Register.
-// DB keys: billing_setting.billing_mode, billing_setting.billing_expr, billing_setting.token_pricing
+// DB keys: billing_setting.billing_mode, billing_setting.billing_expr,
+// billing_setting.token_pricing, billing_setting.cache_billing_offset_bps
 type BillingSetting struct {
-	BillingMode  map[string]string   `json:"billing_mode"`
-	BillingExpr  map[string]string   `json:"billing_expr"`
-	TokenPricing TokenPricingSetting `json:"token_pricing"`
+	BillingMode           map[string]string   `json:"billing_mode"`
+	BillingExpr           map[string]string   `json:"billing_expr"`
+	TokenPricing          TokenPricingSetting `json:"token_pricing"`
+	CacheBillingOffsetBps map[string]int      `json:"cache_billing_offset_bps"`
 }
 
 var billingSetting = BillingSetting{
-	BillingMode: make(map[string]string),
-	BillingExpr: make(map[string]string),
+	BillingMode:           make(map[string]string),
+	BillingExpr:           make(map[string]string),
+	CacheBillingOffsetBps: make(map[string]int),
 	TokenPricing: TokenPricingSetting{
 		Enabled:     false,
 		InputRatio:  1,
@@ -93,6 +97,25 @@ func GetBillingModeCopy() map[string]string {
 
 func GetBillingExprCopy() map[string]string {
 	return lo.Assign(billingSetting.BillingExpr)
+}
+
+// GetCacheBillingOffsetBps returns the model-specific cache billing reduction
+// in basis points. Invalid persisted values are treated as disabled so the hot
+// billing path remains safe even if an older database contains malformed data.
+func GetCacheBillingOffsetBps(model string) int {
+	offsetBps, ok := billingSetting.CacheBillingOffsetBps[model]
+	if !ok || offsetBps <= 0 || offsetBps > 10000 {
+		return 0
+	}
+	return offsetBps
+}
+
+func setCacheBillingOffsetBpsForTest(offsets map[string]int) func() {
+	previous := billingSetting.CacheBillingOffsetBps
+	billingSetting.CacheBillingOffsetBps = lo.Assign(offsets)
+	return func() {
+		billingSetting.CacheBillingOffsetBps = previous
+	}
 }
 
 func GetTokenPricingSetting() TokenPricingSetting {

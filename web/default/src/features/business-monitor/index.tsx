@@ -383,14 +383,9 @@ function getPercentileLatency(logs: UsageLog[], percentile: number) {
   ]
 }
 
-function formatCacheHitRate(
-  inputTokens: number,
-  cacheReadTokens: number,
-  cacheCreationTokens: number
-) {
-  const totalPromptTokens = inputTokens + cacheReadTokens + cacheCreationTokens
-  if (totalPromptTokens <= 0) return '--'
-  return `${((cacheReadTokens / totalPromptTokens) * 100).toFixed(2)}%`
+function formatCacheHitRate(cacheReadTokens: number, totalInputTokens: number) {
+  if (totalInputTokens <= 0) return '--'
+  return `${((cacheReadTokens / totalInputTokens) * 100).toFixed(2)}%`
 }
 
 type MetricProps = {
@@ -719,6 +714,10 @@ export function BusinessMonitor() {
     refetchInterval: 60000,
     staleTime: 30000,
   })
+  const cacheHitTotalInputTokens =
+    (cacheHitStats?.input_tokens ?? 0) +
+    (cacheHitStats?.cache_read_tokens ?? 0) +
+    (cacheHitStats?.cache_creation_tokens ?? 0)
 
   const { data: logsData } = useQuery({
     queryKey: ['business-monitor-logs'],
@@ -903,17 +902,24 @@ export function BusinessMonitor() {
                     rightLabel={t('RPM')}
                   />
                 </Metric>
-                <Metric icon={Database} title={t('Cache hit ratio')}>
-                  <div className='mt-2.5 truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
-                    {formatCacheHitRate(
-                      cacheHitStats?.input_tokens ?? 0,
+                <Metric
+                  icon={Database}
+                  title={`${t('Cache hit ratio')} · ${t('Last 24 hours')}`}
+                >
+                  <DualMetricValues
+                    leftValue={formatCacheHitRate(
                       cacheHitStats?.cache_read_tokens ?? 0,
-                      cacheHitStats?.cache_creation_tokens ?? 0
+                      cacheHitTotalInputTokens
                     )}
-                  </div>
-                  <div className='text-muted-foreground mt-0.5 truncate text-xs'>
-                    {t('Last 24 hours')}
-                  </div>
+                    leftLabel={t('Actual hit rate')}
+                    rightValue={formatCacheHitRate(
+                      cacheHitStats?.billing_cache_read_tokens ??
+                        cacheHitStats?.cache_read_tokens ??
+                        0,
+                      cacheHitTotalInputTokens
+                    )}
+                    rightLabel={t('Billing hit rate')}
+                  />
                 </Metric>
                 <Metric icon={Timer} title={t('Token Throughput')}>
                   <DualMetricValues

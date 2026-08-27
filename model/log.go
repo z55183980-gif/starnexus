@@ -894,9 +894,15 @@ type Stat struct {
 }
 
 type BusinessMonitorCacheStats struct {
-	InputTokens         int64 `json:"input_tokens"`
-	CacheReadTokens     int64 `json:"cache_read_tokens"`
-	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+	InputTokens            int64 `json:"input_tokens"`
+	CacheReadTokens        int64 `json:"cache_read_tokens"`
+	BillingCacheReadTokens int64 `json:"billing_cache_read_tokens"`
+	CacheCreationTokens    int64 `json:"cache_creation_tokens"`
+}
+
+type businessMonitorCacheBillingInfo struct {
+	RawCacheReadTokens     int64 `json:"raw_cache_read_tokens"`
+	BillingCacheReadTokens int64 `json:"billing_cache_read_tokens"`
 }
 
 type businessMonitorCacheLogOther struct {
@@ -907,6 +913,9 @@ type businessMonitorCacheLogOther struct {
 	CacheCreationTokens   int64  `json:"cache_creation_tokens"`
 	CacheCreationTokens5m int64  `json:"cache_creation_tokens_5m"`
 	CacheCreationTokens1h int64  `json:"cache_creation_tokens_1h"`
+	AdminInfo             struct {
+		CacheBilling *businessMonitorCacheBillingInfo `json:"cache_billing"`
+	} `json:"admin_info"`
 }
 
 func (other businessMonitorCacheLogOther) cacheCreationTotal() int64 {
@@ -927,10 +936,13 @@ func (other businessMonitorCacheLogOther) cacheCreationTotal() int64 {
 // sub2api: uncached input, cache read, and cache creation. OpenAI-style prompt
 // totals already include cache tokens, while Anthropic reports these buckets
 // separately, so the former is de-duplicated before aggregation.
-func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64) (stats BusinessMonitorCacheStats, err error) {
+func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64, modelName string) (stats BusinessMonitorCacheStats, err error) {
 	query := LOG_DB.Table("logs").
 		Select("COALESCE(prompt_tokens, 0), COALESCE(other, '')").
 		Where("type = ?", LogTypeConsume)
+	if modelName != "" {
+		query = query.Where("model_name = ?", modelName)
+	}
 	if startTimestamp != 0 {
 		query = query.Where("created_at >= ?", startTimestamp)
 	}
@@ -957,6 +969,13 @@ func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64) (sta
 		}
 
 		cacheReadTokens := max(other.CacheTokens, 0)
+		billingCacheReadTokens := cacheReadTokens
+		if cacheBilling := other.AdminInfo.CacheBilling; cacheBilling != nil &&
+			cacheBilling.RawCacheReadTokens == cacheReadTokens &&
+			cacheBilling.BillingCacheReadTokens >= 0 &&
+			cacheBilling.BillingCacheReadTokens <= cacheReadTokens {
+			billingCacheReadTokens = cacheBilling.BillingCacheReadTokens
+		}
 		cacheCreationTokens := max(other.cacheCreationTotal(), 0)
 		inputTokens := max(promptTokens, 0)
 		if other.UsageSemantic != "anthropic" && !other.Claude {
@@ -965,6 +984,7 @@ func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64) (sta
 
 		stats.InputTokens += inputTokens
 		stats.CacheReadTokens += cacheReadTokens
+		stats.BillingCacheReadTokens += billingCacheReadTokens
 		stats.CacheCreationTokens += cacheCreationTokens
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {

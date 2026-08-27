@@ -23,47 +23,52 @@ import (
 )
 
 type textQuotaSummary struct {
-	PromptTokens              int
-	CompletionTokens          int
-	TotalTokens               int
-	RawPromptTokens           int
-	RawCompletionTokens       int
-	RawTotalTokens            int
-	CacheTokens               int
-	CacheCreationTokens       int
-	CacheCreationTokens5m     int
-	CacheCreationTokens1h     int
-	ImageTokens               int
-	AudioTokens               int
-	ModelName                 string
-	TokenName                 string
-	UseTimeSeconds            int64
-	UseTimeMilliseconds       int64
-	CompletionRatio           float64
-	CacheRatio                float64
-	ImageRatio                float64
-	ModelRatio                float64
-	GroupRatio                float64
-	ModelPrice                float64
-	CacheCreationRatio        float64
-	CacheCreationRatio5m      float64
-	CacheCreationRatio1h      float64
-	Quota                     int
-	IsClaudeUsageSemantic     bool
-	UsageSemantic             string
-	WebSearchPrice            float64
-	WebSearchCallCount        int
-	ClaudeWebSearchPrice      float64
-	ClaudeWebSearchCallCount  int
-	FileSearchPrice           float64
-	FileSearchCallCount       int
-	AudioInputPrice           float64
-	ImageGenerationCallPrice  float64
-	ToolCallSurchargeQuota    decimal.Decimal
-	TokenPricingEnabled       bool
-	TokenPricingInputRatio    float64
-	TokenPricingOutputRatio   float64
-	LongContextBillingApplied bool
+	PromptTokens                 int
+	CompletionTokens             int
+	TotalTokens                  int
+	RawPromptTokens              int
+	RawCompletionTokens          int
+	RawTotalTokens               int
+	CacheTokens                  int
+	BillingCacheTokens           int
+	CacheReclassifiedTokens      int
+	CacheBillingTotalInputTokens int
+	CacheBillingOffsetBps        int
+	CacheBillingApplied          bool
+	CacheCreationTokens          int
+	CacheCreationTokens5m        int
+	CacheCreationTokens1h        int
+	ImageTokens                  int
+	AudioTokens                  int
+	ModelName                    string
+	TokenName                    string
+	UseTimeSeconds               int64
+	UseTimeMilliseconds          int64
+	CompletionRatio              float64
+	CacheRatio                   float64
+	ImageRatio                   float64
+	ModelRatio                   float64
+	GroupRatio                   float64
+	ModelPrice                   float64
+	CacheCreationRatio           float64
+	CacheCreationRatio5m         float64
+	CacheCreationRatio1h         float64
+	Quota                        int
+	IsClaudeUsageSemantic        bool
+	UsageSemantic                string
+	WebSearchPrice               float64
+	WebSearchCallCount           int
+	ClaudeWebSearchPrice         float64
+	ClaudeWebSearchCallCount     int
+	FileSearchPrice              float64
+	FileSearchCallCount          int
+	AudioInputPrice              float64
+	ImageGenerationCallPrice     float64
+	ToolCallSurchargeQuota       decimal.Decimal
+	TokenPricingEnabled          bool
+	TokenPricingInputRatio       float64
+	TokenPricingOutputRatio      float64
+	LongContextBillingApplied    bool
 }
 
 const (
@@ -110,6 +115,44 @@ func cacheWriteTokensTotal(summary textQuotaSummary) int {
 		return splitCacheWriteTokens
 	}
 	return summary.CacheCreationTokens
+}
+
+func applyCacheBillingOffset(summary *textQuotaSummary, priceData types.PriceData, legacyClaudeDerived bool) {
+	if summary == nil {
+		return
+	}
+	summary.BillingCacheTokens = summary.CacheTokens
+	offsetBps := priceData.CacheBillingOffsetBps
+	if priceData.UsePrice || offsetBps <= 0 || offsetBps > 10000 || summary.CacheTokens <= 0 {
+		return
+	}
+
+	cacheReadTokens := int64(max(summary.CacheTokens, 0))
+	cacheCreationTokens := int64(max(cacheWriteTokensTotal(*summary), 0))
+	uncachedInputTokens := int64(max(summary.PromptTokens, 0))
+	if !summary.IsClaudeUsageSemantic && !legacyClaudeDerived {
+		uncachedInputTokens = max(uncachedInputTokens-cacheReadTokens-cacheCreationTokens, 0)
+	}
+	totalInputTokens := uncachedInputTokens + cacheReadTokens + cacheCreationTokens
+	if totalInputTokens <= 0 {
+		return
+	}
+
+	// Split the calculation to avoid overflowing totalInputTokens*offsetBps.
+	reclassifiedTokens := (totalInputTokens/10000)*int64(offsetBps) +
+		(totalInputTokens%10000)*int64(offsetBps)/10000
+	if reclassifiedTokens > cacheReadTokens {
+		reclassifiedTokens = cacheReadTokens
+	}
+	if reclassifiedTokens <= 0 {
+		return
+	}
+
+	summary.CacheBillingApplied = true
+	summary.CacheBillingOffsetBps = offsetBps
+	summary.CacheBillingTotalInputTokens = int(totalInputTokens)
+	summary.CacheReclassifiedTokens = int(reclassifiedTokens)
+	summary.BillingCacheTokens = summary.CacheTokens - summary.CacheReclassifiedTokens
 }
 
 func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) bool {
@@ -303,9 +346,12 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		}
 		summary.PromptTokens -= summary.CacheCreationTokens
 	}
+	applyCacheBillingOffset(&summary, relayInfo.PriceData, legacyClaudeDerived)
 
 	dPromptTokens := decimal.NewFromInt(int64(summary.PromptTokens))
-	dCacheTokens := decimal.NewFromInt(int64(summary.CacheTokens))
+	dRawCacheTokens := decimal.NewFromInt(int64(summary.CacheTokens))
+	dBillingCacheTokens := decimal.NewFromInt(int64(summary.BillingCacheTokens))
+	dCacheReclassifiedTokens := decimal.NewFromInt(int64(summary.CacheReclassifiedTokens))
 	dImageTokens := decimal.NewFromInt(int64(summary.ImageTokens))
 	dAudioTokens := decimal.NewFromInt(int64(summary.AudioTokens))
 	dCompletionTokens := decimal.NewFromInt(int64(summary.CompletionTokens))
@@ -329,11 +375,11 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		baseTokens := dPromptTokens
 
 		var cachedTokensWithRatio decimal.Decimal
-		if !dCacheTokens.IsZero() {
+		if !dRawCacheTokens.IsZero() {
 			if !summary.IsClaudeUsageSemantic && !legacyClaudeDerived {
-				baseTokens = baseTokens.Sub(dCacheTokens)
+				baseTokens = baseTokens.Sub(dRawCacheTokens)
 			}
-			cachedTokensWithRatio = dCacheTokens.Mul(dCacheRatio)
+			cachedTokensWithRatio = dBillingCacheTokens.Mul(dCacheRatio)
 		}
 
 		var cachedCreationTokensWithRatio decimal.Decimal
@@ -374,7 +420,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 			baseTokens = decimal.Zero
 		}
 
-		promptQuota := baseTokens.Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
+		promptQuota := baseTokens.Add(dCacheReclassifiedTokens).Add(cachedTokensWithRatio).Add(imageTokensWithRatio).Add(cachedCreationTokensWithRatio)
 		completionQuota := dCompletionTokens.Mul(dCompletionRatio)
 		if ctx.GetBool(string(constant.ContextKeyUpstreamOpenAILongContextBilling)) &&
 			summary.RawPromptTokens > openAIAccountLongContextInputThreshold {
@@ -583,6 +629,20 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		other["input_tokens_total"] = usage.InputTokens
 	}
 	other["cache_observation"] = textCacheObservation(originUsage, summary, relayInfo)
+	if summary.CacheBillingApplied {
+		adminInfo, ok := other["admin_info"].(map[string]interface{})
+		if !ok {
+			adminInfo = make(map[string]interface{})
+			other["admin_info"] = adminInfo
+		}
+		adminInfo["cache_billing"] = map[string]interface{}{
+			"offset_bps":                summary.CacheBillingOffsetBps,
+			"total_input_tokens":        summary.CacheBillingTotalInputTokens,
+			"raw_cache_read_tokens":     summary.CacheTokens,
+			"billing_cache_read_tokens": summary.BillingCacheTokens,
+			"reclassified_tokens":       summary.CacheReclassifiedTokens,
+		}
+	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}

@@ -57,6 +57,7 @@ const defaultBillingSettings: BillingSettings = {
   ExposeRatioEnabled: false,
   'billing_setting.billing_mode': '{}',
   'billing_setting.billing_expr': '{}',
+  'billing_setting.cache_billing_offset_bps': '{}',
   'billing_setting.token_pricing':
     '{"enabled":false,"input_ratio":1,"output_ratio":1}',
   'tool_price_setting.prices': '{}',

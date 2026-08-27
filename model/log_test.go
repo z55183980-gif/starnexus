@@ -16,6 +16,10 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 			Other: common.MapToJsonStr(map[string]interface{}{
 				"admin_info": map[string]interface{}{
 					"node_name": "xingyuapi-prod-1",
+					"cache_billing": map[string]interface{}{
+						"offset_bps":                300,
+						"billing_cache_read_tokens": 2,
+					},
 				},
 				"token_pricing_enabled":      true,
 				"token_pricing_input_ratio":  2,
@@ -104,7 +108,7 @@ func TestGetBusinessMonitorCacheStats(t *testing.T) {
 
 	logs := []Log{
 		// OpenAI prompt totals include cache reads, so 2,000 becomes 500 uncached + 1,500 read.
-		{Type: LogTypeConsume, CreatedAt: 150, PromptTokens: 2000, Other: `{"cache_tokens":1500}`},
+		{Type: LogTypeConsume, CreatedAt: 150, ModelName: "gpt-test", PromptTokens: 2000, Other: `{"cache_tokens":1500,"admin_info":{"cache_billing":{"raw_cache_read_tokens":1500,"billing_cache_read_tokens":1400}}}`},
 		// Anthropic reports input, cache read, and cache creation separately.
 		{Type: LogTypeConsume, CreatedAt: 160, PromptTokens: 200, Other: `{"usage_semantic":"anthropic","cache_tokens":500,"cache_creation_tokens_5m":100,"cache_creation_tokens_1h":200}`},
 		{Type: LogTypeConsume, CreatedAt: 170, PromptTokens: 100, Other: `{}`},
@@ -114,11 +118,18 @@ func TestGetBusinessMonitorCacheStats(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&logs).Error)
 
-	stats, err := GetBusinessMonitorCacheStats(100, 200)
+	stats, err := GetBusinessMonitorCacheStats(100, 200, "")
 	require.NoError(t, err)
 	require.Equal(t, int64(800), stats.InputTokens)
 	require.Equal(t, int64(2000), stats.CacheReadTokens)
+	require.Equal(t, int64(1900), stats.BillingCacheReadTokens)
 	require.Equal(t, int64(300), stats.CacheCreationTokens)
+
+	filteredStats, err := GetBusinessMonitorCacheStats(100, 200, "gpt-test")
+	require.NoError(t, err)
+	require.Equal(t, int64(500), filteredStats.InputTokens)
+	require.Equal(t, int64(1500), filteredStats.CacheReadTokens)
+	require.Equal(t, int64(1400), filteredStats.BillingCacheReadTokens)
 }
 
 func TestGetAllLogsIncludesUpstreamAccountName(t *testing.T) {

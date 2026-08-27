@@ -34,6 +34,25 @@ func isPaymentComplianceOptionKey(key string) bool {
 	return strings.HasPrefix(key, "payment_setting.compliance_")
 }
 
+func validateCacheBillingOffsetBpsJSON(value string) error {
+	var offsets map[string]int
+	if err := common.UnmarshalJsonStr(value, &offsets); err != nil {
+		return fmt.Errorf("缓存计费调整必须是合法 JSON: %w", err)
+	}
+	if offsets == nil {
+		return fmt.Errorf("缓存计费调整必须是模型到基点数的 JSON 对象")
+	}
+	for modelName, offsetBps := range offsets {
+		if strings.TrimSpace(modelName) == "" || modelName != strings.TrimSpace(modelName) {
+			return fmt.Errorf("缓存计费调整的模型名称不能为空或包含首尾空格")
+		}
+		if offsetBps < 0 || offsetBps > 10000 {
+			return fmt.Errorf("模型 %s 的缓存计费调整必须在 0 到 10000 基点之间", modelName)
+		}
+	}
+	return nil
+}
+
 func isPositiveOptionValue(value string) bool {
 	intValue, err := strconv.Atoi(strings.TrimSpace(value))
 	if err == nil {
@@ -351,6 +370,14 @@ func UpdateOption(c *gin.Context) {
 					return
 				}
 			}
+		}
+	case "billing_setting.cache_billing_offset_bps":
+		if err = validateCacheBillingOffsetBpsJSON(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
 		}
 	case "ModelRequestRateLimitGroup":
 		err = setting.CheckModelRequestRateLimitGroup(option.Value.(string))
