@@ -257,6 +257,53 @@ func TestGetAllLogsIncludesUpstreamAccountName(t *testing.T) {
 	require.Equal(t, "primary-account", logs[0].UpstreamAccountName)
 }
 
+func TestGetAllLogsProjectsCacheBillingDisplayAndPreservesAdminAudit(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalDB := DB
+	originalLogDB := LOG_DB
+	DB = db
+	LOG_DB = db
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+	})
+
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.Create(&Log{
+		Type:      LogTypeConsume,
+		CreatedAt: common.GetTimestamp(),
+		Other: common.MapToJsonStr(map[string]interface{}{
+			"cache_tokens": 164237,
+			"admin_info": map[string]interface{}{
+				"node_name": "xingyuapi-prod-3",
+				"cache_billing": map[string]interface{}{
+					"offset_bps":                300,
+					"total_input_tokens":        166941,
+					"raw_cache_read_tokens":     164237,
+					"billing_cache_read_tokens": 159229,
+					"reclassified_tokens":       5008,
+				},
+			},
+		}),
+	}).Error)
+
+	logs, total, err := GetAllLogs(
+		LogTypeConsume, 0, 0, "", "", "", 0, 20, 0, "", "", "", nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.Equal(t, float64(159229), other["cache_tokens"])
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "xingyuapi-prod-3", adminInfo["node_name"])
+	require.Contains(t, adminInfo, "cache_billing")
+}
+
 func TestGetAgentUserLogsScopesToAgentAndInvitees(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {

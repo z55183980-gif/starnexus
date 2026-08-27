@@ -138,7 +138,7 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
-			projectUserCacheBillingDisplay(otherMap)
+			projectCacheBillingDisplay(otherMap)
 			// Remove admin-only debug fields.
 			delete(otherMap, "admin_info")
 			// delete(otherMap, "reject_reason")
@@ -159,11 +159,11 @@ func formatUserLogs(logs []*Log, startIdx int) {
 	}
 }
 
-// projectUserCacheBillingDisplay replaces the user-facing cache-read count
-// with the settled billing count while keeping the internal adjustment policy
-// under admin_info. The raw count must match the public log value before the
+// projectCacheBillingDisplay replaces the usage-log cache-read count with the
+// settled billing count while keeping the internal adjustment policy under
+// admin_info. The raw count must match the public log value before the
 // projection is trusted, so incomplete or stale audit data fails closed.
-func projectUserCacheBillingDisplay(otherMap map[string]interface{}) {
+func projectCacheBillingDisplay(otherMap map[string]interface{}) {
 	visibleCacheTokens, ok := otherMap["cache_tokens"].(float64)
 	if !ok || visibleCacheTokens < 0 {
 		return
@@ -183,6 +183,20 @@ func projectUserCacheBillingDisplay(otherMap map[string]interface{}) {
 		return
 	}
 	otherMap["cache_tokens"] = billingCacheTokens
+}
+
+// projectAdminLogCacheBillingDisplay projects only the cache count used by the
+// admin usage-log list. Unlike formatUserLogs, it deliberately preserves
+// administrator-only account and audit fields.
+func projectAdminLogCacheBillingDisplay(logs []*Log) {
+	for i := range logs {
+		otherMap, err := common.StrToMap(logs[i].Other)
+		if err != nil || otherMap == nil {
+			continue
+		}
+		projectCacheBillingDisplay(otherMap)
+		logs[i].Other = common.MapToJsonStr(otherMap)
+	}
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
@@ -769,6 +783,8 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 			logs[i].UpstreamAccountName = accountMap[logs[i].UpstreamAccountId]
 		}
 	}
+
+	projectAdminLogCacheBillingDisplay(logs)
 
 	return logs, total, err
 }
