@@ -68,28 +68,25 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		c.Set("image_generation_call_size", responsesResponse.GetSize())
 	}
 
-	// Commit continuation state only after the response body was successfully
-	// written downstream. This prevents hidden tool calls from poisoning the
-	// next turn when the client has already disconnected.
+	// compute usage
+	usage := usageFromResponsesUsage(responsesResponse.Usage)
+	service.ReconcileCodexResponsesUsage(c, info, &usage)
+	if responsesResponse.Usage != nil {
+		projectedUsage := service.ProjectUserBillingUsage(info, &usage)
+		responseBody, err = service.RewriteOpenAIUsageJSON(responseBody, "usage", projectedUsage, true)
+		if err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+	}
+
+	// Commit continuation state only after the user-visible response body was
+	// successfully written downstream. Billing continues to use raw usage.
 	writeErr := service.IOCopyBytesGracefully(c, resp, responseBody)
 	if writeErr == nil {
 		responseID, output := service.ResponsesHTTPResponseEnvelope(responseBody)
 		output = service.PreferStagedResponsesHTTPOutput(c, responseID, output)
 		service.CommitResponsesHTTPContinuation(c, responseID, output)
 	}
-
-	// compute usage
-	usage := dto.Usage{}
-	if responsesResponse.Usage != nil {
-		usage.PromptTokens = responsesResponse.Usage.InputTokens
-		usage.CompletionTokens = responsesResponse.Usage.OutputTokens
-		usage.TotalTokens = responsesResponse.Usage.TotalTokens
-		if responsesResponse.Usage.InputTokensDetails != nil {
-			usage.PromptTokensDetails.CachedTokens = responsesResponse.Usage.InputTokensDetails.CachedTokens
-			usage.PromptTokensDetails.CacheWriteTokens = responsesResponse.Usage.InputTokensDetails.CacheWriteTokens
-		}
-	}
-	service.ReconcileCodexResponsesUsage(c, info, &usage)
 	if info == nil || info.ResponsesUsageInfo == nil || info.ResponsesUsageInfo.BuiltInTools == nil {
 		return &usage, nil
 	}
@@ -123,12 +120,16 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	clientOutputStarted := false
 	var capacityErr *types.NewAPIError
 	deliver := func(streamResponse dto.ResponsesStreamResponse, data string) error {
-		if err := sendResponsesStreamData(c, streamResponse, data); err != nil {
+		clientData, err := ProjectResponsesStreamUsageData(c, info, &streamResponse, data)
+		if err != nil {
+			return err
+		}
+		if err := sendResponsesStreamData(c, streamResponse, clientData); err != nil {
 			return err
 		}
 		info.SendResponseCount++
 		info.SetFirstResponseTime()
-		service.RecordDeliveredResponsesHTTPEvent(c, []byte(data))
+		service.RecordDeliveredResponsesHTTPEvent(c, []byte(clientData))
 		return nil
 	}
 	flushPrelude := func() error {
@@ -195,4 +196,36 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	service.ReconcileCodexResponsesUsage(c, info, usage)
 
 	return usage, nil
+}
+
+func usageFromResponsesUsage(responseUsage *dto.Usage) dto.Usage {
+	if responseUsage == nil {
+		return dto.Usage{}
+	}
+	usage := *responseUsage
+	if usage.InputTokens > 0 || usage.PromptTokens == 0 {
+		usage.PromptTokens = usage.InputTokens
+	}
+	if usage.OutputTokens > 0 || usage.CompletionTokens == 0 {
+		usage.CompletionTokens = usage.OutputTokens
+	}
+	if usage.InputTokensDetails != nil {
+		usage.PromptTokensDetails = *usage.InputTokensDetails
+	}
+	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	return usage
+}
+
+func ProjectResponsesStreamUsageData(c *gin.Context, info *relaycommon.RelayInfo, streamResponse *dto.ResponsesStreamResponse, data string) (string, error) {
+	if streamResponse == nil || streamResponse.Response == nil || streamResponse.Response.Usage == nil || data == "" {
+		return data, nil
+	}
+	usage := usageFromResponsesUsage(streamResponse.Response.Usage)
+	service.ReconcileCodexResponsesUsage(c, info, &usage)
+	projected := service.ProjectUserBillingUsage(info, &usage)
+	clientData, err := service.RewriteOpenAIUsageJSON(common.StringToByteSlice(data), "response.usage", projected, true)
+	if err != nil {
+		return "", err
+	}
+	return string(clientData), nil
 }

@@ -41,6 +41,11 @@ func GeminiTextGenerationHandler(c *gin.Context, info *relaycommon.RelayInfo, re
 
 	// 计算使用量（基于 UsageMetadata）
 	usage := buildUsageFromGeminiMetadata(geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
+	projectedMetadata := service.ProjectGeminiUsageForUser(info, geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
+	responseBody, err = service.RewriteGeminiUsageJSON(responseBody, projectedMetadata)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
@@ -82,7 +87,13 @@ func GeminiTextGenerationStreamHandler(c *gin.Context, info *relaycommon.RelayIn
 	helper.SetEventStreamHeaders(c)
 
 	return geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
-		err := helper.StringData(c, data)
+		projectedMetadata := service.ProjectGeminiUsageForUser(info, geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
+		projectedData, projectErr := service.RewriteGeminiUsageJSON(common.StringToByteSlice(data), projectedMetadata)
+		if projectErr != nil {
+			logger.LogError(c, "failed to project Gemini usage: "+projectErr.Error())
+			return false
+		}
+		err := helper.StringData(c, string(projectedData))
 		if err != nil {
 			logger.LogError(c, "failed to write stream data: "+err.Error())
 			return false

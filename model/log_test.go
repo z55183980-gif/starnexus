@@ -12,13 +12,20 @@ import (
 func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 	logs := []*Log{
 		{
-			Content: "token重算：tokens=50, modelRatio=1.00, rawTokens=100, rawPrompt=80, rawCompletion=20, inputRatio=0.5000, outputRatio=0.5000",
+			UpstreamAccountId:   9,
+			UpstreamAccountName: "supplier-account",
+			AccountCost:         0.25,
+			UserCost:            0.75,
+			Content:             "token重算：tokens=50, modelRatio=1.00, rawTokens=100, rawPrompt=80, rawCompletion=20, inputRatio=0.5000, outputRatio=0.5000",
 			Other: common.MapToJsonStr(map[string]interface{}{
 				"admin_info": map[string]interface{}{
 					"node_name": "xingyuapi-prod-1",
 					"cache_billing": map[string]interface{}{
 						"offset_bps":                300,
+						"total_input_tokens":        5,
+						"raw_cache_read_tokens":     5,
 						"billing_cache_read_tokens": 2,
+						"reclassified_tokens":       3,
 					},
 				},
 				"token_pricing_enabled":      true,
@@ -38,6 +45,10 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 
 	formatUserLogs(logs, 0)
 
+	require.Zero(t, logs[0].UpstreamAccountId)
+	require.Empty(t, logs[0].UpstreamAccountName)
+	require.Zero(t, logs[0].AccountCost)
+	require.Equal(t, 0.75, logs[0].UserCost)
 	require.Contains(t, logs[0].Content, "tokens=50")
 	require.NotContains(t, logs[0].Content, "rawTokens")
 	require.NotContains(t, logs[0].Content, "rawPrompt")
@@ -47,8 +58,8 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 
 	other, err := common.StrToMap(logs[0].Other)
 	require.NoError(t, err)
-	require.Equal(t, true, other["token_pricing_enabled"])
-	require.Equal(t, float64(5), other["cache_tokens"])
+	require.NotContains(t, other, "token_pricing_enabled")
+	require.Equal(t, float64(2), other["cache_tokens"])
 	require.NotContains(t, other, "admin_info")
 	require.NotContains(t, other, "token_pricing_input_ratio")
 	require.NotContains(t, other, "token_pricing_output_ratio")
@@ -59,6 +70,78 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 	require.NotContains(t, other, "billing_prompt_tokens")
 	require.NotContains(t, other, "billing_completion_tokens")
 	require.NotContains(t, other, "billing_total_tokens")
+	require.NotContains(t, logs[0].Other, "offset_bps")
+	require.NotContains(t, logs[0].Other, "total_input_tokens")
+	require.NotContains(t, logs[0].Other, "raw_cache_read_tokens")
+	require.NotContains(t, logs[0].Other, "billing_cache_read_tokens")
+	require.NotContains(t, logs[0].Other, "reclassified_tokens")
+}
+
+func TestFormatUserLogsCacheBillingProjectionRejectsInvalidAudit(t *testing.T) {
+	tests := []struct {
+		name         string
+		cacheBilling map[string]interface{}
+		wantCache    float64
+	}{
+		{
+			name:      "missing audit",
+			wantCache: 5,
+		},
+		{
+			name: "raw count mismatch",
+			cacheBilling: map[string]interface{}{
+				"raw_cache_read_tokens":     4,
+				"billing_cache_read_tokens": 2,
+			},
+			wantCache: 5,
+		},
+		{
+			name: "negative billing count",
+			cacheBilling: map[string]interface{}{
+				"raw_cache_read_tokens":     5,
+				"billing_cache_read_tokens": -1,
+			},
+			wantCache: 5,
+		},
+		{
+			name: "billing count exceeds raw",
+			cacheBilling: map[string]interface{}{
+				"raw_cache_read_tokens":     5,
+				"billing_cache_read_tokens": 6,
+			},
+			wantCache: 5,
+		},
+		{
+			name: "zero billing count is valid",
+			cacheBilling: map[string]interface{}{
+				"raw_cache_read_tokens":     5,
+				"billing_cache_read_tokens": 0,
+			},
+			wantCache: 0,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			adminInfo := map[string]interface{}{"node_name": "internal-node"}
+			if test.cacheBilling != nil {
+				adminInfo["cache_billing"] = test.cacheBilling
+			}
+			logs := []*Log{{
+				Other: common.MapToJsonStr(map[string]interface{}{
+					"cache_tokens": 5,
+					"admin_info":   adminInfo,
+				}),
+			}}
+
+			formatUserLogs(logs, 0)
+
+			other, err := common.StrToMap(logs[0].Other)
+			require.NoError(t, err)
+			require.Equal(t, test.wantCache, other["cache_tokens"])
+			require.NotContains(t, other, "admin_info")
+		})
+	}
 }
 
 func TestAttachNodeNameToLogOther(t *testing.T) {

@@ -115,6 +115,25 @@ func processCompletionsStreamResponse(streamResponse dto.CompletionsStreamRespon
 	}
 }
 
+func projectOpenAIStreamUsageData(info *relaycommon.RelayInfo, data string) (string, error) {
+	if data == "" {
+		return data, nil
+	}
+	var streamResponse dto.ChatCompletionsStreamResponseSimple
+	if err := common.UnmarshalJsonStr(data, &streamResponse); err != nil {
+		return "", err
+	}
+	if streamResponse.Usage == nil {
+		return data, nil
+	}
+	projected := service.ProjectUserBillingUsage(info, streamResponse.Usage)
+	projectedData, err := service.RewriteOpenAIUsageJSON(common.StringToByteSlice(data), "usage", projected, false)
+	if err != nil {
+		return "", err
+	}
+	return string(projectedData), nil
+}
+
 func shouldSendOpenAIStreamData(data string, info *relaycommon.RelayInfo) bool {
 	if info == nil || info.ShouldIncludeUsage {
 		return true
@@ -165,7 +184,8 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		if info.ShouldIncludeUsage && !containStreamUsage {
-			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)
+			projectedUsage := service.ProjectUserBillingUsage(info, usage)
+			response := helper.GenerateFinalUsageResponse(responseId, createAt, model, *projectedUsage)
 			response.SetSystemFingerprint(systemFingerprint)
 			helper.ObjectData(c, response)
 		}
@@ -179,6 +199,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		}
 
 		info.ClaudeConvertInfo.Usage = usage
+		streamResponse.Usage = usage
 
 		claudeResponses := service.StreamResponseOpenAI2Claude(&streamResponse, info)
 		for _, resp := range claudeResponses {
@@ -198,6 +219,7 @@ func HandleFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, lastStream
 		// 而包含最后一段文本输出的响应（倒数第二个）的 finishReason 为 null
 		// 暂不知是否有程序会不兼容。
 
+		streamResponse.Usage = usage
 		geminiResponse := service.StreamResponseOpenAI2Gemini(&streamResponse, info)
 
 		// openai 流响应开头的空数据

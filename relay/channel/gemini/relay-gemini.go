@@ -1406,6 +1406,10 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 
 	usage, err := geminiStreamHandler(c, info, resp, func(data string, geminiResponse *dto.GeminiChatResponse) bool {
 		response, isStop := streamResponseGeminiChat2OpenAI(geminiResponse)
+		if info.RelayFormat == types.RelayFormatOpenAI && geminiResponse.UsageMetadata.TotalTokenCount != 0 {
+			rawChunkUsage := buildUsageFromGeminiMetadata(geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
+			response.Usage = service.ProjectUserBillingUsage(info, &rawChunkUsage)
+		}
 
 		response.Id = id
 		response.Created = createAt
@@ -1539,10 +1543,13 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	usage := buildUsageFromGeminiMetadata(geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
 
 	fullTextResponse.Usage = usage
+	projectedUsage := service.ProjectUserBillingUsage(info, &usage)
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		responseBody, err = common.Marshal(fullTextResponse)
+		clientResponse := *fullTextResponse
+		clientResponse.Usage = *projectedUsage
+		responseBody, err = common.Marshal(clientResponse)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
@@ -1554,7 +1561,11 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 		}
 		responseBody = claudeRespStr
 	case types.RelayFormatGemini:
-		break
+		projectedMetadata := service.ProjectGeminiUsageForUser(info, geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
+		responseBody, err = service.RewriteGeminiUsageJSON(responseBody, projectedMetadata)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
@@ -1596,7 +1607,8 @@ func GeminiEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	// refer to openai billing method to use input tokens billing
 	// https://platform.openai.com/docs/guides/embeddings#what-are-embeddings
 	usage := service.ResponseText2Usage(c, "", info.UpstreamModelName, info.GetEstimatePromptTokens())
-	openAIResponse.Usage = *usage
+	projectedUsage := service.ProjectUserBillingUsage(info, usage)
+	openAIResponse.Usage = *projectedUsage
 
 	jsonResponse, jsonErr := common.Marshal(openAIResponse)
 	if jsonErr != nil {

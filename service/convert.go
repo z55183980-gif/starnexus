@@ -232,10 +232,24 @@ func buildClaudeUsageFromOpenAIUsage(oaiUsage *dto.Usage) *dto.ClaudeUsage {
 		oaiUsage.ClaudeCacheCreation5mTokens,
 		oaiUsage.ClaudeCacheCreation1hTokens,
 	)
+	cacheCreationTokens := oaiUsage.PromptTokensDetails.CacheCreationTokensTotal()
+	if splitTotal := cacheCreation5m + cacheCreation1h; splitTotal > cacheCreationTokens {
+		cacheCreationTokens = splitTotal
+	}
+	inputTokens := oaiUsage.PromptTokens
+	// OpenAI prompt_tokens is cache-inclusive, while Anthropic input_tokens is
+	// mutually exclusive with its cache buckets. Usage explicitly marked as
+	// Anthropic is already exclusive and must not be reduced again.
+	if oaiUsage.UsageSemantic != "anthropic" {
+		inputTokens -= oaiUsage.PromptTokensDetails.CachedTokens + cacheCreationTokens
+		if inputTokens < 0 {
+			inputTokens = 0
+		}
+	}
 	usage := &dto.ClaudeUsage{
-		InputTokens:              oaiUsage.PromptTokens,
+		InputTokens:              inputTokens,
 		OutputTokens:             oaiUsage.CompletionTokens,
-		CacheCreationInputTokens: oaiUsage.PromptTokensDetails.CachedCreationTokens,
+		CacheCreationInputTokens: cacheCreationTokens,
 		CacheReadInputTokens:     oaiUsage.PromptTokensDetails.CachedTokens,
 	}
 	if cacheCreation5m > 0 || cacheCreation1h > 0 {
@@ -245,6 +259,10 @@ func buildClaudeUsageFromOpenAIUsage(oaiUsage *dto.Usage) *dto.ClaudeUsage {
 		}
 	}
 	return usage
+}
+
+func projectClaudeUsageFromOpenAIUsage(info *relaycommon.RelayInfo, oaiUsage *dto.Usage) *dto.ClaudeUsage {
+	return ProjectClaudeUsageForUser(info, buildClaudeUsageFromOpenAIUsage(oaiUsage))
 }
 
 func NormalizeCacheCreationSplit(totalTokens int, tokens5m int, tokens1h int) (int, int) {
@@ -302,10 +320,10 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 			Model: openAIResponse.Model,
 			Type:  "message",
 			Role:  "assistant",
-			Usage: &dto.ClaudeUsage{
+			Usage: ProjectClaudeUsageForUser(info, &dto.ClaudeUsage{
 				InputTokens:  info.GetEstimatePromptTokens(),
 				OutputTokens: 0,
-			},
+			}),
 		}
 		msg.SetContent(make([]any, 0))
 		claudeResponses = append(claudeResponses, &dto.ClaudeResponse{
@@ -421,7 +439,7 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 			if oaiUsage != nil {
 				claudeResponses = append(claudeResponses, &dto.ClaudeResponse{
 					Type:  "message_delta",
-					Usage: buildClaudeUsageFromOpenAIUsage(oaiUsage),
+					Usage: projectClaudeUsageFromOpenAIUsage(info, oaiUsage),
 					Delta: &dto.ClaudeMediaMessage{
 						StopReason: common.GetPointer[string](stopReasonOpenAI2Claude(info.FinishReason)),
 					},
@@ -449,7 +467,7 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 			}
 			claudeResponses = append(claudeResponses, &dto.ClaudeResponse{
 				Type:  "message_delta",
-				Usage: buildClaudeUsageFromOpenAIUsage(oaiUsage),
+				Usage: projectClaudeUsageFromOpenAIUsage(info, oaiUsage),
 				Delta: &dto.ClaudeMediaMessage{
 					StopReason: common.GetPointer[string](stopReason),
 				},
@@ -587,7 +605,7 @@ func StreamResponseOpenAI2Claude(openAIResponse *dto.ChatCompletionsStreamRespon
 			if oaiUsage != nil {
 				claudeResponses = append(claudeResponses, &dto.ClaudeResponse{
 					Type:  "message_delta",
-					Usage: buildClaudeUsageFromOpenAIUsage(oaiUsage),
+					Usage: projectClaudeUsageFromOpenAIUsage(info, oaiUsage),
 					Delta: &dto.ClaudeMediaMessage{
 						StopReason: common.GetPointer[string](stopReasonOpenAI2Claude(info.FinishReason)),
 					},
@@ -638,7 +656,7 @@ func ResponseOpenAI2Claude(openAIResponse *dto.OpenAITextResponse, info *relayco
 	}
 	claudeResponse.Content = contents
 	claudeResponse.StopReason = stopReason
-	claudeResponse.Usage = buildClaudeUsageFromOpenAIUsage(&openAIResponse.Usage)
+	claudeResponse.Usage = projectClaudeUsageFromOpenAIUsage(info, &openAIResponse.Usage)
 
 	return claudeResponse
 }
@@ -829,9 +847,10 @@ func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info *relayco
 	geminiResponse := &dto.GeminiChatResponse{
 		Candidates: make([]dto.GeminiChatCandidate, 0, len(openAIResponse.Choices)),
 		UsageMetadata: dto.GeminiUsageMetadata{
-			PromptTokenCount:     openAIResponse.PromptTokens,
-			CandidatesTokenCount: openAIResponse.CompletionTokens,
-			TotalTokenCount:      openAIResponse.PromptTokens + openAIResponse.CompletionTokens,
+			PromptTokenCount:        openAIResponse.PromptTokens,
+			CandidatesTokenCount:    openAIResponse.CompletionTokens,
+			TotalTokenCount:         openAIResponse.PromptTokens + openAIResponse.CompletionTokens,
+			CachedContentTokenCount: openAIResponse.PromptTokensDetails.CachedTokens,
 		},
 	}
 
@@ -900,6 +919,7 @@ func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info *relayco
 		geminiResponse.Candidates = append(geminiResponse.Candidates, candidate)
 	}
 
+	geminiResponse.UsageMetadata = ProjectGeminiUsageForUser(info, geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
 	return geminiResponse
 }
 
@@ -935,6 +955,7 @@ func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamRespon
 		geminiResponse.UsageMetadata.PromptTokenCount = openAIResponse.Usage.PromptTokens
 		geminiResponse.UsageMetadata.CandidatesTokenCount = openAIResponse.Usage.CompletionTokens
 		geminiResponse.UsageMetadata.TotalTokenCount = openAIResponse.Usage.TotalTokens
+		geminiResponse.UsageMetadata.CachedContentTokenCount = openAIResponse.Usage.PromptTokensDetails.CachedTokens
 	}
 
 	for _, choice := range openAIResponse.Choices {
@@ -1003,5 +1024,6 @@ func StreamResponseOpenAI2Gemini(openAIResponse *dto.ChatCompletionsStreamRespon
 		geminiResponse.Candidates = append(geminiResponse.Candidates, candidate)
 	}
 
+	geminiResponse.UsageMetadata = ProjectGeminiUsageForUser(info, geminiResponse.UsageMetadata, info.GetEstimatePromptTokens())
 	return geminiResponse
 }

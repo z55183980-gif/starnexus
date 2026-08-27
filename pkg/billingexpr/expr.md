@@ -237,15 +237,26 @@ This enables future evolution without breaking existing expressions.
 
 ### Internal Cache Billing Offset
 
-`billing_setting.cache_billing_offset_bps` is an internal settlement adjustment,
-not a user-visible usage rewrite. For a tiered expression that explicitly uses
-`cr`, settlement freezes the configured basis points in `BillingSnapshot`,
-reclassifies at most that share of total input from `cr` back to `p`, and then
-evaluates the expression. The adjustment is capped by the raw cache-read count.
+`billing_setting.cache_billing_offset_bps` is an internal settlement adjustment.
+For a tiered expression that explicitly uses `cr`, settlement freezes the
+configured basis points in `BillingSnapshot`, reclassifies at most that share
+of total input from `cr` back to `p`, and then evaluates the expression. The
+adjustment is capped by the raw cache-read count.
 
-`len`, raw prompt tokens, raw cache tokens, and the upstream response never
-change. Audit details are stored only below `admin_info.cache_billing`, which is
-removed from user log responses.
+`len`, the received upstream usage, and persisted raw audit values never change.
+Before a model response is written to an ordinary API client, a separate
+user-visible projection applies the effective input/output token-pricing rules
+and cache reclassification to standard protocol usage fields. Anthropic keeps
+its mutually exclusive buckets by moving reclassified cache reads into
+`input_tokens`; cache-inclusive OpenAI/Responses/Gemini formats keep their input
+total and replace only the cache subset. The projection never includes pricing
+ratios, offset basis points, raw values, rule names, or reclassification details.
+
+Audit details are stored only below `admin_info.cache_billing`. When an ordinary
+user reads usage logs, the server projects `billing_cache_read_tokens` onto the
+existing `cache_tokens` display field and then removes the entire `admin_info`
+object. Users therefore see only settled input, output, and cache counts;
+administrator logs retain the raw counts and audit detail.
 
 ---
 

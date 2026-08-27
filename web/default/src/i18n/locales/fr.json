@@ -6008,7 +6008,7 @@
     "Model names must be unique.": "Les noms de modèles doivent être uniques.",
     "No cache billing adjustments configured": "Aucun ajustement de facturation du cache n’est configuré",
     "percentage points": "points de pourcentage",
-    "Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.": "Visible uniquement par root. Réduit l’éligibilité à la facturation des lectures du cache sans modifier les données d’utilisation visibles par l’utilisateur.",
+    "Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.": "Visible uniquement par root. Réduit la part des lectures du cache éligible à la facturation et affiche aux utilisateurs des volumes ajustés ; les données brutes en amont et d’audit restent internes.",
     "Settlement example": "Exemple de règlement",
     "Zalo": "Zalo",
     "Zero retention": "Aucune rétention",

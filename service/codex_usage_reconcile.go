@@ -94,9 +94,10 @@ func codexShortProbeBillingTarget(info *relaycommon.RelayInfo, usage *dto.Usage)
 // ReconcileCodexResponsesUsage raises Codex Responses prompt tokens to the
 // request estimate when upstream usage is obviously under-reported.
 //
-// This is billing-only: callers should invoke it after writing the client
-// response (or rely on PostTextConsumeQuota) so transport and user-visible
-// payloads stay unchanged.
+// This is internal accounting normalization and must not be serialized by
+// itself. User-visible paths reconcile a working copy and then pass that copy
+// through ProjectUserBillingUsage; settlement may reconcile its own usage
+// object again because the operation is idempotent.
 //
 // When the upstream total is still plausible (>= estimate/10), the upstream
 // uncached remainder stays at full price and only the raised delta is

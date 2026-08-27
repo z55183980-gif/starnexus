@@ -6008,7 +6008,7 @@
     "Model names must be unique.": "Model names must be unique.",
     "No cache billing adjustments configured": "No cache billing adjustments configured",
     "percentage points": "percentage points",
-    "Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.": "Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.",
+    "Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.": "Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.",
     "Settlement example": "Settlement example",
     "Zalo": "Zalo",
     "Zero retention": "Zero retention",

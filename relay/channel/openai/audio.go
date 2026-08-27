@@ -39,6 +39,7 @@ func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 
 	if info.IsStream {
 		helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+			clientData := data
 			if service.SundaySearch(data, "usage") {
 				var simpleResponse dto.SimpleResponse
 				if err := common.Unmarshal([]byte(data), &simpleResponse); err != nil {
@@ -48,9 +49,16 @@ func OpenaiTTSHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 					usage.PromptTokens = simpleResponse.Usage.InputTokens
 					usage.CompletionTokens = simpleResponse.OutputTokens
 					usage.TotalTokens = simpleResponse.TotalTokens
+					projectedUsage := service.ProjectUserBillingUsage(info, &simpleResponse.Usage)
+					projectedData, projectErr := service.RewriteOpenAIUsageJSON([]byte(data), "usage", projectedUsage, false)
+					if projectErr != nil {
+						sr.Error(projectErr)
+						return
+					}
+					clientData = string(projectedData)
 				}
 			}
-			if err := helper.StringData(c, data); err != nil {
+			if err := helper.StringData(c, clientData); err != nil {
 				sr.Error(err)
 			}
 		})
@@ -121,9 +129,6 @@ func OpenaiSTTHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 	if err != nil {
 		return types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError), nil
 	}
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
-
 	var responseData struct {
 		Usage *dto.Usage `json:"usage"`
 	}
@@ -136,9 +141,16 @@ func OpenaiSTTHandler(c *gin.Context, resp *http.Response, info *relaycommon.Rel
 			if usage.CompletionTokens == 0 {
 				usage.CompletionTokens = usage.OutputTokens
 			}
+			projectedUsage := service.ProjectUserBillingUsage(info, usage)
+			projectedBody, projectErr := service.RewriteOpenAIUsageJSON(responseBody, "usage", projectedUsage, false)
+			if projectErr != nil {
+				return types.NewOpenAIError(projectErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError), nil
+			}
+			service.IOCopyBytesGracefully(c, resp, projectedBody)
 			return nil, usage
 		}
 	}
+	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	usage := &dto.Usage{}
 	usage.PromptTokens = info.GetEstimatePromptTokens()

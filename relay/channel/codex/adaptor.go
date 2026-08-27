@@ -277,7 +277,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeAlphaSearch:
 		return nil, types.NewError(errors.New("codex channel: alpha search response should be handled by AlphaSearchHelper"), types.ErrorCodeInvalidRequest)
 	case relayconstant.RelayModeResponsesCompact:
-		return openai.OaiResponsesCompactionHandler(c, resp)
+		return openai.OaiResponsesCompactionHandler(c, info, resp)
 	case relayconstant.RelayModeResponses:
 		if info.IsStream {
 			return openai.OaiResponsesStreamHandler(c, info, resp)

@@ -899,13 +899,28 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			// message_start, 获取usage
 			if claudeResponse.Message != nil {
 				info.UpstreamModelName = claudeResponse.Message.Model
+				if claudeResponse.Message.Usage != nil {
+					projectedUsage := service.ProjectClaudeUsageForUser(info, claudeResponse.Message.Usage)
+					projectedData, projectErr := service.RewriteClaudeUsageJSON(common.StringToByteSlice(data), "message.usage", projectedUsage)
+					if projectErr != nil {
+						return types.NewError(projectErr, types.ErrorCodeBadResponseBody)
+					}
+					data = string(projectedData)
+				}
 			}
 		} else if claudeResponse.Type == "message_delta" {
 			// 确保 message_delta 的 usage 包含完整的 input_tokens 和 cache 相关字段
 			// 解决 AWS Bedrock 等上游返回的 message_delta 缺少这些字段的问题
+			completeUsage := buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo)
 			if !shouldSkipClaudeMessageDeltaUsagePatch(info) {
-				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
+				data = patchClaudeMessageDeltaUsageData(data, completeUsage)
 			}
+			projectedUsage := service.ProjectClaudeUsageForUser(info, completeUsage)
+			projectedData, projectErr := service.RewriteClaudeUsageJSON(common.StringToByteSlice(data), "usage", projectedUsage)
+			if projectErr != nil {
+				return types.NewError(projectErr, types.ErrorCodeBadResponseBody)
+			}
+			data = string(projectedData)
 		}
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
@@ -950,7 +965,8 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 		//
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		if info.ShouldIncludeUsage {
-			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
+			projectedUsage := service.ProjectUserBillingUsage(info, claudeInfo.Usage)
+			openAIUsage := buildOpenAIStyleUsageFromClaudeUsage(projectedUsage)
 			response := helper.GenerateFinalUsageResponse(claudeInfo.ResponseId, claudeInfo.Created, info.UpstreamModelName, openAIUsage)
 			err := helper.ObjectData(c, response)
 			if err != nil {
@@ -1011,13 +1027,18 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
 		openaiResponse := ResponseClaude2OpenAI(&claudeResponse)
-		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(claudeInfo.Usage)
-		responseData, err = json.Marshal(openaiResponse)
+		projectedUsage := service.ProjectUserBillingUsage(info, claudeInfo.Usage)
+		openaiResponse.Usage = buildOpenAIStyleUsageFromClaudeUsage(projectedUsage)
+		responseData, err = common.Marshal(openaiResponse)
 		if err != nil {
 			return types.NewError(err, types.ErrorCodeBadResponseBody)
 		}
 	case types.RelayFormatClaude:
-		responseData = data
+		projectedUsage := service.ProjectClaudeUsageForUser(info, claudeResponse.Usage)
+		responseData, err = service.RewriteClaudeUsageJSON(data, "usage", projectedUsage)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
 	}
 
 	if claudeResponse.Usage != nil && claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {

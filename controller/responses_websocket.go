@@ -877,6 +877,15 @@ func (s *responsesWebSocketSession) readUpstream(upstream *responsesWSUpstreamCo
 				if consumeErr != nil {
 					logger.LogError(turn.ctx, "failed to parse Responses WebSocket event: "+consumeErr.Error())
 				} else {
+					clientData, projectErr := openairelay.ProjectResponsesStreamUsageData(turn.ctx, turn.info, event, string(data))
+					if projectErr != nil {
+						s.mu.Unlock()
+						s.clientWriteMu.Unlock()
+						logger.LogError(turn.ctx, "failed to project Responses WebSocket usage: "+projectErr.Error())
+						s.handleUpstreamFailure(upstream, projectErr)
+						return
+					}
+					data = []byte(clientData)
 					turn.upstreamEvent = true
 					turn.upstreamEventCount++
 					if openairelay.ResponsesStreamDataStartsClientOutput(string(data), event) {
@@ -1584,6 +1593,13 @@ func (s *responsesWebSocketSession) runSSETurn(turn *responsesWebSocketTurn) {
 			s.clientWriteMu.Unlock()
 			return false, consumeErr
 		}
+		clientData, projectErr := openairelay.ProjectResponsesStreamUsageData(turn.ctx, turn.info, event, string(data))
+		if projectErr != nil {
+			s.mu.Unlock()
+			s.clientWriteMu.Unlock()
+			return false, projectErr
+		}
+		data = []byte(clientData)
 		turn.upstreamEvent = true
 		if openairelay.ResponsesStreamDataStartsClientOutput(string(data), event) {
 			turn.upstreamOutputStarted = true

@@ -327,7 +327,7 @@ func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheReadFromPromptBilling(
 	require.Equal(t, 798, summary.Quota)
 }
 
-func TestCalculateTextQuotaSummaryAppliesCacheBillingOffsetWithoutChangingVisibleCacheTokens(t *testing.T) {
+func TestCalculateTextQuotaSummaryRetainsRawAndBillingCacheBucketsForSettlement(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	relayInfo := &relaycommon.RelayInfo{

@@ -101,6 +101,10 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		chatResp.Usage = *usage
 	}
+	service.ReconcileCodexResponsesUsage(c, info, usage)
+	projectedUsage := service.ProjectUserBillingUsage(info, usage)
+	clientChatResp := *chatResp
+	clientChatResp.Usage = *projectedUsage
 
 	var responseBody []byte
 	switch info.RelayFormat {
@@ -111,16 +115,13 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		geminiResp := service.ResponseOpenAI2Gemini(chatResp, info)
 		responseBody, err = common.Marshal(geminiResp)
 	default:
-		responseBody, err = common.Marshal(chatResp)
+		responseBody, err = common.Marshal(clientChatResp)
 	}
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 	}
 
 	service.IOCopyBytesGracefully(c, resp, responseBody)
-	// Reconcile after writing chat JSON so the client still sees upstream usage;
-	// settlement uses the returned usage (and PostTextConsumeQuota also reconciles).
-	service.ReconcileCodexResponsesUsage(c, info, usage)
 	return usage, nil
 }
 
@@ -162,15 +163,21 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if chunk == nil {
 			return true
 		}
+		clientChunk := chunk
+		if info.RelayFormat == types.RelayFormatOpenAI && chunk.Usage != nil {
+			chunkCopy := *chunk
+			chunkCopy.Usage = service.ProjectUserBillingUsage(info, chunk.Usage)
+			clientChunk = &chunkCopy
+		}
 		if info.RelayFormat == types.RelayFormatOpenAI {
-			if err := helper.ObjectData(c, chunk); err != nil {
+			if err := helper.ObjectData(c, clientChunk); err != nil {
 				streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 				return false
 			}
 			return true
 		}
 
-		chunkData, err := common.Marshal(chunk)
+		chunkData, err := common.Marshal(clientChunk)
 		if err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
 			return false
@@ -515,6 +522,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 					}
 				}
 			}
+			service.ReconcileCodexResponsesUsage(c, info, usage)
 
 			if !sendStartIfNeeded() {
 				sr.Stop(streamErr)
@@ -559,6 +567,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if usage.TotalTokens == 0 {
 		usage = service.ResponseText2Usage(c, usageText.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 	}
+	service.ReconcileCodexResponsesUsage(c, info, usage)
 
 	if !sentStart {
 		if !sendChatChunk(helper.GenerateStartEmptyResponse(responseId, createAt, model, nil)) {
@@ -579,7 +588,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	}
 	if info.RelayFormat == types.RelayFormatOpenAI && info.ShouldIncludeUsage && usage != nil {
-		if err := helper.ObjectData(c, helper.GenerateFinalUsageResponse(responseId, createAt, model, *usage)); err != nil {
+		projectedUsage := service.ProjectUserBillingUsage(info, usage)
+		if err := helper.ObjectData(c, helper.GenerateFinalUsageResponse(responseId, createAt, model, *projectedUsage)); err != nil {
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
 	}
@@ -587,7 +597,5 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	if info.RelayFormat == types.RelayFormatOpenAI {
 		helper.Done(c)
 	}
-	// Reconcile after streaming so client-visible usage chunks stay upstream-native.
-	service.ReconcileCodexResponsesUsage(c, info, usage)
 	return usage, nil
 }

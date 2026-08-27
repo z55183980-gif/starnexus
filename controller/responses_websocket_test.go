@@ -721,6 +721,53 @@ func TestResponsesWSReadUpstreamRecordsFirstResponseTime(t *testing.T) {
 	session.close()
 }
 
+func TestResponsesWSReadUpstreamProjectsUsageWithoutMutatingSettlement(t *testing.T) {
+	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+	upstreamServer, upstreamPeer, closeUpstream := newResponsesWSTestPair(t)
+	defer closeUpstream()
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
+	info.PriceData.CacheBillingOffsetBps = 300
+	turn := &responsesWebSocketTurn{
+		ctx:         ctx,
+		info:        info,
+		accumulator: openairelay.NewResponsesEventAccumulator(),
+	}
+	upstream := newResponsesWSUpstreamConnection(upstreamServer)
+	session := &responsesWebSocketSession{
+		baseCtx: ctx, client: clientServer, upstream: upstream, activeTurn: turn, closed: make(chan struct{}),
+	}
+	go session.readUpstream(upstream)
+
+	rawEvent := []byte(`{"type":"response.in_progress","response":{"id":"resp_projection","usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120,"input_tokens_details":{"cached_tokens":90}}}}`)
+	require.NoError(t, upstreamPeer.WriteMessage(websocket.TextMessage, rawEvent))
+	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
+	messageType, data, err := clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.EqualValues(t, 100, gjson.GetBytes(data, "response.usage.input_tokens").Int())
+	require.EqualValues(t, 20, gjson.GetBytes(data, "response.usage.output_tokens").Int())
+	require.EqualValues(t, 120, gjson.GetBytes(data, "response.usage.total_tokens").Int())
+	require.EqualValues(t, 87, gjson.GetBytes(data, "response.usage.input_tokens_details.cached_tokens").Int())
+	require.False(t, gjson.GetBytes(data, "response.usage.cache_billing_offset_bps").Exists())
+	require.NotContains(t, string(data), "raw_")
+	require.NotContains(t, string(data), "ratio")
+
+	rawUsage := turn.accumulator.Usage(info)
+	require.Equal(t, 100, rawUsage.PromptTokens)
+	require.Equal(t, 20, rawUsage.CompletionTokens)
+	require.Equal(t, 90, rawUsage.PromptTokensDetails.CachedTokens)
+
+	session.mu.Lock()
+	session.activeTurn = nil
+	session.mu.Unlock()
+	session.close()
+	session.wg.Wait()
+}
+
 func TestResponsesWSCapacityPreludeFlushesBeforeFirstOutput(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()

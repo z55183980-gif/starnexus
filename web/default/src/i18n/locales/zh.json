@@ -6008,7 +6008,7 @@
     "Model names must be unique.": "模型名称不能重复。",
     "No cache billing adjustments configured": "尚未配置缓存计费调整",
     "percentage points": "个百分点",
-    "Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.": "仅 Root 可见。减少可按缓存读取价格计费的比例，不改变用户可见的用量数据。",
+    "Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.": "仅 Root 可见。减少可按缓存读取价格计费的比例，并向用户展示调整后的用量；上游原始数据和审计数据仅内部可见。",
     "Settlement example": "结算示例",
     "Zalo": "Zalo",
     "Zero retention": "零数据保留",

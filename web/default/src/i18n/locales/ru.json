@@ -6008,7 +6008,7 @@
     "Model names must be unique.": "Названия моделей должны быть уникальными.",
     "No cache billing adjustments configured": "Корректировки тарификации кэша не настроены",
     "percentage points": "процентных пункта",
-    "Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.": "Доступно только root. Уменьшает учитываемую при тарификации долю чтения кэша, не изменяя видимые пользователю данные об использовании.",
+    "Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.": "Доступно только root. Уменьшает учитываемую при тарификации долю чтения кэша и показывает пользователям скорректированные показатели использования; исходные данные upstream и аудита остаются внутренними.",
     "Settlement example": "Пример расчёта",
     "Zalo": "Zalo",
     "Zero retention": "Без хранения данных",

@@ -60,8 +60,9 @@ type BillingSnapshot struct {
 }
 
 // CacheBillingAdjustment describes the internal cache-read reclassification
-// applied before evaluating a tiered expression. These values are admin audit
-// data; raw usage remains unchanged for users and upstream responses.
+// applied before evaluating a tiered expression. Raw upstream and persisted
+// usage remain unchanged; user responses are projected separately and never
+// expose this internal calculation metadata.
 type CacheBillingAdjustment struct {
 	OffsetBps              int   `json:"-"`
 	TotalInputTokens       int64 `json:"-"`

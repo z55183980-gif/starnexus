@@ -131,14 +131,19 @@ const (
 func formatUserLogs(logs []*Log, startIdx int) {
 	for i := range logs {
 		logs[i].ChannelName = ""
+		logs[i].UpstreamAccountId = 0
+		logs[i].UpstreamAccountName = ""
+		logs[i].AccountCost = 0
 		logs[i].Content = sanitizeUserLogContent(logs[i].Content)
 		var otherMap map[string]interface{}
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
+			projectUserCacheBillingDisplay(otherMap)
 			// Remove admin-only debug fields.
 			delete(otherMap, "admin_info")
 			// delete(otherMap, "reject_reason")
 			delete(otherMap, "stream_status")
+			delete(otherMap, "token_pricing_enabled")
 			delete(otherMap, "token_pricing_input_ratio")
 			delete(otherMap, "token_pricing_output_ratio")
 			delete(otherMap, "token_pricing_rules")
@@ -152,6 +157,32 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		logs[i].Other = common.MapToJsonStr(otherMap)
 		logs[i].Id = startIdx + i + 1
 	}
+}
+
+// projectUserCacheBillingDisplay replaces the user-facing cache-read count
+// with the settled billing count while keeping the internal adjustment policy
+// under admin_info. The raw count must match the public log value before the
+// projection is trusted, so incomplete or stale audit data fails closed.
+func projectUserCacheBillingDisplay(otherMap map[string]interface{}) {
+	visibleCacheTokens, ok := otherMap["cache_tokens"].(float64)
+	if !ok || visibleCacheTokens < 0 {
+		return
+	}
+	adminInfo, ok := otherMap["admin_info"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	cacheBilling, ok := adminInfo["cache_billing"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	rawCacheTokens, rawOk := cacheBilling["raw_cache_read_tokens"].(float64)
+	billingCacheTokens, billingOk := cacheBilling["billing_cache_read_tokens"].(float64)
+	if !rawOk || !billingOk || rawCacheTokens < 0 ||
+		visibleCacheTokens != rawCacheTokens || billingCacheTokens < 0 || billingCacheTokens > rawCacheTokens {
+		return
+	}
+	otherMap["cache_tokens"] = billingCacheTokens
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {

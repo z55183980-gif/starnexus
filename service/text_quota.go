@@ -476,8 +476,8 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if originUsage != nil {
 		ObserveChannelAffinityUsageCacheByRelayFormat(ctx, usage, relayInfo.GetFinalRequestRelayFormat())
 	}
-	// Billing-only: raise obvious Codex under-counts before settlement. Does not
-	// alter the response already written to the client.
+	// Raise obvious Codex under-counts on the settlement object. Response paths
+	// independently project an equivalent reconciled copy for the client.
 	ReconcileCodexResponsesUsage(ctx, relayInfo, usage)
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)

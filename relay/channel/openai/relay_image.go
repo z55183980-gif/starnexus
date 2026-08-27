@@ -89,10 +89,16 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 
 	updateOpenAIImageTierPrice(info, responseBody)
 	updateOpenAIImageCount(info, gjson.GetBytes(responseBody, "data.#").Int())
-	service.IOCopyBytesGracefully(c, resp, responseBody)
-
 	normalizeOpenAIImageUsage(&usageResp.Usage)
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+	projectedUsage := service.ProjectUserBillingUsage(info, &usageResp.Usage)
+	if gjson.GetBytes(responseBody, "usage").Exists() {
+		responseBody, err = service.RewriteOpenAIUsageJSON(responseBody, "usage", projectedUsage, true)
+		if err != nil {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+	}
+	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return &usageResp.Usage, nil
 }
 
@@ -153,6 +159,14 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 			normalizeOpenAIImageUsage(&chunk.Usage)
 			if service.ValidUsage(&chunk.Usage) {
 				usage = &chunk.Usage
+				applyUsagePostProcessing(info, usage, raw)
+				projectedUsage := service.ProjectUserBillingUsage(info, usage)
+				projectedRaw, projectErr := service.RewriteOpenAIUsageJSON(raw, "usage", projectedUsage, true)
+				if projectErr != nil {
+					sr.Error(projectErr)
+					return
+				}
+				raw = projectedRaw
 			}
 			if chunk.Type == "image_generation.completed" || chunk.Type == "image_edit.completed" {
 				completedImages++
@@ -277,7 +291,8 @@ func openaiImageJSONAsStreamHandler(c *gin.Context, info *relaycommon.RelayInfo,
 	validUsage := service.ValidUsage(&usageResp.Usage)
 	var usageJSON []byte
 	if validUsage {
-		usageJSON, err = common.Marshal(usageResp.Usage)
+		projectedUsage := service.ProjectUserBillingUsage(info, &usageResp.Usage)
+		usageJSON, err = common.Marshal(projectedUsage)
 		if err != nil {
 			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 		}

@@ -20,6 +20,7 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/gjson"
 )
 
 func sendStreamData(c *gin.Context, info *relaycommon.RelayInfo, data string, forceFormat bool, thinkToContent bool) error {
@@ -149,7 +150,12 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 			}
 
 			if info.RelayFormat == types.RelayFormatOpenAI && shouldSendOpenAIStreamData(data, info) {
-				if err := HandleStreamFormat(c, info, data, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
+				clientData, projectErr := projectOpenAIStreamUsageData(info, data)
+				if projectErr != nil {
+					sr.Error(projectErr)
+					return
+				}
+				if err := HandleStreamFormat(c, info, clientData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
 					common.SysLog("error handling stream format: " + err.Error())
 					sr.Error(err)
 				}
@@ -257,25 +263,24 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
+	projectedUsage := service.ProjectUserBillingUsage(info, &simpleResponse.Usage)
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:
-		if usageModified {
-			var bodyMap map[string]interface{}
-			err = common.Unmarshal(responseBody, &bodyMap)
-			if err != nil {
-				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
-			}
-			bodyMap["usage"] = simpleResponse.Usage
-			responseBody, _ = common.Marshal(bodyMap)
-		}
 		if forceFormat {
-			responseBody, err = common.Marshal(simpleResponse)
+			clientResponse := simpleResponse
+			clientResponse.Usage = *projectedUsage
+			responseBody, err = common.Marshal(clientResponse)
 			if err != nil {
 				return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
 			}
 		} else {
-			break
+			if usageModified || gjson.GetBytes(responseBody, "usage").Exists() {
+				responseBody, err = service.RewriteOpenAIUsageJSON(responseBody, "usage", projectedUsage, false)
+				if err != nil {
+					return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+				}
+			}
 		}
 	case types.RelayFormatClaude:
 		claudeResp := service.ResponseOpenAI2Claude(&simpleResponse, info)
@@ -570,13 +575,7 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
 
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
-
-	// Once we've written to the client, we should not return errors anymore
-	// because the upstream has already consumed resources and returned content
-	// We should still perform billing even if parsing fails
-	// format
+	responsesStyle := usageResp.InputTokens > 0 || usageResp.OutputTokens > 0
 	if usageResp.InputTokens > 0 {
 		usageResp.PromptTokens += usageResp.InputTokens
 	}
@@ -589,6 +588,15 @@ func OpenaiHandlerWithUsage(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 		usageResp.PromptTokensDetails.TextTokens += usageResp.InputTokensDetails.TextTokens
 	}
 	applyUsagePostProcessing(info, &usageResp.Usage, responseBody)
+	projectedUsage := service.ProjectUserBillingUsage(info, &usageResp.Usage)
+	responseBody, err = service.RewriteOpenAIUsageJSON(responseBody, "usage", projectedUsage, responsesStyle)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	// Only the projected usage is written to the client. Settlement retains the
+	// normalized raw usage below.
+	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return &usageResp.Usage, nil
 }
 

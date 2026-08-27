@@ -139,7 +139,7 @@ export function CacheBillingSettingsSection({
     <SettingsSection
       title={t('Cache Billing Adjustments')}
       description={t(
-        'Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.'
+        'Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.'
       )}
     >
       <FormNavigationGuard when={isDirty} />

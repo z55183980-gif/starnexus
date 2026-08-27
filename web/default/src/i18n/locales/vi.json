@@ -6008,7 +6008,7 @@
     "Model names must be unique.": "Tên mô hình không được trùng lặp.",
     "No cache billing adjustments configured": "Chưa cấu hình điều chỉnh tính phí bộ nhớ đệm",
     "percentage points": "điểm phần trăm",
-    "Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.": "Chỉ root có thể xem. Giảm tỷ lệ đọc bộ nhớ đệm đủ điều kiện tính phí mà không thay đổi dữ liệu sử dụng hiển thị cho người dùng.",
+    "Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.": "Chỉ root có thể xem. Giảm tỷ lệ đọc bộ nhớ đệm đủ điều kiện tính phí và hiển thị cho người dùng số liệu sử dụng đã điều chỉnh; dữ liệu thô từ upstream và dữ liệu kiểm toán chỉ được lưu hành nội bộ.",
     "Settlement example": "Ví dụ quyết toán",
     "Zalo": "Zalo",
     "Zero retention": "Không lưu dữ liệu",

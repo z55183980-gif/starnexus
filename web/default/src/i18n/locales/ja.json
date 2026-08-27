@@ -6008,7 +6008,7 @@
     "Model names must be unique.": "モデル名は重複できません。",
     "No cache billing adjustments configured": "キャッシュ課金調整は設定されていません",
     "percentage points": "パーセントポイント",
-    "Root-only. Reduces cache-read billing eligibility without changing user-visible usage data.": "Root のみ閲覧できます。ユーザーに表示される使用量データを変更せず、キャッシュ読み取り課金の対象率を減らします。",
+    "Root-only. Reduces cache-read billing eligibility and projects adjusted usage counts to users; raw upstream and audit data remain internal.": "Root のみ閲覧できます。キャッシュ読み取り課金の対象率を減らし、調整後の使用量をユーザーに表示します。上流の生データと監査データは内部に保持されます。",
     "Settlement example": "精算例",
     "Zalo": "Zalo",
     "Zero retention": "データ保持なし",
