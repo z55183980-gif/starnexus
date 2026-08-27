@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/shopspring/decimal"
+	"github.com/stretchr/testify/require"
 )
 
 // Claude Sonnet-style tiered expression: standard vs long-context
@@ -38,8 +40,93 @@ func TestBuildTieredTokenParamsUsesNativeCacheWriteTokens(t *testing.T) {
 
 	params := BuildTieredTokenParams(usage, false, map[string]bool{"cr": true, "cc": true})
 
-	if params.P != 0 || params.CR != 80 || params.CC != 90 {
-		t.Fatalf("params = %#v, want P=0 CR=80 CC=90", params)
+	if params.P != 0 || params.CR != 80 || params.CC != 90 || params.BillingInputTotal != 170 {
+		t.Fatalf("params = %#v, want P=0 CR=80 CC=90 BillingInputTotal=170", params)
+	}
+}
+
+func TestTryTieredSettleAppliesFrozenCacheBillingOffsetInternally(t *testing.T) {
+	expr := `tier("base", p + cr * 0.1)`
+	info := makeRelayInfo(expr, 1, 10000, 0)
+	info.TieredBillingSnapshot.CacheBillingOffsetBps = 300
+	usedVars := billingexpr.UsedVars(expr)
+	params := BuildTieredTokenParams(&dto.Usage{
+		PromptTokens: 10000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 9391,
+		},
+	}, false, usedVars)
+
+	ok, quota, result := TryTieredSettle(info, params)
+	if !ok {
+		t.Fatal("expected tiered settle")
+	}
+	// Billing-only values become p=909 and cr=9,091. Raw usage and len stay
+	// at 10,000 / 9,391 / 10,000 outside the expression evaluation.
+	if quota != 909 {
+		t.Fatalf("quota = %d, want 909", quota)
+	}
+	if result == nil || result.CacheBilling == nil {
+		t.Fatalf("cache billing result = %#v, want adjustment", result)
+	}
+	require.EqualValues(t, 300, result.CacheBilling.OffsetBps)
+	require.EqualValues(t, 10000, result.CacheBilling.TotalInputTokens)
+	require.EqualValues(t, 9391, result.CacheBilling.RawCacheReadTokens)
+	require.EqualValues(t, 9091, result.CacheBilling.BillingCacheReadTokens)
+	require.EqualValues(t, 300, result.CacheBilling.ReclassifiedTokens)
+	require.Equal(t, float64(10000), params.Len)
+	require.Equal(t, float64(9391), params.CR)
+}
+
+func TestTryTieredSettleCacheBillingOffsetCapsAtRawCacheRead(t *testing.T) {
+	expr := `tier("base", p + cr * 0.1)`
+	info := makeRelayInfo(expr, 1, 10000, 0)
+	info.TieredBillingSnapshot.CacheBillingOffsetBps = 300
+	params := BuildTieredTokenParams(&dto.Usage{
+		PromptTokens: 10000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 100,
+		},
+	}, false, billingexpr.UsedVars(expr))
+
+	ok, quota, result := TryTieredSettle(info, params)
+	require.True(t, ok)
+	require.Equal(t, 5000, quota)
+	require.NotNil(t, result.CacheBilling)
+	require.EqualValues(t, 100, result.CacheBilling.ReclassifiedTokens)
+	require.Zero(t, result.CacheBilling.BillingCacheReadTokens)
+}
+
+func TestTryTieredSettleCacheBillingOffsetRequiresExplicitCacheVariable(t *testing.T) {
+	expr := `tier("base", p)`
+	info := makeRelayInfo(expr, 1, 10000, 0)
+	info.TieredBillingSnapshot.CacheBillingOffsetBps = 300
+	params := BuildTieredTokenParams(&dto.Usage{
+		PromptTokens: 10000,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 9391,
+		},
+	}, false, billingexpr.UsedVars(expr))
+
+	ok, quota, result := TryTieredSettle(info, params)
+	require.True(t, ok)
+	require.Equal(t, 5000, quota)
+	require.Nil(t, result.CacheBilling)
+}
+
+func TestTryTieredSettleCacheBillingOffsetRejectsInvalidBounds(t *testing.T) {
+	expr := `tier("base", p + cr * 0.1)`
+	params := billingexpr.TokenParams{P: 609, CR: 9391, Len: 10000, BillingInputTotal: 10000}
+
+	for _, offsetBps := range []int{-1, 0, 10001} {
+		t.Run(fmt.Sprintf("offset_%d", offsetBps), func(t *testing.T) {
+			info := makeRelayInfo(expr, 1, 10000, 0)
+			info.TieredBillingSnapshot.CacheBillingOffsetBps = offsetBps
+			ok, quota, result := TryTieredSettle(info, params)
+			require.True(t, ok)
+			require.Equal(t, 774, quota)
+			require.Nil(t, result.CacheBilling)
+		})
 	}
 }
 

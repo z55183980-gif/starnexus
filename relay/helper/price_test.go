@@ -29,8 +29,9 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	})
 
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
-		"billing_setting.billing_mode": `{"tiered-test-model":"tiered_expr"}`,
-		"billing_setting.billing_expr": `{"tiered-test-model":"param(\"stream\") == true ? tier(\"stream\", p * 3) : tier(\"base\", p * 2)"}`,
+		"billing_setting.billing_mode":             `{"tiered-test-model":"tiered_expr"}`,
+		"billing_setting.billing_expr":             `{"tiered-test-model":"param(\"stream\") == true ? tier(\"stream\", p * 3) : tier(\"base\", p * 2)"}`,
+		"billing_setting.cache_billing_offset_bps": `{"tiered-test-model":300}`,
 	}))
 
 	recorder := httptest.NewRecorder()
@@ -60,6 +61,7 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, "stream", info.TieredBillingSnapshot.EstimatedTier)
 	require.Equal(t, billing_setting.BillingModeTieredExpr, info.TieredBillingSnapshot.BillingMode)
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
+	require.Equal(t, 300, info.TieredBillingSnapshot.CacheBillingOffsetBps)
 }
 
 func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T) {

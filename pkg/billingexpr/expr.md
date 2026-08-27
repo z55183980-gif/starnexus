@@ -174,6 +174,8 @@ After the upstream response returns with actual token usage:
 
 2. `TryTieredSettle(relayInfo, params)`:
    - Uses the frozen `BillingSnapshot` from pre-consume
+   - Applies any frozen internal cache-billing offset to billing-only `p`/`cr`
+     values before evaluation; raw usage and `len` remain unchanged
    - Re-runs the expression with actual token counts
    - Converts via `quotaConversion()` (version-dispatched)
    - Returns actual quota
@@ -232,6 +234,18 @@ Version controls:
 - Quota conversion formula
 
 This enables future evolution without breaking existing expressions.
+
+### Internal Cache Billing Offset
+
+`billing_setting.cache_billing_offset_bps` is an internal settlement adjustment,
+not a user-visible usage rewrite. For a tiered expression that explicitly uses
+`cr`, settlement freezes the configured basis points in `BillingSnapshot`,
+reclassifies at most that share of total input from `cr` back to `p`, and then
+evaluates the expression. The adjustment is capped by the raw cache-read count.
+
+`len`, raw prompt tokens, raw cache tokens, and the upstream response never
+change. Audit details are stored only below `admin_info.cache_billing`, which is
+removed from user log responses.
 
 ---
 

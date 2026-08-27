@@ -404,5 +404,19 @@ func InjectTieredBillingInfo(other map[string]interface{}, relayInfo *relaycommo
 	other["expr_b64"] = base64.StdEncoding.EncodeToString([]byte(snap.ExprString))
 	if result != nil {
 		other["matched_tier"] = result.MatchedTier
+		if adjustment := result.CacheBilling; adjustment != nil && adjustment.ReclassifiedTokens > 0 {
+			adminInfo, ok := other["admin_info"].(map[string]interface{})
+			if !ok {
+				adminInfo = make(map[string]interface{})
+				other["admin_info"] = adminInfo
+			}
+			adminInfo["cache_billing"] = map[string]interface{}{
+				"offset_bps":                adjustment.OffsetBps,
+				"total_input_tokens":        adjustment.TotalInputTokens,
+				"raw_cache_read_tokens":     adjustment.RawCacheReadTokens,
+				"billing_cache_read_tokens": adjustment.BillingCacheReadTokens,
+				"reclassified_tokens":       adjustment.ReclassifiedTokens,
+			}
+		}
 	}
 }

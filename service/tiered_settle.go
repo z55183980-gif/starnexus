@@ -29,10 +29,14 @@ func BuildTieredTokenParamsForContext(usage *dto.Usage, isClaudeUsageSemantic bo
 	cr := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CachedTokens, tokenPricingCtx))
 	cc5m := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.CacheCreationTokensTotal(), tokenPricingCtx))
 	cc1h := float64(0)
+	cacheCreationTotal := cc5m
 
 	if usage.UsageSemantic == "anthropic" {
 		cc1h = float64(billing_setting.ApplyInputTokenPricingForContext(usage.ClaudeCacheCreation1hTokens, tokenPricingCtx))
 		cc5m = float64(billing_setting.ApplyInputTokenPricingForContext(usage.ClaudeCacheCreation5mTokens, tokenPricingCtx))
+		if splitTotal := cc5m + cc1h; splitTotal > cacheCreationTotal {
+			cacheCreationTotal = splitTotal
+		}
 	}
 
 	img := float64(billing_setting.ApplyInputTokenPricingForContext(usage.PromptTokensDetails.ImageTokens, tokenPricingCtx))
@@ -46,6 +50,17 @@ func BuildTieredTokenParamsForContext(usage *dto.Usage, isClaudeUsageSemantic bo
 	inputLen := float64(usage.PromptTokens)
 	if isClaudeUsageSemantic {
 		inputLen = float64(usage.PromptTokens + usage.PromptTokensDetails.CachedTokens + usage.ClaudeCacheCreation5mTokens + usage.ClaudeCacheCreation1hTokens)
+	}
+
+	billingInputTotal := p
+	if isClaudeUsageSemantic {
+		billingInputTotal += cr + cacheCreationTotal
+	} else {
+		uncachedInput := p - cr - cacheCreationTotal
+		if uncachedInput < 0 {
+			uncachedInput = 0
+		}
+		billingInputTotal = uncachedInput + cr + cacheCreationTotal
 	}
 
 	if !isClaudeUsageSemantic {
@@ -80,16 +95,17 @@ func BuildTieredTokenParamsForContext(usage *dto.Usage, isClaudeUsageSemantic bo
 	}
 
 	return billingexpr.TokenParams{
-		P:    p,
-		C:    c,
-		Len:  inputLen,
-		CR:   cr,
-		CC:   cc5m,
-		CC1h: cc1h,
-		Img:  img,
-		ImgO: imgO,
-		AI:   ai,
-		AO:   ao,
+		P:                 p,
+		C:                 c,
+		Len:               inputLen,
+		CR:                cr,
+		CC:                cc5m,
+		CC1h:              cc1h,
+		Img:               img,
+		ImgO:              imgO,
+		AI:                ai,
+		AO:                ao,
+		BillingInputTotal: billingInputTotal,
 	}
 }
 

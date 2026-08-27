@@ -6,11 +6,44 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestInjectTieredBillingInfoKeepsCacheAdjustmentUnderAdminInfo(t *testing.T) {
+	other := map[string]interface{}{
+		"cache_tokens": 9391,
+	}
+	info := &relaycommon.RelayInfo{
+		TieredBillingSnapshot: &billingexpr.BillingSnapshot{ExprString: `tier("base", p + cr * 0.1)`},
+	}
+	result := &billingexpr.TieredResult{
+		MatchedTier: "base",
+		CacheBilling: &billingexpr.CacheBillingAdjustment{
+			OffsetBps:              300,
+			TotalInputTokens:       10000,
+			RawCacheReadTokens:     9391,
+			BillingCacheReadTokens: 9091,
+			ReclassifiedTokens:     300,
+		},
+	}
+
+	InjectTieredBillingInfo(other, info, result)
+
+	require.Equal(t, 9391, other["cache_tokens"])
+	require.NotContains(t, other, "cache_billing")
+	adminInfo := other["admin_info"].(map[string]interface{})
+	require.Equal(t, map[string]interface{}{
+		"offset_bps":                300,
+		"total_input_tokens":        int64(10000),
+		"raw_cache_read_tokens":     int64(9391),
+		"billing_cache_read_tokens": int64(9091),
+		"reclassified_tokens":       int64(300),
+	}, adminInfo["cache_billing"])
+}
 
 func TestGenerateTextOtherInfoIncludesStreamTransport(t *testing.T) {
 	gin.SetMode(gin.TestMode)

@@ -26,6 +26,11 @@ type TokenParams struct {
 	ImgO float64 // image output tokens
 	AI   float64 // audio input tokens
 	AO   float64 // audio output tokens
+
+	// BillingInputTotal is internal settlement metadata. It is deliberately not
+	// part of the expression environment and must never replace Len in tier
+	// conditions or be exposed as user-visible usage.
+	BillingInputTotal float64 `json:"-"`
 }
 
 // TraceResult holds side-channel info captured by the tier() function
@@ -51,14 +56,27 @@ type BillingSnapshot struct {
 	EstimatedTier             string  `json:"estimated_tier"`
 	QuotaPerUnit              float64 `json:"quota_per_unit"`
 	ExprVersion               int     `json:"expr_version"`
+	CacheBillingOffsetBps     int     `json:"-"`
+}
+
+// CacheBillingAdjustment describes the internal cache-read reclassification
+// applied before evaluating a tiered expression. These values are admin audit
+// data; raw usage remains unchanged for users and upstream responses.
+type CacheBillingAdjustment struct {
+	OffsetBps              int   `json:"-"`
+	TotalInputTokens       int64 `json:"-"`
+	RawCacheReadTokens     int64 `json:"-"`
+	BillingCacheReadTokens int64 `json:"-"`
+	ReclassifiedTokens     int64 `json:"-"`
 }
 
 // TieredResult holds everything needed after running tiered settlement.
 type TieredResult struct {
-	ActualQuotaBeforeGroup float64 `json:"actual_quota_before_group"`
-	ActualQuotaAfterGroup  int     `json:"actual_quota_after_group"`
-	MatchedTier            string  `json:"matched_tier"`
-	CrossedTier            bool    `json:"crossed_tier"`
+	ActualQuotaBeforeGroup float64                 `json:"actual_quota_before_group"`
+	ActualQuotaAfterGroup  int                     `json:"actual_quota_after_group"`
+	MatchedTier            string                  `json:"matched_tier"`
+	CrossedTier            bool                    `json:"crossed_tier"`
+	CacheBilling           *CacheBillingAdjustment `json:"-"`
 	// Clamp records an int32 saturation event during quota conversion so the
 	// caller can surface it on the consume log for admin auditing.
 	Clamp *common.QuotaClamp `json:"-"`

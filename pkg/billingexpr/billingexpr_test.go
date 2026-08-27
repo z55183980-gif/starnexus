@@ -3,10 +3,52 @@ package billingexpr_test
 import (
 	"math"
 	"math/rand"
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 )
+
+func TestInternalCacheBillingFieldsAreNotSerialized(t *testing.T) {
+	payload := struct {
+		Snapshot   billingexpr.BillingSnapshot        `json:"snapshot"`
+		Params     billingexpr.TokenParams            `json:"params"`
+		Result     billingexpr.TieredResult           `json:"result"`
+		Adjustment billingexpr.CacheBillingAdjustment `json:"adjustment"`
+	}{
+		Snapshot: billingexpr.BillingSnapshot{CacheBillingOffsetBps: 300},
+		Params:   billingexpr.TokenParams{BillingInputTotal: 10000},
+		Result: billingexpr.TieredResult{CacheBilling: &billingexpr.CacheBillingAdjustment{
+			OffsetBps:          300,
+			ReclassifiedTokens: 300,
+		}},
+		Adjustment: billingexpr.CacheBillingAdjustment{
+			OffsetBps:          300,
+			ReclassifiedTokens: 300,
+		},
+	}
+
+	encoded, err := common.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialized := string(encoded)
+	for _, internalField := range []string{
+		"CacheBillingOffsetBps",
+		"BillingInputTotal",
+		"cache_billing",
+		"offset_bps",
+		"total_input_tokens",
+		"raw_cache_read_tokens",
+		"billing_cache_read_tokens",
+		"reclassified_tokens",
+	} {
+		if strings.Contains(serialized, internalField) {
+			t.Fatalf("serialized payload exposes internal field %q: %s", internalField, serialized)
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Claude-style: fixed tiers, input > 200K changes both input & output price
