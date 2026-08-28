@@ -67,7 +67,7 @@ func TestResponsesHTTPHandlerCommitsFunctionCallContinuationAfterWrite(t *testin
 	require.Equal(t, int64(3), gjson.GetBytes(second.Input, "#").Int())
 }
 
-func TestResponsesSSEBridgePreservesRawReasoningForContinuation(t *testing.T) {
+func TestResponsesSSEBridgeStoresPortableReasoningForContinuation(t *testing.T) {
 	firstCtx, _ := newResponsesHTTPIntegrationContext(8102, 9102)
 	enableResponsesHTTPPersist(firstCtx)
 	service.PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: json.RawMessage(`"first"`)})
@@ -89,7 +89,8 @@ data: [DONE]
 	second := &dto.OpenAIResponsesRequest{Model: "gpt-5", PreviousResponseID: "resp_http_bridge_raw", Input: json.RawMessage(`"second"`)}
 	service.PrepareResponsesHTTPContinuation(secondCtx, second)
 	require.Nil(t, service.ApplyResponsesHTTPContinuationForCodex(secondCtx, second))
-	require.Equal(t, "ciphertext", gjson.GetBytes(second.Input, `#(type=="reasoning").encrypted_content`).String())
+	require.False(t, gjson.GetBytes(second.Input, `#(type=="reasoning")`).Exists())
+	require.True(t, gjson.GetBytes(second.Input, `#(type=="message")`).Exists())
 }
 
 func TestResponsesSSERebuildStageOmitsEmptyQualityInContinuation(t *testing.T) {

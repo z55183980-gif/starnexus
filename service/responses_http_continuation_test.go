@@ -57,6 +57,35 @@ func TestResponsesHTTPContinuationRedisWriteCanBeDisabled(t *testing.T) {
 	require.Equal(t, 1, defaultResponsesHTTPContinuationCache.entryCount())
 }
 
+func TestResponsesHTTPContinuationStoresPortableHistoryWithoutEncryptedReasoning(t *testing.T) {
+	resetResponsesHTTPContinuationTestCache(t)
+	firstCtx := newResponsesHTTPContinuationTestContext(t)
+	enableResponsesHTTPContinuationPersist(t, firstCtx)
+	PrepareResponsesHTTPContinuation(firstCtx, &dto.OpenAIResponsesRequest{Model: "gpt-5", Input: json.RawMessage(`"first"`)})
+	CommitResponsesHTTPContinuation(firstCtx, "resp_account_bound", []json.RawMessage{
+		json.RawMessage(`{"type":"reasoning","id":"rs_account_bound","encrypted_content":"cipher"}`),
+		json.RawMessage(`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}`),
+	})
+
+	sameAccountCtx := newResponsesHTTPContinuationTestContext(t)
+	common.SetContextKey(sameAccountCtx, constant.ContextKeyUpstreamAccountId, 9)
+	sameAccountRequest := &dto.OpenAIResponsesRequest{Model: "gpt-5", PreviousResponseID: "resp_account_bound", Input: json.RawMessage(`"next"`)}
+	PrepareResponsesHTTPContinuation(sameAccountCtx, sameAccountRequest)
+	require.Nil(t, ApplyResponsesHTTPContinuationForCodex(sameAccountCtx, sameAccountRequest))
+	require.False(t, gjson.GetBytes(sameAccountRequest.Input, `#(type=="reasoning")`).Exists())
+	require.True(t, gjson.GetBytes(sameAccountRequest.Input, `#(type=="message")`).Exists())
+
+	differentAccountCtx := newResponsesHTTPContinuationTestContext(t)
+	common.SetContextKey(differentAccountCtx, constant.ContextKeyUpstreamAccountId, 10)
+	differentAccountRequest := &dto.OpenAIResponsesRequest{Model: "gpt-5", PreviousResponseID: "resp_account_bound", Input: json.RawMessage(`"next"`)}
+	PrepareResponsesHTTPContinuation(differentAccountCtx, differentAccountRequest)
+	require.Nil(t, ApplyResponsesHTTPContinuationForCodex(differentAccountCtx, differentAccountRequest))
+	require.False(t, gjson.GetBytes(differentAccountRequest.Input, `#(type=="reasoning")`).Exists())
+	require.True(t, gjson.GetBytes(differentAccountRequest.Input, `#(type=="message")`).Exists())
+	_, exists := sameAccountCtx.Get(responsesHTTPReplayCanonicalizationContextKey)
+	require.False(t, exists)
+}
+
 func newResponsesHTTPContinuationTestContext(t testing.TB) *gin.Context {
 	t.Helper()
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

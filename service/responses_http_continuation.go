@@ -24,20 +24,23 @@ import (
 )
 
 const (
-	responsesHTTPContinuationContextKey  = "responses_http_continuation"
-	responsesHTTPDeliveredContextKey     = "responses_http_delivered_context"
-	responsesHTTPStagedOutputContextKey  = "responses_http_staged_output"
-	responsesHTTPStatusContextKey        = "responses_http_continuation_status"
-	responsesHTTPPersistStatusContextKey = "responses_http_persist_status"
-	responsesHTTPLocalCacheContextKey    = "responses_http_local_cache_status"
-	responsesHTTPRedisStatusContextKey   = "responses_http_redis_status"
-	responsesHTTPPersistTargetContextKey = "responses_http_persist_target"
-	responsesHTTPPendingL1ContextKey     = "responses_http_pending_l1"
-	responsesHTTPContinuationTTL         = time.Hour
-	responsesHTTPRedisTimeout            = 500 * time.Millisecond
+	responsesHTTPContinuationContextKey           = "responses_http_continuation"
+	responsesHTTPDeliveredContextKey              = "responses_http_delivered_context"
+	responsesHTTPStagedOutputContextKey           = "responses_http_staged_output"
+	responsesHTTPStatusContextKey                 = "responses_http_continuation_status"
+	responsesHTTPPersistStatusContextKey          = "responses_http_persist_status"
+	responsesHTTPLocalCacheContextKey             = "responses_http_local_cache_status"
+	responsesHTTPRedisStatusContextKey            = "responses_http_redis_status"
+	responsesHTTPPersistTargetContextKey          = "responses_http_persist_target"
+	responsesHTTPPendingL1ContextKey              = "responses_http_pending_l1"
+	responsesHTTPReplayCanonicalizationContextKey = "responses_http_replay_canonicalization"
+	responsesHTTPContinuationTTL                  = time.Hour
+	responsesHTTPRedisTimeout                     = 500 * time.Millisecond
+	responsesHTTPContinuationStateVersion         = 2
 )
 
 type responsesHTTPContinuationState struct {
+	Version     int               `json:"version,omitempty"`
 	Model       string            `json:"model"`
 	ReplayInput []json.RawMessage `json:"replay_input"`
 	AccountID   int               `json:"account_id,omitempty"`
@@ -47,6 +50,10 @@ type responsesHTTPContinuationState struct {
 type responsesHTTPContinuationPreparation struct {
 	Model                string
 	PreviousResponseID   string
+	CurrentInput         []json.RawMessage
+	CurrentInputExists   bool
+	StateReplayInput     []json.RawMessage
+	StateVersion         int
 	FullInput            []json.RawMessage
 	FullInputExists      bool
 	StateFound           bool
@@ -92,6 +99,8 @@ func PrepareResponsesHTTPContinuation(c *gin.Context, request *dto.OpenAIRespons
 	preparation := &responsesHTTPContinuationPreparation{
 		Model:              strings.TrimSpace(request.Model),
 		PreviousResponseID: strings.TrimSpace(request.PreviousResponseID),
+		CurrentInput:       cloneResponsesHTTPRawMessages(current),
+		CurrentInputExists: currentExists,
 		FullInput:          cloneResponsesHTTPRawMessages(current),
 		FullInputExists:    currentExists,
 		ReplayComplete:     strings.TrimSpace(request.PreviousResponseID) == "",
@@ -101,6 +110,8 @@ func PrepareResponsesHTTPContinuation(c *gin.Context, request *dto.OpenAIRespons
 			preparation.StateFound = true
 			preparation.ReplayComplete = state.Complete
 			preparation.PreferredAccountID = state.AccountID
+			preparation.StateVersion = state.Version
+			preparation.StateReplayInput = cloneResponsesHTTPRawMessages(state.ReplayInput)
 			if preparation.Model != "" && state.Model != "" && preparation.Model != state.Model {
 				preparation.ContinuationConflict = fmt.Sprintf("previous_response_id belongs to model %s, not %s", state.Model, preparation.Model)
 			} else {
@@ -321,10 +332,14 @@ func responsesHTTPPersistTargetMatches(c *gin.Context) bool {
 // available; tool outputs fail closed because sending an orphan output is not a
 // valid Responses request.
 func ApplyResponsesHTTPContinuationForCodex(c *gin.Context, request *dto.OpenAIResponsesRequest) *types.NewAPIError {
-	if request == nil || strings.TrimSpace(request.PreviousResponseID) == "" {
+	if request == nil {
 		return nil
 	}
 	preparation := getResponsesHTTPPreparation(c)
+	if strings.TrimSpace(request.PreviousResponseID) == "" {
+		canonicalizeResponsesHTTPCurrentInput(c, request, preparation)
+		return nil
+	}
 	if preparation == nil {
 		current, currentExists, err := normalizeResponsesHTTPInput(request.Input)
 		if err != nil {
@@ -334,20 +349,58 @@ func ApplyResponsesHTTPContinuationForCodex(c *gin.Context, request *dto.OpenAIR
 			!responsesHTTPRawItemsHaveToolCallContextForOutputs(current) {
 			return orphanResponsesHTTPToolOutputError()
 		}
+		canonicalizeResponsesHTTPCurrentInput(c, request, nil)
 		return nil
 	}
 	if preparation.ContinuationConflict != "" {
 		return types.NewErrorWithStatusCode(errors.New(preparation.ContinuationConflict), types.ErrorCodeInvalidRequest, http.StatusConflict, types.ErrOptionWithSkipRetry())
 	}
-	if preparation.ContextTooLarge {
+	stateInput := preparation.StateReplayInput
+	canonicalState, stateResult := canonicalizeResponsesHTTPReplayItems(stateInput)
+	canonicalCurrent, currentResult := canonicalizeResponsesHTTPReplayItems(preparation.CurrentInput)
+	stateUsable := preparation.StateFound && preparation.ReplayComplete && preparation.FullInputExists
+	var replayed []json.RawMessage
+	var replayExists bool
+	if stateUsable {
+		replayed, replayExists = mergeResponsesHTTPInput(
+			canonicalState, len(stateInput) > 0, canonicalCurrent, preparation.CurrentInputExists, true,
+		)
+		if replayExists && len(replayed) == 0 && !preparation.CurrentInputExists {
+			// Do not turn a request containing only provider-owned state into a new
+			// local validation error. The old upstream response remains authoritative
+			// when no portable input is available to send.
+			replayed = cloneResponsesHTTPRawMessages(stateInput)
+		}
+	} else {
+		// A missing or incomplete gateway continuation falls back to the current
+		// turn. Canonicalize it before applying size and tool-context validation so
+		// legacy provider-owned items do not become a new local 413/409 error.
+		replayed = cloneResponsesHTTPRawMessages(canonicalCurrent)
+		replayExists = preparation.CurrentInputExists
+	}
+	replayed, _ = pruneUnansweredResponsesHTTPToolCalls(replayed)
+	if responsesHTTPRawMessagesSize(replayed) > responsesHTTPReplayLimitBytes() {
 		return types.NewErrorWithStatusCode(errors.New("Responses HTTP replay context exceeds the configured request size limit"), types.ErrorCodeInvalidRequest, http.StatusRequestEntityTooLarge, types.ErrOptionWithSkipRetry())
 	}
-	if preparation.MissingToolContext {
+	if responsesHTTPRawItemsHaveToolOutput(replayed) &&
+		!responsesHTTPRawItemsHaveToolCallContextForOutputs(replayed) {
 		return orphanResponsesHTTPToolOutputError()
 	}
-	if !preparation.StateFound || !preparation.ReplayComplete || !preparation.FullInputExists {
+	preparation.FullInput = replayed
+	preparation.FullInputExists = replayExists
+	recordResponsesHTTPReplayCanonicalization(c, stateResult, "continuation_state")
+	recordResponsesHTTPReplayCanonicalization(c, currentResult, "client_input")
+	if !stateUsable {
 		setResponsesHTTPContinuationStatus(c, "fallback_short_input")
 		logger.LogWarn(c, "Responses HTTP continuation unavailable; forwarding current input only")
+	} else {
+		setResponsesHTTPContinuationStatus(c, "expanded")
+	}
+	if !replayExists {
+		// Preserve an absent input field when neither the gateway state nor the
+		// current turn contains portable data. Encoding nil as JSON null would
+		// change the upstream request contract and could create a new validation
+		// error instead of preserving the original upstream response.
 		return nil
 	}
 	encoded, err := common.Marshal(preparation.FullInput)
@@ -355,8 +408,52 @@ func ApplyResponsesHTTPContinuationForCodex(c *gin.Context, request *dto.OpenAIR
 		return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 	request.Input = encoded
-	setResponsesHTTPContinuationStatus(c, "expanded")
 	return nil
+}
+
+// ResponsesHTTPContinuationHasNonPortableInput reports whether either the
+// client input or the gateway-restored state contains provider-owned
+// reasoning references that require a portable replay rebuild.
+func ResponsesHTTPContinuationHasNonPortableInput(c *gin.Context, input json.RawMessage) bool {
+	items, exists, err := normalizeResponsesHTTPInput(input)
+	if err == nil && exists {
+		canonical, result := canonicalizeResponsesHTTPReplayItems(items)
+		if result.Modified() && len(canonical) > 0 {
+			return true
+		}
+	}
+	preparation := getResponsesHTTPPreparation(c)
+	if preparation == nil || len(preparation.StateReplayInput) == 0 {
+		return false
+	}
+	canonical, result := canonicalizeResponsesHTTPReplayItems(preparation.StateReplayInput)
+	return result.Modified() && len(canonical) > 0
+}
+
+func canonicalizeResponsesHTTPCurrentInput(c *gin.Context, request *dto.OpenAIResponsesRequest, preparation *responsesHTTPContinuationPreparation) {
+	if request == nil {
+		return
+	}
+	current, exists, err := normalizeResponsesHTTPInput(request.Input)
+	if err != nil || !exists {
+		return
+	}
+	canonical, result := canonicalizeResponsesHTTPReplayItems(current)
+	if !result.Modified() || len(canonical) == 0 {
+		return
+	}
+	encoded, err := common.Marshal(canonical)
+	if err != nil {
+		return
+	}
+	request.Input = encoded
+	if preparation != nil {
+		preparation.CurrentInput = cloneResponsesHTTPRawMessages(canonical)
+		preparation.CurrentInputExists = true
+		preparation.FullInput = cloneResponsesHTTPRawMessages(canonical)
+		preparation.FullInputExists = true
+	}
+	recordResponsesHTTPReplayCanonicalization(c, result, "client_input")
 }
 
 func setResponsesHTTPContinuationStatus(c *gin.Context, status string) {
@@ -390,6 +487,115 @@ func orphanResponsesHTTPToolOutputError() *types.NewAPIError {
 		http.StatusConflict,
 		types.ErrOptionWithSkipRetry(),
 	)
+}
+
+type responsesHTTPReplayCanonicalizationResult struct {
+	DroppedReasoningItems int
+	DroppedItemReferences int
+}
+
+func (r responsesHTTPReplayCanonicalizationResult) Modified() bool {
+	return r.DroppedReasoningItems > 0 || r.DroppedItemReferences > 0
+}
+
+// canonicalizeResponsesHTTPReplayItems removes provider-owned Responses
+// objects that cannot be replayed by the stateless Codex HTTP endpoint. An
+// encrypted reasoning item is account-bound and an item reference has no
+// standalone data, so neither belongs in portable HTTP continuation state.
+//
+// If filtering removes every item, the returned slice is empty. Callers can
+// then decide whether a new portable request exists; the gateway must not
+// invent a different local error when it cannot reconstruct one.
+func canonicalizeResponsesHTTPReplayItems(items []json.RawMessage) ([]json.RawMessage, responsesHTTPReplayCanonicalizationResult) {
+	result := responsesHTTPReplayCanonicalizationResult{}
+	if len(items) == 0 {
+		return cloneResponsesHTTPRawMessages(items), result
+	}
+
+	filtered := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		trimmed := bytes.TrimSpace(item)
+		if len(trimmed) == 0 || trimmed[0] != '{' {
+			filtered = append(filtered, append(json.RawMessage(nil), item...))
+			continue
+		}
+		var obj map[string]json.RawMessage
+		if common.Unmarshal(trimmed, &obj) != nil {
+			filtered = append(filtered, append(json.RawMessage(nil), item...))
+			continue
+		}
+		itemType := responsesHTTPRawString(obj["type"])
+		itemID := responsesHTTPRawString(obj["id"])
+		hasEncryptedContent := responsesHTTPRawValuePresent(obj["encrypted_content"])
+		switch itemType {
+		case "reasoning":
+			// A provider-owned reasoning object is identifiable by its rs_ ID. An
+			// encrypted object without an ID can still be a client-authored item
+			// that the Codex normalizer must process, so do not discard it here.
+			providerOwned := strings.HasPrefix(itemID, "rs_") || (itemID != "" && hasEncryptedContent)
+			if providerOwned {
+				result.DroppedReasoningItems++
+				continue
+			}
+		case "item_reference":
+			if strings.HasPrefix(itemID, "rs_") {
+				result.DroppedItemReferences++
+				continue
+			}
+		}
+		filtered = append(filtered, append(json.RawMessage(nil), item...))
+	}
+
+	return filtered, result
+}
+
+func responsesHTTPRawString(raw json.RawMessage) string {
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ""
+	}
+	var value string
+	if common.Unmarshal(raw, &value) == nil {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func responsesHTTPRawValuePresent(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) && !bytes.Equal(trimmed, []byte(`""`))
+}
+
+func recordResponsesHTTPReplayCanonicalization(c *gin.Context, result responsesHTTPReplayCanonicalizationResult, source string) {
+	if c == nil || !result.Modified() {
+		return
+	}
+	info := map[string]interface{}{}
+	if existing, exists := c.Get(responsesHTTPReplayCanonicalizationContextKey); exists {
+		if existingInfo, ok := existing.(map[string]interface{}); ok {
+			for key, value := range existingInfo {
+				info[key] = value
+			}
+		}
+	}
+	info["reasoning_items_dropped"] = toIntValue(info["reasoning_items_dropped"]) + result.DroppedReasoningItems
+	info["item_references_dropped"] = toIntValue(info["item_references_dropped"]) + result.DroppedItemReferences
+	if source != "" {
+		info["last_source"] = source
+	}
+	c.Set(responsesHTTPReplayCanonicalizationContextKey, info)
+}
+
+func toIntValue(value interface{}) int {
+	switch number := value.(type) {
+	case int:
+		return number
+	case int64:
+		return int(number)
+	case float64:
+		return int(number)
+	default:
+		return 0
+	}
 }
 
 // RecordDeliveredResponsesHTTPEvent advances continuation state only after an
@@ -467,11 +673,15 @@ func CommitResponsesHTTPContinuation(c *gin.Context, responseID string, output [
 	}
 	replayInput := cloneResponsesHTTPRawMessages(preparation.FullInput)
 	replayInput = append(replayInput, cloneResponsesHTTPRawMessages(output)...)
+	var canonicalizationResult responsesHTTPReplayCanonicalizationResult
+	replayInput, canonicalizationResult = canonicalizeResponsesHTTPReplayItems(replayInput)
+	recordResponsesHTTPReplayCanonicalization(c, canonicalizationResult, "continuation_commit")
 	if responsesHTTPRawMessagesSize(replayInput) > responsesHTTPReplayLimitBytes() {
 		setResponsesHTTPPersistStatus(c, "skipped_replay_limit")
 		return
 	}
 	putResponsesHTTPContinuation(c, responseID, responsesHTTPContinuationState{
+		Version:     responsesHTTPContinuationStateVersion,
 		Model:       preparation.Model,
 		ReplayInput: replayInput,
 		AccountID:   common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId),

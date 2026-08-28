@@ -2,16 +2,19 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -63,6 +66,30 @@ func preparePassthroughRequestBodyWithAdaptor(adaptor channel.Adaptor, c *gin.Co
 
 	jsonData := rawBody
 	if needsCodexInputRepair {
+		input := gjson.GetBytes(jsonData, "input")
+		previousResponseID := strings.TrimSpace(gjson.GetBytes(jsonData, "previous_response_id").String())
+		if input.Exists() || previousResponseID != "" {
+			continuationRequest := &dto.OpenAIResponsesRequest{
+				Model:              gjson.GetBytes(jsonData, "model").String(),
+				PreviousResponseID: previousResponseID,
+				Input:              json.RawMessage(input.Raw),
+			}
+			if apiErr := service.ApplyResponsesHTTPContinuationForCodex(c, continuationRequest); apiErr != nil {
+				return nil, nil, apiErr
+			}
+			if len(continuationRequest.Input) > 0 && string(continuationRequest.Input) != input.Raw {
+				jsonData, err = sjson.SetRawBytes(jsonData, "input", continuationRequest.Input)
+				if err != nil {
+					return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+			}
+			if previousResponseID != "" {
+				jsonData, err = sjson.DeleteBytes(jsonData, "previous_response_id")
+				if err != nil {
+					return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+				}
+			}
+		}
 		jsonData, err = codex.RepairAccountPassthroughResponsesBody(c, jsonData)
 		if err != nil {
 			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())

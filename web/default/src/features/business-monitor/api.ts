@@ -9,7 +9,7 @@ export async function getBusinessMonitorConcurrency(): Promise<{
   return res.data
 }
 
-export async function getBusinessMonitorCacheHitRate(): Promise<{
+export async function getBusinessMonitorCacheHitRate(hours = 24): Promise<{
   success: boolean
   data?: {
     input_tokens: number
@@ -19,7 +19,9 @@ export async function getBusinessMonitorCacheHitRate(): Promise<{
     window_seconds: number
   }
 }> {
-  const res = await api.get('/api/business-monitor/cache-hit-rate')
+  const res = await api.get('/api/business-monitor/cache-hit-rate', {
+    params: { hours },
+  })
   return res.data
 }
 

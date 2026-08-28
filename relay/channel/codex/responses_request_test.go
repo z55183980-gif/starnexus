@@ -827,9 +827,32 @@ func TestCodexHTTPExpandsGatewayContinuationBeforeDroppingPreviousResponseID(t *
 	require.Empty(t, prepared.PreviousResponseID)
 	require.Equal(t, int64(3), gjson.GetBytes(prepared.Input, "#").Int())
 	require.False(t, gjson.GetBytes(prepared.Input, `#(id=="item_cached_local_reasoning")`).Exists())
-	value, exists := ctx.Get("codex_input_repair_admin_info")
+}
+
+func TestCodexHTTPDoesNotReplayProviderOwnedReasoningFromClientInput(t *testing.T) {
+	t.Parallel()
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	request := dto.OpenAIResponsesRequest{
+		Model: "gpt-5.6-sol",
+		Input: json.RawMessage(`[
+			{"type":"reasoning","id":"rs_client_stale","encrypted_content":"cipher"},
+			{"type":"item_reference","id":"rs_client_stale"},
+			{"type":"message","role":"user","content":"continue"}
+		]`),
+	}
+	converted, err := (&Adaptor{}).ConvertOpenAIResponsesRequest(ctx, &relaycommon.RelayInfo{
+		RelayMode:   relayconstant.RelayModeResponses,
+		ChannelMeta: &relaycommon.ChannelMeta{},
+	}, request)
+	require.NoError(t, err)
+	prepared := converted.(dto.OpenAIResponsesRequest)
+	require.False(t, gjson.GetBytes(prepared.Input, `#(id=="rs_client_stale")`).Exists())
+	require.Equal(t, "continue", gjson.GetBytes(prepared.Input, "0.content").String())
+	canonicalInfo, exists := ctx.Get("responses_http_replay_canonicalization")
 	require.True(t, exists)
-	require.Equal(t, 1, value.(map[string]interface{})["dropped_reasoning_items"])
+	require.Equal(t, 1, canonicalInfo.(map[string]interface{})["reasoning_items_dropped"])
+	require.Equal(t, 1, canonicalInfo.(map[string]interface{})["item_references_dropped"])
 }
 
 func TestCodexHTTPContinuationPromotesReplayedSystemOnce(t *testing.T) {

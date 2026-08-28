@@ -68,6 +68,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Tooltip,
   TooltipContent,
@@ -538,6 +539,9 @@ export function BusinessMonitor() {
         queryClient.invalidateQueries({
           queryKey: ['business-monitor-stats'],
         })
+        queryClient.invalidateQueries({
+          queryKey: ['business-monitor-cache-hit-rate'],
+        })
       }, delay)
     }
 
@@ -582,6 +586,9 @@ export function BusinessMonitor() {
           })
           queryClient.invalidateQueries({
             queryKey: ['business-monitor-stats'],
+          })
+          queryClient.invalidateQueries({
+            queryKey: ['business-monitor-cache-hit-rate'],
           })
           queryClient.invalidateQueries({
             queryKey: ['business-monitor-concurrency'],
@@ -705,10 +712,11 @@ export function BusinessMonitor() {
     staleTime: 1000,
   })
 
+  const [cacheHitHours, setCacheHitHours] = useState<2 | 24>(24)
   const { data: cacheHitStats } = useQuery({
-    queryKey: ['business-monitor-cache-hit-rate'],
+    queryKey: ['business-monitor-cache-hit-rate', cacheHitHours],
     queryFn: async () => {
-      const response = await getBusinessMonitorCacheHitRate()
+      const response = await getBusinessMonitorCacheHitRate(cacheHitHours)
       return response.success ? response.data : undefined
     },
     refetchInterval: 60000,
@@ -904,22 +912,52 @@ export function BusinessMonitor() {
                 </Metric>
                 <Metric
                   icon={Database}
-                  title={`${t('Cache hit ratio')} · ${t('Last 24 hours')}`}
+                  title={`${t('Cache hit ratio')} · ${t(
+                    cacheHitHours === 2 ? 'Last 2 hours' : 'Last 24 hours'
+                  )}`}
                 >
-                  <DualMetricValues
-                    leftValue={formatCacheHitRate(
-                      cacheHitStats?.cache_read_tokens ?? 0,
-                      cacheHitTotalInputTokens
-                    )}
-                    leftLabel={t('Actual hit rate')}
-                    rightValue={formatCacheHitRate(
-                      cacheHitStats?.billing_cache_read_tokens ??
-                        cacheHitStats?.cache_read_tokens ??
-                        0,
-                      cacheHitTotalInputTokens
-                    )}
-                    rightLabel={t('Billing hit rate')}
-                  />
+                  <div className='mt-2.5 flex flex-col gap-2'>
+                    <div className='min-w-0'>
+                      <div className='truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
+                        {formatCacheHitRate(
+                          cacheHitStats?.cache_read_tokens ?? 0,
+                          cacheHitTotalInputTokens
+                        )}
+                      </div>
+                      <div className='text-muted-foreground mt-0.5 truncate text-xs'>
+                        {t('Actual hit rate')}
+                      </div>
+                    </div>
+                    <ToggleGroup
+                      value={[String(cacheHitHours)]}
+                      onValueChange={(values) => {
+                        const next = values.at(-1)
+                        if (next === '2' || next === '24') {
+                          setCacheHitHours(Number(next) as 2 | 24)
+                        }
+                      }}
+                      variant='segmented'
+                      size='sm'
+                      spacing={1}
+                      aria-label={t('Statistics range')}
+                      className='self-start'
+                    >
+                      <ToggleGroupItem
+                        value='24'
+                        aria-label={t('Last 24 hours')}
+                        className='px-1.5 text-[10px]'
+                      >
+                        24h
+                      </ToggleGroupItem>
+                      <ToggleGroupItem
+                        value='2'
+                        aria-label={t('Last 2 hours')}
+                        className='px-1.5 text-[10px]'
+                      >
+                        2h
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  </div>
                 </Metric>
                 <Metric icon={Timer} title={t('Token Throughput')}>
                   <DualMetricValues

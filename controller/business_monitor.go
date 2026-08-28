@@ -109,8 +109,15 @@ func GetBusinessMonitorConcurrency(c *gin.Context) {
 }
 
 func GetBusinessMonitorCacheHitRate(c *gin.Context) {
+	hours := 24
+	if rawHours := strings.TrimSpace(c.Query("hours")); rawHours != "" {
+		if parsed, err := strconv.Atoi(rawHours); err == nil && parsed > 0 && parsed <= 24*30 {
+			hours = parsed
+		}
+	}
 	endTimestamp := time.Now().Unix()
-	startTimestamp := endTimestamp - int64((24*time.Hour)/time.Second)
+	windowSeconds := int64(hours) * int64(time.Hour/time.Second)
+	startTimestamp := endTimestamp - windowSeconds
 	modelName := strings.TrimSpace(c.Query("model_name"))
 	stats, err := model.GetBusinessMonitorCacheStats(startTimestamp, endTimestamp, modelName)
 	if err != nil {
@@ -125,7 +132,7 @@ func GetBusinessMonitorCacheHitRate(c *gin.Context) {
 			"cache_read_tokens":         stats.CacheReadTokens,
 			"billing_cache_read_tokens": stats.BillingCacheReadTokens,
 			"cache_creation_tokens":     stats.CacheCreationTokens,
-			"window_seconds":            int64((24 * time.Hour) / time.Second),
+			"window_seconds":            windowSeconds,
 		},
 	})
 }

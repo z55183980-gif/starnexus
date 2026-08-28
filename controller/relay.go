@@ -326,6 +326,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				relayInfo.LastError = nil
 				continue
 			}
+			if relay.TryRepairCodexMissingResponseItemsForRetry(c, relayInfo, newAPIError) {
+				logger.LogWarn(c, "retrying Codex Responses once after rebuilding missing store=false response items")
+				recordUpstreamRequestEvent(c, "request_retry", "retry", "rebuilt missing Codex store=false response items")
+				service.ClearResponsesHTTPContinuationPersistTarget(c)
+				relayInfo.LastError = nil
+				continue
+			}
 			accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 			proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
 			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
@@ -527,6 +534,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if openaiErr == nil {
 		return false
 	}
+	if relay.IsCodexResponsesMissingItemError(c, openaiErr) {
+		return false
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
 		return false
 	}
@@ -612,6 +622,7 @@ func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
 		}
 		service.AppendChannelAffinityAdminInfo(c, adminInfo)
 		service.AppendCodexInputRepairAdminInfo(c, adminInfo)
+		service.AppendResponsesHTTPReplayCanonicalizationAdminInfo(c, adminInfo)
 		service.AppendCodexStructuredOutputCompatAdminInfo(c, adminInfo)
 		other["admin_info"] = adminInfo
 		startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)

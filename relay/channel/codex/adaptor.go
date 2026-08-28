@@ -80,7 +80,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 	// Ordinary Responses HTTP cannot forward previous_response_id to the Codex
 	// backend. Restore the gateway-owned full input first when it is available;
 	// orphan tool outputs fail closed instead of being sent without their call.
-	if !common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
+	if shouldApplyCodexHTTPReplay(c, info) {
 		if apiErr := service.ApplyResponsesHTTPContinuationForCodex(c, &request); apiErr != nil {
 			return nil, apiErr
 		}
@@ -99,7 +99,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
-	if !common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
+	if shouldApplyCodexHTTPReplay(c, info) {
 		normalizedInput, normalizationResult, err := normalizeCodexReasoningSummaryContent(request.Input)
 		if err != nil {
 			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -266,6 +266,17 @@ func ResponsesUsesNativeWebSocket(c *gin.Context, info *relaycommon.RelayInfo) b
 	mode := strings.TrimSpace(info.ChannelOtherSettings.ResponsesWebSocketV2Mode)
 	return mode == model.UpstreamOpenAIWSModeContextPool || mode == model.UpstreamOpenAIWSModePassthrough ||
 		(mode == "" && info.ChannelOtherSettings.ResponsesWebSocketV2Enabled)
+}
+
+// shouldApplyCodexHTTPReplay distinguishes the HTTP bridge from native
+// Responses WebSocket turns. An ingress request with an explicit HTTP bridge
+// mode still needs the stateless replay contract; unknown ingress modes retain
+// the historical WebSocket behavior until their transport is identified.
+func shouldApplyCodexHTTPReplay(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if c == nil || info == nil || !common.GetContextKeyBool(c, appconstant.ContextKeyResponsesWebSocketIngress) {
+		return true
+	}
+	return strings.TrimSpace(info.ChannelOtherSettings.ResponsesWebSocketV2Mode) == model.UpstreamOpenAIWSModeHTTPBridge
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {

@@ -52,6 +52,19 @@ func TestShouldRetryStopsCapacityAfterAccountFailover(t *testing.T) {
 	require.False(t, shouldRetry(c, apiErr, 3))
 }
 
+func TestShouldRetryStopsCodexMissingStoreFalseItem404(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeCodex)
+	apiErr := types.WithOpenAIError(types.OpenAIError{
+		Message: "Item with id 'rs_stale' not found. Items are not persisted when 'store' is set to false. Try again with 'store' set to true, or remove this item from your input.",
+		Type:    "invalid_request_error",
+		Code:    "not_found",
+	}, http.StatusNotFound)
+
+	require.False(t, shouldRetry(c, apiErr, 3))
+}
+
 func TestContentModerationTeamExclusionIsReevaluatedAfterFailover(t *testing.T) {
 	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

@@ -135,6 +135,7 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		}
 	}
 	AppendCodexInputRepairAdminInfo(ctx, adminInfo)
+	AppendResponsesHTTPReplayCanonicalizationAdminInfo(ctx, adminInfo)
 	AppendCodexStructuredOutputCompatAdminInfo(ctx, adminInfo)
 
 	other["admin_info"] = adminInfo
@@ -155,6 +156,17 @@ func AppendCodexInputRepairAdminInfo(ctx *gin.Context, adminInfo map[string]inte
 	if value, ok := ctx.Get("codex_input_repair_admin_info"); ok {
 		if info, ok := value.(map[string]interface{}); ok && len(info) > 0 {
 			adminInfo["codex_input_repair"] = info
+		}
+	}
+}
+
+func AppendResponsesHTTPReplayCanonicalizationAdminInfo(ctx *gin.Context, adminInfo map[string]interface{}) {
+	if ctx == nil || adminInfo == nil {
+		return
+	}
+	if value, ok := ctx.Get(responsesHTTPReplayCanonicalizationContextKey); ok {
+		if info, ok := value.(map[string]interface{}); ok && len(info) > 0 {
+			adminInfo["responses_http_replay_canonicalization"] = info
 		}
 	}
 }
