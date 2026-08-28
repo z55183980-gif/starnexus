@@ -31,6 +31,32 @@ func TestResponsesHTTPRedisWriteContextSurvivesRequestCancellation(t *testing.T)
 	require.NotNil(t, writeCtx.Done())
 }
 
+func TestResponsesHTTPContinuationRedisWriteCanBeDisabled(t *testing.T) {
+	resetResponsesHTTPContinuationTestCache(t)
+	defaultResponsesHTTPContinuationCache.limits.RedisWriteEnabled = false
+
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	common.RedisEnabled = true
+	common.RDB = nil
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+	})
+
+	ctx := newResponsesHTTPContinuationTestContext(t)
+	enableResponsesHTTPContinuationPersist(t, ctx)
+	PrepareResponsesHTTPContinuation(ctx, &dto.OpenAIResponsesRequest{
+		Model: "gpt-5",
+		Input: json.RawMessage(`"first"`),
+	})
+	CommitResponsesHTTPContinuation(ctx, "resp_write_disabled", nil)
+
+	require.Equal(t, "local_only", ctx.GetString(responsesHTTPPersistStatusContextKey))
+	require.Equal(t, "write_disabled", ctx.GetString(responsesHTTPRedisStatusContextKey))
+	require.Equal(t, 1, defaultResponsesHTTPContinuationCache.entryCount())
+}
+
 func newResponsesHTTPContinuationTestContext(t testing.TB) *gin.Context {
 	t.Helper()
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

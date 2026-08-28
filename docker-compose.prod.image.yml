@@ -30,6 +30,7 @@ services:
     environment:
       SQL_DSN: ${SQL_DSN}
       REDIS_CONN_STRING: ${REDIS_CONN_STRING}
+      RESPONSES_HTTP_CONT_REDIS_WRITE_ENABLED: ${RESPONSES_HTTP_CONT_REDIS_WRITE_ENABLED:-false}
       TZ: Asia/Shanghai
       ERROR_LOG_ENABLED: "true"
       BATCH_UPDATE_ENABLED: "true"

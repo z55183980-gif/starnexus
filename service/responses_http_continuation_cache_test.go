@@ -12,11 +12,13 @@ import (
 func TestLoadResponsesHTTPContinuationLimitsFromEnv(t *testing.T) {
 	t.Setenv("RESPONSES_HTTP_CONT_REDIS_MAX_ENTRY_MB", "4")
 	t.Setenv("RESPONSES_HTTP_CONT_TTL_MINUTES", "30")
+	t.Setenv("RESPONSES_HTTP_CONT_REDIS_WRITE_ENABLED", "false")
 
 	limits := loadResponsesHTTPContinuationLimits()
 
 	require.Equal(t, int64(4<<20), limits.RedisMaxEntryBytes)
 	require.Equal(t, 30*time.Minute, limits.TTL)
+	require.False(t, limits.RedisWriteEnabled)
 }
 
 func TestResponsesHTTPContinuationCacheRespectsByteBudget(t *testing.T) {

@@ -672,6 +672,11 @@ func putResponsesHTTPContinuation(c *gin.Context, responseID string, state respo
 
 	localStatus := defaultResponsesHTTPContinuationCache.putEncoded(key, encoded)
 	setResponsesHTTPLocalCacheStatus(c, localStatus)
+	if !limits.RedisWriteEnabled {
+		setResponsesHTTPPersistStatus(c, "local_only")
+		setResponsesHTTPRedisStatus(c, "write_disabled")
+		return
+	}
 	setResponsesHTTPPersistStatus(c, "stored")
 
 	if !common.RedisEnabled || common.RDB == nil {

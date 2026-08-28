@@ -25,6 +25,7 @@ type responsesHTTPContinuationLimits struct {
 	LocalBudgetBytes   int64
 	LocalMaxEntryBytes int64
 	RedisMaxEntryBytes int64
+	RedisWriteEnabled  bool
 	MaxEntries         int
 	TTL                time.Duration
 	RedisOOMCooldown   time.Duration
@@ -37,6 +38,7 @@ func loadResponsesHTTPContinuationLimits() responsesHTTPContinuationLimits {
 		LocalBudgetBytes:   int64(responsesHTTPContinuationDefaultLocalBudgetMB) << 20,
 		LocalMaxEntryBytes: int64(responsesHTTPContinuationDefaultLocalMaxEntryMB) << 20,
 		RedisMaxEntryBytes: replayLimit,
+		RedisWriteEnabled:  true,
 		MaxEntries:         responsesHTTPContinuationDefaultMaxEntries,
 		TTL:                responsesHTTPContinuationTTL,
 		RedisOOMCooldown:   responsesHTTPContinuationRedisOOMCooldown,
@@ -58,6 +60,9 @@ func loadResponsesHTTPContinuationLimits() responsesHTTPContinuationLimits {
 	}
 	if v := envInt("RESPONSES_HTTP_CONT_MAX_ENTRIES"); v > 0 {
 		limits.MaxEntries = v
+	}
+	if v, ok := envBool("RESPONSES_HTTP_CONT_REDIS_WRITE_ENABLED"); ok {
+		limits.RedisWriteEnabled = v
 	}
 	if limits.LocalMaxEntryBytes > limits.LocalBudgetBytes {
 		limits.LocalMaxEntryBytes = limits.LocalBudgetBytes
@@ -82,6 +87,18 @@ func envInt(name string) int {
 
 func envInt64(name string) int64 {
 	return int64(envInt(name))
+}
+
+func envBool(name string) (bool, bool) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return false, false
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, false
+	}
+	return v, true
 }
 
 type responsesHTTPCacheEntry struct {
