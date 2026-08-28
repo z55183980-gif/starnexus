@@ -128,3 +128,25 @@ func TestLoadRoutingNodeMonitorReporterConfig(t *testing.T) {
 	require.Equal(t, "shared-token", config.EnrollmentToken)
 	require.Equal(t, 5*time.Second, interval)
 }
+
+func TestIsRoutingNodeVirtualNetworkInterface(t *testing.T) {
+	for _, name := range []string{
+		"lo", "br-10c4af1963eb", "docker0", "veth9085e70", "virbr0",
+		"cni0", "flannel.1", "cali123", "tun0", "tap0", "wg0", "tailscale0",
+	} {
+		require.True(t, isRoutingNodeVirtualNetworkInterface(name), name)
+	}
+
+	for _, name := range []string{"eth0", "ens3", "enp1s0", "bond0"} {
+		require.False(t, isRoutingNodeVirtualNetworkInterface(name), name)
+	}
+}
+
+func TestCollectRoutingNodeNetworkCountersWithInterfaceOverride(t *testing.T) {
+	t.Setenv("NODE_MONITOR_NETWORK_INTERFACE", "interface-that-does-not-exist")
+
+	sent, received, source := collectRoutingNodeNetworkCounters()
+	require.Zero(t, sent)
+	require.Zero(t, received)
+	require.Empty(t, source)
+}

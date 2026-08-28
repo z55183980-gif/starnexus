@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,7 @@ var (
 		sampledAt     time.Time
 		bytesSent     uint64
 		bytesReceived uint64
+		source        string
 	}
 )
 
@@ -590,19 +592,19 @@ func collectRoutingNodeDiskMetrics() (uint64, uint64, float64, error) {
 }
 
 func collectRoutingNodeNetworkMetrics() (uint64, uint64, float64, float64) {
-	counters, err := gopsutilnet.IOCounters(false)
-	if err != nil || len(counters) == 0 {
+	bytesSent, bytesReceived, source := collectRoutingNodeNetworkCounters()
+	if source == "" {
 		return 0, 0, 0, 0
 	}
-	bytesSent := counters[0].BytesSent
-	bytesReceived := counters[0].BytesRecv
 	now := time.Now()
 
 	routingNodeMonitorNetworkState.Lock()
 	defer routingNodeMonitorNetworkState.Unlock()
 	uploadBps := 0.0
 	downloadBps := 0.0
-	if !routingNodeMonitorNetworkState.sampledAt.IsZero() {
+	// A changed interface set (or a newly selected interface) has a different
+	// counter origin. Do not compare it with the old aggregate counter value.
+	if routingNodeMonitorNetworkState.source == source && !routingNodeMonitorNetworkState.sampledAt.IsZero() {
 		elapsed := now.Sub(routingNodeMonitorNetworkState.sampledAt).Seconds()
 		if elapsed > 0 && bytesSent >= routingNodeMonitorNetworkState.bytesSent {
 			uploadBps = float64(bytesSent-routingNodeMonitorNetworkState.bytesSent) / elapsed
@@ -614,5 +616,63 @@ func collectRoutingNodeNetworkMetrics() (uint64, uint64, float64, float64) {
 	routingNodeMonitorNetworkState.sampledAt = now
 	routingNodeMonitorNetworkState.bytesSent = bytesSent
 	routingNodeMonitorNetworkState.bytesReceived = bytesReceived
+	routingNodeMonitorNetworkState.source = source
 	return bytesSent, bytesReceived, uploadBps, downloadBps
+}
+
+// collectRoutingNodeNetworkCounters returns counters for public-facing
+// interfaces only. IOCounters(false) aggregates every interface, so using it
+// double-counts traffic that crosses loopback, Docker bridges, and veth pairs.
+//
+// NODE_MONITOR_NETWORK_INTERFACE can be set when a host has more than one
+// physical interface. With no override, known virtual interfaces are ignored
+// and the remaining physical-looking interfaces are summed.
+func collectRoutingNodeNetworkCounters() (uint64, uint64, string) {
+	counters, err := gopsutilnet.IOCounters(true)
+	if err != nil || len(counters) == 0 {
+		return 0, 0, ""
+	}
+
+	requested := strings.TrimSpace(os.Getenv("NODE_MONITOR_NETWORK_INTERFACE"))
+	if requested != "" {
+		for _, counter := range counters {
+			if counter.Name == requested {
+				return counter.BytesSent, counter.BytesRecv, "interface:" + counter.Name
+			}
+		}
+		return 0, 0, ""
+	}
+
+	var bytesSent uint64
+	var bytesReceived uint64
+	selected := make([]string, 0, len(counters))
+	for _, counter := range counters {
+		if isRoutingNodeVirtualNetworkInterface(counter.Name) {
+			continue
+		}
+		bytesSent += counter.BytesSent
+		bytesReceived += counter.BytesRecv
+		selected = append(selected, counter.Name)
+	}
+	if len(selected) == 0 {
+		return 0, 0, ""
+	}
+	sort.Strings(selected)
+	return bytesSent, bytesReceived, "auto:" + strings.Join(selected, ",")
+}
+
+func isRoutingNodeVirtualNetworkInterface(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || name == "lo" {
+		return true
+	}
+	for _, prefix := range []string{
+		"br-", "docker", "veth", "virbr", "cni", "flannel", "cali",
+		"tun", "tap", "wg", "tailscale",
+	} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
