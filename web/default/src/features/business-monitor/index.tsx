@@ -68,7 +68,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import {
   Tooltip,
   TooltipContent,
@@ -387,6 +386,22 @@ function getPercentileLatency(logs: UsageLog[], percentile: number) {
 function formatCacheHitRate(cacheReadTokens: number, totalInputTokens: number) {
   if (totalInputTokens <= 0) return '--'
   return `${((cacheReadTokens / totalInputTokens) * 100).toFixed(2)}%`
+}
+
+function getCacheHitTotalInputTokens(
+  stats:
+    | {
+        input_tokens: number
+        cache_read_tokens: number
+        cache_creation_tokens: number
+      }
+    | undefined
+) {
+  return (
+    (stats?.input_tokens ?? 0) +
+    (stats?.cache_read_tokens ?? 0) +
+    (stats?.cache_creation_tokens ?? 0)
+  )
 }
 
 type MetricProps = {
@@ -712,20 +727,24 @@ export function BusinessMonitor() {
     staleTime: 1000,
   })
 
-  const [cacheHitHours, setCacheHitHours] = useState<2 | 24>(24)
-  const { data: cacheHitStats } = useQuery({
-    queryKey: ['business-monitor-cache-hit-rate', cacheHitHours],
+  const { data: cacheHitStats24h } = useQuery({
+    queryKey: ['business-monitor-cache-hit-rate', 24],
     queryFn: async () => {
-      const response = await getBusinessMonitorCacheHitRate(cacheHitHours)
+      const response = await getBusinessMonitorCacheHitRate(24)
       return response.success ? response.data : undefined
     },
     refetchInterval: 60000,
     staleTime: 30000,
   })
-  const cacheHitTotalInputTokens =
-    (cacheHitStats?.input_tokens ?? 0) +
-    (cacheHitStats?.cache_read_tokens ?? 0) +
-    (cacheHitStats?.cache_creation_tokens ?? 0)
+  const { data: cacheHitStats2h } = useQuery({
+    queryKey: ['business-monitor-cache-hit-rate', 2],
+    queryFn: async () => {
+      const response = await getBusinessMonitorCacheHitRate(2)
+      return response.success ? response.data : undefined
+    },
+    refetchInterval: 60000,
+    staleTime: 30000,
+  })
 
   const { data: logsData } = useQuery({
     queryKey: ['business-monitor-logs'],
@@ -910,54 +929,19 @@ export function BusinessMonitor() {
                     rightLabel={t('RPM')}
                   />
                 </Metric>
-                <Metric
-                  icon={Database}
-                  title={`${t('Cache hit ratio')} · ${t(
-                    cacheHitHours === 2 ? 'Last 2 hours' : 'Last 24 hours'
-                  )}`}
-                >
-                  <div className='mt-2.5 flex flex-col gap-2'>
-                    <div className='min-w-0'>
-                      <div className='truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
-                        {formatCacheHitRate(
-                          cacheHitStats?.cache_read_tokens ?? 0,
-                          cacheHitTotalInputTokens
-                        )}
-                      </div>
-                      <div className='text-muted-foreground mt-0.5 truncate text-xs'>
-                        {t('Actual hit rate')}
-                      </div>
-                    </div>
-                    <ToggleGroup
-                      value={[String(cacheHitHours)]}
-                      onValueChange={(values) => {
-                        const next = values.at(-1)
-                        if (next === '2' || next === '24') {
-                          setCacheHitHours(Number(next) as 2 | 24)
-                        }
-                      }}
-                      variant='segmented'
-                      size='sm'
-                      spacing={1}
-                      aria-label={t('Statistics range')}
-                      className='self-start'
-                    >
-                      <ToggleGroupItem
-                        value='24'
-                        aria-label={t('Last 24 hours')}
-                        className='px-1.5 text-[10px]'
-                      >
-                        24h
-                      </ToggleGroupItem>
-                      <ToggleGroupItem
-                        value='2'
-                        aria-label={t('Last 2 hours')}
-                        className='px-1.5 text-[10px]'
-                      >
-                        2h
-                      </ToggleGroupItem>
-                    </ToggleGroup>
-                  </div>
+                <Metric icon={Database} title={t('Cache hit ratio')}>
+                  <DualMetricValues
+                    leftValue={formatCacheHitRate(
+                      cacheHitStats24h?.cache_read_tokens ?? 0,
+                      getCacheHitTotalInputTokens(cacheHitStats24h)
+                    )}
+                    leftLabel='24h'
+                    rightValue={formatCacheHitRate(
+                      cacheHitStats2h?.cache_read_tokens ?? 0,
+                      getCacheHitTotalInputTokens(cacheHitStats2h)
+                    )}
+                    rightLabel='2h'
+                  />
                 </Metric>
                 <Metric icon={Timer} title={t('Token Throughput')}>
                   <DualMetricValues
