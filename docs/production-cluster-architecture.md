@@ -228,11 +228,11 @@ docker compose -f <该节点的Compose文件> up -d \
 | 项目 | 结果 |
 | --- | --- |
 | Git 提交 | `443969ca898eef99804cce166bc56cae331c467d` |
-| Actions Run | `31315247366`，成功，用时 4 分 28 秒 |
-| Actions 页面 | `https://github.com/z55183980-gif/starnexus/actions/runs/31315247366` |
-| GHCR digest | `sha256:55e15edfa71ca872b3fda3fd786315501baa6c8e1beebcb7a90333186843fe22` |
-| 应用版本 | S1/S2/S3/S4 均为 `main-af78935` |
-| 镜像 RepoDigest | S1/S2/S3/S4 均为 `sha256:69881bace63d26494c5a6c02c29c1e0c915afac177a391649cd904c40e2fdb3c` |
+| Actions Run | `33162380186`，成功，用时约 4 分 38 秒 |
+| Actions 页面 | `https://github.com/z55183980-gif/starnexus/actions/runs/33162380186` |
+| GHCR digest | `sha256:69881bace63d26494c5a6c02c29c1e0c915afac177a391649cd904c40e2fdb3c` |
+| 应用版本 | S1/S2/S3 为 `main-af78935`；S4 待本次部署验收后补录 |
+| 镜像 RepoDigest | S1/S2/S3 为 `sha256:69881bace63d26494c5a6c02c29c1e0c915afac177a391649cd904c40e2fdb3c`；S4 待本次部署验收后补录 |
 | `/new-api` SHA-256 | S1/S2/S3 均为 `5a070e59b7e306dc38c6d1c189dae85cae6df36f97cb5f231dc0926b24c2b979`；S4 待本次部署验收后补录 |
 | 容器与 Origin | S1/S2/S3 均为 healthy，三个 Origin 均返回 200；S4 待本次部署验收 |
 | 生产日志 | S1/S2/S3 已完成发布观察；S4 待本次部署观察 |
