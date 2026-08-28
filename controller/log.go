@@ -182,6 +182,43 @@ func GetLogsStat(c *gin.Context) {
 	return
 }
 
+// GetLogsSummary returns aggregate usage metrics for the administrator
+// usage-details view. It accepts the same filters as the paginated log list.
+func GetLogsSummary(c *gin.Context) {
+	logType, _ := strconv.Atoi(c.Query("type"))
+	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
+	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	username := c.Query("username")
+	tokenName := c.Query("token_name")
+	modelName := c.Query("model_name")
+	group := c.Query("group")
+	accountName := c.Query("account")
+	billingMode := c.Query("billing_mode")
+	var billingType *int
+	if rawBillingType := c.Query("billing_type"); rawBillingType != "" {
+		if parsed, parseErr := strconv.Atoi(rawBillingType); parseErr == nil && (parsed == 0 || parsed == 1) {
+			billingType = &parsed
+		}
+	}
+	var stream *bool
+	if rawStream := c.Query("stream"); rawStream == "true" || rawStream == "false" {
+		parsed := rawStream == "true"
+		stream = &parsed
+	}
+
+	summary, err := model.GetUsageDetailsSummary(logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, model.LogQueryOptions{
+		AccountName: accountName,
+		BillingMode: billingMode,
+		BillingType: billingType,
+		Stream:      stream,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, summary)
+}
+
 func GetAgentLogsStat(c *gin.Context) {
 	agentId := c.GetInt("id")
 	logType, _ := strconv.Atoi(c.Query("type"))

@@ -19,9 +19,12 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import {
+  Box,
   ChartNoAxesCombined,
+  CircleDollarSign,
   Download,
   FileText,
+  Info,
   RefreshCw,
   TriangleAlert,
   Trash2,
@@ -30,6 +33,10 @@ import {
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
+import {
+  formatBillingCurrencyFromUSD,
+  getCurrencyDisplay,
+} from '@/lib/currency'
 import {
   formatLogQuota,
   formatTimestampToDate,
@@ -68,6 +75,7 @@ import { deleteLogsBefore } from '@/features/system-settings/api'
 import {
   getAllLogs,
   getAgentLogs,
+  getUsageDetailsSummary,
   getUserLogs,
 } from '@/features/usage-logs/api'
 import { CompactDateTimeRangePicker } from '@/features/usage-logs/components/compact-date-time-range-picker'
@@ -78,7 +86,11 @@ import {
   getLogUseTimeSeconds,
 } from '@/features/usage-logs/lib/format'
 import { getDefaultTimeRange } from '@/features/usage-logs/lib/utils'
-import type { GetLogsParams, LogAccessScope } from '@/features/usage-logs/types'
+import type {
+  GetLogsParams,
+  GetUsageDetailsSummary,
+  LogAccessScope,
+} from '@/features/usage-logs/types'
 import { UsersRankingCard } from '@/features/users/components/users-ranking-card'
 
 type UsageDetailsTab = 'usage' | 'errors' | 'ranking'
@@ -169,6 +181,146 @@ function getBillingMode(log: UsageLog): string {
   return (
     other?.billing_mode ||
     (other?.video_enabled ? 'video' : other?.image ? 'image' : 'token')
+  )
+}
+
+type UsageSummary = {
+  inputTokens: number
+  outputTokens: number
+  cacheTokens: number
+  totalTokens: number
+  actualCostUSD: number
+  accountCostUSD: number
+  standardCostUSD: number
+}
+
+function nonNegativeNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(value, 0)
+    : 0
+}
+
+function getCacheCreationTokens(other: ReturnType<typeof parseLogOther>) {
+  if (!other) return 0
+  if (typeof other.cache_write_tokens === 'number')
+    return nonNegativeNumber(other.cache_write_tokens)
+  const splitCacheTokens =
+    nonNegativeNumber(other.cache_creation_tokens_5m) +
+    nonNegativeNumber(other.cache_creation_tokens_1h)
+  return splitCacheTokens > 0
+    ? splitCacheTokens
+    : nonNegativeNumber(other.cache_creation_tokens)
+}
+
+function getUsageSummary(logs: UsageLog[]): UsageSummary {
+  const quotaPerUnit = getCurrencyDisplay().config.quotaPerUnit
+  return logs.reduce<UsageSummary>(
+    (summary, log) => {
+      const other = parseLogOther(log.other)
+      const promptTokens = nonNegativeNumber(log.prompt_tokens)
+      const completionTokens = nonNegativeNumber(log.completion_tokens)
+      const cacheReadTokens = nonNegativeNumber(other?.cache_tokens)
+      const cacheCreationTokens = getCacheCreationTokens(other)
+      const semantic = other?.usage_semantic?.toLowerCase() || ''
+      const isAnthropic =
+        other?.claude === true ||
+        semantic.includes('anthropic') ||
+        semantic.includes('claude')
+      const inputTokens = isAnthropic
+        ? promptTokens
+        : Math.max(promptTokens - cacheReadTokens - cacheCreationTokens, 0)
+      const quota = nonNegativeNumber(log.quota)
+      const standardCostUSD = quotaPerUnit > 0 ? quota / quotaPerUnit : 0
+      const actualCostUSD =
+        typeof log.user_cost === 'number' && Number.isFinite(log.user_cost)
+          ? nonNegativeNumber(log.user_cost)
+          : standardCostUSD
+      const accountCostUSD = nonNegativeNumber(log.account_cost)
+
+      summary.inputTokens += inputTokens
+      summary.outputTokens += completionTokens
+      summary.cacheTokens += cacheReadTokens + cacheCreationTokens
+      summary.totalTokens +=
+        inputTokens + completionTokens + cacheReadTokens + cacheCreationTokens
+      summary.actualCostUSD += actualCostUSD
+      summary.accountCostUSD += accountCostUSD
+      summary.standardCostUSD += standardCostUSD
+      return summary
+    },
+    {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheTokens: 0,
+      totalTokens: 0,
+      actualCostUSD: 0,
+      accountCostUSD: 0,
+      standardCostUSD: 0,
+    }
+  )
+}
+
+function mapUsageSummary(
+  data: GetUsageDetailsSummary | undefined
+): UsageSummary | null {
+  if (!data) return null
+  return {
+    inputTokens: nonNegativeNumber(data.input_tokens),
+    outputTokens: nonNegativeNumber(data.output_tokens),
+    cacheTokens: nonNegativeNumber(data.cache_tokens),
+    totalTokens: nonNegativeNumber(data.total_tokens),
+    actualCostUSD: nonNegativeNumber(data.actual_cost_usd),
+    accountCostUSD: nonNegativeNumber(data.account_cost_usd),
+    standardCostUSD: nonNegativeNumber(data.standard_cost_usd),
+  }
+}
+
+function formatUsageTokens(value: number): string {
+  if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`
+  if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`
+  if (value >= 1e3) return `${(value / 1e3).toFixed(2)}K`
+  return value.toLocaleString()
+}
+
+function formatUsageCost(value: number): string {
+  return formatBillingCurrencyFromUSD(value, {
+    digitsLarge: 4,
+    digitsSmall: 4,
+    abbreviate: false,
+  })
+}
+
+function UsageSummaryCard({
+  icon: Icon,
+  iconClassName,
+  label,
+  value,
+  valueClassName,
+  children,
+}: {
+  icon: LucideIcon
+  iconClassName: string
+  label: string
+  value: string
+  valueClassName?: string
+  children: ReactNode
+}) {
+  return (
+    <div className='bg-card flex min-w-[260px] flex-1 items-center gap-3 rounded-xl border p-3 shadow-sm sm:p-4'>
+      <div className={`rounded-lg p-2 ${iconClassName}`}>
+        <Icon className='size-5' strokeWidth={2} />
+      </div>
+      <div className='min-w-0'>
+        <p className='text-muted-foreground text-xs font-medium'>{label}</p>
+        <p
+          className={`text-xl leading-tight font-bold tabular-nums ${valueClassName || ''}`}
+        >
+          {value}
+        </p>
+        <div className='text-muted-foreground flex flex-wrap items-center gap-x-1 text-xs'>
+          {children}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -443,6 +595,17 @@ export function UsageDetails() {
       ),
     [activeTab, filters, isManagedScope, pagination]
   )
+  const summaryParams = useMemo(() => {
+    const params = buildQueryParams(
+      filters,
+      { pageIndex: 0, pageSize: 1 },
+      isManagedScope,
+      2
+    )
+    params.p = undefined
+    params.page_size = undefined
+    return params
+  }, [filters, isManagedScope])
   const query = useQuery({
     queryKey: ['usage-details', activeTab, accessScope, params, t],
     queryFn: async () => {
@@ -460,7 +623,25 @@ export function UsageDetails() {
     },
     enabled: activeTab !== 'ranking',
   })
-  const logs = (query.data?.items || []) as UsageLog[]
+  const summaryQuery = useQuery({
+    queryKey: ['usage-details-summary', summaryParams, t],
+    queryFn: async () => {
+      const result = await getUsageDetailsSummary(summaryParams)
+      if (!result.success) {
+        toast.error(result.message || t('Failed to load logs'))
+        return null
+      }
+      return mapUsageSummary(result.data)
+    },
+    enabled: activeTab === 'usage' && accessScope === 'admin',
+    placeholderData: (previousData) => previousData,
+  })
+  const logs = useMemo(
+    () => (query.data?.items || []) as UsageLog[],
+    [query.data?.items]
+  )
+  const pageSummary = useMemo(() => getUsageSummary(logs), [logs])
+  const summary = summaryQuery.data || pageSummary
   const columns = useUsageDetailsColumns(isManagedScope, isAdmin)
   const table = useReactTable({
     data: logs,
@@ -770,7 +951,55 @@ export function UsageDetails() {
                       />
                     )}
                   </div>
-                  <div className='mt-4 flex flex-wrap items-center justify-end gap-2 border-t pt-4'>
+                  <div className='mt-4 flex flex-wrap items-center gap-2 border-t pt-4'>
+                    {activeTab === 'usage' && (
+                      <div className='mr-auto flex min-w-0 flex-[1_1_520px] flex-wrap items-center gap-3'>
+                        <UsageSummaryCard
+                          icon={Box}
+                          iconClassName='bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
+                          label={t('Total Token')}
+                          value={formatUsageTokens(summary.totalTokens)}
+                        >
+                          <span>
+                            {t('Input')}:{' '}
+                            {formatUsageTokens(summary.inputTokens)}
+                          </span>
+                          <span>/</span>
+                          <span>
+                            {t('Output')}:{' '}
+                            {formatUsageTokens(summary.outputTokens)}
+                          </span>
+                          <span>/</span>
+                          <span
+                            className='inline-flex cursor-help items-center gap-0.5'
+                            title={t('Cache')}
+                          >
+                            <span>
+                              {t('Cache')}:{' '}
+                              {formatUsageTokens(summary.cacheTokens)}
+                            </span>
+                            <Info className='size-3.5' />
+                          </span>
+                        </UsageSummaryCard>
+                        <UsageSummaryCard
+                          icon={CircleDollarSign}
+                          iconClassName='bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+                          label={t('Total Consumption')}
+                          value={formatUsageCost(summary.actualCostUSD)}
+                          valueClassName='text-green-600 dark:text-green-400'
+                        >
+                          <span className='text-orange-500'>
+                            {t('Account Cost')}{' '}
+                            {formatUsageCost(summary.accountCostUSD)}
+                          </span>
+                          <span>·</span>
+                          <span>
+                            {t('Standard Cost')}{' '}
+                            {formatUsageCost(summary.standardCostUSD)}
+                          </span>
+                        </UsageSummaryCard>
+                      </div>
+                    )}
                     <Button
                       variant='outline'
                       onClick={() => void query.refetch()}

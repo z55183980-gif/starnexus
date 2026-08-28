@@ -129,6 +129,7 @@ export interface LogOtherData {
   text_input?: number
   text_output?: number
   cache_tokens?: number
+  cache_write_tokens?: number
   cache_creation_tokens?: number
   cache_creation_tokens_5m?: number
   cache_creation_tokens_1h?: number
@@ -143,6 +144,7 @@ export interface LogOtherData {
   billing_completion_tokens?: number
   billing_total_tokens?: number
   claude?: boolean
+  usage_semantic?: string
   model_ratio?: number
   completion_ratio?: number
   model_price?: number
@@ -320,6 +322,22 @@ export interface GetLogsResponse {
     page: number
     page_size: number
   }
+}
+
+export interface GetUsageDetailsSummary {
+  input_tokens: number
+  output_tokens: number
+  cache_tokens: number
+  total_tokens: number
+  actual_cost_usd: number
+  account_cost_usd: number
+  standard_cost_usd: number
+}
+
+export interface GetUsageDetailsSummaryResponse {
+  success: boolean
+  message?: string
+  data?: GetUsageDetailsSummary
 }
 
 export type UserRoutingNode = string

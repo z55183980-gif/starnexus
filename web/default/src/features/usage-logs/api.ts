@@ -23,6 +23,7 @@ import type {
   GetLogsResponse,
   GetLogStatsParams,
   GetLogStatsResponse,
+  GetUsageDetailsSummaryResponse,
   GetMidjourneyLogsParams,
   GetTaskLogsParams,
   LogAccessScope,
@@ -83,6 +84,14 @@ export const getUserLogs = (
 
 export const getLogStats = (params: GetLogStatsParams = {}) =>
   fetchLogStats('/api/log', params, 'admin')
+
+export const getUsageDetailsSummary = async (
+  params: Omit<GetLogsParams, 'p' | 'page_size'> = {}
+): Promise<GetUsageDetailsSummaryResponse> => {
+  const queryParams = buildQueryParams(params as Record<string, unknown>)
+  const res = await api.get(`/api/log/summary?${queryParams}`)
+  return res.data
+}
 
 export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
