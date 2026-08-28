@@ -6017,6 +6017,25 @@
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "ZQBAPI 素材設定"
+    "ZQBAPI material settings": "ZQBAPI 素材設定",
+    "Usage Details": "使用量の詳細",
+    "Review token usage, costs, latency and routing details": "トークン使用量、コスト、遅延、ルーティングの詳細を確認します",
+    "No Usage Details Found": "使用量の詳細はありません",
+    "Usage details will appear here once API calls are made.": "API 呼び出し後に使用量の詳細が表示されます。",
+    "Billing Type": "請求タイプ",
+    "Export Excel": "Excel にエクスポート",
+    "Clear usage logs": "使用ログを削除",
+    "Usage logs cleaned successfully": "使用ログを削除しました",
+    "This permanently removes usage logs before the selected start time. This action cannot be undone.": "選択した開始時刻より前の使用ログを完全に削除します。この操作は取り消せません。",
+    "Search by username...": "ユーザー名で検索…",
+    "Search by API key...": "API キーで検索…",
+    "Search by model...": "モデルで検索…",
+    "Search by account...": "アカウントで検索…",
+    "Search by group...": "グループで検索…",
+    "Sync": "同期",
+    "Error Requests": "エラーリクエスト",
+    "User Ranking": "ユーザーランキング",
+    "No Error Requests Found": "エラーリクエストはありません",
+    "Error requests will appear here when upstream calls fail.": "上流呼び出しが失敗すると、エラーリクエストがここに表示されます。"
   }
 }

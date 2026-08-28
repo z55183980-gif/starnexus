@@ -28,6 +28,7 @@ type BaseNavItem = {
   unread?: boolean
   unreadLabel?: string
   icon?: React.ElementType
+  adminOnly?: boolean
   rootOnly?: boolean
   activeUrls?: (LinkProps['to'] | (string & {}))[]
   configUrls?: (LinkProps['to'] | (string & {}))[]

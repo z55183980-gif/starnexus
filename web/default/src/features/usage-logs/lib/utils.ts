@@ -245,6 +245,20 @@ export function buildApiParams(config: {
     ...(searchParams.upstreamRequestId
       ? { upstream_request_id: String(searchParams.upstreamRequestId) }
       : {}),
+    ...(searchParams.account ? { account: String(searchParams.account) } : {}),
+    ...(searchParams.billingMode
+      ? { billing_mode: String(searchParams.billingMode) }
+      : {}),
+    ...(searchParams.billingType !== undefined &&
+    searchParams.billingType !== null
+      ? { billing_type: Number(searchParams.billingType) }
+      : {}),
+    ...(searchParams.stream !== undefined && searchParams.stream !== null
+      ? {
+          stream:
+            searchParams.stream === true || searchParams.stream === 'true',
+        }
+      : {}),
     ...(() => {
       const excludeFilters = serializeExcludeFilters(searchParams)
       return excludeFilters ? { exclude_filters: excludeFilters } : {}
@@ -293,8 +307,14 @@ export function buildApiParams(config: {
 export async function fetchLogsByCategory(
   config: FetchLogsConfig
 ): Promise<GetLogsResponse> {
-  const { logCategory, accessScope, page, pageSize, searchParams, columnFilters } =
-    config
+  const {
+    logCategory,
+    accessScope,
+    page,
+    pageSize,
+    searchParams,
+    columnFilters,
+  } = config
   const isManagedScope = accessScope === 'admin' || accessScope === 'agent'
 
   if (logCategory === 'common') {

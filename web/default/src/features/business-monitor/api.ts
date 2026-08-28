@@ -9,15 +9,17 @@ export async function getBusinessMonitorConcurrency(): Promise<{
   return res.data
 }
 
+export interface BusinessMonitorCacheHitStats {
+  input_tokens: number
+  cache_read_tokens: number
+  billing_cache_read_tokens: number
+  cache_creation_tokens: number
+  window_seconds: number
+}
+
 export async function getBusinessMonitorCacheHitRate(hours = 24): Promise<{
   success: boolean
-  data?: {
-    input_tokens: number
-    cache_read_tokens: number
-    billing_cache_read_tokens: number
-    cache_creation_tokens: number
-    window_seconds: number
-  }
+  data?: BusinessMonitorCacheHitStats
 }> {
   const res = await api.get('/api/business-monitor/cache-hit-rate', {
     params: { hours },

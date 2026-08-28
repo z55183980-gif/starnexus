@@ -6017,6 +6017,25 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "Paramètres de ressources ZQBAPI"
+    "ZQBAPI material settings": "Paramètres de ressources ZQBAPI",
+    "Usage Details": "Détails de l'utilisation",
+    "Review token usage, costs, latency and routing details": "Consultez l'utilisation des tokens, les coûts, la latence et le routage",
+    "No Usage Details Found": "Aucun détail d'utilisation",
+    "Usage details will appear here once API calls are made.": "Les détails apparaîtront après les appels API.",
+    "Billing Type": "Type de facturation",
+    "Export Excel": "Exporter vers Excel",
+    "Clear usage logs": "Nettoyer les journaux d'utilisation",
+    "Usage logs cleaned successfully": "Journaux nettoyés avec succès",
+    "This permanently removes usage logs before the selected start time. This action cannot be undone.": "Les journaux antérieurs à l'heure choisie seront supprimés définitivement.",
+    "Search by username...": "Rechercher par nom d'utilisateur…",
+    "Search by API key...": "Rechercher par clé API…",
+    "Search by model...": "Rechercher par modèle…",
+    "Search by account...": "Rechercher par compte…",
+    "Search by group...": "Rechercher par groupe…",
+    "Sync": "Synchrone",
+    "Error Requests": "Requêtes en erreur",
+    "User Ranking": "Classement des utilisateurs",
+    "No Error Requests Found": "Aucune requête en erreur",
+    "Error requests will appear here when upstream calls fail.": "Les requêtes en erreur apparaîtront ici lorsque les appels amont échoueront."
   }
 }

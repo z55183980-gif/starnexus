@@ -6017,6 +6017,25 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "Cài đặt tư liệu ZQBAPI"
+    "ZQBAPI material settings": "Cài đặt tư liệu ZQBAPI",
+    "Usage Details": "Chi tiết sử dụng",
+    "Review token usage, costs, latency and routing details": "Xem chi tiết token, chi phí, độ trễ và định tuyến",
+    "No Usage Details Found": "Chưa có chi tiết sử dụng",
+    "Usage details will appear here once API calls are made.": "Chi tiết sử dụng sẽ xuất hiện sau khi có cuộc gọi API.",
+    "Billing Type": "Loại tính phí",
+    "Export Excel": "Xuất Excel",
+    "Clear usage logs": "Xóa nhật ký sử dụng",
+    "Usage logs cleaned successfully": "Đã xóa nhật ký sử dụng",
+    "This permanently removes usage logs before the selected start time. This action cannot be undone.": "Nhật ký trước thời điểm bắt đầu đã chọn sẽ bị xóa vĩnh viễn và không thể hoàn tác.",
+    "Search by username...": "Tìm theo tên người dùng…",
+    "Search by API key...": "Tìm theo khóa API…",
+    "Search by model...": "Tìm theo mô hình…",
+    "Search by account...": "Tìm theo tài khoản…",
+    "Search by group...": "Tìm theo nhóm…",
+    "Sync": "Đồng bộ",
+    "Error Requests": "Yêu cầu lỗi",
+    "User Ranking": "Xếp hạng người dùng",
+    "No Error Requests Found": "Không có yêu cầu lỗi",
+    "Error requests will appear here when upstream calls fail.": "Các yêu cầu lỗi sẽ hiển thị ở đây khi cuộc gọi upstream thất bại."
   }
 }

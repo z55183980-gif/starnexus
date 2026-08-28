@@ -51,6 +51,7 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     detail: true,
     token: true,
     log: true,
+    usageDetails: true,
     midjourney: true,
     task: true,
   },
@@ -121,6 +122,7 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/usage-logs/common': { section: 'console', module: 'log' },
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },
   '/usage-logs/task': { section: 'console', module: 'task' },
+  '/usage-details': { section: 'console', module: 'usageDetails' },
   '/wallet': { section: 'personal', module: 'topup' },
   '/affiliate': { section: 'personal', module: 'affiliate' },
   '/profile': { section: 'personal', module: 'personal' },
@@ -226,6 +228,7 @@ function isNavItemVisible(
   userConfig: SidebarModulesUserConfig,
   userRole: number
 ): boolean {
+  if (item.adminOnly && userRole < ROLE.ADMIN) return false
   if (item.rootOnly && userRole !== ROLE.SUPER_ADMIN) return false
   // Handle dynamic chat presets type — also runs the admin × user AND gate
   if ('type' in item && item.type === 'chat-presets') {

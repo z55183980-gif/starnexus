@@ -90,6 +90,7 @@ import { getUsers } from '@/features/users/api'
 import {
   acknowledgeAllBusinessMonitorAlerts,
   acknowledgeBusinessMonitorAlert,
+  type BusinessMonitorCacheHitStats,
   getBusinessMonitorCacheHitRate,
   getBusinessMonitorConcurrency,
   getBusinessMonitorAlerts,
@@ -383,19 +384,22 @@ function getPercentileLatency(logs: UsageLog[], percentile: number) {
   ]
 }
 
-function formatCacheHitRate(cacheReadTokens: number, totalInputTokens: number) {
+function formatCacheHitRate(
+  billingCacheReadTokens: number,
+  totalInputTokens: number
+) {
   if (totalInputTokens <= 0) return '--'
-  return `${((cacheReadTokens / totalInputTokens) * 100).toFixed(2)}%`
+  return `${((billingCacheReadTokens / totalInputTokens) * 100).toFixed(2)}%`
+}
+
+function getBillingCacheReadTokens(
+  stats: BusinessMonitorCacheHitStats | undefined
+) {
+  return stats?.billing_cache_read_tokens ?? stats?.cache_read_tokens ?? 0
 }
 
 function getCacheHitTotalInputTokens(
-  stats:
-    | {
-        input_tokens: number
-        cache_read_tokens: number
-        cache_creation_tokens: number
-      }
-    | undefined
+  stats: BusinessMonitorCacheHitStats | undefined
 ) {
   return (
     (stats?.input_tokens ?? 0) +
@@ -943,12 +947,12 @@ export function BusinessMonitor() {
                 <Metric icon={Database} title={t('Cache hit ratio')}>
                   <DualMetricValues
                     leftValue={formatCacheHitRate(
-                      cacheHitStats24h?.cache_read_tokens ?? 0,
+                      getBillingCacheReadTokens(cacheHitStats24h),
                       getCacheHitTotalInputTokens(cacheHitStats24h)
                     )}
                     leftLabel='24h'
                     rightValue={formatCacheHitRate(
-                      cacheHitStats2h?.cache_read_tokens ?? 0,
+                      getBillingCacheReadTokens(cacheHitStats2h),
                       getCacheHitTotalInputTokens(cacheHitStats2h)
                     )}
                     rightLabel='2h'

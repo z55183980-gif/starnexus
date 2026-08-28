@@ -84,7 +84,9 @@ export function SidebarModulesSection({
     imageWorkbench: {
       workbench: {
         title: t('Image Workbench'),
-        description: t('Open the dedicated image generation and editing workspace.'),
+        description: t(
+          'Open the dedicated image generation and editing workspace.'
+        ),
       },
     },
     chat: {
@@ -109,6 +111,12 @@ export function SidebarModulesSection({
       log: {
         title: t('Usage logs'),
         description: t('Detailed request logs for investigations.'),
+      },
+      usageDetails: {
+        title: t('Usage Details'),
+        description: t(
+          'Review token usage, costs, latency and routing details'
+        ),
       },
       midjourney: {
         title: t('Drawing logs'),

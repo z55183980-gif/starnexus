@@ -6017,6 +6017,25 @@
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "ZQBAPI 素材设置"
+    "ZQBAPI material settings": "ZQBAPI 素材设置",
+    "Usage Details": "用量明细",
+    "Review token usage, costs, latency and routing details": "查看 Token 用量、费用、延迟和路由详情",
+    "No Usage Details Found": "暂无用量明细",
+    "Usage details will appear here once API calls are made.": "产生 API 调用后，用量明细会显示在这里。",
+    "Billing Type": "计费类型",
+    "Export Excel": "导出 Excel",
+    "Clear usage logs": "清理使用日志",
+    "Usage logs cleaned successfully": "使用日志清理成功",
+    "This permanently removes usage logs before the selected start time. This action cannot be undone.": "这将永久删除所选开始时间之前的使用日志，且无法撤销。",
+    "Search by username...": "按用户名搜索…",
+    "Search by API key...": "按 API 密钥搜索…",
+    "Search by model...": "按模型搜索…",
+    "Search by account...": "按账号搜索…",
+    "Search by group...": "按分组搜索…",
+    "Sync": "同步",
+    "Error Requests": "错误请求",
+    "User Ranking": "用户排行",
+    "No Error Requests Found": "暂无错误请求",
+    "Error requests will appear here when upstream calls fail.": "上游调用失败时，错误请求会显示在这里。"
   }
 }

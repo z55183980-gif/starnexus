@@ -22,12 +22,30 @@ func GetAllLogs(c *gin.Context) {
 	group := c.Query("group")
 	requestId := c.Query("request_id")
 	upstreamRequestId := c.Query("upstream_request_id")
+	accountName := c.Query("account")
+	billingMode := c.Query("billing_mode")
+	var billingType *int
+	if rawBillingType := c.Query("billing_type"); rawBillingType != "" {
+		if parsed, parseErr := strconv.Atoi(rawBillingType); parseErr == nil && (parsed == 0 || parsed == 1) {
+			billingType = &parsed
+		}
+	}
+	var stream *bool
+	if rawStream := c.Query("stream"); rawStream == "true" || rawStream == "false" {
+		parsed := rawStream == "true"
+		stream = &parsed
+	}
 	excludeFilters, err := model.ParseLogExcludeFilters(c.Query("exclude_filters"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, excludeFilters)
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, excludeFilters, model.LogQueryOptions{
+		AccountName: accountName,
+		BillingMode: billingMode,
+		BillingType: billingType,
+		Stream:      stream,
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return

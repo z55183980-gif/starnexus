@@ -305,6 +305,10 @@ export interface GetLogsParams {
   request_id?: string
   upstream_request_id?: string
   exclude_filters?: string
+  account?: string
+  billing_mode?: string
+  billing_type?: number
+  stream?: boolean
 }
 
 export interface GetLogsResponse {

@@ -660,7 +660,18 @@ func applyLogExcludeFilters(tx *gorm.DB, filters []LogExcludeFilter, tablePrefix
 	return tx, nil
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, excludeFilters []LogExcludeFilter) (logs []*Log, total int64, err error) {
+// LogQueryOptions contains optional filters for admin usage-detail views. It is
+// variadic on GetAllLogs so existing callers (and older integrations) keep the
+// original signature while newer callers can filter by upstream account and
+// billing metadata.
+type LogQueryOptions struct {
+	AccountName string
+	BillingMode string
+	BillingType *int
+	Stream      *bool
+}
+
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, excludeFilters []LogExcludeFilter, options ...LogQueryOptions) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
@@ -706,6 +717,56 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 	if group != "" {
 		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	}
+	if len(options) > 0 {
+		option := options[0]
+		if option.AccountName != "" {
+			accountPattern, patternErr := buildFuzzyLikePattern(option.AccountName)
+			if patternErr != nil {
+				return nil, 0, patternErr
+			}
+			// LOG_DB may be configured as a separate database from DB. Resolve
+			// matching account IDs first, then pass the values to the log query so
+			// the filter remains valid on every supported database topology.
+			var accountIDs []int
+			if err = DB.Model(&UpstreamAccount{}).
+				Where("LOWER(name) LIKE LOWER(?) ESCAPE '!'", accountPattern).
+				Pluck("id", &accountIDs).Error; err != nil {
+				return nil, 0, err
+			}
+			if len(accountIDs) == 0 {
+				return []*Log{}, 0, nil
+			}
+			tx = tx.Where("logs.upstream_account_id IN ?", accountIDs)
+		}
+		if option.BillingMode != "" {
+			validBillingMode := false
+			switch option.BillingMode {
+			case "token", "per_request", "image", "video", "tiered_expr":
+				validBillingMode = true
+			default:
+				// Ignore unknown billing modes instead of interpolating arbitrary
+				// input into a LIKE pattern.
+			}
+			if validBillingMode {
+				// billing_mode is persisted in the JSON `other` payload. Restrict
+				// matching to the exact JSON key/value while remaining portable
+				// across SQLite, MySQL and PostgreSQL.
+				billingPattern := `%"billing_mode":"` + option.BillingMode + `"%`
+				tx = tx.Where("logs.other LIKE ?", billingPattern)
+			}
+		}
+		if option.BillingType != nil {
+			subscriptionPattern := `%"billing_source":"subscription"%`
+			if *option.BillingType == 1 {
+				tx = tx.Where("logs.other LIKE ?", subscriptionPattern)
+			} else if *option.BillingType == 0 {
+				tx = tx.Where("logs.other NOT LIKE ?", subscriptionPattern)
+			}
+		}
+		if option.Stream != nil {
+			tx = tx.Where("logs.is_stream = ?", *option.Stream)
+		}
 	}
 	tx, err = applyLogExcludeFilters(tx, excludeFilters, "logs.")
 	if err != nil {

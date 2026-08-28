@@ -128,6 +128,12 @@ export function useSidebarData(): SidebarData {
             icon: FileText,
           },
           {
+            title: t('Usage Details'),
+            url: '/usage-details',
+            icon: ChartNoAxesCombined,
+            adminOnly: true,
+          },
+          {
             title: t('Task Logs'),
             url: '/usage-logs/task',
             activeUrls: ['/usage-logs/drawing'],

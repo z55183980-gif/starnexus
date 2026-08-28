@@ -6017,6 +6017,25 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "ZQBAPI material settings"
+    "ZQBAPI material settings": "ZQBAPI material settings",
+    "Usage Details": "Usage Details",
+    "Review token usage, costs, latency and routing details": "Review token usage, costs, latency and routing details",
+    "No Usage Details Found": "No Usage Details Found",
+    "Usage details will appear here once API calls are made.": "Usage details will appear here once API calls are made.",
+    "Billing Type": "Billing Type",
+    "Export Excel": "Export Excel",
+    "Clear usage logs": "Clear usage logs",
+    "Usage logs cleaned successfully": "Usage logs cleaned successfully",
+    "This permanently removes usage logs before the selected start time. This action cannot be undone.": "This permanently removes usage logs before the selected start time. This action cannot be undone.",
+    "Search by username...": "Search by username...",
+    "Search by API key...": "Search by API key...",
+    "Search by model...": "Search by model...",
+    "Search by account...": "Search by account...",
+    "Search by group...": "Search by group...",
+    "Sync": "Sync",
+    "Error Requests": "Error Requests",
+    "User Ranking": "User Ranking",
+    "No Error Requests Found": "No Error Requests Found",
+    "Error requests will appear here when upstream calls fail.": "Error requests will appear here when upstream calls fail."
   }
 }
