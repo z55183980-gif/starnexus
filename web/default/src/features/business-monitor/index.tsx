@@ -427,11 +427,17 @@ function DualMetricValues(props: {
   leftLabel: string
   rightValue: string
   rightLabel: string
+  valueClassName?: string
 }) {
   return (
     <div className='mt-2.5 grid grid-cols-2 gap-4'>
       <div className='min-w-0'>
-        <div className='truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
+        <div
+          className={cn(
+            props.valueClassName ?? 'truncate',
+            'font-mono text-lg font-semibold tabular-nums sm:text-xl'
+          )}
+        >
           {props.leftValue}
         </div>
         <div className='text-muted-foreground mt-0.5 truncate text-xs'>
@@ -439,7 +445,12 @@ function DualMetricValues(props: {
         </div>
       </div>
       <div className='min-w-0'>
-        <div className='truncate font-mono text-lg font-semibold tabular-nums sm:text-xl'>
+        <div
+          className={cn(
+            props.valueClassName ?? 'truncate',
+            'font-mono text-lg font-semibold tabular-nums sm:text-xl'
+          )}
+        >
           {props.rightValue}
         </div>
         <div className='text-muted-foreground mt-0.5 truncate text-xs'>
@@ -912,7 +923,7 @@ export function BusinessMonitor() {
         <div className='flex flex-col gap-3 sm:gap-4'>
           <Card size='sm' className='gap-0 py-0'>
             <CardContent className='p-0'>
-              <div className='bg-border grid grid-cols-1 gap-px sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,0.65fr)_minmax(0,0.8fr)_minmax(0,0.7fr)_minmax(0,1.15fr)_minmax(0,1.05fr)_minmax(0,1.25fr)]'>
+              <div className='bg-border grid grid-cols-1 gap-px sm:grid-cols-2 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(220px,1.3fr)] xl:grid-cols-[minmax(0,0.65fr)_minmax(0,0.8fr)_minmax(260px,1.35fr)_minmax(0,1.15fr)_minmax(0,1.05fr)_minmax(0,1.25fr)]'>
                 <Metric
                   icon={CircleDollarSign}
                   title={t("Today's Consumption")}
@@ -941,6 +952,7 @@ export function BusinessMonitor() {
                       getCacheHitTotalInputTokens(cacheHitStats2h)
                     )}
                     rightLabel='2h'
+                    valueClassName='whitespace-nowrap sm:text-xl'
                   />
                 </Metric>
                 <Metric icon={Timer} title={t('Token Throughput')}>
