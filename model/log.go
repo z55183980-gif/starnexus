@@ -1029,6 +1029,7 @@ type businessMonitorCacheBillingInfo struct {
 type businessMonitorCacheLogOther struct {
 	UsageSemantic         string `json:"usage_semantic"`
 	Claude                bool   `json:"claude"`
+	GroupRatio            float64 `json:"group_ratio"`
 	CacheTokens           int64  `json:"cache_tokens"`
 	CacheWriteTokens      int64  `json:"cache_write_tokens"`
 	CacheCreationTokens   int64  `json:"cache_creation_tokens"`
@@ -1115,53 +1116,72 @@ func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64, mode
 	return stats, nil
 }
 
+const usageDetailsSummaryBatchSize = 1000
+
 // GetUsageDetailsSummary aggregates all matching usage-detail records. The
 // list endpoint is paginated, but these metrics must represent the complete
-// filtered result set rather than only the visible table page.
+// filtered result set rather than only the visible table page. The batch size
+// only bounds memory used by each query; it is not an aggregate row limit.
 func GetUsageDetailsSummary(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, group string, options ...LogQueryOptions) (summary UsageDetailsSummary, err error) {
-	logs, _, err := GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, 0, logSearchCountLimit, 0, group, "", "", nil, options...)
-	if err != nil {
-		return summary, err
+	quotaPerUnit := float64(common.QuotaPerUnit)
+	aggregate := func(logs []*Log) {
+		for _, log := range logs {
+			if log == nil {
+				continue
+			}
+			var other businessMonitorCacheLogOther
+			if log.Other != "" {
+				_ = common.UnmarshalJsonStr(log.Other, &other)
+			}
+
+			promptTokens := int64(max(log.PromptTokens, 0))
+			completionTokens := int64(max(log.CompletionTokens, 0))
+			cacheReadTokens := max(other.CacheTokens, int64(0))
+			cacheCreationTokens := max(other.cacheCreationTotal(), int64(0))
+			inputTokens := promptTokens
+			if other.UsageSemantic != "anthropic" && !other.Claude {
+				inputTokens = max(inputTokens-cacheReadTokens-cacheCreationTokens, int64(0))
+			}
+
+			quotaCostUSD := 0.0
+			if quotaPerUnit > 0 {
+				quotaCostUSD = float64(max(log.Quota, 0)) / quotaPerUnit
+			}
+			actualCostUSD := log.UserCost
+			if actualCostUSD <= 0 {
+				actualCostUSD = quotaCostUSD
+			}
+			if actualCostUSD < 0 {
+				actualCostUSD = 0
+			}
+			// Quota includes the effective group multiplier. Standard cost is
+			// the same charge before that multiplier, matching sub2api's
+			// total_cost; fall back to the persisted quota when old logs do not
+			// contain group_ratio.
+			standardCostUSD := quotaCostUSD
+			if other.GroupRatio > 0 && actualCostUSD > 0 {
+				standardCostUSD = actualCostUSD / other.GroupRatio
+			}
+
+			summary.InputTokens += inputTokens
+			summary.OutputTokens += completionTokens
+			summary.CacheTokens += cacheReadTokens + cacheCreationTokens
+			summary.TotalTokens += inputTokens + completionTokens + cacheReadTokens + cacheCreationTokens
+			summary.ActualCostUSD += actualCostUSD
+			summary.AccountCostUSD += max(log.AccountCost, 0)
+			summary.StandardCostUSD += standardCostUSD
+		}
 	}
 
-	quotaPerUnit := float64(common.QuotaPerUnit)
-	for _, log := range logs {
-		if log == nil {
-			continue
+	for offset := 0; ; offset += usageDetailsSummaryBatchSize {
+		logs, total, queryErr := GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, offset, usageDetailsSummaryBatchSize, 0, group, "", "", nil, options...)
+		if queryErr != nil {
+			return summary, queryErr
 		}
-		var other businessMonitorCacheLogOther
-		if log.Other != "" {
-			_ = common.UnmarshalJsonStr(log.Other, &other)
+		aggregate(logs)
+		if len(logs) == 0 || int64(offset+len(logs)) >= total {
+			break
 		}
-
-		promptTokens := int64(max(log.PromptTokens, 0))
-		completionTokens := int64(max(log.CompletionTokens, 0))
-		cacheReadTokens := max(other.CacheTokens, int64(0))
-		cacheCreationTokens := max(other.cacheCreationTotal(), int64(0))
-		inputTokens := promptTokens
-		if other.UsageSemantic != "anthropic" && !other.Claude {
-			inputTokens = max(inputTokens-cacheReadTokens-cacheCreationTokens, int64(0))
-		}
-
-		standardCostUSD := 0.0
-		if quotaPerUnit > 0 {
-			standardCostUSD = float64(max(log.Quota, 0)) / quotaPerUnit
-		}
-		actualCostUSD := log.UserCost
-		if actualCostUSD <= 0 {
-			actualCostUSD = standardCostUSD
-		}
-		if actualCostUSD < 0 {
-			actualCostUSD = 0
-		}
-
-		summary.InputTokens += inputTokens
-		summary.OutputTokens += completionTokens
-		summary.CacheTokens += cacheReadTokens + cacheCreationTokens
-		summary.TotalTokens += inputTokens + completionTokens + cacheReadTokens + cacheCreationTokens
-		summary.ActualCostUSD += actualCostUSD
-		summary.AccountCostUSD += max(log.AccountCost, 0)
-		summary.StandardCostUSD += standardCostUSD
 	}
 
 	return summary, nil

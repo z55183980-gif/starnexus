@@ -194,6 +194,16 @@ type UsageSummary = {
   standardCostUSD: number
 }
 
+const EMPTY_USAGE_SUMMARY: UsageSummary = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheTokens: 0,
+  totalTokens: 0,
+  actualCostUSD: 0,
+  accountCostUSD: 0,
+  standardCostUSD: 0,
+}
+
 function nonNegativeNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value)
     ? Math.max(value, 0)
@@ -222,19 +232,23 @@ function getUsageSummary(logs: UsageLog[]): UsageSummary {
       const cacheReadTokens = nonNegativeNumber(other?.cache_tokens)
       const cacheCreationTokens = getCacheCreationTokens(other)
       const semantic = other?.usage_semantic?.toLowerCase() || ''
-      const isAnthropic =
-        other?.claude === true ||
-        semantic.includes('anthropic') ||
-        semantic.includes('claude')
+      const isAnthropic = other?.claude === true || semantic === 'anthropic'
       const inputTokens = isAnthropic
         ? promptTokens
         : Math.max(promptTokens - cacheReadTokens - cacheCreationTokens, 0)
       const quota = nonNegativeNumber(log.quota)
-      const standardCostUSD = quotaPerUnit > 0 ? quota / quotaPerUnit : 0
-      const actualCostUSD =
+      const quotaCostUSD = quotaPerUnit > 0 ? quota / quotaPerUnit : 0
+      const persistedUserCost =
         typeof log.user_cost === 'number' && Number.isFinite(log.user_cost)
           ? nonNegativeNumber(log.user_cost)
-          : standardCostUSD
+          : 0
+      const actualCostUSD =
+        persistedUserCost > 0 ? persistedUserCost : quotaCostUSD
+      const groupRatio = nonNegativeNumber(other?.group_ratio)
+      const standardCostUSD =
+        groupRatio > 0 && actualCostUSD > 0
+          ? actualCostUSD / groupRatio
+          : quotaCostUSD
       const accountCostUSD = nonNegativeNumber(log.account_cost)
 
       summary.inputTokens += inputTokens
@@ -641,7 +655,13 @@ export function UsageDetails() {
     [query.data?.items]
   )
   const pageSummary = useMemo(() => getUsageSummary(logs), [logs])
-  const summary = summaryQuery.data || pageSummary
+  // Admin summaries come from the server-side aggregation, which walks every
+  // matching row. Never fall back to the visible page here, otherwise a
+  // failed summary request would silently display partial totals.
+  const summary =
+    accessScope === 'admin'
+      ? (summaryQuery.data ?? EMPTY_USAGE_SUMMARY)
+      : pageSummary
   const columns = useUsageDetailsColumns(isManagedScope, isAdmin)
   const table = useReactTable({
     data: logs,
