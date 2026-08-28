@@ -11,7 +11,7 @@
 | S1 | `starnexus-s1` / `104.194.82.238` | `xingyuapi-prod-1`，`master` | `origin-s1.dkby.com`；2026-08-09 发布后健康、Origin 200 | `/www/wwwroot/starnexus/docker-compose.prod.yml` |
 | S2 | `starnexus-s2` / `45.132.74.201` | `xingyuapi-prod-2`，`slave` | `origin-s2.dkby.com`；2026-08-22 更换主机后健康、Origin 200 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
 | S3 | `starnexus-s3` / `95.169.7.175` | `xingyuapi-prod-3`，`slave` | `origin-s3.dkby.com`；2026-08-09 发布后健康、Origin 200 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
-| S4 | `starnexus-s4` / `149.104.11.117` | `xingyuapi-prod-4`，`slave` | `origin-s4.dkby.com`；生产节点，本次发布未包含 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
+| S4 | `starnexus-s4` / `85.155.178.254`（VPS004） | `xingyuapi-prod-4`，`slave` | `origin-s4.dkby.com`；生产节点 | `/www/wwwroot/starnexus/docker-compose.prod2.yml` |
 | DB6 / SPG | `starnexus-db6` / `67.230.183.84` | 正式 PostgreSQL、PgBouncer、Redis | 正式库路由键 `spg`，启用、可见、监控启用 | `/srv/db-stack/docker-compose.yml` |
 
 当前访问链路：
@@ -159,7 +159,7 @@ docker tag <旧镜像 ID> starnexus:rollback-sN-before-<7位提交SHA>
 | 2 | S1 | master | `docker-compose.prod.yml` | 唯一执行数据库迁移的业务节点 |
 | 3 | S3 | slave | `docker-compose.prod2.yml` | 前两节点通过后部署 |
 
-S4 是生产 slave，但不在上述当前标准序列内。只有当发布范围明确包含 S4 且先重新核验它的基线时，才在 S3 验收后使用 `docker-compose.prod2.yml` 部署。
+S4 是生产 slave。发布范围包含 S4 时，在 S3 验收后重新核验 S4 基线，再使用 `docker-compose.prod2.yml` 部署。
 
 S2 和 S3：
 
@@ -231,10 +231,11 @@ docker compose -f <该节点的Compose文件> up -d \
 | Actions Run | `31315247366`，成功，用时 4 分 28 秒 |
 | Actions 页面 | `https://github.com/z55183980-gif/starnexus/actions/runs/31315247366` |
 | GHCR digest | `sha256:55e15edfa71ca872b3fda3fd786315501baa6c8e1beebcb7a90333186843fe22` |
-| 应用版本 | S1/S2/S3 均为 `main-443969c` |
-| `/new-api` SHA-256 | S1/S2/S3 均为 `0ce63c176b9175dd98d449c72c6fa39c0f9ee8654b5d9cc6dafa50ed33e00e3d` |
-| 容器与 Origin | S1/S2/S3 均为 healthy，三个 Origin 均返回 200 |
-| 生产日志 | 连续观察 3 分钟，无 API 5xx；S1 12 个 relay 请求为 200，S3 6 个为 200 |
+| 应用版本 | S1/S2/S3/S4 均为 `main-af78935` |
+| 镜像 RepoDigest | S1/S2/S3/S4 均为 `sha256:69881bace63d26494c5a6c02c29c1e0c915afac177a391649cd904c40e2fdb3c` |
+| `/new-api` SHA-256 | S1/S2/S3 均为 `5a070e59b7e306dc38c6d1c189dae85cae6df36f97cb5f231dc0926b24c2b979`；S4 待本次部署验收后补录 |
+| 容器与 Origin | S1/S2/S3 均为 healthy，三个 Origin 均返回 200；S4 待本次部署验收 |
+| 生产日志 | S1/S2/S3 已完成发布观察；S4 待本次部署观察 |
 
 本次观察到的非阻断事项：
 
