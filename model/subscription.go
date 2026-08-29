@@ -594,6 +594,7 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 				UserId:        order.UserId,
 				Amount:        0,
 				Money:         order.Money,
+				PaymentAmount: order.Money,
 				TradeNo:       order.TradeNo,
 				PaymentMethod: order.PaymentMethod,
 				CreateTime:    order.CreateTime,
@@ -605,6 +606,7 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 		return err
 	}
 	topup.Money = order.Money
+	topup.PaymentAmount = order.Money
 	if topup.PaymentMethod == "" {
 		topup.PaymentMethod = order.PaymentMethod
 	} else if topup.PaymentMethod != order.PaymentMethod {

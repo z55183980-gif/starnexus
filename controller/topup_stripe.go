@@ -13,7 +13,9 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 	"github.com/stripe/stripe-go/v81"
 	"github.com/thanhpk/randstr"
 )
@@ -31,9 +33,16 @@ type StripePayRequest struct {
 type StripeAdaptor struct{}
 
 func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
+	if !validateTopupAmountUnit(c, req.Amount) {
+		return
+	}
 	minTopup := service.StripeMinTopUp()
 	if req.Amount < minTopup {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", minTopup)})
+		return
+	}
+	if req.Amount > service.StripeMaxTopUp() {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能大于 %d", service.StripeMaxTopUp())})
 		return
 	}
 
@@ -49,11 +58,17 @@ func (*StripeAdaptor) RequestAmount(c *gin.Context, req *StripePayRequest) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
 	}
+	// Persist the same cent-rounded amount that Stripe will charge, so billing
+	// history and reconciliation never disagree by a fractional cent.
+	payMoney = decimal.NewFromFloat(payMoney).Round(2).InexactFloat64()
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
 }
 
 func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 	if !requirePaymentCompliance(c) {
+		return
+	}
+	if !validateTopupAmountUnit(c, req.Amount) {
 		return
 	}
 	if !service.IsStripeConfigured() {
@@ -70,8 +85,8 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("充值数量不能小于 %d", minTopup), "data": 10})
 		return
 	}
-	if req.Amount > 10000 {
-		c.JSON(http.StatusOK, gin.H{"message": "充值数量不能大于 10000", "data": 10})
+	if req.Amount > service.StripeMaxTopUp() {
+		c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("充值数量不能大于 %d", service.StripeMaxTopUp()), "data": 10})
 		return
 	}
 
@@ -102,15 +117,25 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
 	}
+	payMoney = decimal.NewFromFloat(payMoney).Round(2).InexactFloat64()
 
 	reference := fmt.Sprintf("new-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
-	chargedMoney := service.CalculateStripeChargedAmount(float64(req.Amount), user.Group)
+	creditAmount := float64(req.Amount)
+	storedAmount := req.Amount
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		creditAmount = decimal.NewFromInt(req.Amount).
+			Div(decimal.NewFromFloat(common.QuotaPerUnit)).
+			InexactFloat64()
+		storedAmount = int64(creditAmount)
+	}
+	chargedMoney := service.CalculateStripeChargedAmount(creditAmount, user.Group)
 
 	topUp := &model.TopUp{
 		UserId:          id,
-		Amount:          req.Amount,
+		Amount:          storedAmount,
 		Money:           chargedMoney,
+		PaymentAmount:   payMoney,
 		TradeNo:         referenceId,
 		PaymentMethod:   model.PaymentMethodStripe,
 		PaymentProvider: model.PaymentProviderStripe,
@@ -281,7 +306,12 @@ func fulfillStripeOrder(ctx context.Context, session *service.StripeCheckoutSess
 		return
 	}
 
-	if err := model.Recharge(session.ClientReferenceID, session.Customer, callerIp); err != nil {
+	if err := model.Recharge(
+		session.ClientReferenceID,
+		session.Customer,
+		callerIp,
+		float64(session.AmountTotal)/100,
+	); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("Stripe 充值处理失败 trade_no=%s event_type=%s client_ip=%s error=%q", session.ClientReferenceID, eventType, callerIp, err.Error()))
 		return
 	}

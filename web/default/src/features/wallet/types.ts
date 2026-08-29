@@ -139,12 +139,22 @@ export interface TopupInfo {
   min_topup: number
   /** Minimum topup amount for Stripe */
   stripe_min_topup: number
+  /** EpUSDT credit-to-USDT conversion ratio */
+  epusdt_credit_per_usdt?: number
   /** Stripe Checkout settlement currency */
   stripe_currency?: string
   /** Preset amount options */
   amount_options: number[]
   /** Discount rates by amount */
   discount: Record<number, number>
+  /** Processing fee rates by exact amount (0.03 = 3%) */
+  fee?: Record<number, number>
+  /** Display unit used by the top-up request (TOKENS sends raw token units). */
+  quota_display_type?: QuotaDisplayType
+  /** Number of raw tokens per one canonical credit unit. */
+  quota_per_unit?: number
+  /** Current user's top-up group ratio, used for preset estimates. */
+  topup_group_ratio?: number
   /** Optional topup link for purchasing codes */
   topup_link?: string
   /** Whether Creem topup is enabled */
@@ -246,6 +256,8 @@ export interface UserWalletData {
  */
 export type TopupStatus = 'success' | 'pending' | 'expired'
 
+export type QuotaDisplayType = 'USD' | 'CNY' | 'TOKENS' | 'CUSTOM'
+
 /**
  * Topup billing record
  */
@@ -258,8 +270,10 @@ export interface TopupRecord {
   username?: string
   /** Topup amount (quota) */
   amount: number
-  /** Payment amount (actual money paid) */
+  /** Legacy recorded amount; use payment_amount for actual gateway charge. */
   money: number
+  /** Payment gateway charge including processing fees (new records). */
+  payment_amount?: number
   /** Trade/order number */
   trade_no: string
   /** Payment method type */

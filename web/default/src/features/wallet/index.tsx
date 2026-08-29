@@ -31,7 +31,11 @@ import { WalletMoreOptionsSection } from './components/wallet-more-options-secti
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { DEFAULT_DISCOUNT_RATE } from './constants'
 import { useTopupInfo, usePayment, useRedemption } from './hooks'
-import { getDefaultPaymentType, getMinTopupAmount } from './lib'
+import {
+  getAmountFeeRate,
+  getDefaultPaymentType,
+  getMinTopupAmount,
+} from './lib'
 import type { UserWalletData, PaymentMethod, PresetAmount } from './types'
 
 interface WalletProps {
@@ -55,6 +59,9 @@ export function Wallet(props: WalletProps) {
   const { status } = useStatus()
   const { currency } = useSystemConfig()
   const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
+  const epusdtCreditPerUsdt = topupInfo?.epusdt_credit_per_usdt
+  const quotaDisplayType = topupInfo?.quota_display_type
+  const quotaPerUnit = topupInfo?.quota_per_unit
 
   const effectiveUsdExchangeRate = useMemo(() => {
     return currency?.quotaDisplayType === 'USD'
@@ -117,17 +124,42 @@ export function Wallet(props: WalletProps) {
 
     const defaultPaymentType =
       defaultMethod?.type || getDefaultPaymentType(topupInfo)
-    calculatePaymentAmount(minTopup, defaultPaymentType)
-  }, [topupInfo, calculatePaymentAmount])
+    calculatePaymentAmount(
+      minTopup,
+      defaultPaymentType,
+      getAmountFeeRate(topupInfo, minTopup),
+      epusdtCreditPerUsdt,
+      quotaDisplayType,
+      quotaPerUnit
+    )
+  }, [
+    topupInfo,
+    epusdtCreditPerUsdt,
+    quotaDisplayType,
+    quotaPerUnit,
+    calculatePaymentAmount,
+  ])
 
   const getCurrentPaymentType = useCallback(() => {
     return selectedPaymentMethod?.type || getDefaultPaymentType(topupInfo)
   }, [selectedPaymentMethod, topupInfo])
 
+  const getCurrentFeeRate = useCallback(
+    (amount: number) => getAmountFeeRate(topupInfo, amount),
+    [topupInfo]
+  )
+
   const handleSelectPreset = (preset: PresetAmount) => {
     setTopupAmount(preset.value)
     setSelectedPreset(preset.value)
-    calculatePaymentAmount(preset.value, getCurrentPaymentType())
+    calculatePaymentAmount(
+      preset.value,
+      getCurrentPaymentType(),
+      getCurrentFeeRate(preset.value),
+      epusdtCreditPerUsdt,
+      quotaDisplayType,
+      quotaPerUnit
+    )
   }
 
   const handleTopupAmountChange = (amount: number) => {
@@ -136,21 +168,33 @@ export function Wallet(props: WalletProps) {
 
     const minTopup = getMinTopupAmount(topupInfo)
     if (amount >= minTopup) {
-      calculatePaymentAmount(amount, getCurrentPaymentType())
+      calculatePaymentAmount(
+        amount,
+        getCurrentPaymentType(),
+        getCurrentFeeRate(amount),
+        epusdtCreditPerUsdt,
+        quotaDisplayType,
+        quotaPerUnit
+      )
     }
   }
 
   const handlePaymentMethodChange = (method: PaymentMethod) => {
     setSelectedPaymentMethod(method)
-    calculatePaymentAmount(topupAmount, method.type)
+    calculatePaymentAmount(
+      topupAmount,
+      method.type,
+      getCurrentFeeRate(topupAmount),
+      epusdtCreditPerUsdt,
+      quotaDisplayType,
+      quotaPerUnit
+    )
   }
 
   const handlePayNow = async () => {
     const minTopup = getMinTopupAmount(topupInfo)
     if (topupAmount < minTopup) {
-      toast.error(
-        t('Minimum topup amount: {{amount}}', { amount: minTopup })
-      )
+      toast.error(t('Minimum topup amount: {{amount}}', { amount: minTopup }))
       return
     }
 
@@ -167,7 +211,14 @@ export function Wallet(props: WalletProps) {
       return
     }
 
-    await calculatePaymentAmount(topupAmount, selectedPaymentMethod.type)
+    await calculatePaymentAmount(
+      topupAmount,
+      selectedPaymentMethod.type,
+      getCurrentFeeRate(topupAmount),
+      epusdtCreditPerUsdt,
+      quotaDisplayType,
+      quotaPerUnit
+    )
     setConfirmDialogOpen(true)
   }
 
@@ -239,6 +290,10 @@ export function Wallet(props: WalletProps) {
                 loading={topupLoading}
                 priceRatio={(status?.price as number) || 1}
                 usdExchangeRate={effectiveUsdExchangeRate}
+                feeRate={getCurrentFeeRate(topupAmount)}
+                epusdtCreditPerUsdt={epusdtCreditPerUsdt}
+                quotaDisplayType={quotaDisplayType}
+                quotaPerUnit={quotaPerUnit}
                 onOpenBilling={() => setBillingDialogOpen(true)}
               />
             </div>
@@ -275,6 +330,10 @@ export function Wallet(props: WalletProps) {
         calculating={calculating}
         processing={paying || processing}
         discountRate={getDiscountRate()}
+        feeRate={getCurrentFeeRate(topupAmount)}
+        epusdtCreditPerUsdt={epusdtCreditPerUsdt}
+        quotaDisplayType={quotaDisplayType}
+        quotaPerUnit={quotaPerUnit}
         usdExchangeRate={effectiveUsdExchangeRate}
         stripeCurrency={topupInfo?.stripe_currency}
       />

@@ -27,7 +27,14 @@ import {
   isApiSuccess,
   getApiErrorMessage,
 } from '../api'
-import { isUsdtPayment, isStripePayment, calculateEpusdtPayAmount } from '../lib'
+import { EPUSDT_CREDIT_PER_USDT } from '../constants'
+import {
+  isUsdtPayment,
+  isStripePayment,
+  calculateEpusdtPayAmount,
+  getTopupCreditAmount,
+} from '../lib'
+import type { QuotaDisplayType } from '../types'
 
 // ============================================================================
 // Payment Hook
@@ -40,9 +47,20 @@ export function usePayment() {
 
   // Calculate payment amount
   const calculatePaymentAmount = useCallback(
-    async (topupAmount: number, paymentType: string) => {
+    async (
+      topupAmount: number,
+      paymentType: string,
+      feeRate = 0,
+      creditPerUsdt = EPUSDT_CREDIT_PER_USDT,
+      quotaDisplayType?: QuotaDisplayType,
+      quotaPerUnit?: number
+    ) => {
       if (isUsdtPayment(paymentType)) {
-        const calculated = calculateEpusdtPayAmount(topupAmount)
+        const calculated = calculateEpusdtPayAmount(
+          getTopupCreditAmount(topupAmount, quotaDisplayType, quotaPerUnit),
+          feeRate,
+          creditPerUsdt
+        )
         setAmount(calculated)
         return calculated
       }

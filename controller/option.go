@@ -53,6 +53,25 @@ func validateCacheBillingOffsetBpsJSON(value string) error {
 	return nil
 }
 
+func validateAmountFeeJSON(value string) error {
+	var fees map[int]float64
+	if err := common.UnmarshalJsonStr(value, &fees); err != nil {
+		return fmt.Errorf("充值手续费必须是合法 JSON: %w", err)
+	}
+	if fees == nil {
+		return fmt.Errorf("充值手续费必须是金额到费率的 JSON 对象")
+	}
+	for amount, rate := range fees {
+		if amount <= 0 {
+			return fmt.Errorf("充值金额必须大于 0")
+		}
+		if rate < 0 || rate > 1 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+			return fmt.Errorf("充值金额 %d 的手续费率必须在 0 到 1 之间", amount)
+		}
+	}
+	return nil
+}
+
 func isPositiveOptionValue(value string) bool {
 	intValue, err := strconv.Atoi(strings.TrimSpace(value))
 	if err == nil {
@@ -373,6 +392,14 @@ func UpdateOption(c *gin.Context) {
 		}
 	case "billing_setting.cache_billing_offset_bps":
 		if err = validateCacheBillingOffsetBpsJSON(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	case "payment_setting.amount_fee":
+		if err = validateAmountFeeJSON(option.Value.(string)); err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": err.Error(),

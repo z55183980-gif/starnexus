@@ -79,6 +79,17 @@ func StripeMinTopUp() int64 {
 	return int64(minTopup)
 }
 
+// StripeMaxTopUp returns the maximum top-up amount in the request/display
+// unit. Stripe's business limit is 10,000 canonical credit units; TOKENS
+// requests therefore use the equivalent raw token limit.
+func StripeMaxTopUp() int64 {
+	maxTopup := int64(10000)
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		maxTopup = int64(float64(maxTopup) * common.QuotaPerUnit)
+	}
+	return maxTopup
+}
+
 // CalculateStripeChargedAmount returns quota units credited after group ratio.
 func CalculateStripeChargedAmount(count float64, userGroup string) float64 {
 	topUpGroupRatio := common.GetTopupGroupRatio(userGroup)
@@ -100,13 +111,11 @@ func CalculateStripePayMoney(amount float64, group string) float64 {
 		topupGroupRatio = 1
 	}
 
-	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(originalAmount)]; ok && ds > 0 {
-		discount = ds
-	}
+	discount := operation_setting.GetAmountDiscountRateForTopupAmount(int64(originalAmount))
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(int64(originalAmount))
 
 	// Stripe charges 1:1 in the configured settlement currency (no FX conversion).
-	return amount * topupGroupRatio * discount
+	return amount * topupGroupRatio * discount * (1 + feeRate)
 }
 
 // StripePayMoneyToUnitAmount converts a fiat amount to Stripe's smallest currency unit.
@@ -172,11 +181,11 @@ func CreateTopUpCheckoutSession(input StripeCheckoutSessionInput) (*StripeChecko
 		Params: stripe.Params{
 			IdempotencyKey: stripe.String("topup-" + input.TradeNo),
 		},
-		ClientReferenceID: stripe.String(input.TradeNo),
-		SuccessURL:        stripe.String(successURL),
-		CancelURL:         stripe.String(cancelURL),
-		Mode:              stripe.String(string(stripe.CheckoutSessionModePayment)),
-		LineItems:         []*stripe.CheckoutSessionLineItemParams{lineItem},
+		ClientReferenceID:   stripe.String(input.TradeNo),
+		SuccessURL:          stripe.String(successURL),
+		CancelURL:           stripe.String(cancelURL),
+		Mode:                stripe.String(string(stripe.CheckoutSessionModePayment)),
+		LineItems:           []*stripe.CheckoutSessionLineItemParams{lineItem},
 		AllowPromotionCodes: stripe.Bool(setting.StripePromotionCodesEnabled),
 		Metadata: map[string]string{
 			"trade_no":      input.TradeNo,
@@ -289,11 +298,11 @@ func ParseCheckoutSessionEvent(event stripe.Event) (*StripeCheckoutSessionEvent,
 // BuildStripeFulfillmentPayload serializes webhook data for order audit logs.
 func BuildStripeFulfillmentPayload(session *StripeCheckoutSessionEvent, eventType string) string {
 	payload := map[string]any{
-		"session_id":    session.ID,
-		"customer":      session.Customer,
-		"amount_total":  session.AmountTotal,
-		"currency":      strings.ToUpper(session.Currency),
-		"event_type":    eventType,
+		"session_id":     session.ID,
+		"customer":       session.Customer,
+		"amount_total":   session.AmountTotal,
+		"currency":       strings.ToUpper(session.Currency),
+		"event_type":     eventType,
 		"payment_status": session.PaymentStatus,
 	}
 	return common.GetJsonString(payload)

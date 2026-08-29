@@ -23,6 +23,15 @@ import (
 
 func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
+	topupGroupRatio := 1.0
+	if userID := c.GetInt("id"); userID > 0 {
+		if group, err := model.GetUserGroup(userID, true); err == nil {
+			topupGroupRatio = common.GetTopupGroupRatio(group)
+			if topupGroupRatio <= 0 {
+				topupGroupRatio = 1
+			}
+		}
+	}
 
 	// 获取支付方式
 	payMethods := operation_setting.PayMethods
@@ -136,7 +145,12 @@ func GetTopUpInfo(c *gin.Context) {
 		"waffo_min_topup":         setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
+		"epusdt_credit_per_usdt":  setting.EffectiveEpUSDTCreditPerUSDT(),
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
+		"fee":                     operation_setting.GetPaymentSetting().AmountFee,
+		"quota_display_type":      operation_setting.GetQuotaDisplayType(),
+		"quota_per_unit":          common.QuotaPerUnit,
+		"topup_group_ratio":       topupGroupRatio,
 		"topup_link":              common.TopUpLink,
 	}
 	common.ApiSuccess(c, data)
@@ -149,6 +163,19 @@ type EpayRequest struct {
 
 type AmountRequest struct {
 	Amount int64 `json:"amount"`
+}
+
+// validateTopupAmountUnit prevents TOKENS requests with a fractional
+// canonical credit value from being charged and then truncated on settlement.
+func validateTopupAmountUnit(c *gin.Context, amount int64) bool {
+	if operation_setting.IsPaymentAmountAligned(amount) {
+		return true
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"message": "error",
+		"data":    "TOKENS 模式下充值数量必须是额度单位的整数倍",
+	})
+	return false
 }
 
 func GetEpayClient() *epay.Client {
@@ -181,28 +208,29 @@ func getPayMoney(amount int64, group string) float64 {
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
 	dPrice := decimal.NewFromFloat(operation_setting.Price)
-	// apply optional preset discount by the original request amount (if configured), default 1.0
-	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
-		if ds > 0 {
-			discount = ds
-		}
-	}
+	// Apply an optional preset discount by the original request amount. The
+	// lookup normalizes raw TOKENS requests to the canonical credit amount.
+	discount := operation_setting.GetAmountDiscountRateForTopupAmount(amount)
 	dDiscount := decimal.NewFromFloat(discount)
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(amount)
+	dFeeMultiplier := decimal.NewFromFloat(1 + feeRate)
 
-	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
+	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount).Mul(dFeeMultiplier)
 
 	return payMoney.InexactFloat64()
 }
 
 func getMinTopup() int64 {
-	minTopup := operation_setting.MinTopUp
+	return topupMinInRequestUnits(int64(operation_setting.MinTopUp))
+}
+
+func topupMinInRequestUnits(minTopup int64) int64 {
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		dMinTopup := decimal.NewFromInt(int64(minTopup))
+		dMinTopup := decimal.NewFromInt(minTopup)
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		minTopup = int(dMinTopup.Mul(dQuotaPerUnit).IntPart())
+		return dMinTopup.Mul(dQuotaPerUnit).IntPart()
 	}
-	return int64(minTopup)
+	return minTopup
 }
 
 func RequestEpay(c *gin.Context) {
@@ -210,6 +238,9 @@ func RequestEpay(c *gin.Context) {
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
+		return
+	}
+	if !validateTopupAmountUnit(c, req.Amount) {
 		return
 	}
 	if req.Amount < getMinTopup() {
@@ -268,6 +299,7 @@ func RequestEpay(c *gin.Context) {
 		UserId:          id,
 		Amount:          amount,
 		Money:           payMoney,
+		PaymentAmount:   payMoney,
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
 		PaymentProvider: model.PaymentProviderEpay,
@@ -436,6 +468,9 @@ func RequestAmount(c *gin.Context) {
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
+		return
+	}
+	if !validateTopupAmountUnit(c, req.Amount) {
 		return
 	}
 

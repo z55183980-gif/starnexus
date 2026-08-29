@@ -163,7 +163,14 @@ export function useBillingHistoryColumns({
         <DataTableColumnHeader column={column} title={t('Payment')} />
       ),
       cell: ({ row }) => {
-        const money = row.getValue('money') as number
+        const record = row.original
+        // New orders persist the gateway charge separately so processing
+        // fees are visible. Fall back to Money for historical rows.
+        const paymentAmount = Number(record.payment_amount)
+        const money =
+          Number.isFinite(paymentAmount) && paymentAmount > 0
+            ? paymentAmount
+            : (row.getValue('money') as number)
 
         return (
           <AmountBadge>
@@ -222,9 +229,7 @@ export function useBillingHistoryColumns({
             onClick={() => onCompleteOrder(record.trade_no)}
             disabled={completing}
           >
-            {completing ? (
-              <Loader2 className='size-4 animate-spin' />
-            ) : null}
+            {completing ? <Loader2 className='size-4 animate-spin' /> : null}
             {t('Complete Order')}
           </Button>
         )

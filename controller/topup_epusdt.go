@@ -84,12 +84,18 @@ func (r epusdtCreateOrderResponse) statusCode() int {
 	return r.CodeAlt
 }
 
-func epusdtPayMoneyFromCredit(creditAmount int64) float64 {
+func epusdtPayMoneyFromCredit(creditAmount int64, originalAmount ...int64) float64 {
 	if creditAmount <= 0 {
 		return 0
 	}
+	feeAmount := creditAmount
+	if len(originalAmount) > 0 {
+		feeAmount = originalAmount[0]
+	}
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(feeAmount)
 	return decimal.NewFromInt(creditAmount).
 		Div(decimal.NewFromFloat(setting.EffectiveEpUSDTCreditPerUSDT())).
+		Mul(decimal.NewFromFloat(1 + feeRate)).
 		Round(2).
 		InexactFloat64()
 }
@@ -120,6 +126,9 @@ func RequestUsdtPay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
 		return
 	}
+	if !validateTopupAmountUnit(c, req.Amount) {
+		return
+	}
 	if req.PaymentMethod != "" && req.PaymentMethod != paymentMethodUsdt {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "支付方式不存在"})
 		return
@@ -135,7 +144,7 @@ func RequestUsdtPay(c *gin.Context) {
 
 	id := c.GetInt("id")
 	creditAmount := epusdtStoredCreditAmount(req.Amount)
-	payMoney := epusdtPayMoneyFromCredit(creditAmount)
+	payMoney := epusdtPayMoneyFromCredit(creditAmount, req.Amount)
 	if payMoney < 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
@@ -195,6 +204,7 @@ func RequestUsdtPay(c *gin.Context) {
 		UserId:          id,
 		Amount:          amount,
 		Money:           payMoney,
+		PaymentAmount:   payMoney,
 		TradeNo:         tradeNo,
 		PaymentMethod:   paymentMethodUsdt,
 		PaymentProvider: model.PaymentProviderEpusdt,

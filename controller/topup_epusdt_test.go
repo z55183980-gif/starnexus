@@ -3,6 +3,7 @@ package controller
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
@@ -33,6 +34,28 @@ func TestEpusdtPayMoneyFromCredit(t *testing.T) {
 	setting.EpUSDTCreditPerUSDT = 5
 	if got := epusdtPayMoneyFromCredit(50); got != 10 {
 		t.Fatalf("epusdtPayMoneyFromCredit(50) with ratio 5 = %v, want 10", got)
+	}
+}
+
+func TestEpusdtPayMoneyNormalizesTokenFeeLookup(t *testing.T) {
+	originalRatio := setting.EpUSDTCreditPerUSDT
+	originalDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	originalQuotaPerUnit := common.QuotaPerUnit
+	originalFees := operation_setting.GetPaymentSetting().AmountFee
+	t.Cleanup(func() {
+		setting.EpUSDTCreditPerUSDT = originalRatio
+		operation_setting.GetGeneralSetting().QuotaDisplayType = originalDisplayType
+		common.QuotaPerUnit = originalQuotaPerUnit
+		operation_setting.GetPaymentSetting().AmountFee = originalFees
+	})
+
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
+	common.QuotaPerUnit = 500000
+	setting.EpUSDTCreditPerUSDT = 10
+	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.05}
+
+	if got := epusdtPayMoneyFromCredit(100, 50_000_000); got != 10.5 {
+		t.Fatalf("token fee lookup returned %v, want 10.5", got)
 	}
 }
 
@@ -84,5 +107,21 @@ func TestEpusdtGatewayAmountUsesDisplayedUSDTAmount(t *testing.T) {
 	}
 	if got := epusdtAmountSignString(pay); got != "7.35" {
 		t.Fatalf("epusdtAmountSignString(%v) = %q, want %q", pay, got, "7.35")
+	}
+}
+
+func TestEpusdtPayMoneyFromCreditAppliesFeeToOriginalAmount(t *testing.T) {
+	originalRatio := setting.EpUSDTCreditPerUSDT
+	originalFees := operation_setting.GetPaymentSetting().AmountFee
+	t.Cleanup(func() {
+		setting.EpUSDTCreditPerUSDT = originalRatio
+		operation_setting.GetPaymentSetting().AmountFee = originalFees
+	})
+
+	setting.EpUSDTCreditPerUSDT = 10
+	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.05}
+
+	if got := epusdtPayMoneyFromCredit(100, 100); got != 10.5 {
+		t.Fatalf("epusdtPayMoneyFromCredit(100, 100) = %v, want 10.5", got)
 	}
 }

@@ -18,12 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, useEffect } from 'react'
 import { getTopupInfo } from '../api'
+import { PAYMENT_TYPES, QUOTA_PER_DOLLAR } from '../constants'
 import {
   generatePresetAmounts,
   mergePresetAmounts,
   getMinTopupAmount,
 } from '../lib'
-import { PAYMENT_TYPES } from '../constants'
 import type { TopupInfo, PresetAmount, PaymentMethod } from '../types'
 
 const SUPPORTED_PAYMENT_TYPES = new Set<string>([
@@ -79,8 +79,7 @@ function parsePaymentMethods(
       }
     })
     .filter(
-      (item) =>
-        item.name && item.type && SUPPORTED_PAYMENT_TYPES.has(item.type)
+      (item) => item.name && item.type && SUPPORTED_PAYMENT_TYPES.has(item.type)
     )
 }
 
@@ -128,6 +127,57 @@ function parseDiscountMap(data: unknown): Record<number, number> {
   )
 }
 
+function parseFeeMap(data: unknown): Record<number, number> {
+  return parseDiscountMap(data)
+}
+
+function isQuotaDisplayType(
+  value: unknown
+): value is NonNullable<TopupInfo['quota_display_type']> {
+  return (
+    value === 'USD' ||
+    value === 'CNY' ||
+    value === 'TOKENS' ||
+    value === 'CUSTOM'
+  )
+}
+
+function normalizeRequestAmount(
+  amount: number,
+  quotaDisplayType: TopupInfo['quota_display_type'],
+  quotaPerUnit: number
+): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0
+  if (quotaDisplayType !== 'TOKENS') return amount
+
+  // Canonical settings use credit units (for example 100), while older
+  // installations may already contain raw token keys (for example 50000000).
+  // Preserve the latter instead of multiplying them a second time.
+  if (amount >= quotaPerUnit && amount % quotaPerUnit === 0) return amount
+  return Math.round(amount * quotaPerUnit)
+}
+
+function normalizeRequestMap(
+  values: Record<number, number>,
+  quotaDisplayType: TopupInfo['quota_display_type'],
+  quotaPerUnit: number
+): Record<number, number> {
+  if (quotaDisplayType !== 'TOKENS') return values
+
+  return Object.entries(values).reduce<Record<number, number>>(
+    (result, [key, value]) => {
+      const normalizedKey = normalizeRequestAmount(
+        Number(key),
+        quotaDisplayType,
+        quotaPerUnit
+      )
+      if (normalizedKey > 0) result[normalizedKey] = value
+      return result
+    },
+    {}
+  )
+}
+
 export function useTopupInfo() {
   const [topupInfo, setTopupInfo] = useState<TopupInfo | null>(null)
   const [presetAmounts, setPresetAmounts] = useState<PresetAmount[]>([])
@@ -149,12 +199,56 @@ export function useTopupInfo() {
         response.data.pay_methods,
         response.data.stripe_min_topup
       )
+      const quotaDisplayType = isQuotaDisplayType(
+        response.data.quota_display_type
+      )
+        ? response.data.quota_display_type
+        : 'USD'
+      const parsedQuotaPerUnit = Number(response.data.quota_per_unit)
+      const quotaPerUnit =
+        Number.isFinite(parsedQuotaPerUnit) && parsedQuotaPerUnit > 0
+          ? parsedQuotaPerUnit
+          : QUOTA_PER_DOLLAR
+      const normalizeAmount = (amount: number) =>
+        normalizeRequestAmount(amount, quotaDisplayType, quotaPerUnit)
+      const parsedDiscount = parseDiscountMap(response.data.discount)
+      const parsedFee = parseFeeMap(response.data.fee)
 
       const processedData: TopupInfo = {
         ...response.data,
-        pay_methods: payMethods,
-        amount_options: parseAmountOptions(response.data.amount_options),
-        discount: parseDiscountMap(response.data.discount),
+        quota_display_type: quotaDisplayType,
+        quota_per_unit: quotaPerUnit,
+        topup_group_ratio:
+          Number.isFinite(Number(response.data.topup_group_ratio)) &&
+          Number(response.data.topup_group_ratio) > 0
+            ? Number(response.data.topup_group_ratio)
+            : 1,
+        min_topup: normalizeAmount(Number(response.data.min_topup)),
+        stripe_min_topup: normalizeAmount(
+          Number(response.data.stripe_min_topup)
+        ),
+        waffo_min_topup: response.data.waffo_min_topup
+          ? normalizeAmount(Number(response.data.waffo_min_topup))
+          : response.data.waffo_min_topup,
+        waffo_pancake_min_topup: response.data.waffo_pancake_min_topup
+          ? normalizeAmount(Number(response.data.waffo_pancake_min_topup))
+          : response.data.waffo_pancake_min_topup,
+        pay_methods: payMethods.map((method) => ({
+          ...method,
+          min_topup:
+            method.min_topup && method.min_topup > 0
+              ? normalizeAmount(method.min_topup)
+              : method.min_topup,
+        })),
+        amount_options: parseAmountOptions(response.data.amount_options).map(
+          normalizeAmount
+        ),
+        discount: normalizeRequestMap(
+          parsedDiscount,
+          quotaDisplayType,
+          quotaPerUnit
+        ),
+        fee: normalizeRequestMap(parsedFee, quotaDisplayType, quotaPerUnit),
       }
 
       setTopupInfo(processedData)

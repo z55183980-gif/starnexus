@@ -14,10 +14,14 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
+	Id     int     `json:"id"`
+	UserId int     `json:"user_id" gorm:"index"`
+	Amount int64   `json:"amount"`
+	Money  float64 `json:"money"`
+	// PaymentAmount is the amount charged by the payment gateway, including
+	// configured processing fees. Money keeps the provider-specific legacy
+	// value used by settlement and affiliate logic.
+	PaymentAmount   float64 `json:"payment_amount"`
 	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
 	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
@@ -109,7 +113,7 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 	})
 }
 
-func Recharge(referenceId string, customerId string, callerIp string) (err error) {
+func Recharge(referenceId string, customerId string, callerIp string, paymentAmount ...float64) (err error) {
 	if referenceId == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -138,6 +142,9 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
+		if len(paymentAmount) > 0 && paymentAmount[0] > 0 {
+			topUp.PaymentAmount = paymentAmount[0]
+		}
 		err = tx.Save(topUp).Error
 		if err != nil {
 			return err

@@ -83,13 +83,9 @@ func getWaffoPayMoney(amount float64, group string) float64 {
 	if topupGroupRatio == 0 {
 		topupGroupRatio = 1
 	}
-	discount := 1.0
-	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(originalAmount)]; ok {
-		if ds > 0 {
-			discount = ds
-		}
-	}
-	return amount * setting.WaffoUnitPrice * topupGroupRatio * discount
+	discount := operation_setting.GetAmountDiscountRateForTopupAmount(int64(originalAmount))
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(int64(originalAmount))
+	return amount * setting.WaffoUnitPrice * topupGroupRatio * discount * (1 + feeRate)
 }
 
 type WaffoPayRequest struct {
@@ -105,8 +101,11 @@ func RequestWaffoAmount(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
 		return
 	}
+	if !validateTopupAmountUnit(c, req.Amount) {
+		return
+	}
 
-	waffoMinTopup := int64(setting.WaffoMinTopUp)
+	waffoMinTopup := topupMinInRequestUnits(int64(setting.WaffoMinTopUp))
 	if req.Amount < waffoMinTopup {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", waffoMinTopup)})
 		return
@@ -140,7 +139,10 @@ func RequestWaffoPay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
 		return
 	}
-	waffoMinTopup := int64(setting.WaffoMinTopUp)
+	if !validateTopupAmountUnit(c, req.Amount) {
+		return
+	}
+	waffoMinTopup := topupMinInRequestUnits(int64(setting.WaffoMinTopUp))
 	if req.Amount < waffoMinTopup {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", waffoMinTopup)})
 		return
@@ -210,6 +212,7 @@ func RequestWaffoPay(c *gin.Context) {
 		UserId:          id,
 		Amount:          amount,
 		Money:           payMoney,
+		PaymentAmount:   payMoney,
 		TradeNo:         merchantOrderId,
 		PaymentMethod:   model.PaymentMethodWaffo,
 		PaymentProvider: model.PaymentProviderWaffo,

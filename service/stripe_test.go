@@ -3,7 +3,9 @@ package service
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/require"
 	"github.com/stripe/stripe-go/v81"
 )
@@ -22,6 +24,24 @@ func TestIsStripeConfigured(t *testing.T) {
 
 	setting.StripeWebhookSecret = ""
 	require.False(t, IsStripeConfigured())
+}
+
+func TestCalculateStripePayMoneyNormalizesTokenFeeLookup(t *testing.T) {
+	originalDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	originalQuotaPerUnit := common.QuotaPerUnit
+	originalFees := operation_setting.GetPaymentSetting().AmountFee
+	t.Cleanup(func() {
+		operation_setting.GetGeneralSetting().QuotaDisplayType = originalDisplayType
+		common.QuotaPerUnit = originalQuotaPerUnit
+		operation_setting.GetPaymentSetting().AmountFee = originalFees
+	})
+
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
+	common.QuotaPerUnit = 500000
+	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.05}
+
+	require.Equal(t, int64(5_000_000_000), StripeMaxTopUp())
+	require.Equal(t, 105.0, CalculateStripePayMoney(50_000_000, "unknown-group"))
 }
 
 func TestStripePayMoneyToUnitAmount(t *testing.T) {
@@ -68,8 +88,10 @@ func TestNormalizeStripeCurrency(t *testing.T) {
 
 func TestCalculateStripePayMoneyUsesOneToOneRate(t *testing.T) {
 	originalUnitPrice := setting.StripeUnitPrice
+	originalFees := operation_setting.GetPaymentSetting().AmountFee
 	t.Cleanup(func() {
 		setting.StripeUnitPrice = originalUnitPrice
+		operation_setting.GetPaymentSetting().AmountFee = originalFees
 	})
 
 	setting.StripeUnitPrice = 8
@@ -77,9 +99,19 @@ func TestCalculateStripePayMoneyUsesOneToOneRate(t *testing.T) {
 	require.Equal(t, float64(10), payMoney)
 }
 
+func TestCalculateStripePayMoneyAppliesExactAmountFee(t *testing.T) {
+	originalFees := operation_setting.GetPaymentSetting().AmountFee
+	t.Cleanup(func() {
+		operation_setting.GetPaymentSetting().AmountFee = originalFees
+	})
+
+	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.03}
+	require.Equal(t, 103.0, CalculateStripePayMoney(100, "unknown-group"))
+	require.Equal(t, 101.0, CalculateStripePayMoney(101, "unknown-group"))
+}
+
 func TestCalculateStripeChargedAmountUsesGroupRatio(t *testing.T) {
 	// Uses global group ratio map; default unknown group should still return count.
 	charged := CalculateStripeChargedAmount(10, "unknown-group")
 	require.Equal(t, float64(10), charged)
 }
-

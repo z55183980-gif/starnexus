@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { formatCurrencyFromUSD } from '@/lib/currency'
+import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,8 +31,13 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
-import { formatPaymentChargeAmount, getDisplayPaymentAmount, getPaymentIcon } from '../../lib'
-import type { PaymentMethod } from '../../types'
+import {
+  calculatePaymentFeeAmount,
+  formatPaymentChargeAmount,
+  getDisplayPaymentAmount,
+  getPaymentIcon,
+} from '../../lib'
+import type { PaymentMethod, QuotaDisplayType } from '../../types'
 
 interface PaymentConfirmDialogProps {
   open: boolean
@@ -44,6 +49,10 @@ interface PaymentConfirmDialogProps {
   calculating: boolean
   processing: boolean
   discountRate?: number
+  feeRate?: number
+  epusdtCreditPerUsdt?: number
+  quotaDisplayType?: QuotaDisplayType
+  quotaPerUnit?: number
   usdExchangeRate?: number
   stripeCurrency?: string
 }
@@ -58,6 +67,10 @@ export function PaymentConfirmDialog({
   calculating,
   processing,
   discountRate = DEFAULT_DISCOUNT_RATE,
+  feeRate = 0,
+  epusdtCreditPerUsdt,
+  quotaDisplayType,
+  quotaPerUnit,
   stripeCurrency,
 }: PaymentConfirmDialogProps) {
   const { t } = useTranslation()
@@ -65,15 +78,25 @@ export function PaymentConfirmDialog({
   const displayPaymentAmount = getDisplayPaymentAmount(
     paymentMethod?.type,
     topupAmount,
-    paymentAmount
+    paymentAmount,
+    feeRate,
+    epusdtCreditPerUsdt,
+    quotaDisplayType,
+    quotaPerUnit
   )
+  const paymentFeeAmount = calculatePaymentFeeAmount(
+    displayPaymentAmount,
+    feeRate
+  )
+  const discountedPaymentAmount = displayPaymentAmount - paymentFeeAmount
   const hasDiscount =
-    !isUsdtPayment &&
-    discountRate > 0 &&
-    discountRate < 1 &&
-    paymentAmount > 0
-  const originalAmount = hasDiscount ? paymentAmount / discountRate : 0
-  const discountAmount = hasDiscount ? originalAmount - paymentAmount : 0
+    !isUsdtPayment && discountRate > 0 && discountRate < 1 && paymentAmount > 0
+  const originalAmount = hasDiscount
+    ? discountedPaymentAmount / discountRate
+    : 0
+  const discountAmount = hasDiscount
+    ? originalAmount - discountedPaymentAmount
+    : 0
 
   const paymentFormatOptions = {
     digitsLarge: 2,
@@ -82,11 +105,7 @@ export function PaymentConfirmDialog({
     stripeCurrency,
   } as const
   const formatCharge = (amount: number) =>
-    formatPaymentChargeAmount(
-      amount,
-      paymentMethod?.type,
-      paymentFormatOptions
-    )
+    formatPaymentChargeAmount(amount, paymentMethod?.type, paymentFormatOptions)
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
@@ -106,7 +125,9 @@ export function PaymentConfirmDialog({
               {t('Topup Amount')}
             </span>
             <span className='text-lg font-semibold'>
-              {formatCurrencyFromUSD(topupAmount, paymentFormatOptions)}
+              {quotaDisplayType === 'TOKENS'
+                ? formatQuotaWithCurrency(topupAmount, paymentFormatOptions)
+                : formatCurrencyFromUSD(topupAmount, paymentFormatOptions)}
             </span>
           </div>
 
@@ -136,6 +157,21 @@ export function PaymentConfirmDialog({
                 <span className='text-muted-foreground'>{t('You save')}</span>
                 <span className='font-semibold text-green-600'>
                   {formatCharge(discountAmount)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {feeRate > 0 && !calculating && paymentFeeAmount > 0 && (
+            <div className='bg-warning/5 rounded-lg p-3'>
+              <div className='flex items-center justify-between text-sm'>
+                <span className='text-muted-foreground'>
+                  {t('Processing fee ({{percentage}}%)', {
+                    percentage: Math.round(feeRate * 10000) / 100,
+                  })}
+                </span>
+                <span className='text-warning font-semibold'>
+                  {formatCharge(paymentFeeAmount)}
                 </span>
               </div>
             </div>

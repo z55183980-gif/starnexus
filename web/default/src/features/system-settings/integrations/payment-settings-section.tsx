@@ -57,7 +57,9 @@ import { StatusBadge } from '@/components/status-badge'
 import { confirmPaymentCompliance } from '../api'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { normalizePayMethodsJson } from '../utils/normalize-pay-methods'
 import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
+import { AmountFeeVisualEditor } from './amount-fee-visual-editor'
 import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
 import {
@@ -68,7 +70,25 @@ import {
   removeTrailingSlash,
   resolveEpusdtGatewayAddress,
 } from './utils'
-import { normalizePayMethodsJson } from '../utils/normalize-pay-methods'
+
+function isValidAmountFeeMap(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return false
+  }
+
+  return Object.entries(parsed).every(([key, value]) => {
+    const amount = Number(key)
+    return (
+      /^\d+$/.test(key) &&
+      Number.isSafeInteger(amount) &&
+      amount > 0 &&
+      typeof value === 'number' &&
+      Number.isFinite(value) &&
+      value >= 0 &&
+      value <= 1
+    )
+  })
+}
 
 const paymentSchema = z.object({
   EpUSDTGatewayAddress: z.string().refine((value) => {
@@ -109,6 +129,15 @@ const paymentSchema = z.object({
       (parsed) =>
         !!parsed && typeof parsed === 'object' && !Array.isArray(parsed)
     )
+    if (error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: error,
+      })
+    }
+  }),
+  AmountFee: z.string().superRefine((value, ctx) => {
+    const error = getJsonError(value, isValidAmountFeeMap)
     if (error) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -196,6 +225,7 @@ export function PaymentSettingsSection({
     React.useState(true)
   const [amountDiscountVisualMode, setAmountDiscountVisualMode] =
     React.useState(true)
+  const [amountFeeVisualMode, setAmountFeeVisualMode] = React.useState(true)
   const [showComplianceDialog, setShowComplianceDialog] = React.useState(false)
 
   const resolvedLegacyPayMethods =
@@ -301,6 +331,7 @@ export function PaymentSettingsSection({
       PayMethods: formatJsonForEditor(defaultValues.PayMethods),
       AmountOptions: formatJsonForEditor(defaultValues.AmountOptions),
       AmountDiscount: formatJsonForEditor(defaultValues.AmountDiscount),
+      AmountFee: formatJsonForEditor(defaultValues.AmountFee),
     },
   })
 
@@ -312,6 +343,7 @@ export function PaymentSettingsSection({
       PayMethods: formatJsonForEditor(parsedDefaults.PayMethods),
       AmountOptions: formatJsonForEditor(parsedDefaults.AmountOptions),
       AmountDiscount: formatJsonForEditor(parsedDefaults.AmountDiscount),
+      AmountFee: formatJsonForEditor(parsedDefaults.AmountFee),
     })
   }, [defaultsSignature, form])
 
@@ -323,6 +355,7 @@ export function PaymentSettingsSection({
       PayMethods: normalizePayMethodsJson(values.PayMethods.trim()),
       AmountOptions: values.AmountOptions.trim(),
       AmountDiscount: values.AmountDiscount.trim(),
+      AmountFee: values.AmountFee.trim() || '{}',
     }
 
     const initial = {
@@ -331,6 +364,7 @@ export function PaymentSettingsSection({
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
+      AmountFee: initialRef.current.AmountFee.trim() || '{}',
     }
 
     const updates: Array<{ key: string; value: string | number }> = []
@@ -367,6 +401,16 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_discount',
         value: sanitized.AmountDiscount,
+      })
+    }
+
+    if (
+      normalizeJsonForComparison(sanitized.AmountFee) !==
+      normalizeJsonForComparison(initial.AmountFee)
+    ) {
+      updates.push({
+        key: 'payment_setting.amount_fee',
+        value: sanitized.AmountFee,
       })
     }
 
@@ -569,6 +613,7 @@ export function PaymentSettingsSection({
       PayMethods: normalizePayMethodsJson(values.PayMethods.trim()),
       AmountOptions: values.AmountOptions.trim(),
       AmountDiscount: values.AmountDiscount.trim(),
+      AmountFee: values.AmountFee.trim() || '{}',
       StripeApiSecret: values.StripeApiSecret.trim(),
       StripeWebhookSecret: values.StripeWebhookSecret.trim(),
       StripePriceId: values.StripePriceId.trim(),
@@ -589,6 +634,7 @@ export function PaymentSettingsSection({
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
+      AmountFee: initialRef.current.AmountFee.trim() || '{}',
       StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
       StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
       StripePriceId: initialRef.current.StripePriceId.trim(),
@@ -663,6 +709,16 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_discount',
         value: sanitized.AmountDiscount,
+      })
+    }
+
+    if (
+      normalizeJsonForComparison(sanitized.AmountFee) !==
+      normalizeJsonForComparison(initial.AmountFee)
+    ) {
+      updates.push({
+        key: 'payment_setting.amount_fee',
+        value: sanitized.AmountFee,
       })
     }
 
@@ -1018,6 +1074,60 @@ export function PaymentSettingsSection({
               />
             </div>
 
+            <FormField
+              control={form.control}
+              name='AmountFee'
+              render={({ field }) => (
+                <FormItem>
+                  <div className='mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+                    <FormLabel>{t('Recharge processing fees')}</FormLabel>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      size='sm'
+                      onClick={() =>
+                        setAmountFeeVisualMode(!amountFeeVisualMode)
+                      }
+                      className='w-full sm:w-auto'
+                    >
+                      {amountFeeVisualMode ? (
+                        <>
+                          <Code2 className='mr-2 h-3 w-3' />
+                          {t('JSON Editor')}
+                        </>
+                      ) : (
+                        <>
+                          <Eye className='mr-2 h-3 w-3' />
+                          {t('Visual Editor')}
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                  <FormControl>
+                    {amountFeeVisualMode ? (
+                      <AmountFeeVisualEditor
+                        value={field.value}
+                        onChange={field.onChange}
+                      />
+                    ) : (
+                      <Textarea
+                        rows={4}
+                        placeholder='{"100":0.03,"200":0.02}'
+                        {...field}
+                        onChange={(event) => field.onChange(event.target.value)}
+                      />
+                    )}
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Set a percentage fee for each exact recharge amount. For example, 0.03 adds a 3% processing fee.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
             <Button
               type='button'
               onClick={(e) => {
@@ -1039,7 +1149,9 @@ export function PaymentSettingsSection({
             <div>
               <h3 className='text-lg font-medium'>{t('EpUSDT Gateway')}</h3>
               <p className='text-muted-foreground text-sm'>
-                {t('Configuration for EpUSDT cryptocurrency payment integration')}
+                {t(
+                  'Configuration for EpUSDT cryptocurrency payment integration'
+                )}
               </p>
             </div>
 
@@ -1331,10 +1443,7 @@ export function PaymentSettingsSection({
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>{t('Stripe settlement currency')}</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={field.onChange}
-                    >
+                    <Select value={field.value} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue

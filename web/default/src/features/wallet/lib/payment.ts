@@ -16,15 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { formatPaymentGatewayAmount } from '@/lib/currency'
 import {
   PAYMENT_TYPES,
   DEFAULT_PRESET_MULTIPLIERS,
   DEFAULT_PAYMENT_TYPE,
   DEFAULT_MIN_TOPUP,
   EPUSDT_CREDIT_PER_USDT,
+  QUOTA_PER_DOLLAR,
 } from '../constants'
-import type { PresetAmount, TopupInfo } from '../types'
-import { formatPaymentGatewayAmount } from '@/lib/currency'
+import type { PresetAmount, QuotaDisplayType, TopupInfo } from '../types'
 import { formatCurrency } from './format'
 
 // ============================================================================
@@ -80,16 +81,54 @@ export function isStripePayment(paymentType: string): boolean {
 
 /**
  * Calculate EpUSDT payment amount from credit (system USD units).
- * payUSDT = credit / EPUSDT_CREDIT_PER_USDT, rounded to 2 decimals.
+ * payUSDT = credit / creditPerUsdt × (1 + fee rate), rounded to 2 decimals.
  */
-export function calculateEpusdtPayAmount(creditAmount: number): number {
+export function calculateEpusdtPayAmount(
+  creditAmount: number,
+  feeRate = 0,
+  creditPerUsdt = EPUSDT_CREDIT_PER_USDT
+): number {
   if (!Number.isFinite(creditAmount) || creditAmount <= 0) {
     return 0
   }
 
+  const normalizedCreditPerUsdt =
+    Number.isFinite(creditPerUsdt) && creditPerUsdt > 0
+      ? creditPerUsdt
+      : EPUSDT_CREDIT_PER_USDT
+  const normalizedFeeRate =
+    Number.isFinite(feeRate) && feeRate > 0 && feeRate <= 1 ? feeRate : 0
   return (
-    Math.round((creditAmount / EPUSDT_CREDIT_PER_USDT) * 100) / 100
+    Math.round(
+      (creditAmount / normalizedCreditPerUsdt) * (1 + normalizedFeeRate) * 100
+    ) / 100
   )
+}
+
+/** Convert the amount sent by the wallet UI into canonical credit USD units. */
+export function getTopupCreditAmount(
+  amount: number,
+  quotaDisplayType?: QuotaDisplayType,
+  quotaPerUnit = QUOTA_PER_DOLLAR
+): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0
+  if (
+    quotaDisplayType === 'TOKENS' &&
+    Number.isFinite(quotaPerUnit) &&
+    quotaPerUnit > 0
+  ) {
+    return amount / quotaPerUnit
+  }
+  return amount
+}
+
+/** Return the fee rate for an exact recharge amount. */
+export function getAmountFeeRate(
+  topupInfo: TopupInfo | null,
+  amount: number
+): number {
+  const rate = Number(topupInfo?.fee?.[amount] ?? 0)
+  return Number.isFinite(rate) && rate > 0 && rate <= 1 ? rate : 0
 }
 
 /**
@@ -98,12 +137,37 @@ export function calculateEpusdtPayAmount(creditAmount: number): number {
 export function getDisplayPaymentAmount(
   paymentType: string | undefined,
   topupAmount: number,
-  paymentAmount: number
+  paymentAmount: number,
+  feeRate = 0,
+  creditPerUsdt = EPUSDT_CREDIT_PER_USDT,
+  quotaDisplayType?: QuotaDisplayType,
+  quotaPerUnit = QUOTA_PER_DOLLAR
 ): number {
   if (paymentType && isUsdtPayment(paymentType)) {
-    return calculateEpusdtPayAmount(topupAmount)
+    return calculateEpusdtPayAmount(
+      getTopupCreditAmount(topupAmount, quotaDisplayType, quotaPerUnit),
+      feeRate,
+      creditPerUsdt
+    )
   }
   return paymentAmount
+}
+
+/** Calculate the fee component from the final amount and its percentage rate. */
+export function calculatePaymentFeeAmount(
+  paymentAmount: number,
+  feeRate: number
+): number {
+  if (
+    !Number.isFinite(paymentAmount) ||
+    paymentAmount <= 0 ||
+    !Number.isFinite(feeRate) ||
+    feeRate <= 0 ||
+    feeRate > 1
+  ) {
+    return 0
+  }
+  return paymentAmount - paymentAmount / (1 + feeRate)
 }
 
 export function isUsdtPayment(paymentType: string): boolean {
