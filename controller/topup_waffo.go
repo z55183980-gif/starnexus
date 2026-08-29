@@ -84,7 +84,7 @@ func getWaffoPayMoney(amount float64, group string) float64 {
 		topupGroupRatio = 1
 	}
 	discount := operation_setting.GetAmountDiscountRateForTopupAmount(int64(originalAmount))
-	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(int64(originalAmount))
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmountAndMethod(int64(originalAmount), model.PaymentMethodWaffo)
 	return amount * setting.WaffoUnitPrice * topupGroupRatio * discount * (1 + feeRate)
 }
 

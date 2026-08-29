@@ -147,8 +147,8 @@ export interface TopupInfo {
   amount_options: number[]
   /** Discount rates by amount */
   discount: Record<number, number>
-  /** Processing fee rates by exact amount (0.03 = 3%) */
-  fee?: Record<number, number>
+  /** Processing fee rates by amount or payment-method:amount (0.03 = 3%). */
+  fee?: Record<string, number>
   /** Display unit used by the top-up request (TOKENS sends raw token units). */
   quota_display_type?: QuotaDisplayType
   /** Number of raw tokens per one canonical credit unit. */
@@ -231,6 +231,8 @@ export interface WaffoPancakePaymentRequest {
 export interface AmountRequest {
   /** Topup amount to calculate */
   amount: number
+  /** Payment channel used for channel-scoped fee calculation. */
+  payment_method?: string
 }
 
 /**

@@ -34,14 +34,18 @@ import { safeJsonParseWithValidation } from '../utils/json-parser'
 import { isObjectRecord } from '../utils/json-validators'
 import { AmountFeeDialog, type AmountFeeData } from './amount-fee-dialog'
 
+const ALL_PAYMENT_METHODS = '__all__'
+
 type AmountFeeVisualEditorProps = {
   value: string
   onChange: (value: string) => void
+  paymentMethods?: Array<{ type: string; name: string }>
 }
 
 export function AmountFeeVisualEditor({
   value,
   onChange,
+  paymentMethods = [],
 }: AmountFeeVisualEditorProps) {
   const { t } = useTranslation()
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -56,15 +60,40 @@ export function AmountFeeVisualEditor({
     })
 
     return Object.entries(parsed)
-      .map(([amount, rate]) => ({
-        amount: parseInt(amount, 10),
-        feeRate: typeof rate === 'number' ? rate : parseFloat(String(rate)),
-      }))
+      .map(([key, rate]) => {
+        const separator = key.indexOf(':')
+        const paymentMethod =
+          separator >= 0 ? key.slice(0, separator) : ALL_PAYMENT_METHODS
+        const amount = separator >= 0 ? key.slice(separator + 1) : key
+        return {
+          paymentMethod,
+          amount: parseInt(amount, 10),
+          feeRate: typeof rate === 'number' ? rate : parseFloat(String(rate)),
+        }
+      })
       .filter(
         (item) => Number.isFinite(item.amount) && Number.isFinite(item.feeRate)
       )
       .sort((a, b) => a.amount - b.amount)
   }, [value, t])
+
+  const availablePaymentMethods = useMemo(() => {
+    const methods = new Map(
+      paymentMethods.map((method) => [method.type, method] as const)
+    )
+    fees.forEach((fee) => {
+      if (
+        fee.paymentMethod !== ALL_PAYMENT_METHODS &&
+        !methods.has(fee.paymentMethod)
+      ) {
+        methods.set(fee.paymentMethod, {
+          type: fee.paymentMethod,
+          name: fee.paymentMethod,
+        })
+      }
+    })
+    return Array.from(methods.values())
+  }, [fees, paymentMethods])
 
   const readFeeObject = () =>
     safeJsonParseWithValidation<Record<string, unknown>>(value, {
@@ -75,18 +104,30 @@ export function AmountFeeVisualEditor({
 
   const handleSave = (data: AmountFeeData) => {
     const feeObject = readFeeObject()
-    if (editData && editData.amount !== data.amount) {
-      delete feeObject[editData.amount.toString()]
+    const previousKey = editData
+      ? `${editData.paymentMethod && editData.paymentMethod !== ALL_PAYMENT_METHODS ? `${editData.paymentMethod}:` : ''}${editData.amount}`
+      : ''
+    const nextKey = `${data.paymentMethod && data.paymentMethod !== ALL_PAYMENT_METHODS ? `${data.paymentMethod}:` : ''}${data.amount}`
+    if (editData && previousKey !== nextKey) {
+      delete feeObject[previousKey]
     }
-    feeObject[data.amount.toString()] = data.feeRate
+    feeObject[nextKey] = data.feeRate
     onChange(JSON.stringify(feeObject, null, 2))
   }
 
-  const handleDelete = (amount: number) => {
+  const handleDelete = (fee: AmountFeeData) => {
     const feeObject = readFeeObject()
-    delete feeObject[amount.toString()]
+    delete feeObject[
+      `${fee.paymentMethod && fee.paymentMethod !== ALL_PAYMENT_METHODS ? `${fee.paymentMethod}:` : ''}${fee.amount}`
+    ]
     onChange(JSON.stringify(feeObject, null, 2))
   }
+
+  const displayChannel = (paymentMethod: string) =>
+    paymentMethod && paymentMethod !== ALL_PAYMENT_METHODS
+      ? availablePaymentMethods.find((method) => method.type === paymentMethod)
+          ?.name || paymentMethod
+      : t('All payment channels (legacy)')
 
   const openAddDialog = () => {
     setEditData(null)
@@ -134,6 +175,7 @@ export function AmountFeeVisualEditor({
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>{t('Payment channel')}</TableHead>
                   <TableHead>{t('Recharge Amount')}</TableHead>
                   <TableHead>{t('Processing fee rate')}</TableHead>
                   <TableHead>{t('Fee shown to users')}</TableHead>
@@ -142,7 +184,8 @@ export function AmountFeeVisualEditor({
               </TableHeader>
               <TableBody>
                 {fees.map((fee) => (
-                  <TableRow key={fee.amount}>
+                  <TableRow key={`${fee.paymentMethod}:${fee.amount}`}>
+                    <TableCell>{displayChannel(fee.paymentMethod)}</TableCell>
                     <TableCell>
                       <span className='font-mono text-sm'>${fee.amount}</span>
                     </TableCell>
@@ -179,7 +222,7 @@ export function AmountFeeVisualEditor({
                           onClick={(event) => {
                             event.preventDefault()
                             event.stopPropagation()
-                            handleDelete(fee.amount)
+                            handleDelete(fee)
                           }}
                         >
                           <HugeiconsIcon icon={Delete02Icon} />
@@ -199,6 +242,7 @@ export function AmountFeeVisualEditor({
         onOpenChange={setDialogOpen}
         onSave={handleSave}
         editData={editData}
+        paymentMethods={availablePaymentMethods}
       />
     </div>
   )

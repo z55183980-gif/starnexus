@@ -413,7 +413,8 @@ export function RechargeFormCard({
                     )
                     const presetFeeRate = getAmountFeeRate(
                       topupInfo,
-                      preset.value
+                      preset.value,
+                      selectedPaymentType
                     )
                     const actualPrice = isUsdtSelected
                       ? calculateEpusdtPayAmount(

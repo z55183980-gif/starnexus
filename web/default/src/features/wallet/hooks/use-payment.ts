@@ -70,8 +70,14 @@ export function usePayment() {
 
         const isStripe = isStripePayment(paymentType)
         const response = isStripe
-          ? await calculateStripeAmount({ amount: topupAmount })
-          : await calculateAmount({ amount: topupAmount })
+          ? await calculateStripeAmount({
+              amount: topupAmount,
+              payment_method: paymentType,
+            })
+          : await calculateAmount({
+              amount: topupAmount,
+              payment_method: paymentType,
+            })
 
         if (isApiSuccess(response) && response.data) {
           const calculatedAmount = parseFloat(response.data)

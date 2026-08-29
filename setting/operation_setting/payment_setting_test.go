@@ -12,10 +12,10 @@ func TestGetAmountFeeRateUsesExactAmountAndIgnoresInvalidRates(t *testing.T) {
 		paymentSetting.AmountFee = originalFees
 	})
 
-	paymentSetting.AmountFee = map[int]float64{
-		100: 0.03,
-		200: 0,
-		300: 1.01,
+	paymentSetting.AmountFee = map[string]float64{
+		"100": 0.03,
+		"200": 0,
+		"300": 1.01,
 	}
 
 	if got := GetAmountFeeRate(100); got != 0.03 {
@@ -47,7 +47,7 @@ func TestAmountRatesNormalizeTokenRequestsToCanonicalCredit(t *testing.T) {
 	generalSetting.QuotaDisplayType = QuotaDisplayTypeTokens
 	common.QuotaPerUnit = 500000
 	paymentSetting.AmountDiscount = map[int]float64{100: 0.9}
-	paymentSetting.AmountFee = map[int]float64{100: 0.05}
+	paymentSetting.AmountFee = map[string]float64{"100": 0.05}
 
 	key, ok := GetPaymentAmountKey(50_000_000)
 	if !ok || key != 100 {
@@ -61,5 +61,43 @@ func TestAmountRatesNormalizeTokenRequestsToCanonicalCredit(t *testing.T) {
 	}
 	if _, ok := GetPaymentAmountKey(50_000_001); ok {
 		t.Fatal("expected non-integral token amount to have no exact pricing key")
+	}
+}
+
+func TestAmountFeeRateCanBeScopedToPaymentMethod(t *testing.T) {
+	originalFees := paymentSetting.AmountFee
+	t.Cleanup(func() { paymentSetting.AmountFee = originalFees })
+
+	paymentSetting.AmountFee = map[string]float64{
+		"stripe:100": 0.03,
+		"usdt:100":   0.05,
+	}
+	if got := GetAmountFeeRateForTopupAmountAndMethod(100, "stripe"); got != 0.03 {
+		t.Fatalf("stripe fee = %v, want 0.03", got)
+	}
+	if got := GetAmountFeeRateForTopupAmountAndMethod(100, "usdt"); got != 0.05 {
+		t.Fatalf("usdt fee = %v, want 0.05", got)
+	}
+	if got := GetAmountFeeRateForTopupAmountAndMethod(100, "alipay"); got != 0 {
+		t.Fatalf("unconfigured channel fee = %v, want 0", got)
+	}
+}
+
+func TestChannelFeeCanExplicitlyDisableLegacyFee(t *testing.T) {
+	originalFees := paymentSetting.AmountFee
+	t.Cleanup(func() { paymentSetting.AmountFee = originalFees })
+
+	paymentSetting.AmountFee = map[string]float64{
+		"100":        0.03,
+		"stripe:100": 0,
+	}
+	if got := GetAmountFeeRateForTopupAmountAndMethod(100, "stripe"); got != 0 {
+		t.Fatalf("explicit zero channel fee = %v, want 0", got)
+	}
+	if got := GetAmountFeeRateForTopupAmountAndMethod(100, "usdt"); got != 0 {
+		t.Fatalf("unconfigured channel fee = %v, want 0", got)
+	}
+	if got := GetAmountFeeRateForTopupAmount(100); got != 0 {
+		t.Fatalf("fee without selected channel = %v, want 0", got)
 	}
 }

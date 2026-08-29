@@ -92,7 +92,7 @@ func epusdtPayMoneyFromCredit(creditAmount int64, originalAmount ...int64) float
 	if len(originalAmount) > 0 {
 		feeAmount = originalAmount[0]
 	}
-	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(feeAmount)
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmountAndMethod(feeAmount, paymentMethodUsdt)
 	return decimal.NewFromInt(creditAmount).
 		Div(decimal.NewFromFloat(setting.EffectiveEpUSDTCreditPerUSDT())).
 		Mul(decimal.NewFromFloat(1 + feeRate)).

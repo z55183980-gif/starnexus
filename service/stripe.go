@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stripe/stripe-go/v81"
@@ -112,7 +113,7 @@ func CalculateStripePayMoney(amount float64, group string) float64 {
 	}
 
 	discount := operation_setting.GetAmountDiscountRateForTopupAmount(int64(originalAmount))
-	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(int64(originalAmount))
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmountAndMethod(int64(originalAmount), model.PaymentMethodStripe)
 
 	// Stripe charges 1:1 in the configured settlement currency (no FX conversion).
 	return amount * topupGroupRatio * discount * (1 + feeRate)

@@ -127,7 +127,7 @@ export function Wallet(props: WalletProps) {
     calculatePaymentAmount(
       minTopup,
       defaultPaymentType,
-      getAmountFeeRate(topupInfo, minTopup),
+      getAmountFeeRate(topupInfo, minTopup, defaultPaymentType),
       epusdtCreditPerUsdt,
       quotaDisplayType,
       quotaPerUnit
@@ -145,8 +145,9 @@ export function Wallet(props: WalletProps) {
   }, [selectedPaymentMethod, topupInfo])
 
   const getCurrentFeeRate = useCallback(
-    (amount: number) => getAmountFeeRate(topupInfo, amount),
-    [topupInfo]
+    (amount: number) =>
+      getAmountFeeRate(topupInfo, amount, getCurrentPaymentType()),
+    [getCurrentPaymentType, topupInfo]
   )
 
   const handleSelectPreset = (preset: PresetAmount) => {
@@ -184,7 +185,7 @@ export function Wallet(props: WalletProps) {
     calculatePaymentAmount(
       topupAmount,
       method.type,
-      getCurrentFeeRate(topupAmount),
+      getAmountFeeRate(topupInfo, topupAmount, method.type),
       epusdtCreditPerUsdt,
       quotaDisplayType,
       quotaPerUnit

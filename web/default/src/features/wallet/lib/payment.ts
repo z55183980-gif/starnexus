@@ -125,9 +125,33 @@ export function getTopupCreditAmount(
 /** Return the fee rate for an exact recharge amount. */
 export function getAmountFeeRate(
   topupInfo: TopupInfo | null,
-  amount: number
+  amount: number,
+  paymentType?: string
 ): number {
-  const rate = Number(topupInfo?.fee?.[amount] ?? 0)
+  const feeMap = topupInfo?.fee || {}
+  const amountKey = String(amount)
+  const channelRuleExistsForAmount = Object.keys(feeMap).some((key) => {
+    const separator = key.indexOf(':')
+    return separator >= 0 && key.slice(separator + 1) === amountKey
+  })
+  if (paymentType) {
+    const channelKey = `${paymentType}:${amountKey}`
+    if (Object.prototype.hasOwnProperty.call(feeMap, channelKey)) {
+      const channelRate = Number(feeMap[channelKey])
+      if (
+        Number.isFinite(channelRate) &&
+        channelRate >= 0 &&
+        channelRate <= 1
+      ) {
+        return channelRate
+      }
+      return 0
+    }
+    if (channelRuleExistsForAmount) return 0
+  } else if (channelRuleExistsForAmount) {
+    return 0
+  }
+  const rate = Number(feeMap[amountKey] ?? 0)
   return Number.isFinite(rate) && rate > 0 && rate <= 1 ? rate : 0
 }
 

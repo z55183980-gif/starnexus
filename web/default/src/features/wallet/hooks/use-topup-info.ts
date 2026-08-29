@@ -127,8 +127,31 @@ function parseDiscountMap(data: unknown): Record<number, number> {
   )
 }
 
-function parseFeeMap(data: unknown): Record<number, number> {
-  return parseDiscountMap(data)
+function parseFeeMap(data: unknown): Record<string, number> {
+  if (!data) return {}
+  let parsedData = data
+  if (typeof data === 'string') {
+    try {
+      parsedData = JSON.parse(data)
+    } catch {
+      return {}
+    }
+  }
+  if (
+    !parsedData ||
+    typeof parsedData !== 'object' ||
+    Array.isArray(parsedData)
+  ) {
+    return {}
+  }
+  return Object.entries(parsedData).reduce<Record<string, number>>(
+    (result, [key, value]) => {
+      const numericValue = Number(value)
+      if (Number.isFinite(numericValue)) result[key] = numericValue
+      return result
+    },
+    {}
+  )
 }
 
 function isQuotaDisplayType(
@@ -172,6 +195,29 @@ function normalizeRequestMap(
         quotaPerUnit
       )
       if (normalizedKey > 0) result[normalizedKey] = value
+      return result
+    },
+    {}
+  )
+}
+
+function normalizeFeeMap(
+  values: Record<string, number>,
+  quotaDisplayType: TopupInfo['quota_display_type'],
+  quotaPerUnit: number
+): Record<string, number> {
+  if (quotaDisplayType !== 'TOKENS') return values
+  return Object.entries(values).reduce<Record<string, number>>(
+    (result, [key, value]) => {
+      const separator = key.indexOf(':')
+      const prefix = separator >= 0 ? `${key.slice(0, separator)}:` : ''
+      const rawAmount = separator >= 0 ? key.slice(separator + 1) : key
+      const normalizedAmount = normalizeRequestAmount(
+        Number(rawAmount),
+        quotaDisplayType,
+        quotaPerUnit
+      )
+      if (normalizedAmount > 0) result[`${prefix}${normalizedAmount}`] = value
       return result
     },
     {}
@@ -248,7 +294,7 @@ export function useTopupInfo() {
           quotaDisplayType,
           quotaPerUnit
         ),
-        fee: normalizeRequestMap(parsedFee, quotaDisplayType, quotaPerUnit),
+        fee: normalizeFeeMap(parsedFee, quotaDisplayType, quotaPerUnit),
       }
 
       setTopupInfo(processedData)

@@ -40,9 +40,17 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 const createAmountFeeDialogSchema = (t: (key: string) => string) =>
   z.object({
+    paymentMethod: z.string(),
     amount: z
       .number()
       .positive(t('Amount must be greater than 0'))
@@ -60,6 +68,7 @@ type AmountFeeDialogFormValues = z.infer<
 export type AmountFeeData = {
   amount: number
   feeRate: number
+  paymentMethod: string
 }
 
 type AmountFeeDialogProps = {
@@ -67,13 +76,17 @@ type AmountFeeDialogProps = {
   onOpenChange: (open: boolean) => void
   onSave: (data: AmountFeeData) => void
   editData?: AmountFeeData | null
+  paymentMethods?: Array<{ type: string; name: string }>
 }
+
+const ALL_PAYMENT_METHODS = '__all__'
 
 export function AmountFeeDialog({
   open,
   onOpenChange,
   onSave,
   editData,
+  paymentMethods = [],
 }: AmountFeeDialogProps) {
   const { t } = useTranslation()
   const isEditMode = !!editData
@@ -81,7 +94,11 @@ export function AmountFeeDialog({
 
   const form = useForm<AmountFeeDialogFormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { amount: 0, feeRate: 0 },
+    defaultValues: {
+      amount: 0,
+      feeRate: 0,
+      paymentMethod: paymentMethods[0]?.type || ALL_PAYMENT_METHODS,
+    },
   })
 
   const feeRate = form.watch('feeRate')
@@ -91,8 +108,14 @@ export function AmountFeeDialog({
   )
 
   useEffect(() => {
-    form.reset(editData ?? { amount: 0, feeRate: 0 })
-  }, [editData, form, open])
+    form.reset(
+      editData ?? {
+        amount: 0,
+        feeRate: 0,
+        paymentMethod: paymentMethods[0]?.type || ALL_PAYMENT_METHODS,
+      }
+    )
+  }, [editData, form, open, paymentMethods])
 
   const handleSubmit = (values: AmountFeeDialogFormValues) => {
     onSave(values)
@@ -109,7 +132,7 @@ export function AmountFeeDialog({
           </DialogTitle>
           <DialogDescription>
             {t(
-              'Set the processing fee rate for one exact recharge amount. The fee is added after any discount.'
+              'Set the processing fee rate for one exact recharge amount and payment channel. The fee is added after any discount.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -121,10 +144,50 @@ export function AmountFeeDialog({
           >
             <FormField
               control={form.control}
+              name='paymentMethod'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Payment channel')}</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={(value) =>
+                      field.onChange(value ?? ALL_PAYMENT_METHODS)
+                    }
+                  >
+                    <FormControl>
+                      <SelectTrigger className='w-full'>
+                        <SelectValue
+                          placeholder={t('Select a payment channel')}
+                        />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value={ALL_PAYMENT_METHODS}>
+                        {t('All payment channels (legacy)')}
+                      </SelectItem>
+                      {paymentMethods.map((method) => (
+                        <SelectItem key={method.type} value={method.type}>
+                          {method.name} ({method.type})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    {t(
+                      'Only the selected payment channel will apply this fee. Leave empty to keep the legacy all-channel rule.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name='amount'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Recharge Amount (USD)')}</FormLabel>
+                  <FormLabel>{t('Recharge Amount')}</FormLabel>
                   <FormControl>
                     <Input
                       type='number'

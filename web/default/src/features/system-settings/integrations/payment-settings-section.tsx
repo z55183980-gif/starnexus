@@ -77,9 +77,13 @@ function isValidAmountFeeMap(parsed: unknown): boolean {
   }
 
   return Object.entries(parsed).every(([key, value]) => {
-    const amount = Number(key)
+    const separator = key.indexOf(':')
+    const channel = separator >= 0 ? key.slice(0, separator) : ''
+    const amountKey = separator >= 0 ? key.slice(separator + 1) : key
+    const amount = Number(amountKey)
     return (
-      /^\d+$/.test(key) &&
+      (separator < 0 || (channel.trim() !== '' && !channel.includes(':'))) &&
+      /^\d+$/.test(amountKey) &&
       Number.isSafeInteger(amount) &&
       amount > 0 &&
       typeof value === 'number' &&
@@ -334,6 +338,29 @@ export function PaymentSettingsSection({
       AmountFee: formatJsonForEditor(defaultValues.AmountFee),
     },
   })
+
+  const payMethodsValue = form.watch('PayMethods')
+
+  const paymentMethodsForFee = React.useMemo(() => {
+    try {
+      const parsed = JSON.parse(payMethodsValue || defaultValues.PayMethods)
+      if (!Array.isArray(parsed)) return []
+      const methods = new Map<string, { type: string; name: string }>()
+      parsed.forEach((method) => {
+        if (
+          method &&
+          typeof method.type === 'string' &&
+          typeof method.name === 'string' &&
+          !methods.has(method.type)
+        ) {
+          methods.set(method.type, { type: method.type, name: method.name })
+        }
+      })
+      return Array.from(methods.values())
+    } catch {
+      return []
+    }
+  }, [defaultValues.PayMethods, payMethodsValue])
 
   React.useEffect(() => {
     const parsedDefaults = JSON.parse(defaultsSignature) as PaymentFormValues
@@ -1108,11 +1135,12 @@ export function PaymentSettingsSection({
                       <AmountFeeVisualEditor
                         value={field.value}
                         onChange={field.onChange}
+                        paymentMethods={paymentMethodsForFee}
                       />
                     ) : (
                       <Textarea
                         rows={4}
-                        placeholder='{"100":0.03,"200":0.02}'
+                        placeholder='{"stripe:100":0.03,"usdt:100":0.02}'
                         {...field}
                         onChange={(event) => field.onChange(event.target.value)}
                       />
@@ -1120,7 +1148,7 @@ export function PaymentSettingsSection({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'Set a percentage fee for each exact recharge amount. For example, 0.03 adds a 3% processing fee.'
+                      'Set a percentage fee for each exact recharge amount and payment channel. Use channel:amount keys such as stripe:100; legacy amount-only keys apply to all channels.'
                     )}
                   </FormDescription>
                   <FormMessage />

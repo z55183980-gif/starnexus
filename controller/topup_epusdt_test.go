@@ -52,7 +52,7 @@ func TestEpusdtPayMoneyNormalizesTokenFeeLookup(t *testing.T) {
 	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
 	common.QuotaPerUnit = 500000
 	setting.EpUSDTCreditPerUSDT = 10
-	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.05}
+	operation_setting.GetPaymentSetting().AmountFee = map[string]float64{"100": 0.05}
 
 	if got := epusdtPayMoneyFromCredit(100, 50_000_000); got != 10.5 {
 		t.Fatalf("token fee lookup returned %v, want 10.5", got)
@@ -119,7 +119,7 @@ func TestEpusdtPayMoneyFromCreditAppliesFeeToOriginalAmount(t *testing.T) {
 	})
 
 	setting.EpUSDTCreditPerUSDT = 10
-	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.05}
+	operation_setting.GetPaymentSetting().AmountFee = map[string]float64{"100": 0.05}
 
 	if got := epusdtPayMoneyFromCredit(100, 100); got != 10.5 {
 		t.Fatalf("epusdtPayMoneyFromCredit(100, 100) = %v, want 10.5", got)

@@ -54,19 +54,31 @@ func validateCacheBillingOffsetBpsJSON(value string) error {
 }
 
 func validateAmountFeeJSON(value string) error {
-	var fees map[int]float64
+	var fees map[string]float64
 	if err := common.UnmarshalJsonStr(value, &fees); err != nil {
 		return fmt.Errorf("充值手续费必须是合法 JSON: %w", err)
 	}
 	if fees == nil {
 		return fmt.Errorf("充值手续费必须是金额到费率的 JSON 对象")
 	}
-	for amount, rate := range fees {
-		if amount <= 0 {
-			return fmt.Errorf("充值金额必须大于 0")
+	for key, rate := range fees {
+		if strings.TrimSpace(key) != key {
+			return fmt.Errorf("手续费规则键不能包含首尾空格: %s", key)
+		}
+		parts := strings.SplitN(key, ":", 2)
+		amountKey := key
+		if len(parts) == 2 {
+			if parts[0] == "" || strings.TrimSpace(parts[0]) != parts[0] {
+				return fmt.Errorf("手续费规则中的支付渠道不能为空")
+			}
+			amountKey = parts[1]
+		}
+		amount, parseErr := strconv.Atoi(amountKey)
+		if parseErr != nil || amount <= 0 || amountKey != strconv.Itoa(amount) {
+			return fmt.Errorf("手续费规则金额必须是大于 0 的整数: %s", key)
 		}
 		if rate < 0 || rate > 1 || math.IsNaN(rate) || math.IsInf(rate, 0) {
-			return fmt.Errorf("充值金额 %d 的手续费率必须在 0 到 1 之间", amount)
+			return fmt.Errorf("充值金额 %s 的手续费率必须在 0 到 1 之间", key)
 		}
 	}
 	return nil

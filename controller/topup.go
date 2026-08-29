@@ -162,7 +162,8 @@ type EpayRequest struct {
 }
 
 type AmountRequest struct {
-	Amount int64 `json:"amount"`
+	Amount        int64  `json:"amount"`
+	PaymentMethod string `json:"payment_method"`
 }
 
 // validateTopupAmountUnit prevents TOKENS requests with a fractional
@@ -192,7 +193,7 @@ func GetEpayClient() *epay.Client {
 	return withUrl
 }
 
-func getPayMoney(amount int64, group string) float64 {
+func getPayMoney(amount int64, group string, paymentMethod ...string) float64 {
 	dAmount := decimal.NewFromInt(amount)
 	// 充值金额以“展示类型”为准：
 	// - USD/CNY: 前端传 amount 为金额单位；TOKENS: 前端传 tokens，需要换成 USD 金额
@@ -212,7 +213,11 @@ func getPayMoney(amount int64, group string) float64 {
 	// lookup normalizes raw TOKENS requests to the canonical credit amount.
 	discount := operation_setting.GetAmountDiscountRateForTopupAmount(amount)
 	dDiscount := decimal.NewFromFloat(discount)
-	feeRate := operation_setting.GetAmountFeeRateForTopupAmount(amount)
+	method := ""
+	if len(paymentMethod) > 0 {
+		method = paymentMethod[0]
+	}
+	feeRate := operation_setting.GetAmountFeeRateForTopupAmountAndMethod(amount, method)
 	dFeeMultiplier := decimal.NewFromFloat(1 + feeRate)
 
 	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount).Mul(dFeeMultiplier)
@@ -254,7 +259,7 @@ func RequestEpay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "获取用户分组失败"})
 		return
 	}
-	payMoney := getPayMoney(req.Amount, group)
+	payMoney := getPayMoney(req.Amount, group, req.PaymentMethod)
 	if payMoney < 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
@@ -484,7 +489,7 @@ func RequestAmount(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "获取用户分组失败"})
 		return
 	}
-	payMoney := getPayMoney(req.Amount, group)
+	payMoney := getPayMoney(req.Amount, group, req.PaymentMethod)
 	if payMoney <= 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return

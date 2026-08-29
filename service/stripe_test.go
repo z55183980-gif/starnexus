@@ -38,7 +38,7 @@ func TestCalculateStripePayMoneyNormalizesTokenFeeLookup(t *testing.T) {
 
 	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
 	common.QuotaPerUnit = 500000
-	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.05}
+	operation_setting.GetPaymentSetting().AmountFee = map[string]float64{"100": 0.05}
 
 	require.Equal(t, int64(5_000_000_000), StripeMaxTopUp())
 	require.Equal(t, 105.0, CalculateStripePayMoney(50_000_000, "unknown-group"))
@@ -105,7 +105,7 @@ func TestCalculateStripePayMoneyAppliesExactAmountFee(t *testing.T) {
 		operation_setting.GetPaymentSetting().AmountFee = originalFees
 	})
 
-	operation_setting.GetPaymentSetting().AmountFee = map[int]float64{100: 0.03}
+	operation_setting.GetPaymentSetting().AmountFee = map[string]float64{"100": 0.03}
 	require.Equal(t, 103.0, CalculateStripePayMoney(100, "unknown-group"))
 	require.Equal(t, 101.0, CalculateStripePayMoney(101, "unknown-group"))
 }
