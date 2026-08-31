@@ -628,7 +628,7 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 	if !acquired {
 		rateFinish(false)
 		cancel()
-		return nil, nil, nil, types.NewErrorWithStatusCode(errors.New("user concurrency limit exceeded"), types.ErrorCodeAccessDenied, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
+		return nil, nil, nil, types.NewErrorWithStatusCode(errors.New("user concurrency limit exceeded"), types.ErrorCodeUserConcurrencyLimit, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
 	}
 	releaseBusiness := middleware.AcquireRelayConcurrency(turnCtx.Request.Context())
 

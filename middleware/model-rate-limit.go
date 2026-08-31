@@ -92,7 +92,7 @@ func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) g
 			return
 		}
 		if !allowed {
-			abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到请求数限制：%d分钟内最多请求%d次", setting.ModelRequestRateLimitDurationMinutes, successMaxCount))
+			abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到请求数限制：%d分钟内最多请求%d次", duration/60, successMaxCount), types.ErrorCodeGatewayRateLimit)
 			return
 		}
 
@@ -116,7 +116,8 @@ func redisRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) g
 			}
 
 			if !allowed {
-				abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到总请求数限制：%d分钟内最多请求%d次，包括失败次数，请检查您的请求是否正确", setting.ModelRequestRateLimitDurationMinutes, totalMaxCount))
+				abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到总请求数限制：%d分钟内最多请求%d次，包括失败次数，请检查您的请求是否正确", duration/60, totalMaxCount), types.ErrorCodeGatewayRateLimit)
+				return
 			}
 		}
 
@@ -139,29 +140,27 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 		totalKey := ModelRequestRateLimitCountMark + userId
 		successKey := ModelRequestRateLimitSuccessCountMark + userId
 
-		// 1. 检查总请求数限制（当totalMaxCount为0时跳过）
-		if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+		// 1. 预留成功请求额度。预留本身不是成功计数，最终由请求结果
+		// 提交或回滚，避免失败请求污染成功额度，同时限制并发超发。
+		successReservation, allowed := inMemoryRateLimiter.Reserve(successKey, successMaxCount, duration)
+		if !allowed {
+			abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到请求数限制：%d分钟内最多请求%d次", duration/60, successMaxCount), types.ErrorCodeGatewayRateLimit)
 			return
 		}
 
-		// 2. 检查成功请求数限制
-		// 使用一个临时key来检查限制，这样可以避免实际记录
-		checkKey := successKey + "_check"
-		if !inMemoryRateLimiter.Request(checkKey, successMaxCount, duration) {
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+		// 2. 检查总请求数限制（当totalMaxCount为0时跳过）。如果总量
+		// 桶拒绝，释放上面的成功额度预留，因为请求尚未真正执行。
+		if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
+			inMemoryRateLimiter.Finalize(successKey, successReservation, false)
+			abortWithOpenAiMessage(c, http.StatusTooManyRequests, fmt.Sprintf("您已达到总请求数限制：%d分钟内最多请求%d次，包括失败次数，请检查您的请求是否正确", duration/60, totalMaxCount), types.ErrorCodeGatewayRateLimit)
 			return
 		}
+		defer func() {
+			inMemoryRateLimiter.Finalize(successKey, successReservation, c.Writer.Status() < 400)
+		}()
 
 		// 3. 处理请求
 		c.Next()
-
-		// 4. 如果请求成功，记录到实际的成功请求计数中
-		if c.Writer.Status() < 400 {
-			inMemoryRateLimiter.Request(successKey, successMaxCount, duration)
-		}
 	}
 }
 
@@ -223,7 +222,7 @@ func AcquireModelRequestRateLimit(c *gin.Context) (func(bool), *types.NewAPIErro
 
 	userID := strconv.Itoa(c.GetInt("id"))
 	tooMany := func(message string) *types.NewAPIError {
-		return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeAccessDenied, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
+		return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeGatewayRateLimit, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
 	}
 	checkFailed := func(err error) *types.NewAPIError {
 		return types.NewErrorWithStatusCode(err, types.ErrorCodeAccessDenied, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
@@ -267,15 +266,15 @@ func AcquireModelRequestRateLimit(c *gin.Context) (func(bool), *types.NewAPIErro
 	inMemoryRateLimiter.Init(time.Duration(setting.ModelRequestRateLimitDurationMinutes) * time.Minute)
 	totalKey := ModelRequestRateLimitCountMark + userID
 	successKey := ModelRequestRateLimitSuccessCountMark + userID
-	if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
-		return nil, tooMany("model request rate limit exceeded")
-	}
-	if !inMemoryRateLimiter.Request(successKey+"_check", successMaxCount, duration) {
+	successReservation, allowed := inMemoryRateLimiter.Reserve(successKey, successMaxCount, duration)
+	if !allowed {
 		return nil, tooMany("model successful request rate limit exceeded")
 	}
+	if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
+		inMemoryRateLimiter.Finalize(successKey, successReservation, false)
+		return nil, tooMany("model request rate limit exceeded")
+	}
 	return func(success bool) {
-		if success {
-			inMemoryRateLimiter.Request(successKey, successMaxCount, duration)
-		}
+		inMemoryRateLimiter.Finalize(successKey, successReservation, success)
 	}, nil
 }

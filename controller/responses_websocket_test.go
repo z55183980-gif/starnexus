@@ -1085,6 +1085,32 @@ func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
 	}
 }
 
+func TestResponsesWSTerminalRateLimitRequiresStructuredCode(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
+
+	plainMessageTurn := &responsesWebSocketTurn{
+		ctx:         ctx,
+		info:        info,
+		accumulator: openairelay.NewResponsesEventAccumulator(),
+	}
+	_, err := plainMessageTurn.accumulator.Consume(ctx, info, []byte(`{"type":"response.failed","response":{"error":{"code":"server_error","message":"too many requests while processing this operation"}}}`))
+	require.NoError(t, err)
+	plainErr := responsesWSTerminalAPIError(plainMessageTurn)
+	require.NotEqual(t, http.StatusTooManyRequests, plainErr.StatusCode)
+
+	structuredTurn := &responsesWebSocketTurn{
+		ctx:         ctx,
+		info:        info,
+		accumulator: openairelay.NewResponsesEventAccumulator(),
+	}
+	_, err = structuredTurn.accumulator.Consume(ctx, info, []byte(`{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"request rejected"}}}`))
+	require.NoError(t, err)
+	structuredErr := responsesWSTerminalAPIError(structuredTurn)
+	require.Equal(t, http.StatusTooManyRequests, structuredErr.StatusCode)
+}
+
 func TestResponsesWSPreviousResponseNotFoundReplaysAsFullCreate(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()

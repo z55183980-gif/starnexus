@@ -966,12 +966,11 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 		return
 	}
 	isOpenAIVideoRequest := isOpenAIVideoPublicRequest(c)
-	if taskErr.StatusCode == http.StatusTooManyRequests {
-		if isOpenAIVideoRequest {
-			taskErr.Message = "The video service is temporarily busy. Please retry later."
-		} else {
-			taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
-		}
+	// Only rewrite the public video-provider message for an actual upstream
+	// video error.  A generic 429 can be produced by gateway concurrency or
+	// another local policy; labelling it as upstream saturation is misleading.
+	if taskErr.StatusCode == http.StatusTooManyRequests && isOpenAIVideoRequest && !taskErr.LocalError {
+		taskErr.Message = "The video service is temporarily busy. Please retry later."
 	} else if isOpenAIVideoRequest {
 		taskErr.Message = sanitizePublicErrorMessage(taskErr.Message)
 	}
@@ -1003,6 +1002,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
+	if taskErr.LocalError {
+		return false
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
@@ -1021,9 +1023,6 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError,
 	}
 	if taskErr.StatusCode == 408 {
 		// azure处理超时不重试
-		return false
-	}
-	if taskErr.LocalError {
 		return false
 	}
 	if taskErr.StatusCode/100 == 2 {

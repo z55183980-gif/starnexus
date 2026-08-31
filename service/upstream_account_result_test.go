@@ -34,6 +34,22 @@ func TestApplyUpstreamAccountErrorOwnership(t *testing.T) {
 	require.False(t, updated.Schedulable)
 }
 
+func TestApplyUpstreamAccountRateLimitDoesNotAffectSiblingAccount(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	limited := createRouterTestAccountWithoutPool(t, "rate-limit-owner")
+	sibling := createRouterTestAccountWithoutPool(t, "rate-limit-sibling")
+
+	rateErr := types.NewErrorWithStatusCode(errors.New("rate limited by upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(limited.Id, 0, rateErr))
+
+	var updatedLimited, unchangedSibling model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updatedLimited, limited.Id).Error)
+	require.NotNil(t, updatedLimited.RateLimitResetAt)
+	require.NoError(t, model.DB.First(&unchangedSibling, sibling.Id).Error)
+	require.Nil(t, unchangedSibling.RateLimitResetAt)
+	require.True(t, unchangedSibling.IsSchedulableAt(time.Now().Unix()))
+}
+
 func TestApplyUpstreamAccountErrorFansOutDeactivatedTeamWorkspace(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	teamID := fmt.Sprintf("team-%d", time.Now().UnixNano())

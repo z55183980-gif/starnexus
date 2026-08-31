@@ -52,6 +52,17 @@ func TestShouldRetryStopsCapacityAfterAccountFailover(t *testing.T) {
 	require.False(t, shouldRetry(c, apiErr, 3))
 }
 
+func TestShouldRetryTaskStopsLocalRateLimit(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	taskErr := &dto.TaskError{
+		Code:       "gateway_rate_limit_exceeded",
+		StatusCode: http.StatusTooManyRequests,
+		LocalError: true,
+	}
+
+	require.False(t, shouldRetryTaskRelay(c, 1, taskErr, 1))
+}
+
 func TestShouldRetryStopsCodexMissingStoreFalseItem404(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

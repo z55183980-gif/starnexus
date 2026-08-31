@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 )
@@ -127,7 +128,7 @@ func UserConcurrencyLimit() gin.HandlerFunc {
 			return
 		}
 		if !acquired {
-			abortWithOpenAiMessage(c, http.StatusTooManyRequests, "user concurrency limit exceeded")
+			abortWithOpenAiMessage(c, http.StatusTooManyRequests, "user concurrency limit exceeded", types.ErrorCodeUserConcurrencyLimit)
 			return
 		}
 

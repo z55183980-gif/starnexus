@@ -53,6 +53,12 @@ func nativeSeedancePublicErrorCode(taskErr *dto.TaskError) string {
 	if taskErr == nil {
 		return "InternalServiceError"
 	}
+	// A local compatibility/concurrency error may also use HTTP 429. Preserve
+	// its specific code instead of exposing the provider-facing QuotaExceeded
+	// code, which would falsely attribute the rejection to upstream quota.
+	if taskErr.LocalError && strings.TrimSpace(taskErr.Code) != "" {
+		return taskErr.Code
+	}
 	switch taskErr.StatusCode {
 	case http.StatusUnauthorized:
 		return "AuthenticationError"

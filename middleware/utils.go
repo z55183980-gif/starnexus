@@ -27,6 +27,10 @@ func abortWithOpenAiMessage(c *gin.Context, statusCode int, message string, code
 			case http.StatusTooManyRequests:
 				publicCode = "QuotaExceeded"
 				publicType = "rate_limit_error"
+				if len(code) > 0 && (code[0] == types.ErrorCodeGatewayRateLimit || code[0] == types.ErrorCodeUserConcurrencyLimit) {
+					publicCode = string(code[0])
+					publicType = "new_api_error"
+				}
 			}
 			c.JSON(statusCode, gin.H{"error": gin.H{
 				"message": common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),

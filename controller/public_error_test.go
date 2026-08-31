@@ -79,3 +79,62 @@ func TestRespondTaskErrorUsesNativeSeedanceEnvelope(t *testing.T) {
 		t.Fatalf("legacy task error fields leaked: %s", recorder.Body.String())
 	}
 }
+
+func TestRespondTaskErrorDoesNotRewriteLocalVideo429AsUpstreamBusy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	c.Set(string(constant.ContextKeyZQBAPIOpenAIVideoRequest), true)
+
+	respondTaskError(c, &dto.TaskError{
+		Code:       "gateway_rate_limit_exceeded",
+		Message:    "gateway model request rate limit exceeded",
+		StatusCode: http.StatusTooManyRequests,
+		LocalError: true,
+	})
+
+	var response map[string]any
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	errorObject, ok := response["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("standard error envelope missing: %s", recorder.Body.String())
+	}
+	if got, _ := errorObject["message"].(string); got == "The video service is temporarily busy. Please retry later." {
+		t.Fatalf("local 429 was rewritten as an upstream busy error: %q", got)
+	}
+}
+
+func TestRespondTaskErrorPreservesNonVideoUpstream429Message(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	respondTaskError(c, &dto.TaskError{
+		Code:       "rate_limit_exceeded",
+		Message:    "provider quota exhausted; retry after 30 seconds",
+		StatusCode: http.StatusTooManyRequests,
+	})
+
+	var response dto.TaskError
+	if err := common.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Message != "provider quota exhausted; retry after 30 seconds" {
+		t.Fatalf("upstream 429 message was rewritten: %q", response.Message)
+	}
+}
+
+func TestNativeSeedanceErrorKeepsLocal429Code(t *testing.T) {
+	code := nativeSeedancePublicErrorCode(&dto.TaskError{
+		Code:       "gateway_rate_limit_exceeded",
+		StatusCode: http.StatusTooManyRequests,
+		LocalError: true,
+	})
+	if code != "gateway_rate_limit_exceeded" {
+		t.Fatalf("local native 429 was attributed to upstream quota: %q", code)
+	}
+}

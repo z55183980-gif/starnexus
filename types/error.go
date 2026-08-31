@@ -65,6 +65,11 @@ const (
 	ErrorCodeReadRequestBodyFailed ErrorCode = "read_request_body_failed"
 	ErrorCodeConvertRequestFailed  ErrorCode = "convert_request_failed"
 	ErrorCodeAccessDenied          ErrorCode = "access_denied"
+	// Gateway-generated throttling errors are kept distinct from an upstream
+	// provider's rate_limit error so clients and retry logic can identify the
+	// owner of a 429 response without relying on the HTTP status alone.
+	ErrorCodeGatewayRateLimit      ErrorCode = "gateway_rate_limit_exceeded"
+	ErrorCodeUserConcurrencyLimit  ErrorCode = "user_concurrency_limit"
 
 	// request error
 	ErrorCodeBadRequestBody        ErrorCode = "bad_request_body"

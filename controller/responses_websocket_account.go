@@ -81,7 +81,7 @@ func responsesWSTerminalAPIError(turn *responsesWebSocketTurn) *types.NewAPIErro
 	combined := strings.ToLower(errorCode + " " + errorType + " " + message)
 	status := http.StatusBadRequest
 	switch {
-	case strings.Contains(combined, "rate_limit") || strings.Contains(combined, "too many requests"):
+	case isResponsesWSRateLimitError(errorCode, errorType):
 		status = http.StatusTooManyRequests
 	case strings.Contains(combined, "unauthorized") || strings.Contains(combined, "token_invalidated") || strings.Contains(combined, "token_revoked"):
 		status = http.StatusUnauthorized
@@ -89,4 +89,21 @@ func responsesWSTerminalAPIError(turn *responsesWebSocketTurn) *types.NewAPIErro
 		status = 529
 	}
 	return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeBadResponseStatusCode, status, types.ErrOptionWithSkipRetry())
+}
+
+// isResponsesWSRateLimitError deliberately only accepts structured provider
+// fields. Matching arbitrary message text (for example, "too many requests"
+// in a diagnostic sentence) caused non-rate-limit terminal failures to be
+// reported as upstream 429s.
+func isResponsesWSRateLimitError(errorCode, errorType string) bool {
+	switch strings.ToLower(strings.TrimSpace(errorCode)) {
+	case "rate_limit", "rate_limit_exceeded", "rate_limited", "ratelimit":
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(errorType)) {
+	case "rate_limit_error", "rate_limit":
+		return true
+	default:
+		return false
+	}
 }
