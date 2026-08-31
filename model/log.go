@@ -1012,13 +1012,13 @@ type BusinessMonitorCacheStats struct {
 // administrator usage-details table. Token buckets follow the same
 // normalization used by GetBusinessMonitorCacheStats, while costs are USD.
 type UsageDetailsSummary struct {
-	InputTokens      int64   `json:"input_tokens"`
-	OutputTokens     int64   `json:"output_tokens"`
-	CacheTokens      int64   `json:"cache_tokens"`
-	TotalTokens      int64   `json:"total_tokens"`
-	ActualCostUSD    float64 `json:"actual_cost_usd"`
-	AccountCostUSD   float64 `json:"account_cost_usd"`
-	StandardCostUSD  float64 `json:"standard_cost_usd"`
+	InputTokens     int64   `json:"input_tokens"`
+	OutputTokens    int64   `json:"output_tokens"`
+	CacheTokens     int64   `json:"cache_tokens"`
+	TotalTokens     int64   `json:"total_tokens"`
+	ActualCostUSD   float64 `json:"actual_cost_usd"`
+	AccountCostUSD  float64 `json:"account_cost_usd"`
+	StandardCostUSD float64 `json:"standard_cost_usd"`
 }
 
 type businessMonitorCacheBillingInfo struct {
@@ -1027,14 +1027,14 @@ type businessMonitorCacheBillingInfo struct {
 }
 
 type businessMonitorCacheLogOther struct {
-	UsageSemantic         string `json:"usage_semantic"`
-	Claude                bool   `json:"claude"`
+	UsageSemantic         string  `json:"usage_semantic"`
+	Claude                bool    `json:"claude"`
 	GroupRatio            float64 `json:"group_ratio"`
-	CacheTokens           int64  `json:"cache_tokens"`
-	CacheWriteTokens      int64  `json:"cache_write_tokens"`
-	CacheCreationTokens   int64  `json:"cache_creation_tokens"`
-	CacheCreationTokens5m int64  `json:"cache_creation_tokens_5m"`
-	CacheCreationTokens1h int64  `json:"cache_creation_tokens_1h"`
+	CacheTokens           int64   `json:"cache_tokens"`
+	CacheWriteTokens      int64   `json:"cache_write_tokens"`
+	CacheCreationTokens   int64   `json:"cache_creation_tokens"`
+	CacheCreationTokens5m int64   `json:"cache_creation_tokens_5m"`
+	CacheCreationTokens1h int64   `json:"cache_creation_tokens_1h"`
 	AdminInfo             struct {
 		CacheBilling *businessMonitorCacheBillingInfo `json:"cache_billing"`
 	} `json:"admin_info"`
@@ -1060,7 +1060,6 @@ func (other businessMonitorCacheLogOther) cacheCreationTotal() int64 {
 // separately, so the former is de-duplicated before aggregation.
 func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64, modelName string) (stats BusinessMonitorCacheStats, err error) {
 	query := LOG_DB.Table("logs").
-		Select("COALESCE(prompt_tokens, 0), COALESCE(other, '')").
 		Where("type = ?", LogTypeConsume)
 	if modelName != "" {
 		query = query.Where("model_name = ?", modelName)
@@ -1071,6 +1070,20 @@ func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64, mode
 	if endTimestamp != 0 {
 		query = query.Where("created_at <= ?", endTimestamp)
 	}
+
+	// The original implementation streamed every matching `other` JSON value
+	// to the application and decoded it row by row.  On a busy installation this
+	// can move hundreds of megabytes for a single 24-hour dashboard refresh.
+	// Use a database-side aggregate when the driver has JSON extraction support;
+	// retain the row-streaming implementation as a compatibility/safety fallback
+	// for older or malformed data.
+	if aggregated, aggregateStats, aggregateErr := getBusinessMonitorCacheStatsAggregate(query); aggregated {
+		if aggregateErr == nil {
+			return aggregateStats, nil
+		}
+	}
+
+	query = query.Select("COALESCE(prompt_tokens, 0), COALESCE(other, '')")
 	rows, queryErr := query.Rows()
 	if queryErr != nil {
 		common.SysError("failed to query business monitor cache stats: " + queryErr.Error())
@@ -1116,6 +1129,115 @@ func GetBusinessMonitorCacheStats(startTimestamp int64, endTimestamp int64, mode
 	return stats, nil
 }
 
+type businessMonitorCacheStatsRow struct {
+	InputTokens            int64 `gorm:"column:input_tokens"`
+	CacheReadTokens        int64 `gorm:"column:cache_read_tokens"`
+	BillingCacheReadTokens int64 `gorm:"column:billing_cache_read_tokens"`
+	CacheCreationTokens    int64 `gorm:"column:cache_creation_tokens"`
+}
+
+type businessMonitorJSONExpressions struct {
+	text     func(string) string
+	number   func(string) string
+	boolTrue string
+}
+
+func businessMonitorJSONExpressionsFor(query *gorm.DB) (businessMonitorJSONExpressions, bool) {
+	var expressions businessMonitorJSONExpressions
+	switch strings.ToLower(query.Dialector.Name()) {
+	case "postgres", "postgresql":
+		expressions.text = func(path string) string {
+			return "(NULLIF(other, '')::jsonb #>> '{" + strings.ReplaceAll(path, ".", ",") + "}')"
+		}
+		expressions.number = func(path string) string {
+			return "NULLIF(" + expressions.text(path) + ", '')::bigint"
+		}
+		expressions.boolTrue = "LOWER(COALESCE(" + expressions.text("claude") + ", 'false')) IN ('true', '1')"
+	case "mysql":
+		expressions.text = func(path string) string {
+			return "JSON_UNQUOTE(JSON_EXTRACT(NULLIF(other, ''), '$." + path + "'))"
+		}
+		expressions.number = func(path string) string {
+			return "CAST(NULLIF(" + expressions.text(path) + ", '') AS SIGNED)"
+		}
+		expressions.boolTrue = "LOWER(COALESCE(" + expressions.text("claude") + ", 'false')) IN ('true', '1')"
+	case "sqlite":
+		expressions.text = func(path string) string {
+			return "json_extract(NULLIF(other, ''), '$." + path + "')"
+		}
+		expressions.number = func(path string) string {
+			return "CAST(NULLIF(" + expressions.text(path) + ", '') AS INTEGER)"
+		}
+		expressions.boolTrue = "(" + expressions.text("claude") + " = 1 OR LOWER(COALESCE(CAST(" + expressions.text("claude") + " AS TEXT), 'false')) = 'true')"
+	default:
+		return businessMonitorJSONExpressions{}, false
+	}
+	return expressions, true
+}
+
+// getBusinessMonitorCacheStatsAggregate returns (true, result) only when the
+// current database driver supports the JSON expressions below.  A query error
+// intentionally falls back to the portable row decoder in the caller; this
+// keeps historical rows containing invalid JSON from breaking the dashboard.
+func getBusinessMonitorCacheStatsAggregate(query *gorm.DB) (bool, BusinessMonitorCacheStats, error) {
+	jsonExpressions, ok := businessMonitorJSONExpressionsFor(query)
+	if !ok {
+		return false, BusinessMonitorCacheStats{}, nil
+	}
+	jsonText := jsonExpressions.text
+	jsonNumber := jsonExpressions.number
+	jsonBoolTrue := jsonExpressions.boolTrue
+
+	cacheReadRaw := "COALESCE(" + jsonNumber("cache_tokens") + ", 0)"
+	billingCacheRead := jsonNumber("admin_info.cache_billing.billing_cache_read_tokens")
+	billingCacheRawRead := jsonNumber("admin_info.cache_billing.raw_cache_read_tokens")
+	cacheWrite := "COALESCE(" + jsonNumber("cache_write_tokens") + ", 0)"
+	cacheCreation := "COALESCE(" + jsonNumber("cache_creation_tokens") + ", 0)"
+	cacheCreationSplit := "COALESCE(" + jsonNumber("cache_creation_tokens_5m") + ", 0) + COALESCE(" + jsonNumber("cache_creation_tokens_1h") + ", 0)"
+
+	// First extract JSON fields. Keeping this as a derived table lets the
+	// normalization and final SUM refer to named columns instead of repeating
+	// JSON expressions dozens of times.
+	rawSelect := strings.Join([]string{
+		"COALESCE(prompt_tokens, 0) AS prompt_tokens",
+		"COALESCE(completion_tokens, 0) AS completion_tokens",
+		"CASE WHEN " + jsonText("usage_semantic") + " = 'anthropic' OR " + jsonBoolTrue + " THEN 1 ELSE 0 END AS is_anthropic",
+		cacheReadRaw + " AS cache_read_tokens_raw",
+		billingCacheRead + " AS billing_cache_read_tokens_raw",
+		billingCacheRawRead + " AS billing_cache_raw_read_tokens",
+		cacheWrite + " AS cache_write_tokens",
+		cacheCreation + " AS cache_creation_tokens_raw",
+		cacheCreationSplit + " AS cache_creation_split_tokens",
+	}, ", ")
+	raw := query.Select(rawSelect)
+
+	normalizedSelect := strings.Join([]string{
+		"prompt_tokens",
+		"completion_tokens",
+		"is_anthropic",
+		"CASE WHEN cache_read_tokens_raw > 0 THEN cache_read_tokens_raw ELSE 0 END AS cache_read_tokens",
+		"CASE WHEN billing_cache_read_tokens_raw IS NOT NULL AND billing_cache_raw_read_tokens = cache_read_tokens_raw AND billing_cache_read_tokens_raw >= 0 AND billing_cache_read_tokens_raw <= CASE WHEN cache_read_tokens_raw > 0 THEN cache_read_tokens_raw ELSE 0 END THEN billing_cache_read_tokens_raw ELSE CASE WHEN cache_read_tokens_raw > 0 THEN cache_read_tokens_raw ELSE 0 END END AS billing_cache_read_tokens",
+		"CASE WHEN cache_write_tokens > 0 THEN cache_write_tokens WHEN cache_creation_split_tokens > 0 THEN CASE WHEN cache_creation_tokens_raw > cache_creation_split_tokens THEN cache_creation_tokens_raw ELSE cache_creation_split_tokens END ELSE cache_creation_tokens_raw END AS cache_creation_tokens",
+	}, ", ")
+	normalized := LOG_DB.Session(&gorm.Session{NewDB: true}).Table("(?) AS raw_log_stats", raw).Select(normalizedSelect)
+
+	outerSelect := "COALESCE(SUM(CASE WHEN is_anthropic = 1 THEN prompt_tokens ELSE CASE WHEN prompt_tokens - cache_read_tokens - CASE WHEN cache_creation_tokens > 0 THEN cache_creation_tokens ELSE 0 END > 0 THEN prompt_tokens - cache_read_tokens - CASE WHEN cache_creation_tokens > 0 THEN cache_creation_tokens ELSE 0 END ELSE 0 END END), 0) AS input_tokens, " +
+		"COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, " +
+		"COALESCE(SUM(billing_cache_read_tokens), 0) AS billing_cache_read_tokens, " +
+		"COALESCE(SUM(CASE WHEN cache_creation_tokens > 0 THEN cache_creation_tokens ELSE 0 END), 0) AS cache_creation_tokens"
+	var row businessMonitorCacheStatsRow
+	err := LOG_DB.Session(&gorm.Session{NewDB: true}).Table("(?) AS normalized_log_stats", normalized).Select(outerSelect).Scan(&row).Error
+	if err != nil {
+		return true, BusinessMonitorCacheStats{}, err
+	}
+	return true, BusinessMonitorCacheStats{
+		InputTokens:            row.InputTokens,
+		CacheReadTokens:        row.CacheReadTokens,
+		BillingCacheReadTokens: row.BillingCacheReadTokens,
+		CacheCreationTokens:    row.CacheCreationTokens,
+	}, err
+}
+
 const usageDetailsSummaryBatchSize = 1000
 
 // GetUsageDetailsSummary aggregates all matching usage-detail records. The
@@ -1123,6 +1245,12 @@ const usageDetailsSummaryBatchSize = 1000
 // filtered result set rather than only the visible table page. The batch size
 // only bounds memory used by each query; it is not an aggregate row limit.
 func GetUsageDetailsSummary(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, group string, options ...LogQueryOptions) (summary UsageDetailsSummary, err error) {
+	if aggregated, aggregateSummary, aggregateErr := getUsageDetailsSummaryAggregate(logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, options...); aggregated {
+		if aggregateErr == nil {
+			return aggregateSummary, nil
+		}
+	}
+
 	quotaPerUnit := float64(common.QuotaPerUnit)
 	aggregate := func(logs []*Log) {
 		for _, log := range logs {
@@ -1185,6 +1313,120 @@ func GetUsageDetailsSummary(logType int, startTimestamp int64, endTimestamp int6
 	}
 
 	return summary, nil
+}
+
+func getUsageDetailsSummaryAggregate(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, group string, options ...LogQueryOptions) (bool, UsageDetailsSummary, error) {
+	expressions, ok := businessMonitorJSONExpressionsFor(LOG_DB)
+	if !ok {
+		return false, UsageDetailsSummary{}, nil
+	}
+
+	query := LOG_DB.Table("logs")
+	if logType != LogTypeUnknown {
+		query = query.Where("logs.type = ?", logType)
+	}
+	if modelName != "" {
+		pattern, patternErr := buildFuzzyLikePattern(modelName)
+		if patternErr != nil {
+			return true, UsageDetailsSummary{}, patternErr
+		}
+		query = query.Where("logs.model_name LIKE ? ESCAPE '!'", pattern)
+	}
+	if username != "" {
+		pattern, patternErr := buildFuzzyLikePattern(username)
+		if patternErr != nil {
+			return true, UsageDetailsSummary{}, patternErr
+		}
+		query = query.Where("LOWER(logs.username) LIKE LOWER(?) ESCAPE '!'", pattern)
+	}
+	if tokenName != "" {
+		pattern, patternErr := buildFuzzyLikePattern(tokenName)
+		if patternErr != nil {
+			return true, UsageDetailsSummary{}, patternErr
+		}
+		query = query.Where("logs.token_name LIKE ? ESCAPE '!'", pattern)
+	}
+	if startTimestamp != 0 {
+		query = query.Where("logs.created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		query = query.Where("logs.created_at <= ?", endTimestamp)
+	}
+	if group != "" {
+		query = query.Where("logs."+logGroupCol+" = ?", group)
+	}
+	if len(options) > 0 {
+		option := options[0]
+		if option.AccountName != "" {
+			pattern, patternErr := buildFuzzyLikePattern(option.AccountName)
+			if patternErr != nil {
+				return true, UsageDetailsSummary{}, patternErr
+			}
+			var accountIDs []int
+			if err := DB.Model(&UpstreamAccount{}).Where("LOWER(name) LIKE LOWER(?) ESCAPE '!'", pattern).Pluck("id", &accountIDs).Error; err != nil {
+				return true, UsageDetailsSummary{}, err
+			}
+			if len(accountIDs) == 0 {
+				return true, UsageDetailsSummary{}, nil
+			}
+			query = query.Where("logs.upstream_account_id IN ?", accountIDs)
+		}
+		if option.BillingMode != "" {
+			switch option.BillingMode {
+			case "token", "per_request", "image", "video", "tiered_expr":
+				query = query.Where("logs.other LIKE ?", `%"billing_mode":"`+option.BillingMode+`"%`)
+			}
+		}
+		if option.BillingType != nil {
+			subscriptionPattern := `%"billing_source":"subscription"%`
+			if *option.BillingType == 1 {
+				query = query.Where("logs.other LIKE ?", subscriptionPattern)
+			} else if *option.BillingType == 0 {
+				query = query.Where("logs.other NOT LIKE ?", subscriptionPattern)
+			}
+		}
+		if option.Stream != nil {
+			query = query.Where("logs.is_stream = ?", *option.Stream)
+		}
+	}
+
+	cacheRead := "CASE WHEN COALESCE(" + expressions.number("cache_tokens") + ", 0) > 0 THEN COALESCE(" + expressions.number("cache_tokens") + ", 0) ELSE 0 END"
+	cacheWrite := "COALESCE(" + expressions.number("cache_write_tokens") + ", 0)"
+	cacheCreation := "COALESCE(" + expressions.number("cache_creation_tokens") + ", 0)"
+	cacheCreationSplit := "COALESCE(" + expressions.number("cache_creation_tokens_5m") + ", 0) + COALESCE(" + expressions.number("cache_creation_tokens_1h") + ", 0)"
+	cacheCreationTotal := "CASE WHEN " + cacheWrite + " > 0 THEN " + cacheWrite + " WHEN " + cacheCreationSplit + " > 0 THEN CASE WHEN " + cacheCreation + " > " + cacheCreationSplit + " THEN " + cacheCreation + " ELSE " + cacheCreationSplit + " END ELSE " + cacheCreation + " END"
+	cacheCreationPositive := "CASE WHEN " + cacheCreationTotal + " > 0 THEN " + cacheCreationTotal + " ELSE 0 END"
+	isAnthropic := "(" + expressions.text("usage_semantic") + " = 'anthropic' OR " + expressions.boolTrue + ")"
+	inputTokens := "CASE WHEN " + isAnthropic + " THEN CASE WHEN prompt_tokens > 0 THEN prompt_tokens ELSE 0 END ELSE CASE WHEN prompt_tokens - " + cacheRead + " - " + cacheCreationPositive + " > 0 THEN prompt_tokens - " + cacheRead + " - " + cacheCreationPositive + " ELSE 0 END END"
+	outputTokens := "CASE WHEN completion_tokens > 0 THEN completion_tokens ELSE 0 END"
+	actualCost := "CASE WHEN user_cost > 0 THEN user_cost WHEN ? > 0 AND quota > 0 THEN CAST(quota AS DECIMAL(20,8)) / ? ELSE 0 END"
+	groupRatio := "COALESCE(" + expressions.number("group_ratio") + ", 0)"
+	// group_ratio is normally a floating-point JSON value, so use text rather
+	// than the integer extractor for this one.
+	switch strings.ToLower(LOG_DB.Dialector.Name()) {
+	case "postgres", "postgresql":
+		groupRatio = "COALESCE(NULLIF(" + expressions.text("group_ratio") + ", '')::double precision, 0)"
+	case "mysql":
+		groupRatio = "COALESCE(CAST(NULLIF(" + expressions.text("group_ratio") + ", '') AS DECIMAL(20,8)), 0)"
+	case "sqlite":
+		groupRatio = "COALESCE(CAST(NULLIF(" + expressions.text("group_ratio") + ", '') AS REAL), 0)"
+	}
+	standardCost := "CASE WHEN " + groupRatio + " > 0 AND (" + actualCost + ") > 0 THEN (" + actualCost + ") / " + groupRatio + " WHEN ? > 0 AND quota > 0 THEN CAST(quota AS DECIMAL(20,8)) / ? ELSE 0 END"
+
+	selectSQL := "COALESCE(SUM(" + inputTokens + "), 0) AS input_tokens, " +
+		"COALESCE(SUM(" + outputTokens + "), 0) AS output_tokens, " +
+		"COALESCE(SUM(" + cacheRead + " + CASE WHEN " + cacheCreationTotal + " > 0 THEN " + cacheCreationTotal + " ELSE 0 END), 0) AS cache_tokens, " +
+		"COALESCE(SUM(" + inputTokens + " + " + outputTokens + " + " + cacheRead + " + CASE WHEN " + cacheCreationTotal + " > 0 THEN " + cacheCreationTotal + " ELSE 0 END), 0) AS total_tokens, " +
+		"COALESCE(SUM(" + actualCost + "), 0) AS actual_cost_usd, " +
+		"COALESCE(SUM(CASE WHEN account_cost > 0 THEN account_cost ELSE 0 END), 0) AS account_cost_usd, " +
+		"COALESCE(SUM(" + standardCost + "), 0) AS standard_cost_usd"
+	quotaPerUnit := float64(common.QuotaPerUnit)
+	var summary UsageDetailsSummary
+	// actualCost appears once in the outer aggregate and twice in the
+	// standard-cost expression. Each occurrence has a guarded quota divisor.
+	args := []any{quotaPerUnit, quotaPerUnit, quotaPerUnit, quotaPerUnit, quotaPerUnit, quotaPerUnit, quotaPerUnit, quotaPerUnit}
+	err := query.Select(selectSQL, args...).Scan(&summary).Error
+	return true, summary, err
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter) (stat Stat, err error) {

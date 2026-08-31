@@ -215,6 +215,43 @@ func TestGetBusinessMonitorCacheStats(t *testing.T) {
 	require.Equal(t, int64(1400), filteredStats.BillingCacheReadTokens)
 }
 
+func TestGetUsageDetailsSummaryUsesDatabaseAggregate(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalDB := DB
+	originalLogDB := LOG_DB
+	originalQuotaPerUnit := common.QuotaPerUnit
+	DB = db
+	LOG_DB = db
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.Create(&Log{
+		Type:             LogTypeConsume,
+		CreatedAt:        150,
+		PromptTokens:     2000,
+		CompletionTokens: 100,
+		Quota:            100,
+		AccountCost:      0.25,
+		UserCost:         0.75,
+		Other:            `{"cache_tokens":1500,"admin_info":{"cache_billing":{"raw_cache_read_tokens":1500,"billing_cache_read_tokens":1400}},"group_ratio":0.5}`,
+	}).Error)
+
+	summary, err := GetUsageDetailsSummary(LogTypeConsume, 100, 200, "", "", "", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(500), summary.InputTokens)
+	require.Equal(t, int64(100), summary.OutputTokens)
+	require.Equal(t, int64(1500), summary.CacheTokens)
+	require.Equal(t, int64(2100), summary.TotalTokens)
+	require.InDelta(t, 0.75, summary.ActualCostUSD, 0.000001)
+	require.InDelta(t, 0.25, summary.AccountCostUSD, 0.000001)
+	require.InDelta(t, 1.5, summary.StandardCostUSD, 0.000001)
+}
+
 func TestGetAllLogsIncludesUpstreamAccountName(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
