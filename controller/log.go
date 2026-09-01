@@ -1,20 +1,28 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/gin-gonic/gin"
 )
 
 var (
-	logsStatCache            = newTTLCache[model.Stat](15*time.Second, 2048)
-	usageDetailsSummaryCache = newTTLCache[model.UsageDetailsSummary](30*time.Second, 1024)
+	logsStatCache             = newTTLCache[model.Stat](15*time.Second, 2048)
+	usageDetailsSummaryCache  = newTTLCache[model.UsageDetailsSummary](2*time.Minute, 1024)
+	usageDetailsSummaryFlight singleflight.Group
 )
+
+const dashboardAggregateTimeout = 30 * time.Second
+
+var dashboardAggregateSlots = make(chan struct{}, 2)
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
@@ -225,24 +233,50 @@ func GetLogsSummary(c *gin.Context) {
 		parsed := rawStream == "true"
 		stream = &parsed
 	}
-	cacheKey := dashboardCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "admin-usage-summary", strconv.Itoa(c.GetInt("id")), 30*time.Second)
+	cacheKey := dashboardAggregateCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "admin-usage-summary", strconv.Itoa(c.GetInt("id")))
 	if cached, found := usageDetailsSummaryCache.Get(cacheKey); found {
 		common.ApiSuccess(c, cached)
 		return
 	}
+	stale, hasStale := usageDetailsSummaryCache.GetStale(cacheKey)
 
-	summary, err := model.GetUsageDetailsSummary(logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, model.LogQueryOptions{
-		AccountName: accountName,
-		BillingMode: billingMode,
-		BillingType: billingType,
-		Stream:      stream,
+	result, err, _ := usageDetailsSummaryFlight.Do(cacheKey, func() (any, error) {
+		if cached, found := usageDetailsSummaryCache.Get(cacheKey); found {
+			return cached, nil
+		}
+		// The shared flight must outlive the initiating browser request; a
+		// disconnected tab should not cancel work awaited by other callers.
+		queryCtx, cancel := context.WithTimeout(context.Background(), dashboardAggregateTimeout)
+		defer cancel()
+		select {
+		case dashboardAggregateSlots <- struct{}{}:
+			defer func() { <-dashboardAggregateSlots }()
+		case <-queryCtx.Done():
+			return nil, queryCtx.Err()
+		default:
+			return nil, errors.New("dashboard aggregate is busy")
+		}
+		summary, queryErr := model.GetUsageDetailsSummaryContext(queryCtx, logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, model.LogQueryOptions{
+			AccountName: accountName,
+			BillingMode: billingMode,
+			BillingType: billingType,
+			Stream:      stream,
+		})
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		usageDetailsSummaryCache.Set(cacheKey, summary)
+		return summary, nil
 	})
 	if err != nil {
+		if hasStale {
+			common.ApiSuccess(c, stale)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
-	usageDetailsSummaryCache.Set(cacheKey, summary)
-	common.ApiSuccess(c, summary)
+	common.ApiSuccess(c, result.(model.UsageDetailsSummary))
 }
 
 func GetAgentLogsStat(c *gin.Context) {

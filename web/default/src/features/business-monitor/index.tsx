@@ -91,7 +91,7 @@ import {
   acknowledgeAllBusinessMonitorAlerts,
   acknowledgeBusinessMonitorAlert,
   type BusinessMonitorCacheHitStats,
-  getBusinessMonitorCacheHitRate,
+  getBusinessMonitorCacheHitRateWindows,
   getBusinessMonitorConcurrency,
   getBusinessMonitorAlerts,
   type ErrorAlert,
@@ -636,9 +636,6 @@ export function BusinessMonitor() {
             queryKey: ['business-monitor-stats'],
           })
           queryClient.invalidateQueries({
-            queryKey: ['business-monitor-cache-hit-rate'],
-          })
-          queryClient.invalidateQueries({
             queryKey: ['business-monitor-concurrency'],
           })
         }
@@ -761,24 +758,14 @@ export function BusinessMonitor() {
     refetchOnWindowFocus: false,
   })
 
-  const { data: cacheHitStats24h } = useQuery({
-    queryKey: ['business-monitor-cache-hit-rate', 24],
+  const { data: cacheHitStats } = useQuery({
+    queryKey: ['business-monitor-cache-hit-rate-windows'],
     queryFn: async () => {
-      const response = await getBusinessMonitorCacheHitRate(24)
+      const response = await getBusinessMonitorCacheHitRateWindows()
       return response.success ? response.data : undefined
     },
     refetchInterval: BUSINESS_MONITOR_CACHE_HIT_INTERVAL,
-    staleTime: 30000,
-    refetchOnWindowFocus: false,
-  })
-  const { data: cacheHitStats2h } = useQuery({
-    queryKey: ['business-monitor-cache-hit-rate', 2],
-    queryFn: async () => {
-      const response = await getBusinessMonitorCacheHitRate(2)
-      return response.success ? response.data : undefined
-    },
-    refetchInterval: BUSINESS_MONITOR_CACHE_HIT_INTERVAL,
-    staleTime: 30000,
+    staleTime: BUSINESS_MONITOR_CACHE_HIT_INTERVAL,
     refetchOnWindowFocus: false,
   })
 
@@ -972,13 +959,13 @@ export function BusinessMonitor() {
                 <Metric icon={Database} title={t('Cache hit ratio')}>
                   <DualMetricValues
                     leftValue={formatCacheHitRate(
-                      getBillingCacheReadTokens(cacheHitStats24h),
-                      getCacheHitTotalInputTokens(cacheHitStats24h)
+                      getBillingCacheReadTokens(cacheHitStats?.long),
+                      getCacheHitTotalInputTokens(cacheHitStats?.long)
                     )}
                     leftLabel='24h'
                     rightValue={formatCacheHitRate(
-                      getBillingCacheReadTokens(cacheHitStats2h),
-                      getCacheHitTotalInputTokens(cacheHitStats2h)
+                      getBillingCacheReadTokens(cacheHitStats?.short),
+                      getCacheHitTotalInputTokens(cacheHitStats?.short)
                     )}
                     rightLabel='2h'
                     valueClassName='whitespace-nowrap sm:text-xl'

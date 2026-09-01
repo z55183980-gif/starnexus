@@ -37,9 +37,22 @@ func (c *ttlCache[V]) Get(key string) (V, bool) {
 
 	item, ok := c.items[key]
 	if !ok || time.Now().After(item.expiresAt) {
-		if ok {
-			delete(c.items, key)
-		}
+		var zero V
+		return zero, false
+	}
+	return item.value, true
+}
+
+// GetStale returns the most recently cached value even after its freshness
+// window has elapsed. Dashboard aggregates use this as a safe fallback when a
+// refresh is still running or the database query times out. Entries remain
+// bounded by maxEntries and are replaced on the next successful refresh.
+func (c *ttlCache[V]) GetStale(key string) (V, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	item, ok := c.items[key]
+	if !ok {
 		var zero V
 		return zero, false
 	}
@@ -81,6 +94,25 @@ func dashboardCacheKey(path string, query url.Values, scope string, identity str
 			seconds := int64(bucket / time.Second)
 			if seconds > 0 {
 				values.Set("end_timestamp", strconv.FormatInt(timestamp-timestamp%seconds, 10))
+			}
+		}
+	}
+	return strings.Join([]string{scope, identity, path, values.Encode()}, "|")
+}
+
+// dashboardAggregateCacheKey additionally buckets both ends of a moving time
+// range. Aggregate dashboard values are refreshed periodically, so second-
+// level timestamp differences should not create a new expensive query key.
+func dashboardAggregateCacheKey(path string, query url.Values, scope string, identity string) string {
+	values := make(url.Values, len(query))
+	for key, items := range query {
+		values[key] = append([]string(nil), items...)
+	}
+	const bucket = int64(60)
+	for _, key := range []string{"start_timestamp", "end_timestamp"} {
+		if raw := values.Get(key); raw != "" {
+			if timestamp, err := strconv.ParseInt(raw, 10, 64); err == nil {
+				values.Set(key, strconv.FormatInt(timestamp-timestamp%bucket, 10))
 			}
 		}
 	}

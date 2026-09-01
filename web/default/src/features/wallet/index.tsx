@@ -105,14 +105,22 @@ export function Wallet(props: WalletProps) {
   }, [props.initialShowHistory])
 
   useEffect(() => {
-    if (!topupInfo || topupInitializedRef.current) {
+    if (
+      !topupInfo ||
+      presetAmounts.length === 0 ||
+      topupInitializedRef.current
+    ) {
       return
     }
 
     topupInitializedRef.current = true
 
     const minTopup = getMinTopupAmount(topupInfo)
-    setTopupAmount(minTopup)
+    const initialPreset =
+      presetAmounts.find((preset) => preset.value >= minTopup) ||
+      presetAmounts[0]
+    setTopupAmount(initialPreset.value)
+    setSelectedPreset(initialPreset.value)
 
     const enabledMethods = (topupInfo.pay_methods || []).filter(
       (method) => method.enabled !== false && method.enabled !== 'false'
@@ -125,15 +133,16 @@ export function Wallet(props: WalletProps) {
     const defaultPaymentType =
       defaultMethod?.type || getDefaultPaymentType(topupInfo)
     calculatePaymentAmount(
-      minTopup,
+      initialPreset.value,
       defaultPaymentType,
-      getAmountFeeRate(topupInfo, minTopup, defaultPaymentType),
+      getAmountFeeRate(topupInfo, initialPreset.value, defaultPaymentType),
       epusdtCreditPerUsdt,
       quotaDisplayType,
       quotaPerUnit
     )
   }, [
     topupInfo,
+    presetAmounts,
     epusdtCreditPerUsdt,
     quotaDisplayType,
     quotaPerUnit,
@@ -161,23 +170,6 @@ export function Wallet(props: WalletProps) {
       quotaDisplayType,
       quotaPerUnit
     )
-  }
-
-  const handleTopupAmountChange = (amount: number) => {
-    setTopupAmount(amount)
-    setSelectedPreset(null)
-
-    const minTopup = getMinTopupAmount(topupInfo)
-    if (amount >= minTopup) {
-      calculatePaymentAmount(
-        amount,
-        getCurrentPaymentType(),
-        getCurrentFeeRate(amount),
-        epusdtCreditPerUsdt,
-        quotaDisplayType,
-        quotaPerUnit
-      )
-    }
   }
 
   const handlePaymentMethodChange = (method: PaymentMethod) => {
@@ -281,7 +273,6 @@ export function Wallet(props: WalletProps) {
                 selectedPreset={selectedPreset}
                 onSelectPreset={handleSelectPreset}
                 topupAmount={topupAmount}
-                onTopupAmountChange={handleTopupAmountChange}
                 paymentAmount={paymentAmount}
                 calculating={calculating}
                 onPaymentMethodChange={handlePaymentMethodChange}

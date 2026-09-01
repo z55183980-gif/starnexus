@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, type ReactNode } from 'react'
-import { Check, ChevronDown, Loader2, Receipt } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { Check, Loader2, Receipt } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
   formatCurrencyFromUSD,
@@ -28,12 +28,6 @@ import { cn } from '@/lib/utils'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TitledCard } from '@/components/ui/titled-card'
@@ -70,7 +64,6 @@ interface RechargeFormCardProps {
   selectedPreset: number | null
   onSelectPreset: (preset: PresetAmount) => void
   topupAmount: number
-  onTopupAmountChange: (amount: number) => void
   paymentAmount: number
   calculating: boolean
   onPaymentMethodChange: (method: PaymentMethod) => void
@@ -149,7 +142,6 @@ export function RechargeFormCard({
   selectedPreset,
   onSelectPreset,
   topupAmount,
-  onTopupAmountChange,
   paymentAmount,
   calculating,
   onPaymentMethodChange,
@@ -166,8 +158,6 @@ export function RechargeFormCard({
   onOpenBilling,
 }: RechargeFormCardProps) {
   const { t } = useTranslation()
-  const [localAmount, setLocalAmount] = useState(topupAmount.toString())
-  const [customAmountOpen, setCustomAmountOpen] = useState(false)
   const quotaCurrencyLabel =
     quotaDisplayType === 'TOKENS' ? t('Tokens') : getCurrencyLabel()
   const paymentFormatOptions = {
@@ -186,36 +176,6 @@ export function RechargeFormCard({
     formatPaymentChargeAmount(amount, paymentType, paymentFormatOptions)
   const isMethodEnabled = (method: PaymentMethod) =>
     method.enabled !== false && method.enabled !== 'false'
-
-  const handlePresetSelect = (preset: PresetAmount) => {
-    setCustomAmountOpen(false)
-    onSelectPreset(preset)
-  }
-
-  const handleAmountChange = (value: string) => {
-    if (value !== '' && !/^\d+$/.test(value)) {
-      return
-    }
-
-    setLocalAmount(value)
-
-    if (value === '') {
-      onTopupAmountChange(0)
-      return
-    }
-
-    const numValue = parseInt(value, 10)
-    if (!Number.isNaN(numValue)) {
-      onTopupAmountChange(numValue)
-    }
-  }
-
-  const handleCustomAmountOpenChange = (open: boolean) => {
-    setCustomAmountOpen(open)
-    if (open) {
-      setLocalAmount(topupAmount.toString())
-    }
-  }
 
   const hasStandardPaymentMethods =
     Array.isArray(topupInfo?.pay_methods) &&
@@ -243,11 +203,7 @@ export function RechargeFormCard({
   const feePercentage = Math.round(feeRate * 10000) / 100
   const hasPaymentSelection = !!selectedPaymentMethod
   const selectedMethodLabel = selectedPaymentMethod?.name
-  const isCustomAmountEmpty = customAmountOpen && localAmount === ''
-  const isCustomAmountBelowMin =
-    customAmountOpen && topupAmount > 0 && topupAmount < minTopup
   const amountBelowMin = topupAmount < minTopup
-  const showCustomAmountError = isCustomAmountEmpty || isCustomAmountBelowMin
   const canPay =
     hasPaymentSelection && !amountBelowMin && !calculating && !paying
 
@@ -381,11 +337,7 @@ export function RechargeFormCard({
       {hasAnyTopup ? (
         <>
           <section className='space-y-3 sm:space-y-4'>
-            <StepHeader
-              step={1}
-              title={t('Select top-up amount')}
-              description={t('Choose a preset or enter a custom amount')}
-            />
+            <StepHeader step={1} title={t('Select top-up amount')} />
 
             {presetAmounts.length > 0 ? (
               <div className='space-y-2'>
@@ -439,11 +391,11 @@ export function RechargeFormCard({
                         variant='outline'
                         className={cn(
                           'hover:border-primary/50 flex min-h-[4.75rem] flex-col items-center justify-center rounded-xl px-2 py-2.5 text-center whitespace-normal sm:min-h-20',
-                          selectedPreset === preset.value && !customAmountOpen
+                          selectedPreset === preset.value
                             ? 'border-primary bg-primary/5 ring-primary/20 ring-1'
                             : 'border-muted'
                         )}
-                        onClick={() => handlePresetSelect(preset)}
+                        onClick={() => onSelectPreset(preset)}
                       >
                         <div className='text-lg font-semibold sm:text-xl'>
                           {formatQuotaAmount(preset.value)}
@@ -479,105 +431,6 @@ export function RechargeFormCard({
                 </div>
               </div>
             ) : null}
-
-            <Collapsible
-              open={customAmountOpen}
-              onOpenChange={handleCustomAmountOpenChange}
-            >
-              <CollapsibleTrigger
-                render={
-                  <Button
-                    type='button'
-                    variant='outline'
-                    className={cn(
-                      'flex h-11 w-full items-center justify-between px-3 sm:h-12 sm:px-4',
-                      customAmountOpen &&
-                        'border-primary bg-primary/5 ring-primary/20 ring-1'
-                    )}
-                  />
-                }
-              >
-                <div className='flex min-w-0 flex-col items-start gap-0.5 text-left'>
-                  <span className='text-sm font-medium'>
-                    {t('Custom Amount')}
-                  </span>
-                  {!customAmountOpen && selectedPreset === null ? (
-                    <span className='text-muted-foreground truncate text-xs'>
-                      {formatQuotaAmount(topupAmount)}
-                    </span>
-                  ) : null}
-                </div>
-                <ChevronDown
-                  className={cn(
-                    'text-muted-foreground size-4 shrink-0 transition-transform duration-200',
-                    customAmountOpen && 'rotate-180'
-                  )}
-                />
-              </CollapsibleTrigger>
-
-              <CollapsibleContent className='CollapsibleContent space-y-2 pt-3'>
-                <div className='space-y-1'>
-                  <Label
-                    htmlFor='topup-amount'
-                    className='text-muted-foreground text-xs font-medium'
-                  >
-                    {t('Custom top-up amount ({{currency}})', {
-                      currency:
-                        quotaDisplayType === 'TOKENS' ? t('Tokens') : 'USD',
-                    })}
-                  </Label>
-                  <p className='text-muted-foreground text-xs'>
-                    {quotaDisplayType === 'TOKENS'
-                      ? t('Minimum topup amount: {{amount}}', {
-                          amount: minTopup,
-                        })
-                      : t('Minimum top-up is {{amount}} USD', {
-                          amount: minTopup,
-                        })}
-                  </p>
-                </div>
-                <div className='relative'>
-                  <Input
-                    id='topup-amount'
-                    type='text'
-                    inputMode='numeric'
-                    pattern='[0-9]*'
-                    value={localAmount}
-                    onChange={(e) => handleAmountChange(e.target.value)}
-                    placeholder={t('Enter top-up amount')}
-                    aria-invalid={showCustomAmountError}
-                    aria-describedby='topup-amount-hint'
-                    className={cn(
-                      'h-11 pr-14 text-base sm:h-12 sm:text-lg',
-                      showCustomAmountError &&
-                        'border-destructive focus-visible:ring-destructive/30'
-                    )}
-                  />
-                  <span className='text-muted-foreground pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm font-medium'>
-                    {quotaDisplayType === 'TOKENS' ? t('Tokens') : 'USD'}
-                  </span>
-                </div>
-                <p
-                  id='topup-amount-hint'
-                  className='text-muted-foreground text-xs'
-                >
-                  {t('Credit value: {{amount}}', {
-                    amount: formatQuotaAmount(topupAmount),
-                  })}
-                </p>
-                {isCustomAmountEmpty ? (
-                  <p className='text-destructive text-xs'>
-                    {t('Please enter a top-up amount')}
-                  </p>
-                ) : isCustomAmountBelowMin ? (
-                  <p className='text-destructive text-xs'>
-                    {t('Minimum topup amount: {{amount}}', {
-                      amount: minTopup,
-                    })}
-                  </p>
-                ) : null}
-              </CollapsibleContent>
-            </Collapsible>
           </section>
 
           <section className='space-y-3 border-t pt-5 sm:space-y-4 sm:pt-6'>

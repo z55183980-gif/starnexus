@@ -491,6 +491,7 @@ func SetApiRouter(router *gin.Engine) {
 			businessMonitorRoute.GET("/stream", controller.StreamBusinessMonitorLogs)
 			businessMonitorRoute.GET("/concurrency", controller.GetBusinessMonitorConcurrency)
 			businessMonitorRoute.GET("/cache-hit-rate", controller.GetBusinessMonitorCacheHitRate)
+			businessMonitorRoute.GET("/cache-hit-rate/windows", controller.GetBusinessMonitorCacheHitRateWindows)
 			businessMonitorRoute.GET("/alerts", controller.GetBusinessMonitorAlerts)
 			businessMonitorRoute.GET("/alerts/:id/log", controller.GetBusinessMonitorAlertLog)
 			businessMonitorRoute.POST("/alerts/acknowledge-all", controller.AcknowledgeAllBusinessMonitorAlerts)

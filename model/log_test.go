@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -213,6 +214,25 @@ func TestGetBusinessMonitorCacheStats(t *testing.T) {
 	require.Equal(t, int64(500), filteredStats.InputTokens)
 	require.Equal(t, int64(1500), filteredStats.CacheReadTokens)
 	require.Equal(t, int64(1400), filteredStats.BillingCacheReadTokens)
+}
+
+func TestGetBusinessMonitorCacheStatsWindows(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalLogDB := LOG_DB
+	LOG_DB = db
+	t.Cleanup(func() { LOG_DB = originalLogDB })
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.Create(&[]Log{
+		{Type: LogTypeConsume, CreatedAt: 150, PromptTokens: 100, Other: `{"cache_tokens":20}`},
+		{Type: LogTypeConsume, CreatedAt: 190, PromptTokens: 200, Other: `{"cache_tokens":50}`},
+	}).Error)
+	stats, err := GetBusinessMonitorCacheStatsWindows(context.Background(), 100, 180, 200, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(230), stats.Long.InputTokens)
+	require.Equal(t, int64(70), stats.Long.CacheReadTokens)
+	require.Equal(t, int64(150), stats.Short.InputTokens)
+	require.Equal(t, int64(50), stats.Short.CacheReadTokens)
 }
 
 func TestGetUsageDetailsSummaryUsesDatabaseAggregate(t *testing.T) {

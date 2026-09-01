@@ -668,7 +668,6 @@ const TopUp = () => {
           setEnableWaffoPancakeTopUp(enableWaffoPancakeTopUp);
           setWaffoPancakeMinTopUp(data.waffo_pancake_min_topup || 1);
           setMinTopUp(minTopUpValue);
-          setTopUpCount(minTopUpValue);
           setTopUpLink(data.topup_link || '');
           setTopupInfo((prev) => ({
             ...prev,
@@ -687,24 +686,30 @@ const TopUp = () => {
             setCreemProducts([]);
           }
 
-          // 如果没有自定义充值数量选项，根据最小充值金额生成预设充值额度选项
-          if (topupInfo.amount_options.length === 0) {
-            setPresetAmounts(generatePresetAmounts(minTopUpValue));
-          }
+          const configuredAmounts = Array.isArray(data.amount_options)
+            ? data.amount_options
+                .map((amount) => Number(amount))
+                .filter((amount) => Number.isFinite(amount) && amount > 0)
+            : [];
+          const nextPresetAmounts =
+            configuredAmounts.length > 0
+              ? configuredAmounts.map((amount) => ({
+                  value: amount,
+                  discount: data.discount?.[amount] || 1.0,
+                }))
+              : generatePresetAmounts(minTopUpValue);
+          setPresetAmounts(nextPresetAmounts);
 
-          // 初始化显示实付金额
-          getAmount(minTopUpValue);
+          const initialAmount =
+            nextPresetAmounts.find((preset) => preset.value >= minTopUpValue)
+              ?.value ||
+            nextPresetAmounts[0]?.value ||
+            minTopUpValue;
+          setTopUpCount(initialAmount);
+          setSelectedPreset(initialAmount);
+          getAmount(initialAmount);
         } catch (e) {
           setPayMethods([]);
-        }
-
-        // 如果有自定义充值数量选项，使用它们替换默认的预设选项
-        if (data.amount_options && data.amount_options.length > 0) {
-          const customPresets = data.amount_options.map((amount) => ({
-            value: amount,
-            discount: data.discount[amount] || 1.0,
-          }));
-          setPresetAmounts(customPresets);
         }
       } else {
         showError(data || t('获取充值配置失败'));
@@ -915,13 +920,6 @@ const TopUp = () => {
           formatLargeNumber={formatLargeNumber}
           priceRatio={priceRatio}
           topUpCount={topUpCount}
-          minTopUp={minTopUp}
-          renderQuotaWithAmount={renderQuotaWithAmount}
-          getAmount={getAmount}
-          setTopUpCount={setTopUpCount}
-          setSelectedPreset={setSelectedPreset}
-          renderAmount={renderAmount}
-          amountLoading={amountLoading}
           payMethods={confirmPayMethods}
           preTopUp={preTopUp}
           paymentLoading={paymentLoading}
