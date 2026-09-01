@@ -636,6 +636,9 @@ export function UsageDetails() {
       return result.data || DEFAULT_LOGS_DATA
     },
     enabled: activeTab !== 'ranking',
+    // Keep the list responsive while avoiding a refetch on every brief
+    // navigation back to this page.
+    staleTime: 30_000,
   })
   const summaryQuery = useQuery({
     queryKey: ['usage-details-summary', summaryParams, t],
@@ -647,8 +650,16 @@ export function UsageDetails() {
       }
       return mapUsageSummary(result.data)
     },
-    enabled: activeTab === 'usage' && accessScope === 'admin',
+    // The summary scans the complete filtered result set. Start it only after
+    // the first page has loaded so the two database-heavy requests do not hit
+    // the log database concurrently on initial navigation.
+    enabled:
+      activeTab === 'usage' &&
+      accessScope === 'admin' &&
+      query.isSuccess &&
+      !query.isFetching,
     placeholderData: (previousData) => previousData,
+    staleTime: 30_000,
   })
   const logs = useMemo(
     () => (query.data?.items || []) as UsageLog[],

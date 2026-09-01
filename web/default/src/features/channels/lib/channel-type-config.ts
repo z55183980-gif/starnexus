@@ -146,6 +146,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       'doubao-seedance-2-5-260628',
     ],
   },
+  55: {
+    id: 55,
+    name: CHANNEL_TYPES[55],
+    icon: 'openai',
+    hints: {
+      baseUrl: 'OpenAI-compatible video API base URL (for example: https://video.laoliimage2.win)',
+      key: 'Bearer API key',
+      models: 'Use the upstream video model IDs returned by /v1/models',
+    },
+  },
 }
 
 /**

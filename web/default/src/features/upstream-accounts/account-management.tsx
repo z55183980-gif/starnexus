@@ -1669,6 +1669,7 @@ export function AccountManagement({
   const openedEditPoolIdRef = useRef<number | null>(null)
   const [activeTab, setActiveTab] = useState<'accounts' | 'pools'>(initialTab)
   const [search, setSearch] = useState('')
+  const debouncedSearch = useDebounce(search.trim(), 300)
   const [platformFilter, setPlatformFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -1740,7 +1741,7 @@ export function AccountManagement({
   const accountsQuery = useQuery({
     queryKey: [
       ...queryKeys.accounts,
-      search,
+      debouncedSearch,
       page,
       platformFilter,
       typeFilter,
@@ -1755,7 +1756,7 @@ export function AccountManagement({
       listUpstreamAccounts({
         page,
         page_size: 50,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         platform: platformFilter === 'all' ? undefined : platformFilter,
         type: typeFilter === 'all' ? undefined : typeFilter,
         status: statusFilter === 'all' ? undefined : statusFilter,
@@ -1768,6 +1769,7 @@ export function AccountManagement({
         sort_by: sortBy ?? undefined,
         sort_order: sortBy ? sortOrder : undefined,
       }),
+    staleTime: 30_000,
   })
   const poolsQuery = useQuery({
     queryKey: queryKeys.pools,
@@ -1778,10 +1780,12 @@ export function AccountManagement({
       }
       return response.data ?? []
     },
+    staleTime: 60_000,
   })
   const proxiesQuery = useQuery({
     queryKey: queryKeys.proxies,
     queryFn: listUpstreamProxies,
+    staleTime: 60_000,
   })
   const accounts = accountsQuery.data?.data?.items ?? []
   useEffect(() => {
@@ -1829,6 +1833,7 @@ export function AccountManagement({
       return nextStats
     },
     enabled: !accountsQuery.isLoading,
+    staleTime: 60_000,
   })
   const todayStatsByAccountId = todayStatsQuery.data ?? {}
   const todayStatsLoading = todayStatsQuery.isFetching

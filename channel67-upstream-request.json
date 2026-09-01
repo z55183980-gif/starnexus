@@ -1,0 +1,37 @@
+{
+  "request_info": {
+    "method": "POST",
+    "upstream_endpoint": "https://video.laoliimage2.win/v1/videos",
+    "gateway_channel_id": 67,
+    "gateway_model": "doubao-seedance-2-5-260628",
+    "upstream_model": "3.5",
+    "authorization": "Bearer <UPSTREAM_API_KEY>",
+    "content_type": "application/json",
+    "note": "The gateway's channel-67 model mapping changed the model field from doubao-seedance-2-5-260628 to 3.5. The authorization value is intentionally redacted."
+  },
+  "body": {
+    "model": "3.5",
+    "prompt": "30秒好莱坞史诗大片，电影宽画幅2.39:1，IMAX质感，杜比光影，电影级调色，高细节8K，HDR，景深，镜头流畅叙事。\n0‑5秒：黄昏末日荒原，破碎巨型遗迹矗立，狂风卷起沙尘，低角度广角镜头，氛围感压抑悲壮，冷金夕阳光线；\n5‑12秒：孤胆主角身披磨损作战披风，手持武器缓步走向遗迹，跟拍长镜头，面部半埋在阴影，眼神坚毅，远处乌云开始汇聚；\n12‑20秒：天空骤然电闪雷鸣，遗迹巨石轰然开裂，神秘金色能量洪流喷涌而出，爆炸冲击波向外扩散，高速动态镜头，粒子特效，烟雾漫天；\n20‑26秒：主角直面爆发的能量，回身抬手做出抵抗姿态，慢动作，发丝与披风被狂风剧烈吹动，轮廓光打亮人物剪影；\n26‑30秒：定格宏大全景，乌云与金色能量交织，主角渺小伫立在震撼天地之间，留下悬念收尾，电影暗角，史诗氛围感，无字幕，无水印，镜头丝滑无崩坏，人物肢体正常",
+    "seconds": "30",
+    "size": "1080x1920",
+    "metadata": {
+      "resolution": "1080p",
+      "aspect_ratio": "9:16"
+    }
+  },
+  "gateway_task": {
+    "public_task_id": "task_eAb0RTynsNPUN6mALm0bofF8paahebjQ",
+    "upstream_task_id": "task_0oBIHmrbye70NSEBXgqvlpcfILMitFrE",
+    "upstream_request_id": "vt1.N9MgGfZFWLKiVtNqg3O-91AatjGTqqZMbE-_gfYqlBbADqzIwSLXOIeibRjFfX0MaUB8Y7Jeq2HxIbAtx9WAVS0.U-eoY6IMfiSGflD_6eJaZeVEQSnVd96JInX821Lna3A",
+    "initial_submit_response": {
+      "http_status": 200,
+      "status": "queued"
+    },
+    "later_upstream_error_reported": {
+      "http_status": 502,
+      "error_type": "api_error",
+      "message": "时长不合法",
+      "request_id": "1850a274-5e11-41a5-849f-56065918d265"
+    }
+  }
+}
