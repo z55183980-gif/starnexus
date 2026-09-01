@@ -242,7 +242,9 @@ export function AccountIdentityCell({ account }: { account: UpstreamAccount }) {
           className='h-auto rounded-md px-1.5 py-0 text-[10px]'
           title={subscriptionExpiresAt}
         >
-          {t('Subscription expires {{date}}', { date: formattedSubscriptionExpiry })}
+          {t('Subscription expires {{date}}', {
+            date: formattedSubscriptionExpiry,
+          })}
         </Badge>
       ) : null}
     </div>
@@ -993,6 +995,8 @@ export function AccountUsageCell({
     account.platform === 'anthropic' &&
     (account.type === 'oauth' || account.type === 'setup_token')
   const supported = isOpenAI || isAnthropic
+  const autoQueryEnabled =
+    supported && account.status === 'active' && account.schedulable
   const windows = useMemo(() => classifyWindows(usage), [usage])
   const displayedWindows = isAnthropic
     ? ([
@@ -1107,7 +1111,7 @@ export function AccountUsageCell({
   }, [account.id])
 
   useEffect(() => {
-    if (!supported || !visible) return
+    if (!autoQueryEnabled || !visible) return
     let active = true
     setLoading(true)
     setError('')
@@ -1147,6 +1151,7 @@ export function AccountUsageCell({
     account.id,
     isOpenAI,
     refreshSchedulingState,
+    autoQueryEnabled,
     supported,
     t,
     visible,
@@ -1260,10 +1265,15 @@ export function AccountUsageCell({
           >
             <span className='inline-flex items-center gap-1'>
               <Badge
-                variant={error && !(usage || anthropicUsage) ? 'warning' : 'secondary'}
+                variant={
+                  error && !(usage || anthropicUsage) ? 'warning' : 'secondary'
+                }
                 className='rounded-md'
               >
-                {usage || anthropicUsage || usageSource === 'cached' || usageSource === 'passive'
+                {usage ||
+                anthropicUsage ||
+                usageSource === 'cached' ||
+                usageSource === 'passive'
                   ? t('Cached')
                   : t('Usage unavailable')}
               </Badge>

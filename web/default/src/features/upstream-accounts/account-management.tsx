@@ -1769,17 +1769,24 @@ export function AccountManagement({
         sort_by: sortBy ?? undefined,
         sort_order: sortBy ? sortOrder : undefined,
       }),
+    enabled: activeTab === 'accounts',
     staleTime: 30_000,
   })
   const poolsQuery = useQuery({
-    queryKey: queryKeys.pools,
+    queryKey: [
+      ...queryKeys.pools,
+      activeTab === 'pools' ? 'with-stats' : 'summary',
+    ],
     queryFn: async () => {
-      const response = await listUpstreamPools()
+      const response = await listUpstreamPools({
+        includeStats: activeTab === 'pools',
+      })
       if (!response.success) {
         throw new Error(response.message)
       }
       return response.data ?? []
     },
+    enabled: true,
     staleTime: 60_000,
   })
   const proxiesQuery = useQuery({
@@ -1815,7 +1822,7 @@ export function AccountManagement({
   )
   const accountIdsKey = accountIds.join(',')
   const todayStatsQuery = useQuery({
-    queryKey: [...queryKeys.accounts, 'today-stats', accountIdsKey],
+    queryKey: [...queryKeys.accounts, 'today-stats', accountIdsKey, accountIds],
     queryFn: async () => {
       if (accountIds.length === 0) {
         return {} as Record<string, UpstreamAccountWindowStats>
@@ -1832,7 +1839,7 @@ export function AccountManagement({
       }
       return nextStats
     },
-    enabled: !accountsQuery.isLoading,
+    enabled: activeTab === 'accounts' && !accountsQuery.isLoading,
     staleTime: 60_000,
   })
   const todayStatsByAccountId = todayStatsQuery.data ?? {}

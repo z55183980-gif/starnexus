@@ -188,7 +188,11 @@ type UpstreamProxyUpdateInput struct {
 	Auth  *UpstreamProxyAuthInput
 }
 
-func ListUpstreamAccountPools() ([]UpstreamAccountPoolView, error) {
+func ListUpstreamAccountPools(includeStats ...bool) ([]UpstreamAccountPoolView, error) {
+	withStats := true
+	if len(includeStats) > 0 {
+		withStats = includeStats[0]
+	}
 	var pools []model.UpstreamAccountPool
 	if err := model.DB.Order("id ASC").Find(&pools).Error; err != nil {
 		return nil, err
@@ -196,6 +200,9 @@ func ListUpstreamAccountPools() ([]UpstreamAccountPoolView, error) {
 	views := make([]UpstreamAccountPoolView, 0, len(pools))
 	for _, pool := range pools {
 		views = append(views, UpstreamAccountPoolView{UpstreamAccountPool: pool})
+	}
+	if !withStats {
+		return views, nil
 	}
 	if err := populateUpstreamAccountPoolViews(views); err != nil {
 		return nil, err

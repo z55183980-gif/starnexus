@@ -388,7 +388,7 @@ export function ChannelMutateDrawer({
 
   const { data: upstreamPoolsData } = useQuery({
     queryKey: ['upstream-account-pools', 'channel-form'],
-    queryFn: listUpstreamPools,
+    queryFn: () => listUpstreamPools(),
     enabled: open && isRoot,
   })
 

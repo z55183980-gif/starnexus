@@ -115,7 +115,8 @@ type upstreamBatchResult struct {
 }
 
 func ListUpstreamAccountPools(c *gin.Context) {
-	pools, err := service.ListUpstreamAccountPools()
+	includeStats := !strings.EqualFold(strings.TrimSpace(c.Query("include_stats")), "false")
+	pools, err := service.ListUpstreamAccountPools(includeStats)
 	if err != nil {
 		common.ApiError(c, err)
 		return

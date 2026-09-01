@@ -47,10 +47,15 @@ const localFeedbackApiConfig: LocalFeedbackApiConfig = {
   skipErrorHandler: true,
 }
 
-export async function listUpstreamPools(): Promise<
-  ApiResponse<UpstreamAccountPool[]>
-> {
-  const response = await api.get('/api/upstream/account-pools')
+export async function listUpstreamPools(options?: {
+  includeStats?: boolean
+}): Promise<ApiResponse<UpstreamAccountPool[]>> {
+  const response = await api.get('/api/upstream/account-pools', {
+    params:
+      options?.includeStats === undefined
+        ? undefined
+        : { include_stats: options.includeStats },
+  })
   return response.data
 }
 
