@@ -485,8 +485,15 @@ function TripleMetricValues(props: {
 }
 
 const LIVE_LOG_PAGE_SIZE = 50
-const BUSINESS_MONITOR_FALLBACK_INTERVAL = 15000
+const BUSINESS_MONITOR_FALLBACK_INTERVAL = 30000
+const BUSINESS_MONITOR_CONCURRENCY_INTERVAL = 10000
+const BUSINESS_MONITOR_CACHE_HIT_INTERVAL = 300000
+const BUSINESS_MONITOR_ALERT_INTERVAL = 30000
 const BUSINESS_MONITOR_STATS_THROTTLE = 15000
+const BUSINESS_MONITOR_RECONNECT_BASE_DELAY = 10000
+const BUSINESS_MONITOR_RECONNECT_MAX_DELAY = 60000
+const BUSINESS_MONITOR_RECONNECT_COOLDOWN = 300000
+const BUSINESS_MONITOR_RECONNECT_COOLDOWN_AFTER = 5
 
 interface LiveLogsSnapshot {
   logs: UsageLog[]
@@ -558,6 +565,7 @@ export function BusinessMonitor() {
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let statsRefreshTimer: ReturnType<typeof setTimeout> | undefined
     let lastStatsRefreshAt = Date.now()
+    let reconnectAttempt = 0
 
     const scheduleStatsRefresh = () => {
       if (statsRefreshTimer) return
@@ -568,9 +576,6 @@ export function BusinessMonitor() {
         lastStatsRefreshAt = Date.now()
         queryClient.invalidateQueries({
           queryKey: ['business-monitor-stats'],
-        })
-        queryClient.invalidateQueries({
-          queryKey: ['business-monitor-cache-hit-rate'],
         })
       }, delay)
     }
@@ -583,10 +588,22 @@ export function BusinessMonitor() {
 
     const scheduleReconnect = () => {
       if (controller.signal.aborted || reconnectTimer) return
+      reconnectAttempt += 1
+      const backoffAttempt = Math.min(reconnectAttempt - 1, 3)
+      const delay =
+        reconnectAttempt >= BUSINESS_MONITOR_RECONNECT_COOLDOWN_AFTER
+          ? BUSINESS_MONITOR_RECONNECT_COOLDOWN
+          : Math.min(
+              BUSINESS_MONITOR_RECONNECT_BASE_DELAY * 2 ** backoffAttempt,
+              BUSINESS_MONITOR_RECONNECT_MAX_DELAY
+            )
       reconnectTimer = setTimeout(() => {
         reconnectTimer = undefined
+        if (reconnectAttempt >= BUSINESS_MONITOR_RECONNECT_COOLDOWN_AFTER) {
+          reconnectAttempt = 0
+        }
         consumeStream()
-      }, 3000)
+      }, delay)
     }
 
     const consumeStream = async () => {
@@ -605,6 +622,7 @@ export function BusinessMonitor() {
         if (!response.ok || !response.body) {
           throw new Error(`business monitor stream failed: ${response.status}`)
         }
+        reconnectAttempt = 0
         if (hasConnected) {
           clearScheduledStatsRefresh()
           lastStatsRefreshAt = Date.now()
@@ -738,8 +756,9 @@ export function BusinessMonitor() {
         ? response.data?.concurrency
         : undefined
     },
-    refetchInterval: 5000,
+    refetchInterval: BUSINESS_MONITOR_CONCURRENCY_INTERVAL,
     staleTime: 1000,
+    refetchOnWindowFocus: false,
   })
 
   const { data: cacheHitStats24h } = useQuery({
@@ -748,8 +767,9 @@ export function BusinessMonitor() {
       const response = await getBusinessMonitorCacheHitRate(24)
       return response.success ? response.data : undefined
     },
-    refetchInterval: 60000,
+    refetchInterval: BUSINESS_MONITOR_CACHE_HIT_INTERVAL,
     staleTime: 30000,
+    refetchOnWindowFocus: false,
   })
   const { data: cacheHitStats2h } = useQuery({
     queryKey: ['business-monitor-cache-hit-rate', 2],
@@ -757,8 +777,9 @@ export function BusinessMonitor() {
       const response = await getBusinessMonitorCacheHitRate(2)
       return response.success ? response.data : undefined
     },
-    refetchInterval: 60000,
+    refetchInterval: BUSINESS_MONITOR_CACHE_HIT_INTERVAL,
     staleTime: 30000,
+    refetchOnWindowFocus: false,
   })
 
   const { data: logsData } = useQuery({
@@ -797,6 +818,7 @@ export function BusinessMonitor() {
     refetchInterval:
       streamStatus === 'connected' ? false : BUSINESS_MONITOR_FALLBACK_INTERVAL,
     staleTime: 10000,
+    refetchOnWindowFocus: false,
     structuralSharing: (oldData, newData) => {
       const current = oldData as LiveLogsSnapshot | undefined
       const incoming = newData as LiveLogsSnapshot
@@ -844,6 +866,7 @@ export function BusinessMonitor() {
     refetchInterval:
       streamStatus === 'connected' ? false : BUSINESS_MONITOR_FALLBACK_INTERVAL,
     staleTime: BUSINESS_MONITOR_STATS_THROTTLE,
+    refetchOnWindowFocus: false,
   })
 
   const {
@@ -857,8 +880,9 @@ export function BusinessMonitor() {
       if (!response.success) throw new Error('failed to load error alerts')
       return response.data ?? []
     },
-    refetchInterval: 15000,
+    refetchInterval: BUSINESS_MONITOR_ALERT_INTERVAL,
     staleTime: 10000,
+    refetchOnWindowFocus: false,
   })
 
   const { data: userSummary } = useQuery({
@@ -888,6 +912,7 @@ export function BusinessMonitor() {
     },
     refetchInterval: 60000,
     staleTime: 30000,
+    refetchOnWindowFocus: false,
   })
 
   const logs = logsData?.logs ?? []

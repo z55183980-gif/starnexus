@@ -3,11 +3,17 @@ package controller
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+)
+
+var (
+	logsStatCache            = newTTLCache[model.Stat](15*time.Second, 2048)
+	usageDetailsSummaryCache = newTTLCache[model.UsageDetailsSummary](30*time.Second, 1024)
 )
 
 func GetAllLogs(c *gin.Context) {
@@ -164,6 +170,19 @@ func GetLogsStat(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	cacheKey := dashboardCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "admin-log-stat", strconv.Itoa(c.GetInt("id")), 15*time.Second)
+	if cached, found := logsStatCache.Get(cacheKey); found {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data": gin.H{
+				"quota": cached.Quota,
+				"rpm":   cached.Rpm,
+				"tpm":   cached.Tpm,
+			},
+		})
+		return
+	}
 	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
 	if err != nil {
 		common.ApiError(c, err)
@@ -179,6 +198,7 @@ func GetLogsStat(c *gin.Context) {
 			"tpm":   stat.Tpm,
 		},
 	})
+	logsStatCache.Set(cacheKey, stat)
 	return
 }
 
@@ -205,6 +225,11 @@ func GetLogsSummary(c *gin.Context) {
 		parsed := rawStream == "true"
 		stream = &parsed
 	}
+	cacheKey := dashboardCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "admin-usage-summary", strconv.Itoa(c.GetInt("id")), 30*time.Second)
+	if cached, found := usageDetailsSummaryCache.Get(cacheKey); found {
+		common.ApiSuccess(c, cached)
+		return
+	}
 
 	summary, err := model.GetUsageDetailsSummary(logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, model.LogQueryOptions{
 		AccountName: accountName,
@@ -216,6 +241,7 @@ func GetLogsSummary(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	usageDetailsSummaryCache.Set(cacheKey, summary)
 	common.ApiSuccess(c, summary)
 }
 
@@ -233,6 +259,19 @@ func GetAgentLogsStat(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	cacheKey := dashboardCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "agent-log-stat", strconv.Itoa(agentId), 15*time.Second)
+	if cached, found := logsStatCache.Get(cacheKey); found {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data": gin.H{
+				"quota": cached.Quota,
+				"rpm":   cached.Rpm,
+				"tpm":   cached.Tpm,
+			},
+		})
+		return
+	}
 	stat, err := model.SumAgentUsedQuota(agentId, logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, excludeFilters)
 	if err != nil {
 		common.ApiError(c, err)
@@ -247,6 +286,7 @@ func GetAgentLogsStat(c *gin.Context) {
 			"tpm":   stat.Tpm,
 		},
 	})
+	logsStatCache.Set(cacheKey, stat)
 }
 
 func GetLogsSelfStat(c *gin.Context) {
@@ -261,6 +301,19 @@ func GetLogsSelfStat(c *gin.Context) {
 	excludeFilters, err := model.ParseLogExcludeFilters(c.Query("exclude_filters"))
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	cacheKey := dashboardCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "self-log-stat", strconv.Itoa(c.GetInt("id"))+":"+username, 15*time.Second)
+	if cached, found := logsStatCache.Get(cacheKey); found {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data": gin.H{
+				"quota": cached.Quota,
+				"rpm":   cached.Rpm,
+				"tpm":   cached.Tpm,
+			},
+		})
 		return
 	}
 	quotaNum, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
@@ -279,6 +332,7 @@ func GetLogsSelfStat(c *gin.Context) {
 			//"token": tokenNum,
 		},
 	})
+	logsStatCache.Set(cacheKey, quotaNum)
 	return
 }
 

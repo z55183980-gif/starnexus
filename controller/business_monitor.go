@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var businessMonitorCacheHitRateCache = newTTLCache[model.BusinessMonitorCacheStats](60*time.Second, 128)
+
 // StreamBusinessMonitorLogs streams committed log events to an authenticated
 // admin. PostgreSQL remains the source of truth; the frontend periodically
 // refreshes its snapshot to compensate for missed stream events.
@@ -119,6 +121,21 @@ func GetBusinessMonitorCacheHitRate(c *gin.Context) {
 	windowSeconds := int64(hours) * int64(time.Hour/time.Second)
 	startTimestamp := endTimestamp - windowSeconds
 	modelName := strings.TrimSpace(c.Query("model_name"))
+	cacheKey := dashboardCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "business-monitor-cache-hit-rate", strconv.Itoa(c.GetInt("id")), 60*time.Second)
+	if cached, found := businessMonitorCacheHitRateCache.Get(cacheKey); found {
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data": gin.H{
+				"input_tokens":              cached.InputTokens,
+				"cache_read_tokens":         cached.CacheReadTokens,
+				"billing_cache_read_tokens": cached.BillingCacheReadTokens,
+				"cache_creation_tokens":     cached.CacheCreationTokens,
+				"window_seconds":            windowSeconds,
+			},
+		})
+		return
+	}
 	stats, err := model.GetBusinessMonitorCacheStats(startTimestamp, endTimestamp, modelName)
 	if err != nil {
 		common.ApiError(c, err)
@@ -135,6 +152,7 @@ func GetBusinessMonitorCacheHitRate(c *gin.Context) {
 			"window_seconds":            windowSeconds,
 		},
 	})
+	businessMonitorCacheHitRateCache.Set(cacheKey, stats)
 }
 
 func GetBusinessMonitorAlerts(c *gin.Context) {
