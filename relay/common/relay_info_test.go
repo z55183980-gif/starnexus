@@ -2,6 +2,7 @@ package common
 
 import (
 	"testing"
+	"time"
 
 	appcommon "github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -64,4 +65,24 @@ func TestRelayInfoRefreshesAccountRateMultiplierAfterFailover(t *testing.T) {
 	appcommon.SetContextKey(ctx, constant.ContextKeyUpstreamAccountRateMultiplier, 0.75)
 	info.SetAccountRateMultiplierFromContext(ctx)
 	require.Equal(t, 0.75, info.GetAccountRateMultiplier())
+}
+
+func TestRelayInfoLogStartTimeUsesDisplayOnlyStart(t *testing.T) {
+	start := time.Now()
+	displayStart := start.Add(750 * time.Millisecond)
+	info := &RelayInfo{StartTime: start}
+
+	info.SetLogStartTime(displayStart)
+
+	require.Equal(t, displayStart, info.GetLogStartTime())
+	require.Equal(t, start, info.StartTime)
+}
+
+func TestRelayInfoLogStartTimeDoesNotMoveBeforeRequestStart(t *testing.T) {
+	start := time.Now()
+	info := &RelayInfo{StartTime: start}
+
+	info.SetLogStartTime(start.Add(-time.Millisecond))
+
+	require.Equal(t, start, info.GetLogStartTime())
 }

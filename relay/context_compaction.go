@@ -553,6 +553,7 @@ func cloneRelayInfoForContextCompaction(info *relaycommon.RelayInfo, req *dto.Cl
 	clone.UpstreamRequestBodySize = 0
 	clone.RequestConversionChain = []types.RelayFormat{types.RelayFormatClaude}
 	clone.StartTime = time.Now()
+	clone.LogStartTime = clone.StartTime
 	clone.FirstResponseTime = clone.StartTime.Add(-time.Second)
 	clone.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{
 		LastMessagesType: relaycommon.LastMessageTypeNone,

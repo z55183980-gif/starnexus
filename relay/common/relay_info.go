@@ -86,14 +86,18 @@ type TokenCountMeta struct {
 }
 
 type RelayInfo struct {
-	TokenId           int
-	TokenKey          string
-	TokenGroup        string
-	UserId            int
-	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
-	UserGroup         string // 用户所在分组
-	TokenUnlimited    bool
-	StartTime         time.Time
+	TokenId        int
+	TokenKey       string
+	TokenGroup     string
+	UserId         int
+	UsingGroup     string // 使用的分组，当auto跨分组重试时，会变动
+	UserGroup      string // 用户所在分组
+	TokenUnlimited bool
+	StartTime      time.Time
+	// LogStartTime is the HTTP usage-log display start point. It is set just
+	// before dispatching an upstream attempt, so displayed FRT excludes local
+	// preparation. StartTime remains canonical for billing and performance.
+	LogStartTime      time.Time
 	FirstResponseTime time.Time
 	isFirstResponse   bool
 	//SendLastReasoningResponse bool
@@ -537,6 +541,7 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		IsStream:        isStream,
 
 		StartTime:         startTime,
+		LogStartTime:      startTime,
 		FirstResponseTime: startTime.Add(-time.Second),
 		ThinkingContentInfo: ThinkingContentInfo{
 			IsFirstThinkingContent:  true,
@@ -736,6 +741,28 @@ func (info *RelayInfo) SetFirstResponseTime() {
 		info.FirstResponseTime = time.Now()
 		info.isFirstResponse = false
 	}
+}
+
+// SetLogStartTime updates the start point used by the usage-log FRT display.
+// It intentionally does not change StartTime, which is also used by billing
+// and aggregate performance metrics.
+func (info *RelayInfo) SetLogStartTime(start time.Time) {
+	if info == nil || start.IsZero() {
+		return
+	}
+	info.LogStartTime = start
+}
+
+// GetLogStartTime returns the display-only start point, falling back to the
+// canonical request start for callers that do not use the HTTP display timing.
+func (info *RelayInfo) GetLogStartTime() time.Time {
+	if info == nil {
+		return time.Time{}
+	}
+	if !info.LogStartTime.IsZero() && !info.LogStartTime.Before(info.StartTime) {
+		return info.LogStartTime
+	}
+	return info.StartTime
 }
 
 func (info *RelayInfo) HasSendResponse() bool {

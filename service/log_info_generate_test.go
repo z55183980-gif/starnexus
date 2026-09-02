@@ -76,6 +76,23 @@ func TestGenerateTextOtherInfoIncludesStreamTransport(t *testing.T) {
 	}, other["stream_status"])
 }
 
+func TestGenerateTextOtherInfoUsesHTTPDisplayStartForFRT(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	started := time.Now().Add(-2 * time.Second)
+	info := &relaycommon.RelayInfo{
+		StartTime:         started,
+		LogStartTime:      started.Add(1500 * time.Millisecond),
+		FirstResponseTime: started.Add(1800 * time.Millisecond),
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+	}
+
+	other := GenerateTextOtherInfo(ctx, info, 1, 1, 1, 0, 0, -1, -1)
+	require.Equal(t, float64(300), other["frt"])
+}
+
 func TestGenerateTextOtherInfoIncludesCodexStructuredOutputCompatibility(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())

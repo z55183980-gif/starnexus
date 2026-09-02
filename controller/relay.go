@@ -288,6 +288,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				break
 			}
 			c.Request.Body = io.NopCloser(bodyStorage)
+			// The usage-log FRT is a display metric. Start it at the last point
+			// before dispatching this HTTP attempt so routing, local audits, token
+			// estimation, billing reservation, and account lease waits are excluded.
+			if relayFormat != types.RelayFormatOpenAIRealtime {
+				markHTTPLogStart(c, relayInfo)
+			}
 
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
@@ -528,6 +534,23 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, newAPIError
 	}
 	return channel, nil
+}
+
+// markHTTPLogStart advances only the usage-log display timer after the current
+// channel/account attempt has been prepared. The canonical request timer is
+// intentionally left untouched for billing and performance metrics.
+func markHTTPLogStart(c *gin.Context, info *relaycommon.RelayInfo) {
+	if c == nil || c.Request == nil || c.Request.Method == http.MethodGet || info == nil {
+		return
+	}
+	// Do not move the display origin after a response has already been
+	// observed. A later retry must not make the original first response produce
+	// a negative (clamped-to-zero) FRT.
+	if info.HasSendResponse() {
+		return
+	}
+	now := time.Now()
+	info.SetLogStartTime(now)
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
