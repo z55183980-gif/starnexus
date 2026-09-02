@@ -170,6 +170,26 @@ func TestResolveUseTimeMilliseconds(t *testing.T) {
 	require.Nil(t, resolveUseTimeMilliseconds(0, nil))
 }
 
+func TestNormalizeLogUsageStats(t *testing.T) {
+	log := &Log{Other: `{"usage_semantic":"anthropic","cache_tokens":1500,"cache_write_tokens":300,"cache_creation_tokens":400,"cache_creation_tokens_5m":100,"cache_creation_tokens_1h":200,"group_ratio":0.5,"billing_mode":"tiered_expr","billing_source":"subscription","admin_info":{"cache_billing":{"raw_cache_read_tokens":1500,"billing_cache_read_tokens":1400}}}`}
+	require.True(t, NormalizeLogUsageStats(log))
+	require.Equal(t, int8(1), log.UsageStatsReady)
+	require.Equal(t, int64(1500), log.UsageCacheReadTokens)
+	require.Equal(t, int64(1400), log.UsageBillingCacheRead)
+	// cache_write_tokens has the same precedence as the existing JSON logic.
+	require.Equal(t, int64(300), log.UsageCacheCreationTokens)
+	require.Equal(t, int8(1), log.UsageIsAnthropic)
+	require.InDelta(t, 0.5, log.UsageGroupRatio, 0.000001)
+	require.Equal(t, "tiered_expr", log.UsageBillingMode)
+	require.Equal(t, "subscription", log.UsageBillingSource)
+
+	malformed := &Log{Other: `{not-json`}
+	require.False(t, NormalizeLogUsageStats(malformed))
+	require.Equal(t, int8(1), malformed.UsageStatsReady)
+	require.Zero(t, malformed.UsageCacheReadTokens)
+	require.Empty(t, malformed.UsageBillingMode)
+}
+
 func TestSQLiteDecimalAutoMigrateIsIdempotent(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/log-migration.db"), &gorm.Config{})
 	require.NoError(t, err)
@@ -198,6 +218,9 @@ func TestGetBusinessMonitorCacheStats(t *testing.T) {
 		{Type: LogTypeError, CreatedAt: 180, PromptTokens: 900, Other: `{"cache_tokens":800}`},
 		{Type: LogTypeConsume, CreatedAt: 99, PromptTokens: 900, Other: `{"cache_tokens":800}`},
 		{Type: LogTypeConsume, CreatedAt: 201, PromptTokens: 900, Other: `{"cache_tokens":800}`},
+	}
+	for i := range logs {
+		NormalizeLogUsageStats(&logs[i])
 	}
 	require.NoError(t, db.Create(&logs).Error)
 
@@ -230,7 +253,7 @@ func TestGetUsageDetailsSummaryUsesDatabaseAggregate(t *testing.T) {
 		common.QuotaPerUnit = originalQuotaPerUnit
 	})
 	require.NoError(t, db.AutoMigrate(&Log{}))
-	require.NoError(t, db.Create(&Log{
+	log := &Log{
 		Type:             LogTypeConsume,
 		CreatedAt:        150,
 		PromptTokens:     2000,
@@ -239,7 +262,9 @@ func TestGetUsageDetailsSummaryUsesDatabaseAggregate(t *testing.T) {
 		AccountCost:      0.25,
 		UserCost:         0.75,
 		Other:            `{"cache_tokens":1500,"admin_info":{"cache_billing":{"raw_cache_read_tokens":1500,"billing_cache_read_tokens":1400}},"group_ratio":0.5}`,
-	}).Error)
+	}
+	NormalizeLogUsageStats(log)
+	require.NoError(t, db.Create(log).Error)
 
 	summary, err := GetUsageDetailsSummary(LogTypeConsume, 100, 200, "", "", "", "")
 	require.NoError(t, err)
@@ -250,6 +275,95 @@ func TestGetUsageDetailsSummaryUsesDatabaseAggregate(t *testing.T) {
 	require.InDelta(t, 0.75, summary.ActualCostUSD, 0.000001)
 	require.InDelta(t, 0.25, summary.AccountCostUSD, 0.000001)
 	require.InDelta(t, 1.5, summary.StandardCostUSD, 0.000001)
+}
+
+func TestUsageAggregatesDoNotParseOtherJSON(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalDB := DB
+	originalLogDB := LOG_DB
+	originalQuotaPerUnit := common.QuotaPerUnit
+	DB = db
+	LOG_DB = db
+	common.QuotaPerUnit = 100
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+
+	// Ready=1 deliberately skips the create hook. If either aggregate regresses
+	// to a JSON expression, this malformed payload makes the SQLite query fail.
+	log := &Log{
+		Type:                     LogTypeConsume,
+		CreatedAt:                150,
+		PromptTokens:             1000,
+		CompletionTokens:         100,
+		Quota:                    100,
+		Other:                    `{not-json`,
+		UsageStatsReady:          1,
+		UsageCacheReadTokens:     600,
+		UsageBillingCacheRead:    550,
+		UsageCacheCreationTokens: 100,
+		UsageGroupRatio:          0.5,
+		UsageBillingMode:         "tiered_expr",
+		UsageBillingSource:       "subscription",
+	}
+	require.NoError(t, db.Create(log).Error)
+
+	cacheStats, err := GetBusinessMonitorCacheStats(100, 200, "")
+	require.NoError(t, err)
+	require.Equal(t, int64(300), cacheStats.InputTokens)
+	require.Equal(t, int64(600), cacheStats.CacheReadTokens)
+	require.Equal(t, int64(550), cacheStats.BillingCacheReadTokens)
+	require.Equal(t, int64(100), cacheStats.CacheCreationTokens)
+
+	billingType := 1
+	summary, err := GetUsageDetailsSummary(
+		LogTypeConsume, 100, 200, "", "", "", "",
+		LogQueryOptions{BillingMode: "tiered_expr", BillingType: &billingType},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(300), summary.InputTokens)
+	require.Equal(t, int64(100), summary.OutputTokens)
+	require.Equal(t, int64(700), summary.CacheTokens)
+	require.Equal(t, int64(1100), summary.TotalTokens)
+	require.InDelta(t, 1.0, summary.ActualCostUSD, 0.000001)
+	require.InDelta(t, 2.0, summary.StandardCostUSD, 0.000001)
+
+	logs, total, err := GetAllLogs(
+		LogTypeConsume, 100, 200, "", "", "", 0, 20, 0, "", "", "", nil,
+		LogQueryOptions{BillingMode: "tiered_expr", BillingType: &billingType},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), total)
+	require.Len(t, logs, 1)
+}
+
+func TestUsageAggregatesRequireHistoricalBackfill(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	originalDB := DB
+	originalLogDB := LOG_DB
+	DB = db
+	LOG_DB = db
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+	})
+	require.NoError(t, db.AutoMigrate(&Log{}))
+	require.NoError(t, db.Session(&gorm.Session{SkipHooks: true}).Create(&Log{
+		Type:         LogTypeConsume,
+		CreatedAt:    150,
+		PromptTokens: 1000,
+		Other:        `{"cache_tokens":600}`,
+	}).Error)
+
+	_, err = GetBusinessMonitorCacheStats(100, 200, "")
+	require.ErrorIs(t, err, ErrLogUsageStatsBackfillRequired)
+	_, err = GetUsageDetailsSummary(LogTypeConsume, 100, 200, "", "", "", "")
+	require.ErrorIs(t, err, ErrLogUsageStatsBackfillRequired)
 }
 
 func TestGetAllLogsIncludesUpstreamAccountName(t *testing.T) {

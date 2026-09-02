@@ -20,12 +20,14 @@ type codexStructuredOutputCompatInfo struct {
 	JSONInstructionAdded                 bool `json:"json_instruction_added,omitempty"`
 	RequiredFieldsAdded                  int  `json:"required_fields_added,omitempty"`
 	AdditionalPropertiesAdded            int  `json:"additional_properties_added,omitempty"`
+	UnsupportedFormatsRemoved            int  `json:"unsupported_formats_removed,omitempty"`
 	ExplicitAdditionalPropertiesConflict bool `json:"explicit_additional_properties_conflict,omitempty"`
 }
 
 func (info codexStructuredOutputCompatInfo) relevant() bool {
 	return info.JSONInstructionAdded || info.RequiredFieldsAdded > 0 ||
-		info.AdditionalPropertiesAdded > 0 || info.ExplicitAdditionalPropertiesConflict
+		info.AdditionalPropertiesAdded > 0 || info.UnsupportedFormatsRemoved > 0 ||
+		info.ExplicitAdditionalPropertiesConflict
 }
 
 func (info codexStructuredOutputCompatInfo) auditMap() map[string]interface{} {
@@ -38,6 +40,9 @@ func (info codexStructuredOutputCompatInfo) auditMap() map[string]interface{} {
 	}
 	if info.AdditionalPropertiesAdded > 0 {
 		audit["additional_properties_added"] = info.AdditionalPropertiesAdded
+	}
+	if info.UnsupportedFormatsRemoved > 0 {
+		audit["unsupported_formats_removed"] = info.UnsupportedFormatsRemoved
 	}
 	if info.ExplicitAdditionalPropertiesConflict {
 		audit["explicit_additional_properties_conflict"] = true
@@ -66,13 +71,23 @@ func applyCodexStructuredOutputCompatibility(c *gin.Context, request *dto.OpenAI
 			compatInfo.JSONInstructionAdded = true
 		}
 	case "json_schema":
-		if gjson.GetBytes(request.Text, "format.strict").Type != gjson.True {
-			return
-		}
 		schema := gjson.GetBytes(request.Text, "format.schema")
 		if !schema.Exists() || !schema.IsObject() {
 			return
 		}
+		normalizedSchema, removedFormats := removeUnsupportedCodexSchemaFormats(json.RawMessage(schema.Raw))
+		if removedFormats > 0 {
+			updated, err := sjson.SetRawBytes(request.Text, "format.schema", normalizedSchema)
+			if err != nil {
+				return
+			}
+			request.Text = updated
+			compatInfo.UnsupportedFormatsRemoved = removedFormats
+		}
+		if gjson.GetBytes(request.Text, "format.strict").Type != gjson.True {
+			break
+		}
+		schema = gjson.GetBytes(request.Text, "format.schema")
 		normalized, schemaInfo := normalizeCodexStrictSchema(json.RawMessage(schema.Raw))
 		compatInfo.RequiredFieldsAdded = schemaInfo.RequiredFieldsAdded
 		compatInfo.AdditionalPropertiesAdded = schemaInfo.AdditionalPropertiesAdded
@@ -94,6 +109,135 @@ func applyCodexStructuredOutputCompatibility(c *gin.Context, request *dto.OpenAI
 	if c != nil && compatInfo.relevant() {
 		c.Set("codex_structured_output_compat", compatInfo.auditMap())
 	}
+}
+
+// removeUnsupportedCodexSchemaFormats removes schema keywords that the Codex
+// Responses backend rejects while preserving the surrounding property shape.
+// The cleanup is deliberately limited to JSON Schema child locations and does
+// not rewrite arbitrary values nested in defaults, examples, or tool payloads.
+func removeUnsupportedCodexSchemaFormats(raw json.RawMessage) (json.RawMessage, int) {
+	return removeUnsupportedCodexSchemaFormatsNode(raw, 0)
+}
+
+func removeUnsupportedCodexSchemaFormatsNode(raw json.RawMessage, depth int) (json.RawMessage, int) {
+	if depth > maxCodexStrictSchemaNormalizationDepth {
+		return raw, 0
+	}
+	root := gjson.ParseBytes(raw)
+	if !root.IsObject() {
+		return raw, 0
+	}
+
+	out := append(json.RawMessage(nil), raw...)
+	removed := 0
+	if root.Get("format").Type == gjson.String && root.Get("format").String() == "uri" {
+		if updated, err := sjson.DeleteBytes(out, "format"); err == nil {
+			out = updated
+			removed++
+		}
+	}
+
+	for _, field := range []string{"properties", "$defs", "definitions", "patternProperties"} {
+		container := gjson.GetBytes(out, escapeGJSONPath(field))
+		if !container.Exists() || !container.IsObject() {
+			continue
+		}
+		containerRaw := []byte(container.Raw)
+		changed := false
+		container.ForEach(func(key, value gjson.Result) bool {
+			if !value.IsObject() {
+				return true
+			}
+			normalized, count := removeUnsupportedCodexSchemaFormatsNode(json.RawMessage(value.Raw), depth+1)
+			if count == 0 {
+				return true
+			}
+			if updated, err := sjson.SetRawBytes(containerRaw, escapeSJSONPath(key.String()), normalized); err == nil {
+				containerRaw = updated
+				changed = true
+				removed += count
+			}
+			return true
+		})
+		if changed {
+			if updated, err := sjson.SetRawBytes(out, escapeSJSONPath(field), containerRaw); err == nil {
+				out = updated
+			}
+		}
+	}
+
+	for _, field := range []string{"items", "contains", "propertyNames", "additionalProperties", "not", "if", "then", "else"} {
+		child := gjson.GetBytes(out, escapeGJSONPath(field))
+		if !child.Exists() {
+			continue
+		}
+		if child.IsObject() {
+			normalized, count := removeUnsupportedCodexSchemaFormatsNode(json.RawMessage(child.Raw), depth+1)
+			if count > 0 {
+				if updated, err := sjson.SetRawBytes(out, escapeSJSONPath(field), normalized); err == nil {
+					out = updated
+					removed += count
+				}
+			}
+			continue
+		}
+		if !child.IsArray() {
+			continue
+		}
+		arrayRaw := []byte(child.Raw)
+		changed := false
+		child.ForEach(func(key, value gjson.Result) bool {
+			if !value.IsObject() {
+				return true
+			}
+			normalized, count := removeUnsupportedCodexSchemaFormatsNode(json.RawMessage(value.Raw), depth+1)
+			if count == 0 {
+				return true
+			}
+			if updated, err := sjson.SetRawBytes(arrayRaw, strconv.Itoa(int(key.Int())), normalized); err == nil {
+				arrayRaw = updated
+				changed = true
+				removed += count
+			}
+			return true
+		})
+		if changed {
+			if updated, err := sjson.SetRawBytes(out, escapeSJSONPath(field), arrayRaw); err == nil {
+				out = updated
+			}
+		}
+	}
+
+	for _, field := range []string{"anyOf", "oneOf", "allOf", "prefixItems"} {
+		array := gjson.GetBytes(out, escapeGJSONPath(field))
+		if !array.Exists() || !array.IsArray() {
+			continue
+		}
+		arrayRaw := []byte(array.Raw)
+		changed := false
+		array.ForEach(func(key, value gjson.Result) bool {
+			if !value.IsObject() {
+				return true
+			}
+			normalized, count := removeUnsupportedCodexSchemaFormatsNode(json.RawMessage(value.Raw), depth+1)
+			if count == 0 {
+				return true
+			}
+			if updated, err := sjson.SetRawBytes(arrayRaw, strconv.Itoa(int(key.Int())), normalized); err == nil {
+				arrayRaw = updated
+				changed = true
+				removed += count
+			}
+			return true
+		})
+		if changed {
+			if updated, err := sjson.SetRawBytes(out, escapeSJSONPath(field), arrayRaw); err == nil {
+				out = updated
+			}
+		}
+	}
+
+	return out, removed
 }
 
 func codexStructuredOutputContextContainsJSON(request *dto.OpenAIResponsesRequest) bool {

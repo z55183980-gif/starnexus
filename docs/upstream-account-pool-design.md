@@ -41,6 +41,11 @@ client transport (WebSocket or HTTP/SSE)
   -> existing provider adaptor over the selected upstream transport
 ```
 
+StarNexus disables client Responses WebSocket ingress by default and returns
+HTTP 426 before upgrading, so Codex can immediately fall back to
+`POST /v1/responses`. Set `RESPONSES_WEBSOCKET_INGRESS_ENABLED=true` only when
+client WebSocket ingress is explicitly required.
+
 The AccountRouter is a service-layer component. Middleware and controllers only
 coordinate acquisition, context attachment, result reporting, retry, and release.
 Database access stays in the model layer.

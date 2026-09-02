@@ -36,6 +36,23 @@ import (
 
 var responsesWSTestEntityID atomic.Int64
 
+func TestRelayResponsesWebSocketDefaultsToHTTPSFallback(t *testing.T) {
+	t.Setenv(responsesWebSocketIngressEnabledEnv, "false")
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+
+	RelayResponsesWebSocket(ctx)
+
+	require.Equal(t, http.StatusUpgradeRequired, recorder.Code)
+	require.Equal(t, "https", recorder.Header().Get("X-Codex-Transport"))
+	require.Equal(t, "close", recorder.Header().Get("Connection"))
+	require.Contains(t, recorder.Body.String(), "upgrade_required")
+	require.Contains(t, recorder.Body.String(), "use HTTPS")
+}
+
 func newResponsesWSTestPair(t *testing.T) (*websocket.Conn, *websocket.Conn, func()) {
 	t.Helper()
 	serverConnCh := make(chan *websocket.Conn, 1)

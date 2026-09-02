@@ -33,6 +33,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const responsesWebSocketIngressEnabledEnv = "RESPONSES_WEBSOCKET_INGRESS_ENABLED"
+
 const (
 	responsesWSFirstMessageTimeout = 15 * time.Second
 	responsesWSHeartbeatInterval   = 25 * time.Second
@@ -303,6 +305,23 @@ type responsesWebSocketSession struct {
 }
 
 func RelayResponsesWebSocket(c *gin.Context) {
+	// Codex falls back to the HTTPS Responses endpoint when the WebSocket
+	// handshake receives 426. Keep the client-facing HTTP API as the default
+	// transport for StarNexus; the environment switch is an explicit rollback
+	// path for deployments that still need Responses WebSocket ingress.
+	if !common.GetEnvOrDefaultBool(responsesWebSocketIngressEnabledEnv, false) {
+		c.Header("Connection", "close")
+		c.Header("X-Codex-Transport", "https")
+		c.AbortWithStatusJSON(http.StatusUpgradeRequired, gin.H{
+			"error": gin.H{
+				"type":    "upgrade_required",
+				"code":    "upgrade_required",
+				"message": "Responses WebSocket transport is disabled; use HTTPS",
+			},
+		})
+		return
+	}
+
 	client, err := responsesWebSocketUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		logger.LogError(c, "responses websocket upgrade failed: "+err.Error())

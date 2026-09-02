@@ -3,6 +3,7 @@ package codex
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -432,6 +433,29 @@ func TestCodexStructuredOutputLeavesNonStrictAndConflictingSchemasUnchanged(t *t
 		_, exists := ctx.Get("codex_structured_output_compat")
 		require.False(t, exists)
 	})
+}
+
+func TestCodexStructuredOutputRemovesUnsupportedURIFormats(t *testing.T) {
+	t.Parallel()
+	for name, strict := range map[string]bool{"strict": true, "non-strict": false} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			strictValue := "false"
+			if strict {
+				strictValue = "true"
+			}
+			request := dto.OpenAIResponsesRequest{Text: json.RawMessage(fmt.Sprintf(`{"format":{"type":"json_schema","name":"reel_blueprint","strict":%s,"schema":{"type":"object","properties":{"facts":{"type":"array","items":{"type":"object","properties":{"source_urls":{"type":"array","items":{"type":"string","format":"uri"}},"contact":{"type":"string","format":"email"}}}}}}}}}`, strictValue))}
+
+			applyCodexStructuredOutputCompatibility(ctx, &request)
+
+			require.False(t, gjson.GetBytes(request.Text, "format.schema.properties.facts.items.properties.source_urls.items.format").Exists())
+			require.Equal(t, "email", gjson.GetBytes(request.Text, "format.schema.properties.facts.items.properties.contact.format").String())
+			value, exists := ctx.Get("codex_structured_output_compat")
+			require.True(t, exists)
+			require.Equal(t, 1, value.(map[string]interface{})["unsupported_formats_removed"])
+		})
+	}
 }
 
 func TestCodexStructuredOutputCompatibilityCoversChatCompletionsConversion(t *testing.T) {

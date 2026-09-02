@@ -249,7 +249,7 @@
       "get": {
         "summary": "Responses WebSocket v2 连接",
         "deprecated": false,
-        "description": "建立 OpenAI Responses WebSocket v2 长连接。连接建立后发送扁平的 `response.create` 事件；同一连接固定使用首个请求选择的模型和渠道。\n\n已升级的 WebSocket 会固定在当前节点；断线重连时负载均衡可能选择其他节点。\n",
+        "description": "建立 OpenAI Responses WebSocket v2 长连接。默认情况下 StarNexus 在升级前返回 426，客户端应回退到 HTTPS `POST /v1/responses`；设置 `RESPONSES_WEBSOCKET_INGRESS_ENABLED=true` 后恢复 WebSocket 接入。连接建立后发送扁平的 `response.create` 事件；同一连接固定使用首个请求选择的模型和渠道。\n\n已升级的 WebSocket 会固定在当前节点；断线重连时负载均衡可能选择其他节点。\n",
         "operationId": "createResponseWebSocketV2",
         "tags": [
           "OpenAI Responses"
@@ -257,6 +257,9 @@
         "responses": {
           "101": {
             "description": "WebSocket 协议切换成功"
+          },
+          "426": {
+            "description": "WebSocket 接入已关闭，请使用 HTTPS POST /v1/responses"
           }
         },
         "security": [
