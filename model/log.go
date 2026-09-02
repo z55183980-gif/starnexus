@@ -1008,11 +1008,6 @@ type BusinessMonitorCacheStats struct {
 	CacheCreationTokens    int64 `json:"cache_creation_tokens"`
 }
 
-type BusinessMonitorCacheStatsWindows struct {
-	Long  BusinessMonitorCacheStats
-	Short BusinessMonitorCacheStats
-}
-
 // UsageDetailsSummary contains the aggregate metrics displayed above the
 // administrator usage-details table. Token buckets follow the same
 // normalization used by GetBusinessMonitorCacheStats, while costs are USD.
@@ -1086,7 +1081,7 @@ func GetBusinessMonitorCacheStatsContext(ctx context.Context, startTimestamp int
 
 	// The original implementation streamed every matching `other` JSON value
 	// to the application and decoded it row by row.  On a busy installation this
-	// can move hundreds of megabytes for a single 24-hour dashboard refresh.
+	// can move hundreds of megabytes for a single dashboard refresh.
 	// Use a database-side aggregate when the driver has JSON extraction support;
 	// retain the row-streaming implementation as a compatibility/safety fallback
 	// for older or malformed data.
@@ -1140,77 +1135,6 @@ func GetBusinessMonitorCacheStatsContext(ctx context.Context, startTimestamp int
 		return stats, errors.New("查询缓存命中统计失败")
 	}
 	return stats, nil
-}
-
-// GetBusinessMonitorCacheStatsWindows computes the long and short dashboard
-// windows with one database scan. The short window must be within the long
-// window; otherwise it is clamped to the long-window start.
-func GetBusinessMonitorCacheStatsWindows(ctx context.Context, startTimestamp int64, shortStartTimestamp int64, endTimestamp int64, modelName string) (stats BusinessMonitorCacheStatsWindows, err error) {
-	if shortStartTimestamp < startTimestamp || shortStartTimestamp == 0 {
-		shortStartTimestamp = startTimestamp
-	}
-	queryDB := LOG_DB
-	if ctx != nil {
-		queryDB = LOG_DB.WithContext(ctx)
-	}
-	query := queryDB.Table("logs").Where("type = ?", LogTypeConsume)
-	if modelName != "" {
-		query = query.Where("model_name = ?", modelName)
-	}
-	if startTimestamp != 0 {
-		query = query.Where("created_at >= ?", startTimestamp)
-	}
-	if endTimestamp != 0 {
-		query = query.Where("created_at <= ?", endTimestamp)
-	}
-	if aggregated, aggregateStats, aggregateErr := getBusinessMonitorCacheStatsAggregateWindows(query, shortStartTimestamp); aggregated {
-		if aggregateErr == nil {
-			return aggregateStats, nil
-		}
-		if ctx != nil && ctx.Err() != nil {
-			return stats, ctx.Err()
-		}
-	}
-	// The portable row fallback is intentionally retained for databases or
-	// historical rows where the JSON aggregate cannot be evaluated.
-	query = query.Select("COALESCE(created_at, 0), COALESCE(prompt_tokens, 0), COALESCE(other, '')")
-	rows, queryErr := query.Rows()
-	if queryErr != nil {
-		return stats, errors.New("查询缓存命中统计失败")
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var createdAt, promptTokens int64
-		var otherJSON string
-		if scanErr := rows.Scan(&createdAt, &promptTokens, &otherJSON); scanErr != nil {
-			return stats, errors.New("查询缓存命中统计失败")
-		}
-		var other businessMonitorCacheLogOther
-		if otherJSON != "" {
-			_ = common.UnmarshalJsonStr(otherJSON, &other)
-		}
-		var target *BusinessMonitorCacheStats
-		if createdAt >= shortStartTimestamp {
-			target = &stats.Short
-		} else {
-			target = &stats.Long
-		}
-		cacheReadTokens := max(other.CacheTokens, 0)
-		billingCacheReadTokens := cacheReadTokens
-		if cacheBilling := other.AdminInfo.CacheBilling; cacheBilling != nil && cacheBilling.RawCacheReadTokens == cacheReadTokens && cacheBilling.BillingCacheReadTokens >= 0 && cacheBilling.BillingCacheReadTokens <= cacheReadTokens {
-			billingCacheReadTokens = cacheBilling.BillingCacheReadTokens
-		}
-		cacheCreationTokens := max(other.cacheCreationTotal(), 0)
-		inputTokens := max(promptTokens, 0)
-		if other.UsageSemantic != "anthropic" && !other.Claude {
-			inputTokens = max(inputTokens-cacheReadTokens-cacheCreationTokens, 0)
-		}
-		target.InputTokens += inputTokens
-		target.CacheReadTokens += cacheReadTokens
-		target.BillingCacheReadTokens += billingCacheReadTokens
-		target.CacheCreationTokens += cacheCreationTokens
-	}
-	return stats, rows.Err()
 }
 
 type businessMonitorCacheStatsRow struct {
@@ -1319,81 +1243,6 @@ func getBusinessMonitorCacheStatsAggregate(query *gorm.DB) (bool, BusinessMonito
 		CacheReadTokens:        row.CacheReadTokens,
 		BillingCacheReadTokens: row.BillingCacheReadTokens,
 		CacheCreationTokens:    row.CacheCreationTokens,
-	}, err
-}
-
-// getBusinessMonitorCacheStatsAggregateWindows performs the 24h and 2h
-// aggregates in one pass over the filtered log range. Keeping the JSON
-// extraction in a derived table avoids evaluating the same expressions once
-// for each dashboard window.
-func getBusinessMonitorCacheStatsAggregateWindows(query *gorm.DB, shortStartTimestamp int64) (bool, BusinessMonitorCacheStatsWindows, error) {
-	jsonExpressions, ok := businessMonitorJSONExpressionsFor(query)
-	if !ok {
-		return false, BusinessMonitorCacheStatsWindows{}, nil
-	}
-	jsonText := jsonExpressions.text
-	jsonNumber := jsonExpressions.number
-	jsonBoolTrue := jsonExpressions.boolTrue
-	cacheReadRaw := "COALESCE(" + jsonNumber("cache_tokens") + ", 0)"
-	billingCacheRead := jsonNumber("admin_info.cache_billing.billing_cache_read_tokens")
-	billingCacheRawRead := jsonNumber("admin_info.cache_billing.raw_cache_read_tokens")
-	cacheWrite := "COALESCE(" + jsonNumber("cache_write_tokens") + ", 0)"
-	cacheCreation := "COALESCE(" + jsonNumber("cache_creation_tokens") + ", 0)"
-	cacheCreationSplit := "COALESCE(" + jsonNumber("cache_creation_tokens_5m") + ", 0) + COALESCE(" + jsonNumber("cache_creation_tokens_1h") + ", 0)"
-	rawSelect := strings.Join([]string{
-		"COALESCE(created_at, 0) AS created_at",
-		"COALESCE(prompt_tokens, 0) AS prompt_tokens",
-		"COALESCE(completion_tokens, 0) AS completion_tokens",
-		"CASE WHEN " + jsonText("usage_semantic") + " = 'anthropic' OR " + jsonBoolTrue + " THEN 1 ELSE 0 END AS is_anthropic",
-		cacheReadRaw + " AS cache_read_tokens_raw",
-		billingCacheRead + " AS billing_cache_read_tokens_raw",
-		billingCacheRawRead + " AS billing_cache_raw_read_tokens",
-		cacheWrite + " AS cache_write_tokens",
-		cacheCreation + " AS cache_creation_tokens_raw",
-		cacheCreationSplit + " AS cache_creation_split_tokens",
-	}, ", ")
-	raw := query.Select(rawSelect)
-	normalizedSelect := strings.Join([]string{
-		"created_at",
-		"prompt_tokens",
-		"completion_tokens",
-		"is_anthropic",
-		"CASE WHEN cache_read_tokens_raw > 0 THEN cache_read_tokens_raw ELSE 0 END AS cache_read_tokens",
-		"CASE WHEN billing_cache_read_tokens_raw IS NOT NULL AND billing_cache_raw_read_tokens = cache_read_tokens_raw AND billing_cache_read_tokens_raw >= 0 AND billing_cache_read_tokens_raw <= CASE WHEN cache_read_tokens_raw > 0 THEN cache_read_tokens_raw ELSE 0 END THEN billing_cache_read_tokens_raw ELSE CASE WHEN cache_read_tokens_raw > 0 THEN cache_read_tokens_raw ELSE 0 END END AS billing_cache_read_tokens",
-		"CASE WHEN cache_write_tokens > 0 THEN cache_write_tokens WHEN cache_creation_split_tokens > 0 THEN CASE WHEN cache_creation_tokens_raw > cache_creation_split_tokens THEN cache_creation_tokens_raw ELSE cache_creation_split_tokens END ELSE cache_creation_tokens_raw END AS cache_creation_tokens",
-	}, ", ")
-	normalized := query.Session(&gorm.Session{NewDB: true}).Table("(?) AS raw_log_stats", raw).Select(normalizedSelect)
-	isAnthropicInput := "CASE WHEN is_anthropic = 1 THEN prompt_tokens ELSE CASE WHEN prompt_tokens - cache_read_tokens - CASE WHEN cache_creation_tokens > 0 THEN cache_creation_tokens ELSE 0 END > 0 THEN prompt_tokens - cache_read_tokens - CASE WHEN cache_creation_tokens > 0 THEN cache_creation_tokens ELSE 0 END ELSE 0 END END"
-	cacheCreationPositive := "CASE WHEN cache_creation_tokens > 0 THEN cache_creation_tokens ELSE 0 END"
-	short := func(expression string) string {
-		return "COALESCE(SUM(CASE WHEN created_at >= ? THEN " + expression + " ELSE 0 END), 0)"
-	}
-	long := func(expression string) string {
-		return "COALESCE(SUM(" + expression + "), 0)"
-	}
-	selectSQL := strings.Join([]string{
-		long(isAnthropicInput) + " AS long_input_tokens",
-		long("cache_read_tokens") + " AS long_cache_read_tokens",
-		long("billing_cache_read_tokens") + " AS long_billing_cache_read_tokens",
-		long(cacheCreationPositive) + " AS long_cache_creation_tokens",
-		short(isAnthropicInput) + " AS short_input_tokens",
-		short("cache_read_tokens") + " AS short_cache_read_tokens",
-		short("billing_cache_read_tokens") + " AS short_billing_cache_read_tokens",
-		short(cacheCreationPositive) + " AS short_cache_creation_tokens",
-	}, ", ")
-	type row struct {
-		LongInputTokens, LongCacheReadTokens, LongBillingCacheReadTokens, LongCacheCreationTokens     int64
-		ShortInputTokens, ShortCacheReadTokens, ShortBillingCacheReadTokens, ShortCacheCreationTokens int64
-	}
-	var result row
-	err := query.Session(&gorm.Session{NewDB: true}).Table("(?) AS normalized_log_stats", normalized).Select(selectSQL, shortStartTimestamp, shortStartTimestamp, shortStartTimestamp, shortStartTimestamp).Scan(&result).Error
-	return true, BusinessMonitorCacheStatsWindows{
-		Long: BusinessMonitorCacheStats{
-			InputTokens: result.LongInputTokens, CacheReadTokens: result.LongCacheReadTokens, BillingCacheReadTokens: result.LongBillingCacheReadTokens, CacheCreationTokens: result.LongCacheCreationTokens,
-		},
-		Short: BusinessMonitorCacheStats{
-			InputTokens: result.ShortInputTokens, CacheReadTokens: result.ShortCacheReadTokens, BillingCacheReadTokens: result.ShortBillingCacheReadTokens, CacheCreationTokens: result.ShortCacheCreationTokens,
-		},
 	}, err
 }
 

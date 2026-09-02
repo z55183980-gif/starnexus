@@ -17,28 +17,11 @@ export interface BusinessMonitorCacheHitStats {
   window_seconds: number
 }
 
-export interface BusinessMonitorCacheHitWindows {
-  long: BusinessMonitorCacheHitStats
-  short: BusinessMonitorCacheHitStats
-  long_window_seconds: number
-  short_window_seconds: number
-}
-
-export async function getBusinessMonitorCacheHitRateWindows(): Promise<{
-  success: boolean
-  data?: BusinessMonitorCacheHitWindows
-}> {
-  const res = await api.get('/api/business-monitor/cache-hit-rate/windows')
-  return res.data
-}
-
-export async function getBusinessMonitorCacheHitRate(hours = 24): Promise<{
+export async function getBusinessMonitorCacheHitRate(): Promise<{
   success: boolean
   data?: BusinessMonitorCacheHitStats
 }> {
-  const res = await api.get('/api/business-monitor/cache-hit-rate', {
-    params: { hours },
-  })
+  const res = await api.get('/api/business-monitor/cache-hit-rate')
   return res.data
 }
 

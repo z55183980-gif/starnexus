@@ -15,12 +15,12 @@ import (
 )
 
 var (
-	businessMonitorCacheHitRateCache        = newTTLCache[model.BusinessMonitorCacheStats](5*time.Minute, 128)
-	businessMonitorCacheHitRateWindowsCache = newTTLCache[model.BusinessMonitorCacheStatsWindows](5*time.Minute, 128)
-	businessMonitorCacheHitRateFlight       singleflight.Group
+	businessMonitorCacheHitRateCache  = newTTLCache[model.BusinessMonitorCacheStats](5*time.Minute, 128)
+	businessMonitorCacheHitRateFlight singleflight.Group
 )
 
 const businessMonitorAggregateTimeout = 20 * time.Second
+const businessMonitorCacheHitRateHours = 2
 
 // StreamBusinessMonitorLogs streams committed log events to an authenticated
 // admin. PostgreSQL remains the source of truth; the frontend periodically
@@ -119,14 +119,8 @@ func GetBusinessMonitorConcurrency(c *gin.Context) {
 }
 
 func GetBusinessMonitorCacheHitRate(c *gin.Context) {
-	hours := 24
-	if rawHours := strings.TrimSpace(c.Query("hours")); rawHours != "" {
-		if parsed, err := strconv.Atoi(rawHours); err == nil && parsed > 0 && parsed <= 24*30 {
-			hours = parsed
-		}
-	}
 	endTimestamp := time.Now().Unix()
-	windowSeconds := int64(hours) * int64(time.Hour/time.Second)
+	windowSeconds := int64(businessMonitorCacheHitRateHours) * int64(time.Hour/time.Second)
 	startTimestamp := endTimestamp - windowSeconds
 	modelName := strings.TrimSpace(c.Query("model_name"))
 	cacheKey := dashboardAggregateCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "business-monitor-cache-hit-rate", strconv.Itoa(c.GetInt("id")))
@@ -183,47 +177,6 @@ func GetBusinessMonitorCacheHitRate(c *gin.Context) {
 		},
 	})
 	businessMonitorCacheHitRateCache.Set(cacheKey, stats)
-}
-
-// GetBusinessMonitorCacheHitRateWindows computes the 24-hour and 2-hour
-// cache metrics with one database scan. It is used by the dashboard card to
-// avoid issuing two overlapping full-window aggregate queries.
-func GetBusinessMonitorCacheHitRateWindows(c *gin.Context) {
-	endTimestamp := time.Now().Unix()
-	longWindow := int64(24 * time.Hour / time.Second)
-	shortWindow := int64(2 * time.Hour / time.Second)
-	startTimestamp := endTimestamp - longWindow
-	shortStartTimestamp := endTimestamp - shortWindow
-	modelName := strings.TrimSpace(c.Query("model_name"))
-	cacheKey := dashboardAggregateCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "business-monitor-cache-hit-rate-windows", strconv.Itoa(c.GetInt("id")))
-	if cached, found := businessMonitorCacheHitRateWindowsCache.Get(cacheKey); found {
-		common.ApiSuccess(c, gin.H{"long": cached.Long, "short": cached.Short, "long_window_seconds": longWindow, "short_window_seconds": shortWindow})
-		return
-	}
-	stale, hasStale := businessMonitorCacheHitRateWindowsCache.GetStale(cacheKey)
-	result, err, _ := businessMonitorCacheHitRateFlight.Do(cacheKey, func() (any, error) {
-		if cached, found := businessMonitorCacheHitRateWindowsCache.Get(cacheKey); found {
-			return cached, nil
-		}
-		queryCtx, cancel := context.WithTimeout(context.Background(), businessMonitorAggregateTimeout)
-		defer cancel()
-		stats, queryErr := model.GetBusinessMonitorCacheStatsWindows(queryCtx, startTimestamp, shortStartTimestamp, endTimestamp, modelName)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		businessMonitorCacheHitRateWindowsCache.Set(cacheKey, stats)
-		return stats, nil
-	})
-	if err != nil {
-		if hasStale {
-			common.ApiSuccess(c, gin.H{"long": stale.Long, "short": stale.Short, "long_window_seconds": longWindow, "short_window_seconds": shortWindow})
-			return
-		}
-		common.ApiError(c, err)
-		return
-	}
-	stats := result.(model.BusinessMonitorCacheStatsWindows)
-	common.ApiSuccess(c, gin.H{"long": stats.Long, "short": stats.Short, "long_window_seconds": longWindow, "short_window_seconds": shortWindow})
 }
 
 func GetBusinessMonitorAlerts(c *gin.Context) {

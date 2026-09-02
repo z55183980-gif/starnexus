@@ -91,7 +91,7 @@ import {
   acknowledgeAllBusinessMonitorAlerts,
   acknowledgeBusinessMonitorAlert,
   type BusinessMonitorCacheHitStats,
-  getBusinessMonitorCacheHitRateWindows,
+  getBusinessMonitorCacheHitRate,
   getBusinessMonitorConcurrency,
   getBusinessMonitorAlerts,
   type ErrorAlert,
@@ -759,9 +759,9 @@ export function BusinessMonitor() {
   })
 
   const { data: cacheHitStats } = useQuery({
-    queryKey: ['business-monitor-cache-hit-rate-windows'],
+    queryKey: ['business-monitor-cache-hit-rate'],
     queryFn: async () => {
-      const response = await getBusinessMonitorCacheHitRateWindows()
+      const response = await getBusinessMonitorCacheHitRate()
       return response.success ? response.data : undefined
     },
     refetchInterval: BUSINESS_MONITOR_CACHE_HIT_INTERVAL,
@@ -957,19 +957,17 @@ export function BusinessMonitor() {
                   />
                 </Metric>
                 <Metric icon={Database} title={t('Cache hit ratio')}>
-                  <DualMetricValues
-                    leftValue={formatCacheHitRate(
-                      getBillingCacheReadTokens(cacheHitStats?.long),
-                      getCacheHitTotalInputTokens(cacheHitStats?.long)
-                    )}
-                    leftLabel='24h'
-                    rightValue={formatCacheHitRate(
-                      getBillingCacheReadTokens(cacheHitStats?.short),
-                      getCacheHitTotalInputTokens(cacheHitStats?.short)
-                    )}
-                    rightLabel='2h'
-                    valueClassName='whitespace-nowrap sm:text-xl'
-                  />
+                  <div className='mt-2.5'>
+                    <div className='font-mono text-lg font-semibold whitespace-nowrap tabular-nums sm:text-xl'>
+                      {formatCacheHitRate(
+                        getBillingCacheReadTokens(cacheHitStats),
+                        getCacheHitTotalInputTokens(cacheHitStats)
+                      )}
+                    </div>
+                    <div className='text-muted-foreground mt-0.5 text-xs'>
+                      2h
+                    </div>
+                  </div>
                 </Metric>
                 <Metric icon={Timer} title={t('Token Throughput')}>
                   <DualMetricValues
