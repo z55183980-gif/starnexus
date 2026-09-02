@@ -396,8 +396,22 @@ func (s *responsesWebSocketSession) inferToolContinuation(request *dto.OpenAIRes
 	if s == nil || request == nil || strings.TrimSpace(request.PreviousResponseID) != "" {
 		return nil
 	}
+	// An explicit null or empty previous_response_id is a client-owned reset
+	// signal. Only infer the session boundary when the field was omitted.
+	if _, specified := envelope["previous_response_id"]; specified {
+		return nil
+	}
+	// prompt and conversation are independent create sources. When either is
+	// explicitly present, preserve the client's requested boundary instead of
+	// implicitly linking the turn to this WebSocket session's last response.
+	if _, specified := envelope["prompt"]; specified {
+		return nil
+	}
+	if _, specified := envelope["conversation"]; specified {
+		return nil
+	}
 	input, inputExists, err := responsesWSNormalizedInput(request.Input)
-	if err != nil || !inputExists || !responsesWSRawItemsHaveToolOutput(input) {
+	if err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -406,11 +420,19 @@ func (s *responsesWebSocketSession) inferToolContinuation(request *dto.OpenAIRes
 	if previousResponseID == "" {
 		return nil
 	}
-	request.PreviousResponseID = previousResponseID
-	encoded, err := common.Marshal(previousResponseID)
-	if err != nil {
-		return err
+	// Responses WebSocket clients are allowed to omit input when continuing
+	// the current conversation. The HTTP bridge cannot forward an empty turn
+	// after removing previous_response_id, so recover the session boundary and
+	// let prepareReplayPayload expand the gateway-owned history. This also
+	// preserves the existing tool-output inference for clients that omit the
+	// boundary while sending a tool result.
+	if !inputExists || len(input) == 0 || responsesWSRawItemsHaveToolOutput(input) {
+		request.PreviousResponseID = previousResponseID
+		encoded, err := common.Marshal(previousResponseID)
+		if err != nil {
+			return err
+		}
+		envelope["previous_response_id"] = encoded
 	}
-	envelope["previous_response_id"] = encoded
 	return nil
 }

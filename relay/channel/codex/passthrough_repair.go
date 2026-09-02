@@ -21,6 +21,14 @@ func RepairAccountPassthroughResponsesBody(c *gin.Context, body []byte) ([]byte,
 	if err != nil {
 		return nil, err
 	}
+	// Passthrough requests intentionally preserve the client's top-level
+	// schema, but replayed Responses output items can contain output-only
+	// fields such as status. Remove those known-invalid fields before sending
+	// the request while leaving nested tool payloads untouched.
+	repairedInput, err = scrubCodexResponsesInputPreserveShape(repairedInput)
+	if err != nil {
+		return nil, err
+	}
 	if string(repairedInput) == input.Raw {
 		return body, nil
 	}

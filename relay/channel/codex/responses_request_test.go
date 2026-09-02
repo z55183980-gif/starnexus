@@ -51,6 +51,43 @@ func TestNormalizeCodexResponsesRequestMatchesOAuthSchema(t *testing.T) {
 	require.Contains(t, include, "reasoning.encrypted_content")
 }
 
+func TestNormalizeCodexResponsesInputDropsOutputStatusFromReplayItems(t *testing.T) {
+	t.Parallel()
+	request := dto.OpenAIResponsesRequest{Input: json.RawMessage(`[
+		{"type":"message","role":"assistant","status":"completed","content":"hello"},
+		{"type":"function_call_output","call_id":"call_1","status":"completed","output":{"status":"keep"}}
+	]`)}
+
+	require.NoError(t, normalizeCodexResponsesRequest(&request))
+	require.False(t, gjson.GetBytes(request.Input, "0.status").Exists())
+	require.False(t, gjson.GetBytes(request.Input, "1.status").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(request.Input, "1.output.status").String())
+}
+
+func TestRepairAccountPassthroughResponsesBodyDropsOutputStatus(t *testing.T) {
+	t.Parallel()
+	body := []byte(`{
+		"input":[
+			{"type":"message","role":"assistant","status":"completed","content":"hello"},
+			{"type":"function_call_output","call_id":"call_1","status":"completed","output":{"status":"keep"}}
+		],
+		"stream":true,
+		"custom_zero":0,
+		"custom_false":false
+	}`)
+
+	repaired, err := RepairAccountPassthroughResponsesBody(nil, body)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(repaired, "input.0.status").Exists())
+	require.False(t, gjson.GetBytes(repaired, "input.1.status").Exists())
+	require.Equal(t, "keep", gjson.GetBytes(repaired, "input.1.output.status").String())
+	require.True(t, gjson.GetBytes(repaired, "stream").Bool())
+	require.True(t, gjson.GetBytes(repaired, "custom_zero").Exists())
+	require.Zero(t, gjson.GetBytes(repaired, "custom_zero").Int())
+	require.True(t, gjson.GetBytes(repaired, "custom_false").Exists())
+	require.False(t, gjson.GetBytes(repaired, "custom_false").Bool())
+}
+
 func TestNormalizeCodexResponsesRequestCompactsAllOverlongCallIDs(t *testing.T) {
 	t.Parallel()
 	longFunctionID := "call_" + strings.Repeat("a", 80)

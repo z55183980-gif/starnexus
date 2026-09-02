@@ -447,6 +447,79 @@ func TestResponsesWSInfersPreviousResponseIDForToolOutput(t *testing.T) {
 	require.Equal(t, "resp_previous", encodedPrevious)
 }
 
+func TestResponsesWSInfersPreviousResponseIDForEmptyContinuation(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{lastResponseID: "resp_previous"}
+	request := &dto.OpenAIResponsesRequest{}
+	envelope := map[string]json.RawMessage{}
+	require.NoError(t, session.inferToolContinuation(request, envelope))
+	require.Equal(t, "resp_previous", request.PreviousResponseID)
+	var encodedPrevious string
+	require.NoError(t, common.Unmarshal(envelope["previous_response_id"], &encodedPrevious))
+	require.Equal(t, "resp_previous", encodedPrevious)
+}
+
+func TestResponsesWSEmptyContinuationRespectsExplicitPreviousResponseReset(t *testing.T) {
+	t.Parallel()
+	for name, raw := range map[string]json.RawMessage{
+		"null":         json.RawMessage("null"),
+		"empty string": json.RawMessage(`""`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			session := &responsesWebSocketSession{lastResponseID: "resp_previous"}
+			request := &dto.OpenAIResponsesRequest{}
+			envelope := map[string]json.RawMessage{"previous_response_id": raw}
+
+			require.NoError(t, session.inferToolContinuation(request, envelope))
+			require.Empty(t, request.PreviousResponseID)
+			require.Equal(t, raw, envelope["previous_response_id"])
+		})
+	}
+}
+
+func TestResponsesWSEmptyContinuationPreservesAlternativeCreateSource(t *testing.T) {
+	t.Parallel()
+	for name, source := range map[string]json.RawMessage{
+		"prompt":       json.RawMessage(`{"id":"pmpt_1"}`),
+		"conversation": json.RawMessage(`"conv_1"`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			session := &responsesWebSocketSession{lastResponseID: "resp_previous"}
+			request := &dto.OpenAIResponsesRequest{}
+			envelope := map[string]json.RawMessage{name: source}
+
+			require.NoError(t, session.inferToolContinuation(request, envelope))
+			require.Empty(t, request.PreviousResponseID)
+			require.NotContains(t, envelope, "previous_response_id")
+			require.Equal(t, source, envelope[name])
+		})
+	}
+}
+
+func TestResponsesWSEmptyContinuationHTTPBridgeReplaysHistory(t *testing.T) {
+	t.Parallel()
+	session := &responsesWebSocketSession{
+		lastResponseID:    "resp_previous",
+		replayInput:       []json.RawMessage{json.RawMessage(`{"type":"message","role":"user","content":"first"}`)},
+		replayInputExists: true,
+	}
+	request := &dto.OpenAIResponsesRequest{}
+	envelope := map[string]json.RawMessage{}
+	require.NoError(t, session.inferToolContinuation(request, envelope))
+
+	turn := &responsesWebSocketTurn{
+		upstreamMode:    model.UpstreamOpenAIWSModeHTTPBridge,
+		originalRequest: request,
+	}
+	prepared, apiErr := session.prepareReplayPayload(turn, json.RawMessage(`{"model":"gpt-5","previous_response_id":"resp_previous","stream":true}`))
+	require.Nil(t, apiErr)
+	require.False(t, gjson.GetBytes(prepared, "previous_response_id").Exists())
+	require.Equal(t, int64(1), gjson.GetBytes(prepared, "input.#").Int())
+	require.Equal(t, "first", gjson.GetBytes(prepared, "input.0.content").String())
+}
+
 func TestResponsesWSTurnReplaySnapshotSurvivesFinish(t *testing.T) {
 	t.Parallel()
 

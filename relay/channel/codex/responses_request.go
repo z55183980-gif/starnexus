@@ -621,6 +621,51 @@ func scrubCodexResponsesInputItems(items []json.RawMessage) error {
 	return nil
 }
 
+// scrubCodexResponsesInputPreserveShape applies the same top-level item
+// cleanup as normalizeCodexResponsesInput without converting an object or
+// scalar input into the canonical array form. Account passthrough must retain
+// the client's wire shape while still removing fields rejected by Codex.
+func scrubCodexResponsesInputPreserveShape(raw json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return raw, nil
+	}
+
+	switch trimmed[0] {
+	case '[':
+		var items []json.RawMessage
+		if err := common.Unmarshal(trimmed, &items); err != nil {
+			return nil, fmt.Errorf("scrub Codex Responses input: %w", err)
+		}
+		changed := false
+		for index, item := range items {
+			normalized, itemChanged, err := scrubCodexResponsesInputItem(item)
+			if err != nil {
+				return nil, fmt.Errorf("scrub Codex Responses input item %d: %w", index, err)
+			}
+			if itemChanged {
+				items[index] = normalized
+				changed = true
+			}
+		}
+		if !changed {
+			return raw, nil
+		}
+		return common.Marshal(items)
+	case '{':
+		normalized, changed, err := scrubCodexResponsesInputItem(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("scrub Codex Responses input item: %w", err)
+		}
+		if !changed {
+			return raw, nil
+		}
+		return normalized, nil
+	default:
+		return raw, nil
+	}
+}
+
 func scrubCodexResponsesInputItem(item json.RawMessage) (json.RawMessage, bool, error) {
 	trimmed := bytes.TrimSpace(item)
 	if len(trimmed) == 0 || trimmed[0] != '{' {
@@ -632,6 +677,14 @@ func scrubCodexResponsesInputItem(item json.RawMessage) (json.RawMessage, bool, 
 	}
 	itemType := codexJSONRawString(obj["type"])
 	changed := false
+	// Clients commonly replay a prior Responses output item as the next
+	// request input. `status` is output-only for the Codex backend and causes
+	// errors such as `input[4].status`; remove it only from the known top-level
+	// input-item envelope, leaving arbitrary nested user/tool JSON untouched.
+	if _, exists := obj["status"]; exists {
+		delete(obj, "status")
+		changed = true
+	}
 	if itemType != "image_generation_call" {
 		if _, exists := obj["quality"]; exists {
 			delete(obj, "quality")
