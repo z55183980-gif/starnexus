@@ -29,6 +29,7 @@ import { ModelsChartPreferences } from './components/models/models-chart-prefere
 import { ModelsFilter } from './components/models/models-filter-dialog'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
+import { useDashboardCurrentUserRefresh } from './hooks/use-dashboard-refresh'
 import {
   buildDefaultDashboardFilters,
   getSavedChartPreferences,
@@ -155,6 +156,10 @@ export function Dashboard() {
   const userRole = useAuthStore((state) => state.auth.user?.role)
   const activeSection = (params.section ??
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
+
+  useDashboardCurrentUserRefresh(
+    activeSection === 'overview' || activeSection === 'models'
+  )
 
   const [modelData, setModelData] = useState<QuotaDataItem[]>([])
   const [dataLoading, setDataLoading] = useState(false)

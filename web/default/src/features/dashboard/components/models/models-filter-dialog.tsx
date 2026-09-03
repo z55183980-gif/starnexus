@@ -127,9 +127,16 @@ export function ModelsFilter(props: ModelsFilterProps) {
     field: keyof DashboardFilters,
     value: Date | string | undefined
   ) => {
-    setFilters((prev) => ({ ...prev, [field]: value }))
-    if (field === 'start_timestamp' || field === 'end_timestamp')
+    if (field === 'start_timestamp' || field === 'end_timestamp') {
       setSelectedRange(null)
+      setFilters((prev) => ({
+        ...prev,
+        [field]: value,
+        time_range_days: undefined,
+      }))
+      return
+    }
+    setFilters((prev) => ({ ...prev, [field]: value }))
   }
 
   const handleQuickRange = (days: number) => {
@@ -139,6 +146,7 @@ export function ModelsFilter(props: ModelsFilterProps) {
       ...prev,
       start_timestamp: start,
       end_timestamp: end,
+      time_range_days: days,
     }))
     setSelectedRange(days)
   }

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
-import type { QuotaDataItem, UptimeGroupResult } from './types'
+import type { QuotaDataResponse, UptimeGroupResult } from './types'
 
 // ============================================================================
 // Dashboard APIs
@@ -39,10 +39,7 @@ export async function getUserQuotaDates(
   isAdmin = false
 ) {
   const endpoint = isAdmin ? '/api/data' : '/api/data/self'
-  const res = await api.get<{ success: boolean; data: QuotaDataItem[] }>(
-    endpoint,
-    { params }
-  )
+  const res = await api.get<QuotaDataResponse>(endpoint, { params })
   return res.data
 }
 
@@ -54,10 +51,7 @@ export async function getUserQuotaDataByUsers(params: {
   start_timestamp: number
   end_timestamp: number
 }) {
-  const res = await api.get<{ success: boolean; data: QuotaDataItem[] }>(
-    '/api/data/users',
-    { params }
-  )
+  const res = await api.get<QuotaDataResponse>('/api/data/users', { params })
   return res.data
 }
 

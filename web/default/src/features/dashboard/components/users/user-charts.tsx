@@ -27,10 +27,12 @@ import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useTheme } from '@/context/theme-provider'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
+import { DashboardRefreshStatus } from '@/features/dashboard/components/ui/dashboard-refresh-status'
 import {
   TIME_GRANULARITY_OPTIONS,
   TIME_RANGE_PRESETS,
 } from '@/features/dashboard/constants'
+import { DASHBOARD_USER_REFRESH_INTERVAL } from '@/features/dashboard/hooks/use-dashboard-refresh'
 import {
   getDefaultDays,
   getSavedGranularity,
@@ -61,6 +63,9 @@ const USER_CHARTS: {
 ]
 
 const TOP_USER_LIMIT_OPTIONS = [5, 10, 20, 50]
+const EMPTY_USER_DATA: NonNullable<
+  Awaited<ReturnType<typeof getUserQuotaDataByUsers>>['data']
+> = []
 
 export function UserCharts() {
   const { t } = useTranslation()
@@ -78,22 +83,11 @@ export function UserCharts() {
     getDefaultDays(timeGranularity)
   )
   const [topUserLimit, setTopUserLimit] = useState(10)
-  const [timeRange, setTimeRange] = useState(() => {
-    const days = getDefaultDays(timeGranularity)
-    const { start, end } = getRollingDateRange(days)
-    return {
-      start_timestamp: Math.floor(start.getTime() / 1000),
-      end_timestamp: Math.floor(end.getTime() / 1000),
-    }
-  })
+  const [rangeRevision, setRangeRevision] = useState(0)
 
   const handleRangeChange = useCallback((days: number) => {
     setSelectedRange(days)
-    const { start, end } = getRollingDateRange(days)
-    setTimeRange({
-      start_timestamp: Math.floor(start.getTime() / 1000),
-      end_timestamp: Math.floor(end.getTime() / 1000),
-    })
+    setRangeRevision((current) => current + 1)
   }, [])
 
   const handleGranularityChange = useCallback(
@@ -124,17 +118,32 @@ export function UserCharts() {
     updateTheme()
   }, [resolvedTheme])
 
-  const { data: userData, isLoading } = useQuery({
-    queryKey: ['dashboard', 'user-quota', timeRange],
-    queryFn: () => getUserQuotaDataByUsers(timeRange),
-    select: (res) => (res.success ? res.data : []),
-    staleTime: 60_000,
+  const userQuotaQuery = useQuery({
+    queryKey: ['dashboard', 'user-quota', selectedRange, rangeRevision],
+    queryFn: ({ queryKey }) => {
+      const rangeDays = Number(queryKey[2])
+      const { start, end } = getRollingDateRange(rangeDays)
+      return getUserQuotaDataByUsers({
+        start_timestamp: Math.floor(start.getTime() / 1000),
+        end_timestamp: Math.floor(end.getTime() / 1000),
+      })
+    },
+    select: (response) => ({
+      data: response.success ? response.data : [],
+      meta: response.meta,
+    }),
+    staleTime: 30_000,
+    refetchInterval: DASHBOARD_USER_REFRESH_INTERVAL,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   })
+  const userData = userQuotaQuery.data?.data ?? EMPTY_USER_DATA
+  const isLoading = userQuotaQuery.isLoading
 
   const chartData = useMemo(
     () =>
       processUserChartData(
-        isLoading ? [] : (userData ?? []),
+        isLoading ? [] : userData,
         timeGranularity,
         t,
         topUserLimit,
@@ -147,7 +156,6 @@ export function UserCharts() {
       t,
       topUserLimit,
       customization.preset,
-      customization.radius,
     ]
   )
 
@@ -214,6 +222,13 @@ export function UserCharts() {
           <Loader2 className='text-muted-foreground size-4 animate-spin' />
         )}
       </div>
+
+      <DashboardRefreshStatus
+        dataUpdatedAt={userQuotaQuery.dataUpdatedAt}
+        isFetching={userQuotaQuery.isFetching}
+        meta={userQuotaQuery.data?.meta}
+        onRefresh={() => void userQuotaQuery.refetch()}
+      />
 
       <div className='grid gap-3'>
         {USER_CHARTS.map((chart) => {

@@ -148,6 +148,7 @@ export function buildDefaultDashboardFilters(
     ...EMPTY_DASHBOARD_FILTERS,
     start_timestamp: start,
     end_timestamp: end,
+    time_range_days: preferences.defaultTimeRangeDays,
     time_granularity: preferences.defaultTimeGranularity,
   }
 }

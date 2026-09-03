@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, Flame, ShieldCheck, TrendingDown } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -30,7 +30,9 @@ import { useStatus } from '@/hooks/use-status'
 import { Button } from '@/components/ui/button'
 import { StaggerContainer, StaggerItem } from '@/components/page-transition'
 import { getUserQuotaDates } from '@/features/dashboard/api'
+import { DashboardRefreshStatus } from '@/features/dashboard/components/ui/dashboard-refresh-status'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
+import { DASHBOARD_MODEL_REFRESH_INTERVAL } from '@/features/dashboard/hooks/use-dashboard-refresh'
 import type { QuotaDataItem } from '@/features/dashboard/types'
 import { StatCard } from '../ui/stat-card'
 
@@ -136,30 +138,57 @@ const HEALTH_CONFIG: Record<
 
 export function SummaryCards() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const user = useAuthStore((state) => state.auth.user)
   const { status, loading } = useStatus()
 
-  const summaryTimeRange = useMemo(() => computeTimeRange(1), [])
   const remainQuota = Number(user?.quota ?? 0)
   const usedQuota = Number(user?.used_quota ?? 0)
   const requestCount = Number(user?.request_count ?? 0)
 
   const usageTrendQuery = useQuery({
-    queryKey: [
-      'dashboard',
-      'overview',
-      'summary-sparklines',
-      summaryTimeRange.start_timestamp,
-      summaryTimeRange.end_timestamp,
-    ],
-    queryFn: async () =>
-      getUserQuotaDates({
-        start_timestamp: summaryTimeRange.start_timestamp,
-        end_timestamp: summaryTimeRange.end_timestamp,
+    queryKey: ['dashboard', 'overview', 'summary-sparklines', 1],
+    queryFn: async () => {
+      const currentRange = computeTimeRange(1)
+      return getUserQuotaDates({
+        start_timestamp: currentRange.start_timestamp,
+        end_timestamp: currentRange.end_timestamp,
         default_time: 'hour',
-      }),
-    staleTime: 60 * 1000,
+      })
+    },
+    staleTime: 20_000,
+    refetchInterval: DASHBOARD_MODEL_REFRESH_INTERVAL,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   })
+  const currentUserFetches = useIsFetching({
+    queryKey: ['dashboard', 'current-user'],
+  })
+  const performanceFetches = useIsFetching({
+    queryKey: ['perf-metrics-summary'],
+  })
+  const refreshOverview = () => {
+    void Promise.all([
+      usageTrendQuery.refetch(),
+      queryClient.refetchQueries({
+        queryKey: ['dashboard', 'current-user'],
+        type: 'active',
+      }),
+      queryClient.refetchQueries({
+        queryKey: ['perf-metrics-summary'],
+        type: 'active',
+      }),
+    ])
+  }
+
+  const queriedAt = usageTrendQuery.data?.meta?.queried_at
+  const summaryTimeRange = useMemo(
+    () =>
+      queriedAt
+        ? computeTimeRange(1, undefined, new Date((queriedAt + 3600) * 1000))
+        : computeTimeRange(1),
+    [queriedAt]
+  )
 
   const summaryValues = useMemo(() => {
     return {
@@ -260,6 +289,16 @@ export function SummaryCards() {
                 {t('Monitor balance, usage, and request volume')}
               </p>
             </div>
+            <DashboardRefreshStatus
+              dataUpdatedAt={usageTrendQuery.dataUpdatedAt}
+              isFetching={
+                usageTrendQuery.isFetching ||
+                currentUserFetches > 0 ||
+                performanceFetches > 0
+              }
+              meta={usageTrendQuery.data?.meta}
+              onRefresh={refreshOverview}
+            />
           </div>
           <StaggerContainer className='grid grid-cols-3 gap-1.5 sm:gap-3'>
             {items.map((it) => (

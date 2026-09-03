@@ -22,6 +22,7 @@ import { Gauge, HeartPulse, Timer } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/components/ui/skeleton'
+import { DASHBOARD_USER_REFRESH_INTERVAL } from '@/features/dashboard/hooks/use-dashboard-refresh'
 import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
 import {
   formatLatency,
@@ -71,6 +72,9 @@ export function PerformanceHealthPanel() {
     queryKey: ['perf-metrics-summary', PERFORMANCE_WINDOW_HOURS],
     queryFn: () => getPerfMetricsSummary(PERFORMANCE_WINDOW_HOURS),
     staleTime: 60 * 1000,
+    refetchInterval: DASHBOARD_USER_REFRESH_INTERVAL,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: false,
   })
 

@@ -64,6 +64,7 @@ export const MODEL_ANALYTICS_CHART_OPTIONS = [
 export const EMPTY_DASHBOARD_FILTERS: DashboardFilters = {
   start_timestamp: undefined,
   end_timestamp: undefined,
+  time_range_days: undefined,
   time_granularity: 'hour',
   username: '',
 }

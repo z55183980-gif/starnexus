@@ -33,6 +33,21 @@ export interface QuotaDataItem {
   quota?: number
 }
 
+export interface QuotaDataMeta {
+  queried_at: number
+  aggregation_enabled: boolean
+  flush_interval_seconds: number
+  last_successful_flush_at: number
+  pending_aggregation_count: number
+}
+
+export interface QuotaDataResponse {
+  success: boolean
+  message?: string
+  data: QuotaDataItem[]
+  meta?: QuotaDataMeta
+}
+
 // ============================================================================
 // Uptime Monitoring Types
 // ============================================================================
@@ -56,6 +71,7 @@ export interface UptimeGroupResult {
 export interface DashboardFilters {
   start_timestamp?: Date
   end_timestamp?: Date
+  time_range_days?: number
   time_granularity?: TimeGranularity
   username?: string
 }
