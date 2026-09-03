@@ -30,12 +30,13 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { Database } from 'lucide-react'
+import { Database, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { Button } from '@/components/ui/button'
 import {
   Empty,
   EmptyDescription,
@@ -44,6 +45,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Spinner } from '@/components/ui/spinner'
 import {
   DISABLED_ROW_DESKTOP,
   DISABLED_ROW_MOBILE,
@@ -58,9 +60,8 @@ import {
   ERROR_MESSAGES,
 } from '../constants'
 import { type ApiKey } from '../types'
-import { ApiKeyCell } from './api-keys-cells'
+import { ApiKeyCell, UsageCell } from './api-keys-cells'
 import { useApiKeysColumns } from './api-keys-columns'
-import { useApiKeys } from './api-keys-provider'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { DataTableRowActions } from './data-table-row-actions'
 
@@ -180,6 +181,11 @@ function ApiKeysMobileList({
                 </span>
               )}
             </div>
+
+            <div className='flex items-start justify-between gap-2 text-xs'>
+              <span className='text-muted-foreground'>{t('Usage')}</span>
+              <UsageCell apiKey={apiKey} />
+            </div>
           </div>
         )
       })}
@@ -189,7 +195,6 @@ function ApiKeysMobileList({
 
 export function ApiKeysTable() {
   const { t } = useTranslation()
-  const { refreshTrigger } = useApiKeys()
   const columns = useApiKeysColumns()
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
@@ -212,14 +217,14 @@ export function ApiKeysTable() {
   })
 
   // Fetch data with React Query
+  // `t` is intentionally excluded: changing language must not refresh usage data.
   // eslint-disable-next-line @tanstack/query/exhaustive-deps
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: [
       'keys',
       pagination.pageIndex + 1,
       pagination.pageSize,
       globalFilter,
-      refreshTrigger,
     ],
     queryFn: async () => {
       // If there's a global filter, use search
@@ -254,6 +259,10 @@ export function ApiKeysTable() {
       }
     },
     placeholderData: (previousData) => previousData,
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const apiKeys = data?.items || []
@@ -313,6 +322,20 @@ export function ApiKeysTable() {
       skeletonKeyPrefix='api-keys-skeleton'
       toolbarProps={{
         searchPlaceholder: t('Filter by name or key...'),
+        preActions: (
+          <Button
+            variant='outline'
+            disabled={isFetching}
+            onClick={() => void refetch()}
+          >
+            {isFetching ? (
+              <Spinner data-icon='inline-start' />
+            ) : (
+              <RefreshCw data-icon='inline-start' />
+            )}
+            {t('Refresh')}
+          </Button>
+        ),
         filters: [
           {
             columnId: 'status',

@@ -28,7 +28,16 @@ type Token struct {
 	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
+	TodayQuota         int64          `json:"today_quota" gorm:"-"`
+	ThirtyDayQuota     int64          `json:"thirty_day_quota" gorm:"-"`
+	UsageAvailable     bool           `json:"usage_available" gorm:"-"`
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
+}
+
+type TokenUsageWindowStats struct {
+	TokenId        int   `json:"token_id" gorm:"column:token_id"`
+	TodayQuota     int64 `json:"today_quota" gorm:"column:today_quota"`
+	ThirtyDayQuota int64 `json:"thirty_day_quota" gorm:"column:thirty_day_quota"`
 }
 
 func (token *Token) Clean() {
@@ -83,6 +92,52 @@ func GetAllUserTokens(userId int, startIdx int, num int) ([]*Token, error) {
 	var err error
 	err = DB.Where("user_id = ?", userId).Order("id desc").Limit(num).Offset(startIdx).Find(&tokens).Error
 	return tokens, err
+}
+
+// GetTokenUsageWindowStats aggregates consumption for the requested tokens.
+// The caller supplies calendar-window boundaries so the result follows the
+// server's configured local timezone without relying on database-specific date
+// functions.
+func GetTokenUsageWindowStats(userId int, tokenIds []int, todayStart int64, thirtyDayStart int64, windowEnd int64) (map[int]TokenUsageWindowStats, error) {
+	statsByToken := make(map[int]TokenUsageWindowStats)
+	if userId <= 0 || len(tokenIds) == 0 {
+		return statsByToken, nil
+	}
+
+	uniqueTokenIds := make([]int, 0, len(tokenIds))
+	seen := make(map[int]struct{}, len(tokenIds))
+	for _, tokenId := range tokenIds {
+		if tokenId <= 0 {
+			continue
+		}
+		if _, ok := seen[tokenId]; ok {
+			continue
+		}
+		seen[tokenId] = struct{}{}
+		uniqueTokenIds = append(uniqueTokenIds, tokenId)
+	}
+	if len(uniqueTokenIds) == 0 {
+		return statsByToken, nil
+	}
+
+	var rows []TokenUsageWindowStats
+	err := LOG_DB.Table("logs").
+		Select(
+			"token_id, COALESCE(SUM(CASE WHEN created_at >= ? THEN quota ELSE 0 END), 0) AS today_quota, COALESCE(SUM(quota), 0) AS thirty_day_quota",
+			todayStart,
+		).
+		Where("user_id = ? AND token_id IN ? AND type = ?", userId, uniqueTokenIds, LogTypeConsume).
+		Where("created_at >= ? AND created_at < ?", thirtyDayStart, windowEnd).
+		Group("token_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		statsByToken[row.TokenId] = row
+	}
+	return statsByToken, nil
 }
 
 // sanitizeLikePattern 校验并清洗用户输入的 LIKE 搜索模式。

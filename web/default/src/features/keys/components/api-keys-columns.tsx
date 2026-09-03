@@ -34,11 +34,7 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { API_KEY_STATUSES } from '../constants'
 import { type ApiKey } from '../types'
-import {
-  ApiKeyCell,
-  ModelLimitsCell,
-  IpRestrictionsCell,
-} from './api-keys-cells'
+import { ApiKeyCell, UsageCell } from './api-keys-cells'
 import { DataTableRowActions } from './data-table-row-actions'
 
 function getQuotaProgressColor(percentage: number): string {
@@ -193,6 +189,14 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
       meta: { label: t('Quota') },
     },
     {
+      id: 'usage',
+      accessorFn: (row) => row.thirty_day_quota,
+      header: t('Usage'),
+      cell: ({ row }) => <UsageCell apiKey={row.original} />,
+      enableSorting: false,
+      meta: { label: t('Usage') },
+    },
+    {
       accessorKey: 'group',
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Group')} />
@@ -233,26 +237,6 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
         return <GroupBadge group={group} ratio={ratio} />
       },
       meta: { label: t('Group'), mobileHidden: true },
-    },
-    {
-      id: 'model_limits',
-      accessorKey: 'model_limits',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Models')} />
-      ),
-      cell: ({ row }) => <ModelLimitsCell apiKey={row.original} />,
-      enableSorting: false,
-      meta: { label: t('Models'), mobileHidden: true },
-    },
-    {
-      id: 'allow_ips',
-      accessorKey: 'allow_ips',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('IP Restriction')} />
-      ),
-      cell: ({ row }) => <IpRestrictionsCell apiKey={row.original} />,
-      enableSorting: false,
-      meta: { label: t('IP Restriction'), mobileHidden: true },
     },
     {
       accessorKey: 'created_time',

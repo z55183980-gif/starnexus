@@ -199,6 +199,7 @@ func TestSQLiteDecimalAutoMigrateIsIdempotent(t *testing.T) {
 	models := []interface{}{&Log{}, &ContentModerationKeyUsage{}, &SubscriptionPlan{}, &UserAffiliate{}}
 	require.NoError(t, db.AutoMigrate(models...))
 	require.NoError(t, db.AutoMigrate(models...))
+	require.True(t, db.Migrator().HasIndex(&Log{}, "idx_logs_token_usage_window"))
 }
 
 func TestGetBusinessMonitorCacheStats(t *testing.T) {

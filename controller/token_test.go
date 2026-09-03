@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -32,10 +33,13 @@ type tokenPageResponse struct {
 }
 
 type tokenResponseItem struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name"`
-	Key    string `json:"key"`
-	Status int    `json:"status"`
+	ID             int    `json:"id"`
+	Name           string `json:"name"`
+	Key            string `json:"key"`
+	Status         int    `json:"status"`
+	TodayQuota     int64  `json:"today_quota"`
+	ThirtyDayQuota int64  `json:"thirty_day_quota"`
+	UsageAvailable bool   `json:"usage_available"`
 }
 
 type tokenKeyResponse struct {
@@ -48,21 +52,21 @@ type sqliteColumnInfo struct {
 }
 
 type legacyToken struct {
-	Id                 int            `gorm:"primaryKey"`
-	UserId             int            `gorm:"index"`
-	Key                string         `gorm:"column:key;type:char(48);uniqueIndex"`
-	Status             int            `gorm:"default:1"`
-	Name               string         `gorm:"index"`
-	CreatedTime        int64          `gorm:"bigint"`
-	AccessedTime       int64          `gorm:"bigint"`
-	ExpiredTime        int64          `gorm:"bigint;default:-1"`
-	RemainQuota        int            `gorm:"default:0"`
+	Id                 int    `gorm:"primaryKey"`
+	UserId             int    `gorm:"index"`
+	Key                string `gorm:"column:key;type:char(48);uniqueIndex"`
+	Status             int    `gorm:"default:1"`
+	Name               string `gorm:"index"`
+	CreatedTime        int64  `gorm:"bigint"`
+	AccessedTime       int64  `gorm:"bigint"`
+	ExpiredTime        int64  `gorm:"bigint;default:-1"`
+	RemainQuota        int    `gorm:"default:0"`
 	UnlimitedQuota     bool
 	ModelLimitsEnabled bool
-	ModelLimits        string         `gorm:"type:text"`
-	AllowIps           *string        `gorm:"default:''"`
-	UsedQuota          int            `gorm:"default:0"`
-	Group              string         `gorm:"column:group;default:''"`
+	ModelLimits        string  `gorm:"type:text"`
+	AllowIps           *string `gorm:"default:''"`
+	UsedQuota          int     `gorm:"default:0"`
+	Group              string  `gorm:"column:group;default:''"`
 	CrossGroupRetry    bool
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
@@ -111,6 +115,9 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 
 	db := openTokenControllerTestDB(t)
 	migrateTokenControllerTestDB(t, db)
+	if err := db.AutoMigrate(&model.Log{}); err != nil {
+		t.Fatalf("failed to migrate log table: %v", err)
+	}
 	return db
 }
 
@@ -415,6 +422,90 @@ func TestGetAllTokensMasksKeyInResponse(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), token.Key) {
 		t.Fatalf("list response leaked raw token key: %s", recorder.Body.String())
+	}
+}
+
+func TestGetAllTokensIncludesUsageWindows(t *testing.T) {
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() { common.LogConsumeEnabled = originalLogConsumeEnabled })
+
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "usage-token", "usage1234token5678")
+	otherToken := seedToken(t, db, 1, "other-token", "other1234token5678")
+	now := time.Now().In(time.Local)
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+
+	logs := []model.Log{
+		{UserId: 1, TokenId: token.Id, Type: model.LogTypeConsume, CreatedAt: today.Add(time.Hour).Unix(), Quota: 100},
+		{UserId: 1, TokenId: token.Id, Type: model.LogTypeConsume, CreatedAt: today.AddDate(0, 0, -10).Unix(), Quota: 200},
+		{UserId: 1, TokenId: token.Id, Type: model.LogTypeConsume, CreatedAt: today.AddDate(0, 0, -30).Unix(), Quota: 400},
+		{UserId: 1, TokenId: otherToken.Id, Type: model.LogTypeConsume, CreatedAt: today.Add(time.Hour).Unix(), Quota: 800},
+		{UserId: 2, TokenId: token.Id, Type: model.LogTypeConsume, CreatedAt: today.Add(time.Hour).Unix(), Quota: 1600},
+		{UserId: 1, TokenId: token.Id, Type: model.LogTypeError, CreatedAt: today.Add(time.Hour).Unix(), Quota: 3200},
+	}
+	if err := db.Create(&logs).Error; err != nil {
+		t.Fatalf("failed to seed usage logs: %v", err)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/?p=1&size=10", nil, 1)
+	GetAllTokens(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected success response, got message: %s", response.Message)
+	}
+
+	var page tokenPageResponse
+	if err := common.Unmarshal(response.Data, &page); err != nil {
+		t.Fatalf("failed to decode token page response: %v", err)
+	}
+	for _, item := range page.Items {
+		if item.ID != token.Id {
+			continue
+		}
+		if item.TodayQuota != 100 {
+			t.Fatalf("expected today's quota to be 100, got %d", item.TodayQuota)
+		}
+		if item.ThirtyDayQuota != 300 {
+			t.Fatalf("expected 30-day quota to be 300, got %d", item.ThirtyDayQuota)
+		}
+		if !item.UsageAvailable {
+			t.Fatal("expected usage stats to be available")
+		}
+		return
+	}
+	t.Fatalf("usage token not found in response")
+}
+
+func TestGetAllTokensSurvivesUsageStatsFailure(t *testing.T) {
+	originalLogConsumeEnabled := common.LogConsumeEnabled
+	common.LogConsumeEnabled = true
+	t.Cleanup(func() { common.LogConsumeEnabled = originalLogConsumeEnabled })
+
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "usage-failure-token", "failure1234token5678")
+	if err := db.Migrator().DropTable(&model.Log{}); err != nil {
+		t.Fatalf("failed to drop log table: %v", err)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/?p=1&size=10", nil, 1)
+	GetAllTokens(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected token list to survive usage failure, got message: %s", response.Message)
+	}
+
+	var page tokenPageResponse
+	if err := common.Unmarshal(response.Data, &page); err != nil {
+		t.Fatalf("failed to decode token page response: %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != token.Id {
+		t.Fatalf("expected token %d to remain in response, got %+v", token.Id, page.Items)
+	}
+	if page.Items[0].UsageAvailable {
+		t.Fatal("expected usage stats to be unavailable after query failure")
 	}
 }
 

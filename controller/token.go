@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -31,6 +32,52 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 	return maskedTokens
 }
 
+func attachTokenUsageWindowStats(tokens []*model.Token, userId int, now time.Time) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+	for _, token := range tokens {
+		if token != nil {
+			token.UsageAvailable = false
+		}
+	}
+	if !common.LogConsumeEnabled {
+		return nil
+	}
+
+	localNow := now.In(time.Local)
+	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, localNow.Location())
+	thirtyDayStart := today.AddDate(0, 0, -29)
+	windowEnd := today.AddDate(0, 0, 1)
+	tokenIds := make([]int, 0, len(tokens))
+	for _, token := range tokens {
+		if token != nil {
+			tokenIds = append(tokenIds, token.Id)
+		}
+	}
+
+	statsByToken, err := model.GetTokenUsageWindowStats(
+		userId,
+		tokenIds,
+		today.Unix(),
+		thirtyDayStart.Unix(),
+		windowEnd.Unix(),
+	)
+	if err != nil {
+		return err
+	}
+	for _, token := range tokens {
+		if token == nil {
+			continue
+		}
+		stats := statsByToken[token.Id]
+		token.TodayQuota = stats.TodayQuota
+		token.ThirtyDayQuota = stats.ThirtyDayQuota
+		token.UsageAvailable = true
+	}
+	return nil
+}
+
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
@@ -38,6 +85,9 @@ func GetAllTokens(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if err = attachTokenUsageWindowStats(tokens, userId, time.Now()); err != nil {
+		common.SysError("failed to query API key usage stats: " + err.Error())
 	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
@@ -56,6 +106,9 @@ func SearchTokens(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if err = attachTokenUsageWindowStats(tokens, userId, time.Now()); err != nil {
+		common.SysError("failed to query API key usage stats: " + err.Error())
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
