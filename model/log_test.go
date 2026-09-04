@@ -39,6 +39,13 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 				"billing_completion_tokens":  30,
 				"billing_total_tokens":       230,
 				"cache_tokens":               5,
+				"stream_status": map[string]interface{}{
+					"status":      "error",
+					"end_reason":  "handler_stop",
+					"error_count": 1,
+					"end_error":   "upstream https://api.example.com/v1 failed from 192.168.1.1",
+					"errors":      []string{"internal retry detail"},
+				},
 			}),
 		},
 	}
@@ -70,11 +77,31 @@ func TestFormatUserLogsRemovesTokenPricingAdminFields(t *testing.T) {
 	require.NotContains(t, other, "billing_prompt_tokens")
 	require.NotContains(t, other, "billing_completion_tokens")
 	require.NotContains(t, other, "billing_total_tokens")
+	streamStatus, ok := other["stream_status"].(map[string]interface{})
+	require.True(t, ok)
+	require.Equal(t, "error", streamStatus["status"])
+	require.Equal(t, "handler_stop", streamStatus["end_reason"])
+	require.Equal(t, float64(1), streamStatus["error_count"])
+	require.NotContains(t, streamStatus, "errors")
+	require.NotContains(t, streamStatus["end_error"], "api.example.com")
+	require.NotContains(t, streamStatus["end_error"], "192.168.1.1")
 	require.NotContains(t, logs[0].Other, "offset_bps")
 	require.NotContains(t, logs[0].Other, "total_input_tokens")
 	require.NotContains(t, logs[0].Other, "raw_cache_read_tokens")
 	require.NotContains(t, logs[0].Other, "billing_cache_read_tokens")
 	require.NotContains(t, logs[0].Other, "reclassified_tokens")
+}
+
+func TestFormatUserLogsOmitsSuccessfulStreamStatus(t *testing.T) {
+	logs := []*Log{{
+		Other: `{"stream_status":{"status":"ok","end_reason":"eof"}}`,
+	}}
+
+	formatUserLogs(logs, 0)
+
+	other, err := common.StrToMap(logs[0].Other)
+	require.NoError(t, err)
+	require.NotContains(t, other, "stream_status")
 }
 
 func TestFormatUserLogsCacheBillingProjectionRejectsInvalidAudit(t *testing.T) {

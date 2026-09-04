@@ -246,6 +246,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		ModelName:  relayInfo.OriginModelName,
 		Retry:      common.GetPointer(0),
 	}
+	// Record the terminal user-visible error once, including failures that
+	// return directly from inside channel/account handling. This is registered
+	// after billing and request audits so their existing no-record decisions
+	// remain unchanged.
+	defer func() {
+		if newAPIError != nil {
+			recordRelayErrorLogOnce(c, newAPIError)
+		}
+	}()
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	contentModerationCompleted := false
@@ -380,7 +389,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				break
 			}
 
-			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+			processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, false)
 			break
 		}
 
@@ -594,12 +603,15 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	return operation_setting.ShouldRetryByStatusCode(code)
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, recordUserLog bool) {
 	accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 	proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
 	if service.ApplyUpstreamAccountError(accountId, proxyId, err).Handled() {
 		recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(err))
 		logger.LogError(c, fmt.Sprintf("upstream account error (account #%d, channel #%d, status code: %d): %s", accountId, channelError.ChannelId, err.StatusCode, service.UpstreamAccountErrorSummary(err)))
+		if recordUserLog {
+			recordRelayErrorLogOnce(c, err)
+		}
 		return
 	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, err.Error()))
@@ -611,7 +623,28 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		})
 	}
 
+	if recordUserLog {
+		recordRelayErrorLogOnce(c, err)
+	}
+}
+
+const relayErrorLogRecordedContextKey = "relay_error_log_recorded"
+
+// recordRelayErrorLogOnce prevents retries and the final relay failure path
+// from creating duplicate user-visible errors for one downstream request.
+func recordRelayErrorLogOnce(c *gin.Context, err *types.NewAPIError) {
+	if !claimRelayErrorLog(c, err, constant.ErrorLogEnabled) {
+		return
+	}
 	recordRelayErrorLog(c, err)
+}
+
+func claimRelayErrorLog(c *gin.Context, err *types.NewAPIError, enabled bool) bool {
+	if c == nil || err == nil || !enabled || c.GetBool(relayErrorLogRecordedContextKey) || !types.IsRecordErrorLog(err) {
+		return false
+	}
+	c.Set(relayErrorLogRecordedContextKey, true)
+	return true
 }
 
 func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
@@ -842,7 +875,7 @@ func RelayTask(c *gin.Context) {
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode))
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode), true)
 		}
 
 		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {

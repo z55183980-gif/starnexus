@@ -217,10 +217,10 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		otherMap, _ = common.StrToMap(logs[i].Other)
 		if otherMap != nil {
 			projectCacheBillingDisplay(otherMap)
+			projectUserStreamStatus(otherMap)
 			// Remove admin-only debug fields.
 			delete(otherMap, "admin_info")
 			// delete(otherMap, "reject_reason")
-			delete(otherMap, "stream_status")
 			delete(otherMap, "token_pricing_enabled")
 			delete(otherMap, "token_pricing_input_ratio")
 			delete(otherMap, "token_pricing_output_ratio")
@@ -235,6 +235,33 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		logs[i].Other = common.MapToJsonStr(otherMap)
 		logs[i].Id = startIdx + i + 1
 	}
+}
+
+// projectUserStreamStatus keeps only the minimal, sanitized terminal state
+// needed to distinguish a completed stream from a partially completed one.
+// Retry/account diagnostics remain under admin_info and are removed below.
+func projectUserStreamStatus(otherMap map[string]interface{}) {
+	raw, ok := otherMap["stream_status"].(map[string]interface{})
+	if !ok || raw == nil {
+		delete(otherMap, "stream_status")
+		return
+	}
+	status, _ := raw["status"].(string)
+	if status == "" || status == "ok" {
+		delete(otherMap, "stream_status")
+		return
+	}
+	projected := map[string]interface{}{"status": status}
+	if endReason, ok := raw["end_reason"].(string); ok && endReason != "" {
+		projected["end_reason"] = endReason
+	}
+	if errorCount, ok := raw["error_count"].(float64); ok && errorCount > 0 {
+		projected["error_count"] = errorCount
+	}
+	if endError, ok := raw["end_error"].(string); ok && endError != "" {
+		projected["end_error"] = common.MaskSensitiveInfo(endError)
+	}
+	otherMap["stream_status"] = projected
 }
 
 // projectCacheBillingDisplay replaces the usage-log cache-read count with the

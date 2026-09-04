@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -50,6 +51,31 @@ func TestShouldRetryStopsCapacityAfterAccountFailover(t *testing.T) {
 	}, 529)
 
 	require.False(t, shouldRetry(c, apiErr, 3))
+}
+
+func TestClaimRelayErrorLogAllowsOnlyOneFinalFailure(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	apiErr := types.NewErrorWithStatusCode(
+		assert.AnError,
+		types.ErrorCodeGetChannelFailed,
+		http.StatusServiceUnavailable,
+	)
+
+	require.True(t, claimRelayErrorLog(c, apiErr, true))
+	require.False(t, claimRelayErrorLog(c, apiErr, true))
+}
+
+func TestClaimRelayErrorLogHonorsNoRecordOption(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	apiErr := types.NewError(
+		assert.AnError,
+		types.ErrorCodeInvalidRequest,
+		types.ErrOptionWithNoRecordErrorLog(),
+	)
+
+	require.False(t, claimRelayErrorLog(c, apiErr, true))
+	require.False(t, claimRelayErrorLog(c, types.NewError(assert.AnError, types.ErrorCodeInvalidRequest), false))
+	require.False(t, c.GetBool(relayErrorLogRecordedContextKey))
 }
 
 func TestShouldRetryTaskStopsLocalRateLimit(t *testing.T) {

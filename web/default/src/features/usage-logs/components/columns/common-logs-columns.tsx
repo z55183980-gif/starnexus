@@ -286,6 +286,9 @@ export function useCommonLogsColumns(
         const log = row.original
         const timestamp = row.getValue('created_at') as number
         const config = getLogTypeConfig(log.type)
+        const streamInterrupted =
+          log.type === 2 &&
+          parseLogOther(log.other)?.stream_status?.status === 'error'
 
         return (
           <div className='flex flex-col gap-0.5'>
@@ -293,8 +296,12 @@ export function useCommonLogsColumns(
               {formatTimestampToDate(timestamp)}
             </span>
             <StatusBadge
-              label={t(config.label)}
-              variant={config.color as StatusBadgeProps['variant']}
+              label={streamInterrupted ? t('Interrupted') : t(config.label)}
+              variant={
+                streamInterrupted
+                  ? 'red'
+                  : (config.color as StatusBadgeProps['variant'])
+              }
               size='sm'
               copyable={false}
             />

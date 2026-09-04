@@ -497,7 +497,7 @@ func RelayResponsesWebSocket(c *gin.Context) {
 				}
 				turn.info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonScannerErr, dialErr)
 				turn.finish(false)
-				processChannelError(turn.ctx, *types.NewChannelError(selectedChannel.Id, selectedChannel.Type, selectedChannel.Name, selectedChannel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), selectedChannel.GetAutoBan()), apiErr)
+				processChannelError(turn.ctx, *types.NewChannelError(selectedChannel.Id, selectedChannel.Type, selectedChannel.Name, selectedChannel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), selectedChannel.GetAutoBan()), apiErr, true)
 				session.clearChannel(selectedChannel)
 				session.sendTurnFailure(turn, apiErr)
 				continue
@@ -1780,7 +1780,7 @@ func (s *responsesWebSocketSession) finishFailedSSETurn(turn *responsesWebSocket
 
 	turn.finish(false)
 	if processChannel && turn.channel != nil {
-		processChannelError(turn.ctx, *types.NewChannelError(turn.channel.Id, turn.channel.Type, turn.channel.Name, turn.channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), turn.channel.GetAutoBan()), apiErr)
+		processChannelError(turn.ctx, *types.NewChannelError(turn.channel.Id, turn.channel.Type, turn.channel.Name, turn.channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(turn.ctx, appconstant.ContextKeyChannelKey), turn.channel.GetAutoBan()), apiErr, true)
 	}
 	logger.LogWarn(turn.ctx, fmt.Sprintf("responses websocket upstream SSE turn failed without closing downstream websocket: %v", apiErr))
 	s.sendTurnFailure(turn, apiErr)
