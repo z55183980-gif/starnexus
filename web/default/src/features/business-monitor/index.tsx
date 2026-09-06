@@ -1068,16 +1068,16 @@ export function BusinessMonitor() {
                         </TableCell>
                         <TableCell className='py-1.5'>
                           {(() => {
-                            // A consume log can still represent an incomplete
-                            // stream: the upstream may close with EOF before
-                            // returning any billable usage. Treat the persisted
-                            // stream status as an error in the monitor instead
-                            // of showing a misleading green Success badge.
                             const streamStatus =
                               parseLogOther(log.other)?.stream_status
+                            const hasBillableUsage =
+                              log.quota > 0 ||
+                              log.prompt_tokens > 0 ||
+                              log.completion_tokens > 0
                             const isError =
                               log.type === LOG_TYPE_ENUM.ERROR ||
-                              streamStatus?.status === 'error'
+                              (streamStatus?.status === 'error' &&
+                                !hasBillableUsage)
                             return (
                               <Badge
                                 variant={isError ? 'destructive' : 'outline'}
