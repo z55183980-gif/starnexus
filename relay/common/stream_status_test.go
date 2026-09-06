@@ -151,6 +151,7 @@ func TestStreamStatus_IsNormalEnd(t *testing.T) {
 		{StreamEndReasonDone, true},
 		{StreamEndReasonEOF, true},
 		{StreamEndReasonHandlerStop, true},
+		{StreamEndReasonIncomplete, false},
 		{StreamEndReasonTimeout, false},
 		{StreamEndReasonClientGone, false},
 		{StreamEndReasonScannerErr, false},
@@ -163,6 +164,19 @@ func TestStreamStatus_IsNormalEnd(t *testing.T) {
 		s.SetEndReason(tt.reason, nil)
 		assert.Equal(t, tt.normal, s.IsNormalEnd(), "reason=%s", tt.reason)
 	}
+}
+
+func TestStreamStatus_MarkIncompleteIfEOF(t *testing.T) {
+	t.Parallel()
+	s := NewStreamStatus()
+
+	s.SetEndReason(StreamEndReasonEOF, nil)
+	expectedErr := fmt.Errorf("upstream stream ended before returning billable usage")
+	s.MarkIncompleteIfEOF(expectedErr)
+
+	assert.Equal(t, StreamEndReasonIncomplete, s.EndReason)
+	assert.Equal(t, expectedErr, s.EndError)
+	assert.False(t, s.IsNormalEnd())
 }
 
 func TestStreamStatus_IsNormalEnd_NilSafe(t *testing.T) {

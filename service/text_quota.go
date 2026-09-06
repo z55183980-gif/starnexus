@@ -522,6 +522,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	if !summary.hasBillableUsage() {
+		markUnbilledEOFIncomplete(relayInfo)
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
 	} else {
@@ -666,6 +667,19 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
 	})
+}
+
+// markUnbilledEOFIncomplete distinguishes a usable stream that simply omitted
+// the optional [DONE] sentinel from one whose upstream connection closed
+// without producing any billable result. The scanner cannot make this decision
+// by itself because usage may only arrive in the terminal response frame.
+func markUnbilledEOFIncomplete(relayInfo *relaycommon.RelayInfo) {
+	if relayInfo == nil || !relayInfo.IsStream || relayInfo.StreamStatus == nil {
+		return
+	}
+	relayInfo.StreamStatus.MarkIncompleteIfEOF(
+		fmt.Errorf("upstream stream ended before returning billable usage"),
+	)
 }
 
 func textCacheObservation(originUsage *dto.Usage, summary textQuotaSummary, relayInfo *relaycommon.RelayInfo) string {

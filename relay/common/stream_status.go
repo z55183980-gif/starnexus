@@ -17,8 +17,12 @@ const (
 	StreamEndReasonScannerErr  StreamEndReason = "scanner_error"
 	StreamEndReasonHandlerStop StreamEndReason = "handler_stop"
 	StreamEndReasonEOF         StreamEndReason = "eof"
-	StreamEndReasonPanic       StreamEndReason = "panic"
-	StreamEndReasonPingFail    StreamEndReason = "ping_fail"
+	// StreamEndReasonIncomplete indicates that the upstream closed the stream
+	// without reporting any billable usage. EOF is only considered normal when
+	// the request produced a usable result.
+	StreamEndReasonIncomplete StreamEndReason = "incomplete"
+	StreamEndReasonPanic      StreamEndReason = "panic"
+	StreamEndReasonPingFail   StreamEndReason = "ping_fail"
 )
 
 const maxStreamErrorEntries = 20
@@ -53,6 +57,21 @@ func (s *StreamStatus) SetEndReason(reason StreamEndReason, err error) {
 	}
 }
 
+// MarkIncompleteIfEOF reclassifies an EOF that produced no usable result.
+// Keeping the check and update under the same lock avoids racing the scanner
+// and billing goroutines while preserving completed/error terminal reasons.
+func (s *StreamStatus) MarkIncompleteIfEOF(err error) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.EndReason == StreamEndReasonEOF {
+		s.EndReason = StreamEndReasonIncomplete
+		s.EndError = err
+	}
+}
+
 func shouldReplaceStreamEndReason(current, next StreamEndReason) bool {
 	if current == StreamEndReasonNone {
 		return true
@@ -60,7 +79,10 @@ func shouldReplaceStreamEndReason(current, next StreamEndReason) bool {
 	if current != StreamEndReasonDone && current != StreamEndReasonEOF {
 		return false
 	}
-	return next == StreamEndReasonHandlerStop || next == StreamEndReasonPanic
+	if next == StreamEndReasonHandlerStop || next == StreamEndReasonPanic {
+		return true
+	}
+	return false
 }
 
 func (s *StreamStatus) RecordError(msg string) {

@@ -1068,7 +1068,16 @@ export function BusinessMonitor() {
                         </TableCell>
                         <TableCell className='py-1.5'>
                           {(() => {
-                            const isError = log.type === LOG_TYPE_ENUM.ERROR
+                            // A consume log can still represent an incomplete
+                            // stream: the upstream may close with EOF before
+                            // returning any billable usage. Treat the persisted
+                            // stream status as an error in the monitor instead
+                            // of showing a misleading green Success badge.
+                            const streamStatus =
+                              parseLogOther(log.other)?.stream_status
+                            const isError =
+                              log.type === LOG_TYPE_ENUM.ERROR ||
+                              streamStatus?.status === 'error'
                             return (
                               <Badge
                                 variant={isError ? 'destructive' : 'outline'}

@@ -85,6 +85,36 @@ func TestTextCacheObservationUsesHitMissUnknownStates(t *testing.T) {
 	}))
 }
 
+func TestMarkUnbilledEOFIncomplete(t *testing.T) {
+	t.Parallel()
+	status := relaycommon.NewStreamStatus()
+	status.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+	info := &relaycommon.RelayInfo{IsStream: true, StreamStatus: status}
+
+	markUnbilledEOFIncomplete(info)
+
+	require.Equal(t, relaycommon.StreamEndReasonIncomplete, status.EndReason)
+	require.ErrorContains(t, status.EndError, "before returning billable usage")
+	require.False(t, status.IsNormalEnd())
+}
+
+func TestMarkUnbilledEOFIncompletePreservesOtherEndReasons(t *testing.T) {
+	t.Parallel()
+	for _, reason := range []relaycommon.StreamEndReason{
+		relaycommon.StreamEndReasonDone,
+		relaycommon.StreamEndReasonTimeout,
+		relaycommon.StreamEndReasonClientGone,
+	} {
+		status := relaycommon.NewStreamStatus()
+		status.SetEndReason(reason, nil)
+		info := &relaycommon.RelayInfo{IsStream: true, StreamStatus: status}
+
+		markUnbilledEOFIncomplete(info)
+
+		require.Equal(t, reason, status.EndReason)
+	}
+}
+
 func TestCalculateTextQuotaSummaryRecordsMillisecondDuration(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
