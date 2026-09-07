@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
+import {
+  getRollingDateRange,
+  getStartOfDay,
+  type TimeGranularity,
+} from '@/lib/time'
 import {
   DASHBOARD_CHART_PREFERENCES_STORAGE_KEY,
   DEFAULT_DASHBOARD_CHART_PREFERENCES,
@@ -140,10 +144,32 @@ export function getDefaultDays(granularity?: TimeGranularity): number {
   return TIME_RANGE_BY_GRANULARITY[getSavedGranularity(granularity)]
 }
 
+/**
+ * Resolve a dashboard quick-range preset. "Today" runs from the user's local
+ * midnight to the current moment; longer presets include the current day and
+ * begin at local midnight.
+ */
+export function getDashboardDateRange(
+  days: number,
+  fromDate: Date = new Date()
+): { start: Date; end: Date } {
+  if (days <= 1) {
+    return {
+      start: getStartOfDay(fromDate),
+      end: new Date(fromDate),
+    }
+  }
+  const { start } = getRollingDateRange(days - 1, fromDate)
+  return {
+    start: getStartOfDay(start),
+    end: new Date(fromDate),
+  }
+}
+
 export function buildDefaultDashboardFilters(
   preferences: DashboardChartPreferences = getSavedChartPreferences()
 ): DashboardFilters {
-  const { start, end } = getRollingDateRange(preferences.defaultTimeRangeDays)
+  const { start, end } = getDashboardDateRange(preferences.defaultTimeRangeDays)
   return {
     ...EMPTY_DASHBOARD_FILTERS,
     start_timestamp: start,

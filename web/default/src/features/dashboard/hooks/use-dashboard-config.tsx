@@ -94,11 +94,11 @@ export function useSummaryCardsConfig(totals: {
   return [
     {
       key: 'todayUsage',
-      title: t('Last 24h usage'),
+      title: t("Today's Consumption"),
       value: totals.todayUsageDisplay,
       description: totals.currencyEnabled
-        ? `${t('Consumed in the last 24 hours')} (${totals.currencyLabel})`
-        : t('Consumed in the last 24 hours'),
+        ? `${t("Today's Consumption")} (${totals.currencyLabel})`
+        : t("Today's Consumption"),
       icon: Flame,
     },
     {

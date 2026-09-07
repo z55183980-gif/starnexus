@@ -24,7 +24,6 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '@/stores/auth-store'
 import { getCurrencyLabel, isCurrencyDisplayEnabled } from '@/lib/currency'
 import { formatNumber, formatQuota } from '@/lib/format'
-import { computeTimeRange } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { useStatus } from '@/hooks/use-status'
 import { Button } from '@/components/ui/button'
@@ -33,6 +32,7 @@ import { getUserQuotaDates } from '@/features/dashboard/api'
 import { DashboardRefreshStatus } from '@/features/dashboard/components/ui/dashboard-refresh-status'
 import { useSummaryCardsConfig } from '@/features/dashboard/hooks/use-dashboard-config'
 import { DASHBOARD_MODEL_REFRESH_INTERVAL } from '@/features/dashboard/hooks/use-dashboard-refresh'
+import { getDashboardDateRange } from '@/features/dashboard/lib'
 import type { QuotaDataItem } from '@/features/dashboard/types'
 import { StatCard } from '../ui/stat-card'
 
@@ -149,10 +149,10 @@ export function SummaryCards() {
   const usageTrendQuery = useQuery({
     queryKey: ['dashboard', 'overview', 'summary-sparklines', 1],
     queryFn: async () => {
-      const currentRange = computeTimeRange(1)
+      const currentRange = getDashboardDateRange(1)
       return getUserQuotaDates({
-        start_timestamp: currentRange.start_timestamp,
-        end_timestamp: currentRange.end_timestamp,
+        start_timestamp: Math.floor(currentRange.start.getTime() / 1000),
+        end_timestamp: Math.floor(currentRange.end.getTime() / 1000),
         default_time: 'hour',
       })
     },
@@ -182,13 +182,16 @@ export function SummaryCards() {
   }
 
   const queriedAt = usageTrendQuery.data?.meta?.queried_at
-  const summaryTimeRange = useMemo(
-    () =>
-      queriedAt
-        ? computeTimeRange(1, undefined, new Date((queriedAt + 3600) * 1000))
-        : computeTimeRange(1),
-    [queriedAt]
-  )
+  const summaryTimeRange = useMemo(() => {
+    const range = getDashboardDateRange(
+      1,
+      queriedAt ? new Date(queriedAt * 1000) : new Date()
+    )
+    return {
+      start_timestamp: Math.floor(range.start.getTime() / 1000),
+      end_timestamp: Math.floor(range.end.getTime() / 1000),
+    }
+  }, [queriedAt])
 
   const summaryValues = useMemo(() => {
     return {
@@ -347,7 +350,7 @@ export function SummaryCards() {
               <div className='bg-background/60 rounded-lg px-2.5 py-2'>
                 <div className='text-muted-foreground flex items-center gap-1 text-[11px] leading-none font-medium'>
                   <Flame className='size-3 shrink-0' aria-hidden='true' />
-                  <span className='truncate'>{t('Last 24h usage')}</span>
+                  <span className='truncate'>{t("Today's Consumption")}</span>
                 </div>
                 <div className='text-foreground mt-1.5 truncate text-xs font-semibold tabular-nums'>
                   {formatQuota(recentUsage)}

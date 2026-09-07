@@ -357,21 +357,33 @@ export function ApiKeysTable() {
       toolbarProps={{
         searchPlaceholder: t('Filter by name or key...'),
         preActions: (
-          <Button
-            variant='outline'
-            disabled={isFetching}
-            onClick={() => {
-              void refetch()
-              if (tokenIds.length > 0) void usageQuery.refetch()
-            }}
-          >
-            {isFetching ? (
-              <Spinner data-icon='inline-start' />
-            ) : (
-              <RefreshCw data-icon='inline-start' />
+          <div className='flex items-center gap-2'>
+            <Button
+              variant='outline'
+              disabled={isFetching}
+              onClick={() => {
+                void refetch()
+                if (tokenIds.length > 0) void usageQuery.refetch()
+              }}
+            >
+              {isFetching ? (
+                <Spinner data-icon='inline-start' />
+              ) : (
+                <RefreshCw data-icon='inline-start' />
+              )}
+              {t('Refresh')}
+            </Button>
+            {usageLoading && (
+              <span
+                className='text-muted-foreground flex items-center gap-1 text-xs'
+                role='status'
+                aria-live='polite'
+              >
+                <Spinner className='size-3' />
+                {t('Loading...')}
+              </span>
             )}
-            {t('Refresh')}
-          </Button>
+          </div>
         ),
         filters: [
           {

@@ -22,6 +22,7 @@ export {
   getSavedGranularity,
   saveGranularity,
   getDefaultDays,
+  getDashboardDateRange,
   getSavedChartPreferences,
   saveChartPreferences,
   buildDefaultDashboardFilters,

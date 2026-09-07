@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -11,9 +12,23 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/gin-gonic/gin"
 )
+
+// API-key usage is a dashboard hint, so keep a short process-local cache. The
+// raw log aggregate can touch many rows; caching and singleflight prevent a
+// page refresh (or several browser tabs) from issuing the same scan at once.
+var (
+	tokenUsageWindowCache  = newTTLCache[tokenUsageWindowResult](30*time.Second, 2048)
+	tokenUsageWindowFlight singleflight.Group
+)
+
+type tokenUsageWindowResult struct {
+	Available bool
+	Items     map[int]model.TokenUsageWindowStats
+}
 
 func buildMaskedTokenResponse(token *model.Token) *model.Token {
 	if token == nil {
@@ -99,22 +114,51 @@ func GetTokenUsageWindows(c *gin.Context) {
 
 	localNow := time.Now().In(time.Local)
 	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, localNow.Location())
-	statsByToken, err := model.GetTokenUsageWindowStats(
-		userId,
-		ids,
-		today.Unix(),
-		today.AddDate(0, 0, -29).Unix(),
-		today.AddDate(0, 0, 1).Unix(),
-	)
+	todayStart := today.Unix()
+	windowStart := today.AddDate(0, 0, -29).Unix()
+	windowEnd := today.AddDate(0, 0, 1).Unix()
+	// IDs are sorted only for the cache key. The response is rebuilt in the
+	// original request order so the API contract remains unchanged.
+	cacheIDs := append([]int(nil), ids...)
+	sort.Ints(cacheIDs)
+	cacheKey := fmt.Sprintf("api-key-usage|%d|%d|%d|%s", userId, todayStart, windowEnd, joinTokenIDs(cacheIDs))
+	result, err, _ := tokenUsageWindowFlight.Do(cacheKey, func() (any, error) {
+		if cached, found := tokenUsageWindowCache.Get(cacheKey); found {
+			return cached, nil
+		}
+		statsByToken, queryErr := model.GetTokenUsageWindowStats(
+			userId,
+			ids,
+			todayStart,
+			windowStart,
+			windowEnd,
+		)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		cached := tokenUsageWindowResult{Available: true, Items: statsByToken}
+		tokenUsageWindowCache.Set(cacheKey, cached)
+		return cached, nil
+	})
 	if err != nil {
-		common.SysLog("failed to query API key usage stats: " + err.Error())
+		if stale, found := tokenUsageWindowCache.GetStale(cacheKey); found {
+			result = stale
+		} else {
+			common.SysLog("failed to query API key usage stats: " + err.Error())
+			common.ApiSuccess(c, response)
+			return
+		}
+	}
+	usageResult, ok := result.(tokenUsageWindowResult)
+	if !ok || !usageResult.Available {
+		common.SysLog("failed to decode API key usage stats response")
 		common.ApiSuccess(c, response)
 		return
 	}
 
 	items := make(map[int]gin.H, len(ids))
 	for _, id := range ids {
-		stats := statsByToken[id]
+		stats := usageResult.Items[id]
 		items[id] = gin.H{
 			"today_quota":      stats.TodayQuota,
 			"thirty_day_quota": stats.ThirtyDayQuota,
@@ -122,6 +166,14 @@ func GetTokenUsageWindows(c *gin.Context) {
 		}
 	}
 	common.ApiSuccess(c, gin.H{"available": true, "items": items})
+}
+
+func joinTokenIDs(ids []int) string {
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = strconv.Itoa(id)
+	}
+	return strings.Join(parts, ",")
 }
 
 func GetToken(c *gin.Context) {

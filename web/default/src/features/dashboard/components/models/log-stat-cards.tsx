@@ -29,6 +29,7 @@ import { DASHBOARD_MODEL_REFRESH_INTERVAL } from '@/features/dashboard/hooks/use
 import {
   buildQueryParams,
   calculateDashboardStats,
+  getDashboardDateRange,
   getDefaultDays,
 } from '@/features/dashboard/lib'
 import type {
@@ -50,11 +51,19 @@ export function LogStatCards(props: LogStatCardsProps) {
   const { filters, onDataUpdate } = props
   const queryKeyParams = useMemo(() => {
     const rollingDays = filters?.time_range_days
-    const timeRange = computeTimeRange(
-      rollingDays ?? getDefaultDays(filters?.time_granularity),
-      rollingDays ? undefined : filters?.start_timestamp,
-      rollingDays ? undefined : filters?.end_timestamp
-    )
+    const timeRange = rollingDays
+      ? (() => {
+          const { start, end } = getDashboardDateRange(rollingDays)
+          return {
+            start_timestamp: Math.floor(start.getTime() / 1000),
+            end_timestamp: Math.floor(end.getTime() / 1000),
+          }
+        })()
+      : computeTimeRange(
+          getDefaultDays(filters?.time_granularity),
+          filters?.start_timestamp,
+          filters?.end_timestamp
+        )
     return buildQueryParams(timeRange, filters)
   }, [filters])
   const quotaQuery = useQuery({
@@ -62,11 +71,19 @@ export function LogStatCards(props: LogStatCardsProps) {
     queryFn: ({ queryKey }) => {
       const queryFilters = queryKey[3] as DashboardFilters | undefined
       const rollingDays = queryFilters?.time_range_days
-      const timeRange = computeTimeRange(
-        rollingDays ?? getDefaultDays(queryFilters?.time_granularity),
-        rollingDays ? undefined : queryFilters?.start_timestamp,
-        rollingDays ? undefined : queryFilters?.end_timestamp
-      )
+      const timeRange = rollingDays
+        ? (() => {
+            const { start, end } = getDashboardDateRange(rollingDays)
+            return {
+              start_timestamp: Math.floor(start.getTime() / 1000),
+              end_timestamp: Math.floor(end.getTime() / 1000),
+            }
+          })()
+        : computeTimeRange(
+            getDefaultDays(queryFilters?.time_granularity),
+            queryFilters?.start_timestamp,
+            queryFilters?.end_timestamp
+          )
       return getUserQuotaDates(
         buildQueryParams(timeRange, queryFilters),
         Boolean(queryKey[2])

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>鹈鹕骑自行车</title>
+<style>
+  :root { --sky:#bfe9ff; --road:#263847; --cream:#fff4d6; --orange:#f28c28; --blue:#47a9d8; }
+  *{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(#86d6f5,#eafaff);font-family:system-ui,sans-serif;overflow:hidden}
+  .scene{width:min(1000px,96vw);aspect-ratio:16/9;border-radius:24px;overflow:hidden;box-shadow:0 22px 60px #23607955;background:var(--sky);position:relative}
+  svg{width:100%;height:100%;display:block}
+  .cloud{fill:#fff;opacity:.8}.hill{fill:#76c3a1}.hill2{fill:#54a982}.road{fill:var(--road)}
+  .wheel{fill:none;stroke:#18252e;stroke-width:8}.spoke{stroke:#9fc7d4;stroke-width:2}.frame{fill:none;stroke:#d86425;stroke-width:7;stroke-linecap:round;stroke-linejoin:round}.handle{fill:none;stroke:#d86425;stroke-width:6;stroke-linecap:round}
+  .pelican{animation:bob .65s ease-in-out infinite alternate;transform-origin:500px 205px}.leg{animation:pedal .8s linear infinite;transform-origin:487px 264px}.wing{animation:wing .9s ease-in-out infinite alternate;transform-origin:535px 168px}
+  .wheelGroup{animation:roll 1.2s linear infinite;transform-origin:500px 294px}
+  .feather{fill:var(--cream);stroke:#bb7f46;stroke-width:4}.beak{fill:var(--orange);stroke:#b95c1b;stroke-width:4}.eye{fill:#17222a}.scarf{fill:#e85f5b;stroke:#a83d3b;stroke-width:3}
+  .caption{position:absolute;left:24px;top:18px;color:#17384a;font-weight:800;letter-spacing:.08em;font-size:clamp(15px,2vw,25px)}
+  @keyframes roll{to{transform:rotate(360deg)}} @keyframes bob{to{transform:translateY(5px)}} @keyframes pedal{to{transform:rotate(360deg)}} @keyframes wing{to{transform:rotate(-8deg)}}
+</style>
+</head>
+<body>
+<div class="scene"><div class="caption">PELICAN EXPRESS</div>
+<svg viewBox="0 0 1000 560" role="img" aria-label="鹈鹕骑自行车的二维动画">
+<rect width="1000" height="560" fill="#bfe9ff"/><circle cx="830" cy="100" r="48" fill="#fff4a8" opacity=".75"/>
+<g class="cloud"><ellipse cx="170" cy="110" rx="75" ry="24"/><ellipse cx="115" cy="112" rx="38" ry="22"/><ellipse cx="220" cy="105" rx="42" ry="28"/></g>
+<path class="hill" d="M0 350 Q160 220 325 350 T650 340 T1000 320 V560 H0Z"/><path class="hill2" d="M0 415 Q180 310 380 420 T760 400 T1000 390 V560 H0Z"/><path class="road" d="M0 420 Q250 395 500 420 T1000 415 V560 H0Z"/>
+<g stroke="#f4cb66" stroke-width="8" stroke-linecap="round" opacity=".8"><path d="M90 487h78"/><path d="M270 475h78"/><path d="M470 490h78"/><path d="M690 470h78"/><path d="M870 490h78"/></g>
+<g class="wheelGroup"><circle class="wheel" cx="395" cy="370" r="63"/><circle class="wheel" cx="625" cy="370" r="63"/><g class="spoke"><path d="M395 307v126M332 370h126M350 325l90 90M440 325l-90 90"/><path d="M625 307v126M562 370h126M580 325l90 90M670 325l-90 90"/></g></g>
+<g><path class="frame" d="M395 370l95-100 55 100H395l95-100 135 100"/><path class="handle" d="M545 270l35-35h35l-15 22"/><path class="frame" d="M490 270l-18-42h-28"/><circle cx="490" cy="270" r="9" fill="#d86425"/></g>
+<g class="pelican"><ellipse class="feather" cx="505" cy="190" rx="84" ry="77"/><path class="scarf" d="M445 205 Q505 225 568 205l-8 20q-60 23-120 0z"/><path class="feather" d="M535 170q50 25 20 83q-35 4-58-18z"/><g class="wing"><path class="feather" d="M535 160q65 10 40 60q-20 30-57 14q20-30 17-74z"/></g><ellipse class="feather" cx="468" cy="124" rx="55" ry="48"/><path class="beak" d="M430 127q-70 10-112 40q44 35 102 5z"/><circle class="eye" cx="448" cy="111" r="7"/><path class="feather" d="M457 73q18-32 34 3" fill="none"/><path class="feather" d="M470 267q-2 28 18 48M520 266q-2 29 18 48" fill="none" stroke-width="11"/></g>
+<g class="leg"><path d="M490 270l-25 50 34 12M520 270l30 46-28 17" fill="none" stroke="#d86425" stroke-width="8" stroke-linecap="round"/><path d="M487 332h-30M522 333h30" stroke="#d86425" stroke-width="7" stroke-linecap="round"/></g>
+<g fill="#fff" opacity=".75"><circle cx="72" cy="210" r="5"/><circle cx="92" cy="185" r="3"/><circle cx="900" cy="210" r="4"/></g>
+</svg></div>
+</body>
+</html>

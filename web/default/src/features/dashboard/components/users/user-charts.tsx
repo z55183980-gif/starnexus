@@ -21,22 +21,18 @@ import { useQuery } from '@tanstack/react-query'
 import { VChart } from '@visactor/react-vchart'
 import { Users, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
+import { type TimeGranularity } from '@/lib/time'
 import { VCHART_OPTION } from '@/lib/vchart'
 import { useThemeCustomization } from '@/context/theme-customization-provider'
 import { useTheme } from '@/context/theme-provider'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
 import { DashboardRefreshStatus } from '@/features/dashboard/components/ui/dashboard-refresh-status'
-import {
-  TIME_GRANULARITY_OPTIONS,
-  TIME_RANGE_PRESETS,
-} from '@/features/dashboard/constants'
+import { TIME_RANGE_PRESETS } from '@/features/dashboard/constants'
 import { DASHBOARD_USER_REFRESH_INTERVAL } from '@/features/dashboard/hooks/use-dashboard-refresh'
 import {
-  getDefaultDays,
-  getSavedGranularity,
-  saveGranularity,
+  getDashboardDateRange,
+  getSavedChartPreferences,
   processUserChartData,
 } from '@/features/dashboard/lib'
 import type { ProcessedUserChartData } from '@/features/dashboard/types'
@@ -76,12 +72,11 @@ export function UserCharts() {
     (typeof import('@visactor/vchart'))['ThemeManager'] | null
   >(null)
 
-  const [timeGranularity, setTimeGranularity] = useState<TimeGranularity>(() =>
-    getSavedGranularity()
+  const [selectedRange, setSelectedRange] = useState<number>(
+    () => getSavedChartPreferences().defaultTimeRangeDays
   )
-  const [selectedRange, setSelectedRange] = useState<number>(() =>
-    getDefaultDays(timeGranularity)
-  )
+  const timeGranularity: TimeGranularity =
+    selectedRange <= 1 ? 'hour' : selectedRange <= 7 ? 'day' : 'week'
   const [topUserLimit, setTopUserLimit] = useState(10)
   const [rangeRevision, setRangeRevision] = useState(0)
 
@@ -89,18 +84,6 @@ export function UserCharts() {
     setSelectedRange(days)
     setRangeRevision((current) => current + 1)
   }, [])
-
-  const handleGranularityChange = useCallback(
-    (g: TimeGranularity) => {
-      setTimeGranularity(g)
-      saveGranularity(g)
-      const days = getDefaultDays(g)
-      if (days !== selectedRange) {
-        handleRangeChange(days)
-      }
-    },
-    [selectedRange, handleRangeChange]
-  )
 
   useEffect(() => {
     const updateTheme = async () => {
@@ -122,7 +105,7 @@ export function UserCharts() {
     queryKey: ['dashboard', 'user-quota', selectedRange, rangeRevision],
     queryFn: ({ queryKey }) => {
       const rangeDays = Number(queryKey[2])
-      const { start, end } = getRollingDateRange(rangeDays)
+      const { start, end } = getDashboardDateRange(rangeDays)
       return getUserQuotaDataByUsers({
         start_timestamp: Math.floor(start.getTime() / 1000),
         end_timestamp: Math.floor(end.getTime() / 1000),
@@ -175,25 +158,6 @@ export function UserCharts() {
               }`}
             >
               {t(preset.label)}
-            </button>
-          ))}
-        </div>
-
-        <div className='flex shrink-0 items-center gap-1.5 rounded-lg border p-0.5'>
-          {TIME_GRANULARITY_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type='button'
-              onClick={() =>
-                handleGranularityChange(opt.value as TimeGranularity)
-              }
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                timeGranularity === opt.value
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
-            >
-              {t(opt.label)}
             </button>
           ))}
         </div>
