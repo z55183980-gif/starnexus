@@ -28,7 +28,7 @@ import { useTheme } from '@/context/theme-provider'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getUserQuotaDataByUsers } from '@/features/dashboard/api'
 import { DashboardRefreshStatus } from '@/features/dashboard/components/ui/dashboard-refresh-status'
-import { TIME_RANGE_PRESETS } from '@/features/dashboard/constants'
+import { DashboardTimeRangeToggle } from '@/features/dashboard/components/ui/dashboard-time-range-toggle'
 import { DASHBOARD_USER_REFRESH_INTERVAL } from '@/features/dashboard/hooks/use-dashboard-refresh'
 import {
   getDashboardDateRange,
@@ -145,22 +145,10 @@ export function UserCharts() {
   return (
     <div className='space-y-3'>
       <div className='flex items-center gap-1.5 overflow-x-auto pb-1 sm:gap-2'>
-        <div className='flex shrink-0 items-center gap-1.5 rounded-lg border p-0.5'>
-          {TIME_RANGE_PRESETS.map((preset) => (
-            <button
-              key={preset.days}
-              type='button'
-              onClick={() => handleRangeChange(preset.days)}
-              className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                selectedRange === preset.days
-                  ? 'bg-primary text-primary-foreground shadow-sm'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
-            >
-              {t(preset.label)}
-            </button>
-          ))}
-        </div>
+        <DashboardTimeRangeToggle
+          value={selectedRange}
+          onValueChange={handleRangeChange}
+        />
 
         <div className='flex shrink-0 items-center gap-1.5 rounded-lg border p-0.5'>
           <span className='text-muted-foreground px-2 text-xs font-medium'>

@@ -28,10 +28,12 @@ import { FadeIn } from '@/components/page-transition'
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
+import { DashboardTimeRangeToggle } from './components/ui/dashboard-time-range-toggle'
 import { DEFAULT_TIME_GRANULARITY } from './constants'
 import { useDashboardCurrentUserRefresh } from './hooks/use-dashboard-refresh'
 import {
   buildDefaultDashboardFilters,
+  getDashboardDateRange,
   getSavedChartPreferences,
   saveChartPreferences,
 } from './lib'
@@ -177,6 +179,16 @@ export function Dashboard() {
     setModelFilters(buildDefaultDashboardFilters(chartPreferences))
   }, [chartPreferences])
 
+  const handleModelRangeChange = useCallback((days: number) => {
+    const { start, end } = getDashboardDateRange(days)
+    setModelFilters((current) => ({
+      ...current,
+      start_timestamp: start,
+      end_timestamp: end,
+      time_range_days: days,
+    }))
+  }, [])
+
   const handleDataUpdate = useCallback(
     (data: QuotaDataItem[], loading: boolean) => {
       setModelData(data)
@@ -238,23 +250,36 @@ export function Dashboard() {
       <SectionPageLayout.Content>
         <div className='space-y-3 sm:space-y-4'>
           {activeSection !== 'overview' && (
-            <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>
-              {showSectionTabs ? (
-                <Tabs value={activeSection} onValueChange={handleSectionChange}>
-                  <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
-                    {visibleSections.map((section) => (
-                      <TabsTrigger key={section} value={section}>
-                        {t(SECTION_META[section].titleKey)}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
-              ) : (
-                <div />
-              )}
-              {modelActions != null && (
-                <div className='flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2'>
-                  {modelActions}
+            <div className='flex flex-col gap-1.5 sm:gap-2'>
+              <div className='flex flex-wrap items-center justify-between gap-1.5 sm:gap-2'>
+                {showSectionTabs ? (
+                  <Tabs
+                    value={activeSection}
+                    onValueChange={handleSectionChange}
+                  >
+                    <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
+                      {visibleSections.map((section) => (
+                        <TabsTrigger key={section} value={section}>
+                          {t(SECTION_META[section].titleKey)}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                ) : (
+                  <div />
+                )}
+                {modelActions != null && (
+                  <div className='flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2'>
+                    {modelActions}
+                  </div>
+                )}
+              </div>
+              {activeSection === 'models' && (
+                <div className='overflow-x-auto pb-1'>
+                  <DashboardTimeRangeToggle
+                    value={modelFilters.time_range_days ?? 0}
+                    onValueChange={handleModelRangeChange}
+                  />
                 </div>
               )}
             </div>
