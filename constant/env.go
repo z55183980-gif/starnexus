@@ -1,6 +1,9 @@
 package constant
 
 var StreamingTimeout int
+var NonStreamKeepAliveEnabled bool
+var NonStreamKeepAliveDelaySeconds int
+var NonStreamKeepAliveIntervalSeconds int
 var DifyDebug bool
 var MaxFileDownloadMB int
 var StreamScannerMaxBufferMB int

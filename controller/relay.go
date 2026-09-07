@@ -248,6 +248,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
+	// Cloudflare's proxied connection has a finite origin read timeout. Start
+	// only after all request-wide validation, billing, and audit work succeeds,
+	// so those failures retain their original HTTP status. Ordinary requests
+	// complete before the delayed first heartbeat and remain byte-for-byte JSON.
+	stopNonStreamKeepAlive := startNonStreamJSONKeepAlive(c, relayFormat, request)
+	defer stopNonStreamKeepAlive()
+
 	retryParam := &service.RetryParam{
 		Ctx:        c,
 		TokenGroup: relayInfo.TokenGroup,

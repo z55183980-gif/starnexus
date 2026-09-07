@@ -138,6 +138,9 @@ func InitEnv() {
 
 func initConstantEnv() {
 	constant.StreamingTimeout = GetEnvOrDefault("STREAMING_TIMEOUT", 300)
+	constant.NonStreamKeepAliveEnabled = GetEnvOrDefaultBool("NON_STREAM_KEEPALIVE_ENABLED", true)
+	constant.NonStreamKeepAliveDelaySeconds = GetEnvOrDefault("NON_STREAM_KEEPALIVE_DELAY_SECONDS", 90)
+	constant.NonStreamKeepAliveIntervalSeconds = GetEnvOrDefault("NON_STREAM_KEEPALIVE_INTERVAL_SECONDS", 25)
 	constant.DifyDebug = GetEnvOrDefaultBool("DIFY_DEBUG", true)
 	constant.MaxFileDownloadMB = GetEnvOrDefault("MAX_FILE_DOWNLOAD_MB", 64)
 	constant.StreamScannerMaxBufferMB = GetEnvOrDefault("STREAM_SCANNER_MAX_BUFFER_MB", 128)
