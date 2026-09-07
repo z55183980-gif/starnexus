@@ -27,6 +27,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   Tooltip,
   TooltipContent,
@@ -142,6 +143,23 @@ export function ApiKeyCell({ apiKey }: { apiKey: ApiKey }) {
 
 export function UsageCell({ apiKey }: { apiKey: ApiKey }) {
   const { t } = useTranslation()
+
+  if (apiKey.usage_loading) {
+    return (
+      <div className='flex min-w-[8.5rem] flex-col gap-1'>
+        <div className='flex items-center gap-1'>
+          <span className='text-muted-foreground text-xs'>{t('Today')}:</span>
+          <Skeleton className='h-3 w-12' />
+        </div>
+        <div className='flex items-center gap-1'>
+          <span className='text-muted-foreground text-xs'>
+            {t('Last 30 days')}:
+          </span>
+          <Skeleton className='h-3 w-12' />
+        </div>
+      </div>
+    )
+  }
 
   if (!apiKey.usage_available) {
     return (

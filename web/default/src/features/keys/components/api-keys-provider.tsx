@@ -70,7 +70,11 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
   const triggerRefresh = useCallback(() => {
     void queryClient.invalidateQueries({
       queryKey: ['keys'],
-      refetchType: 'none',
+      refetchType: 'active',
+    })
+    void queryClient.invalidateQueries({
+      queryKey: ['keys-usage'],
+      refetchType: 'active',
     })
   }, [queryClient])
 

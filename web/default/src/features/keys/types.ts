@@ -32,6 +32,7 @@ export const apiKeySchema = z.object({
   today_quota: z.number().default(0),
   thirty_day_quota: z.number().default(0),
   usage_available: z.boolean().default(false),
+  usage_loading: z.boolean().default(false),
   unlimited_quota: z.boolean(),
   expired_time: z.number(), // -1 for never expires
   created_time: z.number(),

@@ -32,6 +32,11 @@ type tokenPageResponse struct {
 	Items []tokenResponseItem `json:"items"`
 }
 
+type tokenUsagePageResponse struct {
+	Available bool                      `json:"available"`
+	Items     map[int]tokenResponseItem `json:"items"`
+}
+
 type tokenResponseItem struct {
 	ID             int    `json:"id"`
 	Name           string `json:"name"`
@@ -425,7 +430,7 @@ func TestGetAllTokensMasksKeyInResponse(t *testing.T) {
 	}
 }
 
-func TestGetAllTokensIncludesUsageWindows(t *testing.T) {
+func TestGetTokenUsageWindows(t *testing.T) {
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	common.LogConsumeEnabled = true
 	t.Cleanup(func() { common.LogConsumeEnabled = originalLogConsumeEnabled })
@@ -448,37 +453,37 @@ func TestGetAllTokensIncludesUsageWindows(t *testing.T) {
 		t.Fatalf("failed to seed usage logs: %v", err)
 	}
 
-	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/?p=1&size=10", nil, 1)
-	GetAllTokens(ctx)
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/usage?ids="+strconv.Itoa(token.Id)+","+strconv.Itoa(otherToken.Id), nil, 1)
+	GetTokenUsageWindows(ctx)
 
 	response := decodeAPIResponse(t, recorder)
 	if !response.Success {
 		t.Fatalf("expected success response, got message: %s", response.Message)
 	}
 
-	var page tokenPageResponse
-	if err := common.Unmarshal(response.Data, &page); err != nil {
-		t.Fatalf("failed to decode token page response: %v", err)
+	var usage tokenUsagePageResponse
+	if err := common.Unmarshal(response.Data, &usage); err != nil {
+		t.Fatalf("failed to decode token usage response: %v", err)
 	}
-	for _, item := range page.Items {
-		if item.ID != token.Id {
-			continue
-		}
-		if item.TodayQuota != 100 {
-			t.Fatalf("expected today's quota to be 100, got %d", item.TodayQuota)
-		}
-		if item.ThirtyDayQuota != 300 {
-			t.Fatalf("expected 30-day quota to be 300, got %d", item.ThirtyDayQuota)
-		}
-		if !item.UsageAvailable {
-			t.Fatal("expected usage stats to be available")
-		}
-		return
+	if !usage.Available {
+		t.Fatal("expected usage stats to be available")
 	}
-	t.Fatalf("usage token not found in response")
+	item, ok := usage.Items[token.Id]
+	if !ok {
+		t.Fatalf("usage token not found in response: %+v", usage.Items)
+	}
+	if item.TodayQuota != 100 {
+		t.Fatalf("expected today's quota to be 100, got %d", item.TodayQuota)
+	}
+	if item.ThirtyDayQuota != 300 {
+		t.Fatalf("expected 30-day quota to be 300, got %d", item.ThirtyDayQuota)
+	}
+	if !item.UsageAvailable {
+		t.Fatal("expected usage stats to be available")
+	}
 }
 
-func TestGetAllTokensSurvivesUsageStatsFailure(t *testing.T) {
+func TestGetTokenUsageWindowsSurvivesStatsFailure(t *testing.T) {
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	common.LogConsumeEnabled = true
 	t.Cleanup(func() { common.LogConsumeEnabled = originalLogConsumeEnabled })
@@ -489,22 +494,26 @@ func TestGetAllTokensSurvivesUsageStatsFailure(t *testing.T) {
 		t.Fatalf("failed to drop log table: %v", err)
 	}
 
-	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/?p=1&size=10", nil, 1)
-	GetAllTokens(ctx)
+	listCtx, listRecorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/?p=1&size=10", nil, 1)
+	GetAllTokens(listCtx)
+	listResponse := decodeAPIResponse(t, listRecorder)
+	if !listResponse.Success {
+		t.Fatalf("expected token list to survive usage table failure, got message: %s", listResponse.Message)
+	}
+
+	ctx, recorder := newAuthenticatedContext(t, http.MethodGet, "/api/token/usage?ids="+strconv.Itoa(token.Id), nil, 1)
+	GetTokenUsageWindows(ctx)
 
 	response := decodeAPIResponse(t, recorder)
 	if !response.Success {
 		t.Fatalf("expected token list to survive usage failure, got message: %s", response.Message)
 	}
 
-	var page tokenPageResponse
-	if err := common.Unmarshal(response.Data, &page); err != nil {
-		t.Fatalf("failed to decode token page response: %v", err)
+	var usage tokenUsagePageResponse
+	if err := common.Unmarshal(response.Data, &usage); err != nil {
+		t.Fatalf("failed to decode token usage response: %v", err)
 	}
-	if len(page.Items) != 1 || page.Items[0].ID != token.Id {
-		t.Fatalf("expected token %d to remain in response, got %+v", token.Id, page.Items)
-	}
-	if page.Items[0].UsageAvailable {
+	if usage.Available {
 		t.Fatal("expected usage stats to be unavailable after query failure")
 	}
 }

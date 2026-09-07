@@ -26,6 +26,21 @@ import type {
   ApiKeyFormData,
 } from './types'
 
+export interface ApiKeyUsageItem {
+  today_quota: number
+  thirty_day_quota: number
+  usage_available: boolean
+}
+
+export interface GetApiKeysUsageResponse {
+  success: boolean
+  message?: string
+  data?: {
+    available: boolean
+    items: Record<string, ApiKeyUsageItem>
+  }
+}
+
 // ============================================================================
 // API Key Management
 // ============================================================================
@@ -39,10 +54,20 @@ export async function getApiKeys(
   return res.data
 }
 
+// Get usage for only the API keys currently visible in the table.
+export async function getApiKeysUsage(
+  ids: number[]
+): Promise<GetApiKeysUsageResponse> {
+  const res = await api.get('/api/token/usage', {
+    params: { ids: ids.join(',') },
+  })
+  return res.data
+}
+
 // Search API keys by keyword or token (with pagination)
 export async function searchApiKeys(
   params: SearchApiKeysParams
-): Promise<{ success: boolean; message?: string; data?: ApiKey[] }> {
+): Promise<GetApiKeysResponse> {
   const { keyword = '', token = '', p, size } = params
   const queryParams = new URLSearchParams()
   if (keyword) queryParams.set('keyword', keyword)

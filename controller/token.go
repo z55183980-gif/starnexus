@@ -32,52 +32,6 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 	return maskedTokens
 }
 
-func attachTokenUsageWindowStats(tokens []*model.Token, userId int, now time.Time) error {
-	if len(tokens) == 0 {
-		return nil
-	}
-	for _, token := range tokens {
-		if token != nil {
-			token.UsageAvailable = false
-		}
-	}
-	if !common.LogConsumeEnabled {
-		return nil
-	}
-
-	localNow := now.In(time.Local)
-	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, localNow.Location())
-	thirtyDayStart := today.AddDate(0, 0, -29)
-	windowEnd := today.AddDate(0, 0, 1)
-	tokenIds := make([]int, 0, len(tokens))
-	for _, token := range tokens {
-		if token != nil {
-			tokenIds = append(tokenIds, token.Id)
-		}
-	}
-
-	statsByToken, err := model.GetTokenUsageWindowStats(
-		userId,
-		tokenIds,
-		today.Unix(),
-		thirtyDayStart.Unix(),
-		windowEnd.Unix(),
-	)
-	if err != nil {
-		return err
-	}
-	for _, token := range tokens {
-		if token == nil {
-			continue
-		}
-		stats := statsByToken[token.Id]
-		token.TodayQuota = stats.TodayQuota
-		token.ThirtyDayQuota = stats.ThirtyDayQuota
-		token.UsageAvailable = true
-	}
-	return nil
-}
-
 func GetAllTokens(c *gin.Context) {
 	userId := c.GetInt("id")
 	pageInfo := common.GetPageQuery(c)
@@ -85,9 +39,6 @@ func GetAllTokens(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
-	}
-	if err = attachTokenUsageWindowStats(tokens, userId, time.Now()); err != nil {
-		common.SysError("failed to query API key usage stats: " + err.Error())
 	}
 	total, _ := model.CountUserTokens(userId)
 	pageInfo.SetTotal(int(total))
@@ -107,12 +58,70 @@ func SearchTokens(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err = attachTokenUsageWindowStats(tokens, userId, time.Now()); err != nil {
-		common.SysError("failed to query API key usage stats: " + err.Error())
-	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(buildMaskedTokenResponses(tokens))
 	common.ApiSuccess(c, pageInfo)
+}
+
+// GetTokenUsageWindows returns usage statistics for the token IDs currently
+// visible on the API key page. It is intentionally separate from the token
+// list endpoint so a slow log aggregation cannot block the initial page load.
+func GetTokenUsageWindows(c *gin.Context) {
+	userId := c.GetInt("id")
+	rawIDs := strings.TrimSpace(c.Query("ids"))
+	response := gin.H{
+		"available": false,
+		"items":     map[int]gin.H{},
+	}
+	if rawIDs == "" || !common.LogConsumeEnabled {
+		common.ApiSuccess(c, response)
+		return
+	}
+
+	ids := make([]int, 0, 100)
+	seen := make(map[int]struct{})
+	for _, rawID := range strings.Split(rawIDs, ",") {
+		id, err := strconv.Atoi(strings.TrimSpace(rawID))
+		if err != nil || id <= 0 {
+			common.ApiErrorMsg(c, "invalid token id")
+			return
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+		if len(ids) > 100 {
+			common.ApiErrorMsg(c, "too many token ids")
+			return
+		}
+	}
+
+	localNow := time.Now().In(time.Local)
+	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, localNow.Location())
+	statsByToken, err := model.GetTokenUsageWindowStats(
+		userId,
+		ids,
+		today.Unix(),
+		today.AddDate(0, 0, -29).Unix(),
+		today.AddDate(0, 0, 1).Unix(),
+	)
+	if err != nil {
+		common.SysLog("failed to query API key usage stats: " + err.Error())
+		common.ApiSuccess(c, response)
+		return
+	}
+
+	items := make(map[int]gin.H, len(ids))
+	for _, id := range ids {
+		stats := statsByToken[id]
+		items[id] = gin.H{
+			"today_quota":      stats.TodayQuota,
+			"thirty_day_quota": stats.ThirtyDayQuota,
+			"usage_available":  true,
+		}
+	}
+	common.ApiSuccess(c, gin.H{"available": true, "items": items})
 }
 
 func GetToken(c *gin.Context) {
