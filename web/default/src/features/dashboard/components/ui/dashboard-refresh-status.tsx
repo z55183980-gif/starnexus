@@ -24,7 +24,6 @@ import { Button } from '@/components/ui/button'
 import type { QuotaDataMeta } from '@/features/dashboard/types'
 
 interface DashboardRefreshStatusProps {
-  dataUpdatedAt: number
   isFetching: boolean
   meta?: QuotaDataMeta
   onRefresh: () => void
@@ -32,7 +31,7 @@ interface DashboardRefreshStatusProps {
 
 export function DashboardRefreshStatus(props: DashboardRefreshStatusProps) {
   const { t } = useTranslation()
-  const updatedAt = (props.meta?.queried_at ?? 0) * 1000 || props.dataUpdatedAt
+  const updatedAt = (props.meta?.last_successful_flush_at ?? 0) * 1000
   const updatedLabel = updatedAt
     ? t('Last updated: {{time}}', {
         time: formatDateTimeObject(new Date(updatedAt)),

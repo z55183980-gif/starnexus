@@ -22,6 +22,7 @@ type QuotaData struct {
 	TokenUsed int    `json:"token_used" gorm:"default:0"`
 	Count     int    `json:"count" gorm:"default:0"`
 	Quota     int    `json:"quota" gorm:"default:0"`
+	UpdatedAt int64  `json:"-" gorm:"bigint;index:idx_qdt_updated_at"`
 }
 
 type QuotaDataStatus struct {
@@ -33,6 +34,9 @@ type QuotaDataStatus struct {
 
 var quotaDataFlushLock sync.RWMutex
 var quotaDataLastSuccessfulFlushAt atomic.Int64
+var quotaDataPersistedLastFlushAt atomic.Int64
+var quotaDataStatusCheckedAt atomic.Int64
+var quotaDataStatusCheckLock sync.Mutex
 var quotaDataFlushInProgress atomic.Bool
 
 func UpdateQuotaData() {
@@ -47,6 +51,8 @@ func UpdateQuotaData() {
 
 var CacheQuotaData = make(map[string]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
+
+const quotaDataBucketSeconds int64 = 3600
 
 func logQuotaDataCache(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int) {
 	key := fmt.Sprintf("%d-%s-%s-%d", userId, username, modelName, createdAt)
@@ -71,7 +77,7 @@ func logQuotaDataCache(userId int, username string, modelName string, quota int,
 
 func LogQuotaData(userId int, username string, modelName string, quota int, createdAt int64, tokenUsed int) {
 	// 只精确到小时
-	createdAt = createdAt - (createdAt % 3600)
+	createdAt = createdAt - (createdAt % quotaDataBucketSeconds)
 
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()
@@ -100,6 +106,10 @@ func flushQuotaDataCache() error {
 
 	if len(pending) == 0 {
 		return nil
+	}
+	flushAt := time.Now().Unix()
+	for _, item := range pending {
+		item.UpdatedAt = flushAt
 	}
 
 	quotaDataFlushInProgress.Store(true)
@@ -151,6 +161,7 @@ func flushQuotaDataCache() error {
 					"count":      gorm.Expr("count + ?", quotaData.Count),
 					"quota":      gorm.Expr("quota + ?", quotaData.Quota),
 					"token_used": gorm.Expr("token_used + ?", quotaData.TokenUsed),
+					"updated_at": flushAt,
 				})
 			if result.Error != nil {
 				return result.Error
@@ -166,7 +177,7 @@ func flushQuotaDataCache() error {
 		return err
 	}
 
-	quotaDataLastSuccessfulFlushAt.Store(time.Now().Unix())
+	quotaDataLastSuccessfulFlushAt.Store(flushAt)
 	common.SysLog(fmt.Sprintf("保存数据看板数据成功，共保存%d条数据", len(pending)))
 	return nil
 }
@@ -278,6 +289,148 @@ func GetAllQuotaDatesContext(ctx context.Context, startTime int64, endTime int64
 	}), nil
 }
 
+// hybridQuotaDataRange keeps the current hour out of quota_data. quota_data is
+// bucketed by hour, so reading its current bucket together with raw logs would
+// double count rows that have already been flushed while the bucket is still
+// receiving new logs. The current hour is instead rebuilt from logs, which is
+// exact and bounded to one hour of the indexed log table.
+func hybridQuotaDataRange(startTime int64, endTime int64) (historyEnd int64, recentStart int64, recentEnd int64, hasRecent bool) {
+	historyEnd = endTime
+	now := time.Now().Unix()
+	currentBucketStart := now - now%quotaDataBucketSeconds
+	if currentBucketStart < startTime || currentBucketStart > endTime {
+		return historyEnd, 0, 0, false
+	}
+
+	historyEnd = currentBucketStart - 1
+	recentStart = startTime
+	if recentStart < currentBucketStart {
+		recentStart = currentBucketStart
+	}
+	recentEnd = endTime
+	if recentEnd > now {
+		recentEnd = now
+	}
+	return historyEnd, recentStart, recentEnd, recentStart <= recentEnd
+}
+
+func quotaDataBucketExpression(column string) string {
+	if common.UsingMySQL {
+		return fmt.Sprintf("FLOOR(%s / %d) * %d", column, quotaDataBucketSeconds, quotaDataBucketSeconds)
+	}
+	return fmt.Sprintf("(%s / %d) * %d", column, quotaDataBucketSeconds, quotaDataBucketSeconds)
+}
+
+func queryRecentQuotaDataByModelContext(ctx context.Context, startTime int64, endTime int64, username string, userID int) ([]*QuotaData, error) {
+	bucketExpr := quotaDataBucketExpression("created_at")
+	selectExpr := fmt.Sprintf("model_name, %s AS created_at, SUM(prompt_tokens + completion_tokens) AS token_used, COUNT(*) AS count, SUM(quota) AS quota", bucketExpr)
+	groupExpr := fmt.Sprintf("model_name, %s", bucketExpr)
+	if username != "" || userID > 0 {
+		selectExpr = fmt.Sprintf("user_id, username, model_name, %s AS created_at, SUM(prompt_tokens + completion_tokens) AS token_used, COUNT(*) AS count, SUM(quota) AS quota", bucketExpr)
+		groupExpr = fmt.Sprintf("user_id, username, model_name, %s", bucketExpr)
+	}
+	query := LOG_DB.WithContext(ctx).Table("logs").
+		Select(selectExpr).
+		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Group(groupExpr)
+	if username != "" {
+		query = query.Where("username = ?", username)
+	}
+	if userID > 0 {
+		query = query.Where("user_id = ?", userID)
+	}
+	var rows []*QuotaData
+	return rows, query.Order("created_at ASC").Find(&rows).Error
+}
+
+func queryRecentQuotaDataByUserContext(ctx context.Context, startTime int64, endTime int64) ([]*QuotaData, error) {
+	bucketExpr := quotaDataBucketExpression("created_at")
+	var rows []*QuotaData
+	err := LOG_DB.WithContext(ctx).Table("logs").
+		Select(fmt.Sprintf("username, %s AS created_at, SUM(prompt_tokens + completion_tokens) AS token_used, COUNT(*) AS count, SUM(quota) AS quota", bucketExpr)).
+		Where("type = ? AND created_at >= ? AND created_at <= ?", LogTypeConsume, startTime, endTime).
+		Group(fmt.Sprintf("username, %s", bucketExpr)).
+		Order("created_at ASC").Find(&rows).Error
+	return rows, err
+}
+
+func GetAllQuotaDatesHybridContext(ctx context.Context, startTime int64, endTime int64, username string) ([]*QuotaData, error) {
+	if !common.DataExportEnabled {
+		return GetAllQuotaDatesContext(ctx, startTime, endTime, username)
+	}
+	historyEnd, recentStart, recentEnd, hasRecent := hybridQuotaDataRange(startTime, endTime)
+	var history []*QuotaData
+	if historyEnd >= startTime {
+		var err error
+		history, err = GetAllQuotaDatesContext(ctx, startTime, historyEnd, username)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !hasRecent {
+		return history, nil
+	}
+	recent, err := queryRecentQuotaDataByModelContext(ctx, recentStart, recentEnd, username, 0)
+	if err != nil {
+		return nil, err
+	}
+	key := func(item *QuotaData) string {
+		if username != "" {
+			return quotaDataIdentityKey(item)
+		}
+		return fmt.Sprintf("%s-%d", item.ModelName, item.CreatedAt)
+	}
+	return mergeQuotaDataRows(history, recent, key), nil
+}
+
+func GetQuotaDataGroupByUserHybridContext(ctx context.Context, startTime int64, endTime int64) ([]*QuotaData, error) {
+	if !common.DataExportEnabled {
+		return GetQuotaDataGroupByUserContext(ctx, startTime, endTime)
+	}
+	historyEnd, recentStart, recentEnd, hasRecent := hybridQuotaDataRange(startTime, endTime)
+	var history []*QuotaData
+	if historyEnd >= startTime {
+		var err error
+		history, err = GetQuotaDataGroupByUserContext(ctx, startTime, historyEnd)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !hasRecent {
+		return history, nil
+	}
+	recent, err := queryRecentQuotaDataByUserContext(ctx, recentStart, recentEnd)
+	if err != nil {
+		return nil, err
+	}
+	return mergeQuotaDataRows(history, recent, func(item *QuotaData) string {
+		return fmt.Sprintf("%s-%d", item.Username, item.CreatedAt)
+	}), nil
+}
+
+func GetQuotaDataByUserIdHybridContext(ctx context.Context, userID int, startTime int64, endTime int64) ([]*QuotaData, error) {
+	if !common.DataExportEnabled {
+		return GetQuotaDataByUserIdContext(ctx, userID, startTime, endTime)
+	}
+	historyEnd, recentStart, recentEnd, hasRecent := hybridQuotaDataRange(startTime, endTime)
+	var history []*QuotaData
+	if historyEnd >= startTime {
+		var err error
+		history, err = GetQuotaDataByUserIdContext(ctx, userID, startTime, historyEnd)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if !hasRecent {
+		return history, nil
+	}
+	recent, err := queryRecentQuotaDataByModelContext(ctx, recentStart, recentEnd, "", userID)
+	if err != nil {
+		return nil, err
+	}
+	return mergeQuotaDataRows(history, recent, quotaDataIdentityKey), nil
+}
+
 func snapshotPendingQuotaData(include func(*QuotaData) bool) []*QuotaData {
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()
@@ -334,10 +487,30 @@ func GetQuotaDataStatus() QuotaDataStatus {
 	if quotaDataFlushInProgress.Load() {
 		pendingCount++
 	}
+	lastSuccessfulFlushAt := quotaDataLastSuccessfulFlushAt.Load()
+	lastPersistedFlush := quotaDataPersistedLastFlushAt.Load()
+	if lastPersistedFlush < lastSuccessfulFlushAt {
+		lastPersistedFlush = lastSuccessfulFlushAt
+	}
+	if DB != nil && time.Now().Unix()-quotaDataStatusCheckedAt.Load() >= 15 {
+		quotaDataStatusCheckLock.Lock()
+		if time.Now().Unix()-quotaDataStatusCheckedAt.Load() >= 15 {
+			var persistedLastFlush int64
+			if err := DB.Model(&QuotaData{}).Select("COALESCE(MAX(updated_at), 0)").Scan(&persistedLastFlush).Error; err == nil {
+				quotaDataPersistedLastFlushAt.Store(persistedLastFlush)
+				lastPersistedFlush = persistedLastFlush
+			}
+			quotaDataStatusCheckedAt.Store(time.Now().Unix())
+		}
+		quotaDataStatusCheckLock.Unlock()
+	}
+	if lastPersistedFlush > lastSuccessfulFlushAt {
+		lastSuccessfulFlushAt = lastPersistedFlush
+	}
 	return QuotaDataStatus{
 		Enabled:                 common.DataExportEnabled,
 		FlushIntervalSeconds:    int64(common.DataExportInterval) * int64(time.Minute/time.Second),
-		LastSuccessfulFlushAt:   quotaDataLastSuccessfulFlushAt.Load(),
+		LastSuccessfulFlushAt:   lastSuccessfulFlushAt,
 		PendingAggregationCount: pendingCount,
 	}
 }

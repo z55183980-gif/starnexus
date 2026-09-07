@@ -293,7 +293,6 @@ export function SummaryCards() {
               </p>
             </div>
             <DashboardRefreshStatus
-              dataUpdatedAt={usageTrendQuery.dataUpdatedAt}
               isFetching={
                 usageTrendQuery.isFetching ||
                 currentUserFetches > 0 ||

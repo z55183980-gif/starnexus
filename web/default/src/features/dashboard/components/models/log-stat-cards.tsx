@@ -129,7 +129,6 @@ export function LogStatCards(props: LogStatCardsProps) {
     <div className='overflow-hidden rounded-lg border'>
       <div className='flex justify-end border-b px-3 py-2 sm:px-5'>
         <DashboardRefreshStatus
-          dataUpdatedAt={quotaQuery.dataUpdatedAt}
           isFetching={quotaQuery.isFetching}
           meta={quotaQuery.data?.meta}
           onRefresh={() => void quotaQuery.refetch()}

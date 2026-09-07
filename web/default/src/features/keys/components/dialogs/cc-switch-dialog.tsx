@@ -32,6 +32,11 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import {
+  buildCCSwitchImportUrl,
+  normalizeCCSwitchBaseUrl,
+  type CCSwitchApp,
+} from '../../lib/cc-switch-import'
 
 const DEFAULT_PROVIDER_NAME = '星域互联'
 
@@ -58,7 +63,7 @@ const APP_CONFIGS = {
   },
 } as const
 
-type AppType = keyof typeof APP_CONFIGS
+type AppType = CCSwitchApp
 
 function getStatusFromStorage(): Record<string, unknown> | null {
   try {
@@ -72,7 +77,7 @@ function getStatusFromStorage(): Record<string, unknown> | null {
 
 function normalizeBaseUrl(value: unknown): string {
   if (typeof value !== 'string') return ''
-  return value.trim().replace(/\/+$/, '')
+  return normalizeCCSwitchBaseUrl(value)
 }
 
 function getServerAddress(): string {
@@ -90,29 +95,6 @@ function getApiBaseUrl(): string {
   )
   if (apiBaseUrl) return apiBaseUrl
   return getServerAddress()
-}
-
-function buildCCSwitchURL(
-  app: string,
-  name: string,
-  models: Record<string, string>,
-  apiKey: string
-): string {
-  const serverAddress = getServerAddress()
-  const apiBaseUrl = getApiBaseUrl()
-  const endpoint = app === 'codex' ? `${apiBaseUrl}/v1` : apiBaseUrl
-  const params = new URLSearchParams()
-  params.set('resource', 'provider')
-  params.set('app', app)
-  params.set('name', name)
-  params.set('endpoint', endpoint)
-  params.set('apiKey', apiKey)
-  for (const [k, v] of Object.entries(models)) {
-    if (v) params.set(k, v)
-  }
-  params.set('homepage', serverAddress)
-  params.set('enabled', 'true')
-  return `ccswitch://v1/import?${params.toString()}`
 }
 
 interface Props {
@@ -160,14 +142,23 @@ export function CCSwitchDialog(props: Props) {
   }
 
   const handleSubmit = () => {
+    if (!name.trim()) {
+      toast.warning(t('Please enter a name'))
+      return
+    }
     if (!models.model) {
       toast.warning(t('Please select a primary model'))
       return
     }
-    const key = props.tokenKey.startsWith('sk-')
-      ? props.tokenKey
-      : `sk-${props.tokenKey}`
-    const url = buildCCSwitchURL(app, name, models, key)
+    const serverAddress = getServerAddress()
+    const url = buildCCSwitchImportUrl({
+      app,
+      name,
+      models,
+      apiKey: props.tokenKey,
+      apiBaseUrl: getApiBaseUrl(),
+      homepage: serverAddress,
+    })
     window.open(url, '_blank')
     props.onOpenChange(false)
   }

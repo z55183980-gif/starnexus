@@ -176,7 +176,6 @@ export function UserCharts() {
       </div>
 
       <DashboardRefreshStatus
-        dataUpdatedAt={userQuotaQuery.dataUpdatedAt}
         isFetching={userQuotaQuery.isFetching}
         meta={userQuotaQuery.data?.meta}
         onRefresh={() => void userQuotaQuery.refetch()}

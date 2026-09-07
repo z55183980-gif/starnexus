@@ -120,7 +120,7 @@ func GetAllQuotaDates(c *gin.Context) {
 	}
 	username := strings.TrimSpace(c.Query("username"))
 	result, err := queryQuotaData(c, "admin-quota-data", "shared", func(ctx context.Context) ([]*model.QuotaData, error) {
-		return model.GetAllQuotaDatesContext(ctx, startTimestamp, endTimestamp, username)
+		return model.GetAllQuotaDatesHybridContext(ctx, startTimestamp, endTimestamp, username)
 	})
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("query dashboard data: %w", err))
@@ -136,7 +136,7 @@ func GetQuotaDatesByUser(c *gin.Context) {
 		return
 	}
 	result, err := queryQuotaData(c, "admin-user-quota-data", "shared", func(ctx context.Context) ([]*model.QuotaData, error) {
-		return model.GetQuotaDataGroupByUserContext(ctx, startTimestamp, endTimestamp)
+		return model.GetQuotaDataGroupByUserHybridContext(ctx, startTimestamp, endTimestamp)
 	})
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("query dashboard user data: %w", err))
@@ -153,7 +153,7 @@ func GetUserQuotaDates(c *gin.Context) {
 		return
 	}
 	result, err := queryQuotaData(c, "self-quota-data", strconv.Itoa(userId), func(ctx context.Context) ([]*model.QuotaData, error) {
-		return model.GetQuotaDataByUserIdContext(ctx, userId, startTimestamp, endTimestamp)
+		return model.GetQuotaDataByUserIdHybridContext(ctx, userId, startTimestamp, endTimestamp)
 	})
 	if err != nil {
 		common.ApiError(c, fmt.Errorf("query dashboard data: %w", err))

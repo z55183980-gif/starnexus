@@ -37,7 +37,7 @@ const defaultContentSettings: ContentSettings = {
   'console_setting.uptime_kuma_enabled': false,
   DataExportEnabled: false,
   DataExportDefaultTime: 'hour',
-  DataExportInterval: 5,
+  DataExportInterval: 10,
   Chats: '[]',
   DrawingEnabled: false,
   MjNotifyEnabled: false,

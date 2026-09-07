@@ -94,10 +94,12 @@ export function DataTableRowActions<TData>({
     triggerRefresh,
     setResolvedKey,
     resolveRealKey,
+    loadingKeys,
   } = useApiKeys()
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const { chatPresets, serverAddress } = useChatPresets()
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+  const isResolvingKey = Boolean(loadingKeys[apiKey.id])
 
   const hasChatPresets = chatPresets.length > 0
 
@@ -169,8 +171,40 @@ export function DataTableRowActions<TData>({
     }
   }
 
+  const handleOpenCCSwitch = async (
+    e?: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    e?.stopPropagation()
+    const realKey = await resolveRealKey(apiKey.id)
+    if (!realKey) return
+    setResolvedKey(realKey)
+    setCurrentRow(apiKey)
+    setOpen('cc-switch')
+  }
+
   return (
     <div className='flex items-center justify-end gap-1'>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant='ghost'
+              size='icon-sm'
+              onClick={handleOpenCCSwitch}
+              disabled={isResolvingKey}
+              aria-label={t('Import to CC Switch')}
+            />
+          }
+        >
+          {isResolvingKey ? (
+            <Loader2 className='animate-spin' />
+          ) : (
+            <ArrowRightLeft />
+          )}
+        </TooltipTrigger>
+        <TooltipContent>{t('Import to CC Switch')}</TooltipContent>
+      </Tooltip>
+
       <Tooltip>
         <TooltipTrigger
           render={
@@ -254,20 +288,6 @@ export function DataTableRowActions<TData>({
             {t('Edit')}
             <DropdownMenuShortcut>
               <Edit size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={async () => {
-              const realKey = await resolveRealKey(apiKey.id)
-              if (!realKey) return
-              setResolvedKey(realKey)
-              setCurrentRow(apiKey)
-              setOpen('cc-switch')
-            }}
-          >
-            {t('CC Switch')}
-            <DropdownMenuShortcut>
-              <ArrowRightLeft size={16} />
             </DropdownMenuShortcut>
           </DropdownMenuItem>
           {hasChatPresets && (

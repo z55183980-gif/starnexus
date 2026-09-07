@@ -1,8 +1,11 @@
 package model
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -51,6 +54,53 @@ func TestQuotaDataQueryIncludesPendingAndFlushesWithoutDoubleCounting(t *testing
 	require.Equal(t, 3, rows[0].Count)
 	require.Equal(t, 25, rows[0].Quota)
 	require.Equal(t, 250, rows[0].TokenUsed)
+}
+
+func TestHybridQuotaDataRebuildsCurrentBucketWithoutDoubleCounting(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&QuotaData{}, &Log{}))
+
+	originalDB := DB
+	originalLogDB := LOG_DB
+	originalExportEnabled := common.DataExportEnabled
+	DB = db
+	LOG_DB = db
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		DB = originalDB
+		LOG_DB = originalLogDB
+		common.DataExportEnabled = originalExportEnabled
+	})
+
+	now := time.Now().Unix()
+	currentBucket := now - now%quotaDataBucketSeconds
+	require.NoError(t, db.Create(&QuotaData{
+		UserID: 7, Username: "alice", ModelName: "gpt-test", CreatedAt: currentBucket - quotaDataBucketSeconds,
+		Count: 1, Quota: 10, TokenUsed: 100,
+	}).Error)
+	// This row represents an already-flushed partial current bucket. The hybrid
+	// query must replace it with the complete raw-log aggregation below.
+	require.NoError(t, db.Create(&QuotaData{
+		UserID: 7, Username: "alice", ModelName: "gpt-test", CreatedAt: currentBucket,
+		Count: 1, Quota: 20, TokenUsed: 200,
+	}).Error)
+	require.NoError(t, db.Create(&Log{
+		UserId: 7, Username: "alice", ModelName: "gpt-test", Type: LogTypeConsume,
+		CreatedAt: currentBucket + 10, Quota: 30, PromptTokens: 120, CompletionTokens: 80,
+	}).Error)
+	require.NoError(t, db.Create(&Log{
+		UserId: 7, Username: "alice", ModelName: "gpt-test", Type: LogTypeConsume,
+		CreatedAt: currentBucket + 20, Quota: 40, PromptTokens: 150, CompletionTokens: 50,
+	}).Error)
+
+	rows, err := GetAllQuotaDatesHybridContext(context.Background(), currentBucket-quotaDataBucketSeconds, now, "")
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+	require.Equal(t, 10, rows[0].Quota)
+	require.Equal(t, 70, rows[1].Quota)
+	require.Equal(t, 400, rows[1].TokenUsed)
+	require.Equal(t, 2, rows[1].Count)
 }
 
 func TestQuotaDataFlushRestoresPendingDataOnFailure(t *testing.T) {
