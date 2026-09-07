@@ -1020,6 +1020,7 @@ func TestResponsesWSUpstreamFailureReplaysOnceBeforeDownstreamEvents(t *testing.
 func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
 	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "2")
 	t.Setenv("UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS", "5000")
+	t.Setenv("UPSTREAM_ACCOUNT_CAPACITY_FAILOVER_BUDGET_MS", "30000")
 	newTurn := func(t *testing.T, event string) (*responsesWebSocketTurn, *types.NewAPIError) {
 		t.Helper()
 		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -1153,7 +1154,7 @@ func TestShouldRetryResponsesWSCapacityIsStrictlyScoped(t *testing.T) {
 			name:  "outside retry window",
 			event: capacityEvent,
 			mutate: func(turn *responsesWebSocketTurn, _ *types.NewAPIError) {
-				turn.failoverStartedAt = time.Now().Add(-responsesWSCapacityRetryMaxAge - time.Second)
+				turn.capacityFailoverStartedAt = time.Now().Add(-responsesWSCapacityRetryMaxAge - time.Second)
 			},
 		},
 		{
@@ -1923,6 +1924,20 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 		Where("event_type = ? AND result = ?", "request_retry", "retry").
 		Count(&retryEvents).Error)
 	require.EqualValues(t, 3, retryEvents)
+	var retryEventRows []model.UpstreamAccountEvent
+	require.NoError(t, db.Where("event_type = ? AND result = ?", "request_retry", "retry").
+		Order("id ASC").Find(&retryEventRows).Error)
+	require.Len(t, retryEventRows, 3)
+	for index, event := range retryEventRows {
+		var metadata map[string]any
+		require.NoError(t, common.UnmarshalJsonStr(event.Metadata, &metadata))
+		require.EqualValues(t, index+1, metadata["retry_index"])
+		require.Positive(t, metadata["failed_account_id"])
+		require.Positive(t, metadata["replacement_account_id"])
+		require.NotEqual(t, metadata["failed_account_id"], metadata["replacement_account_id"])
+		require.NotContains(t, event.Metadata, "api_key")
+		require.NotContains(t, event.Metadata, "authorization")
+	}
 
 	seenAuthorizations := map[string]struct{}{}
 	for range 4 {
@@ -1943,6 +1958,173 @@ func TestResponsesWSCapacityFailureRetriesAcrossLocalAccounts(t *testing.T) {
 		require.NoError(t, serverErr)
 	default:
 	}
+
+	session.mu.Lock()
+	session.activeTurn = nil
+	session.mu.Unlock()
+	session.close()
+	session.wg.Wait()
+}
+
+func TestResponsesWSCapacityReplacementHandshake529ContinuesToNextAccount(t *testing.T) {
+	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "2")
+	t.Setenv("UPSTREAM_ACCOUNT_CAPACITY_FAILOVER_BUDGET_MS", "30000")
+	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
+	defer closeClient()
+
+	var connections atomic.Int32
+	authorizations := make(chan string, 3)
+	requestBodies := make(chan []byte, 3)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connectionNumber := connections.Add(1)
+		authorizations <- r.Header.Get("Authorization")
+		if connectionNumber == 2 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(529)
+			_, _ = w.Write([]byte(`{"error":{"code":"server_is_overloaded","message":"capacity"}}`))
+			return
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, body, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		requestBodies <- body
+		if connectionNumber == 1 {
+			_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.failed","response":{"id":"resp_capacity","status":"failed","error":{"code":"server_error","message":"Selected model is at capacity"}}}`))
+			return
+		}
+		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"response.created","response":{"id":"resp_after_handshake_retry"}}`))
+		for {
+			if _, _, err = conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	dsn := fmt.Sprintf("file:responses_ws_capacity_handshake_retry_%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&model.Channel{}, &model.UpstreamAccountPool{}, &model.UpstreamAccount{},
+		&model.UpstreamAccountPoolMember{}, &model.UpstreamProxy{}, &model.UpstreamAccountEvent{},
+	))
+	originalDB := model.DB
+	model.DB = db
+	originalRedisEnabled := common.RedisEnabled
+	originalRDB := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	t.Cleanup(func() {
+		model.DB = originalDB
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRDB
+	})
+	t.Setenv("UPSTREAM_ACCOUNT_ALLOW_LOCAL_LEASES", "true")
+	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef0123456789abcdef"))
+	keyringJSON, err := common.Marshal(map[string]string{"1": key})
+	require.NoError(t, err)
+	t.Setenv("UPSTREAM_ACCOUNT_CREDENTIAL_KEYS", string(keyringJSON))
+	t.Setenv("UPSTREAM_ACCOUNT_ACTIVE_KEY_VERSION", "1")
+
+	entityBaseID := int(responsesWSTestEntityID.Add(10)) + 2_000_000
+	pool := model.UpstreamAccountPool{
+		Id: entityBaseID, Name: "openai-native-ws-handshake", Platform: constant.UpstreamPlatformOpenAI,
+		CredentialType: constant.UpstreamAccountTypeAPIKey, Status: constant.UpstreamStatusActive, SchedulerConfig: "{}",
+	}
+	require.NoError(t, service.CreateUpstreamAccountPool(&pool))
+	for index, candidate := range []struct{ name, key string }{
+		{name: "handshake-account-one", key: "handshake-key-one"},
+		{name: "handshake-account-two", key: "handshake-key-two"},
+		{name: "handshake-account-three", key: "handshake-key-three"},
+	} {
+		input := service.UpstreamAccountCreateInput{
+			Account: model.UpstreamAccount{
+				Id: entityBaseID + index + 1, Name: candidate.name, Platform: constant.UpstreamPlatformOpenAI,
+				Type: constant.UpstreamAccountTypeAPIKey, Extra: `{"openai_apikey_responses_websockets_v2_mode":"ctx_pool"}`,
+				Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive, Schedulable: true,
+			},
+			Credentials: map[string]any{"api_key": candidate.key, "base_url": upstream.URL}, PoolIds: []int{pool.Id},
+		}
+		require.NoError(t, service.CreateUpstreamAccount(&input))
+	}
+
+	selectedChannel := &model.Channel{
+		Id: entityBaseID + 5, Type: constant.ChannelTypeOpenAI, Name: "native-handshake-pool",
+		CredentialSource: constant.ChannelCredentialSourceAccountPool, UpstreamAccountPoolId: &pool.Id,
+	}
+	baseCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	baseCtx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	turnCtx, cancel := newResponsesWSTurnContext(baseCtx, "gpt-5")
+	require.Nil(t, middleware.SetupContextForSelectedChannel(turnCtx, selectedChannel, "gpt-5"))
+	initialAccountID := common.GetContextKeyInt(turnCtx, constant.ContextKeyUpstreamAccountId)
+	require.Positive(t, initialAccountID)
+
+	request := &dto.OpenAIResponsesRequest{Model: "gpt-5"}
+	info := relaycommon.GenRelayInfoOpenAI(turnCtx, nil)
+	info.IsStream, info.RelayMode, info.RelayFormat, info.RequestURLPath = true, relayconstant.RelayModeResponses, types.RelayFormatOpenAIResponses, "/v1/responses"
+	prepared, adaptor, apiErr := relay.PrepareResponsesWebSocketRequest(turnCtx, info, request, false)
+	require.Nil(t, apiErr)
+	upstreamConn, resp, err := relaychannel.DoResponsesWssRequest(adaptor, turnCtx, info)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	require.NoError(t, err)
+
+	turn := &responsesWebSocketTurn{
+		ctx: turnCtx, info: info, accumulator: openairelay.NewResponsesEventAccumulator(), originalRequest: request,
+		upstreamMode: model.UpstreamOpenAIWSModeContextPool, channel: selectedChannel, requestDispatched: true,
+		accountID: initialAccountID, failoverStartedAt: time.Now(), cancel: cancel,
+	}
+	turn.setReplayState(prepared, func() (*websocket.Conn, *http.Response, error) {
+		return relaychannel.DoResponsesWssRequest(adaptor, turnCtx, info)
+	})
+	upstreamConnection := newResponsesWSUpstreamConnection(upstreamConn)
+	session := &responsesWebSocketSession{
+		baseCtx: baseCtx, client: clientServer, upstream: upstreamConnection, channel: selectedChannel,
+		activeTurn: turn, lockedAccountID: initialAccountID, lockedWSMode: model.UpstreamOpenAIWSModeContextPool, closed: make(chan struct{}),
+	}
+	go session.readUpstream(upstreamConnection)
+	require.NoError(t, upstreamConn.WriteMessage(websocket.TextMessage, prepared))
+
+	require.NoError(t, clientPeer.SetReadDeadline(time.Now().Add(5*time.Second)))
+	messageType, downstream, err := clientPeer.ReadMessage()
+	require.NoError(t, err)
+	require.Equal(t, websocket.TextMessage, messageType)
+	require.JSONEq(t, `{"type":"response.created","response":{"id":"resp_after_handshake_retry"}}`, string(downstream))
+	require.Equal(t, int32(3), connections.Load())
+	require.Equal(t, 2, turn.accountFailovers)
+	require.Equal(t, 1, turn.capacityRetryCount)
+	require.Equal(t, 1, turn.replayCount)
+
+	var retryEventRows []model.UpstreamAccountEvent
+	require.NoError(t, db.Where("event_type = ? AND result = ?", "request_retry", "retry").Order("id ASC").Find(&retryEventRows).Error)
+	require.Len(t, retryEventRows, 2)
+	var firstMetadata, secondMetadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(retryEventRows[0].Metadata, &firstMetadata))
+	require.NoError(t, common.UnmarshalJsonStr(retryEventRows[1].Metadata, &secondMetadata))
+	require.EqualValues(t, 1, firstMetadata["retry_index"])
+	require.EqualValues(t, 2, secondMetadata["retry_index"])
+	require.EqualValues(t, firstMetadata["replacement_account_id"], secondMetadata["failed_account_id"])
+	require.NotEqual(t, firstMetadata["failed_account_id"], firstMetadata["replacement_account_id"])
+	require.NotEqual(t, secondMetadata["failed_account_id"], secondMetadata["replacement_account_id"])
+	bAccountID := int(firstMetadata["replacement_account_id"].(float64))
+	require.True(t, service.IsUpstreamAccountModelTransientBlocked(bAccountID, "gpt-5"))
+
+	seenAuthorizations := map[string]struct{}{}
+	for range 3 {
+		seenAuthorizations[<-authorizations] = struct{}{}
+	}
+	require.Len(t, seenAuthorizations, 3)
+	firstBody := <-requestBodies
+	secondBody := <-requestBodies
+	require.JSONEq(t, string(firstBody), string(secondBody))
 
 	session.mu.Lock()
 	session.activeTurn = nil

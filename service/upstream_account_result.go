@@ -148,6 +148,26 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		accountLoaded = true
 		return true
 	}
+	mergeExistingRateLimitState := func(resetAt int64, windowStart, windowEnd *int64) (int64, *int64, *int64) {
+		// A later 429 must never shorten a cooldown already persisted for this
+		// account. This applies to both the generic 429 path and custom rules.
+		if !accountLoaded {
+			_ = loadAccount()
+		}
+		if !accountLoaded {
+			return resetAt, windowStart, windowEnd
+		}
+		if account.RateLimitResetAt != nil && *account.RateLimitResetAt > resetAt {
+			resetAt = *account.RateLimitResetAt
+		}
+		if account.SessionWindowEnd != nil && *account.SessionWindowEnd > now &&
+			(windowEnd == nil || *account.SessionWindowEnd > *windowEnd) {
+			resetAt = maxInt64(resetAt, *account.SessionWindowEnd)
+			windowEnd = account.SessionWindowEnd
+			windowStart = account.SessionWindowStart
+		}
+		return resetAt, windowStart, windowEnd
+	}
 
 	// Team-linked workspace failures must fan out before custom temporary
 	// unschedulable rules or other account-error early returns.
@@ -172,6 +192,26 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 	if matched, until, reason := matchUpstreamTempUnschedulableRule(apiErr, loadAccount, &account); matched {
 		updates["temp_unschedulable_until"] = until
 		updates["temp_unschedulable_reason"] = reason
+		// A custom 429 rule is an additional operator safety window; it must
+		// not hide a provider-supplied reset time. Merge both windows and keep
+		// the later deadline so the account cannot be selected prematurely.
+		if apiErr.StatusCode == http.StatusTooManyRequests {
+			resetAt, windowStart, windowEnd := upstreamExplicitRateLimitState(apiErr, now)
+			if resetAt <= now {
+				resetAt = until
+			}
+			if resetAt < until {
+				resetAt = until
+			}
+			resetAt, windowStart, windowEnd = mergeExistingRateLimitState(resetAt, windowStart, windowEnd)
+			updates["rate_limited_at"] = now
+			updates["rate_limit_reset_at"] = resetAt
+			if windowStart != nil && windowEnd != nil {
+				updates["session_window_start"] = *windowStart
+				updates["session_window_end"] = *windowEnd
+				updates["session_window_status"] = "rejected"
+			}
+		}
 		_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
 		return UpstreamAccountErrorRetryAccount
 	}
@@ -209,6 +249,7 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		updates["temp_unschedulable_reason"] = message
 	case apiErr.StatusCode == 429:
 		resetAt, windowStart, windowEnd := upstreamRateLimitState(apiErr, now)
+		resetAt, windowStart, windowEnd = mergeExistingRateLimitState(resetAt, windowStart, windowEnd)
 		updates["rate_limited_at"] = now
 		updates["rate_limit_reset_at"] = resetAt
 		updates["temp_unschedulable_reason"] = "rate_limited"
@@ -406,6 +447,29 @@ func ShouldRetryUpstreamAccount(failovers int, startedAt time.Time) bool {
 		return false
 	}
 	budgetMs := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS", 5000)
+	if budgetMs <= 0 || startedAt.IsZero() {
+		return true
+	}
+	return time.Since(startedAt) < time.Duration(budgetMs)*time.Millisecond
+}
+
+// ShouldRetryUpstreamCapacityAccount keeps capacity failover independent from
+// the generic account retry budget. A slow 529 response may consume that
+// entire budget before the first replacement can be selected, so the first
+// capacity failover is always allowed when the count limit permits it.
+// Subsequent replacements remain bounded by their own latency budget.
+func ShouldRetryUpstreamCapacityAccount(failovers int, startedAt time.Time) bool {
+	maxFailovers := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_MAX_FAILOVERS", 3)
+	if maxFailovers < 0 {
+		maxFailovers = 0
+	}
+	if failovers >= maxFailovers {
+		return false
+	}
+	if failovers == 0 {
+		return true
+	}
+	budgetMs := common.GetEnvOrDefault("UPSTREAM_ACCOUNT_CAPACITY_FAILOVER_BUDGET_MS", 30000)
 	if budgetMs <= 0 || startedAt.IsZero() {
 		return true
 	}

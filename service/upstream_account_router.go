@@ -547,7 +547,7 @@ func (router *UpstreamAccountRouter) selectWithoutAccountAffinity(ctx context.Co
 				exclusions["model_unsupported"]++
 				continue
 			}
-			if IsUpstreamAccountModelTransientBlocked(candidate.account.Id, mappedModel) {
+			if IsUpstreamAccountModelTransientBlockedContext(ctx, candidate.account.Id, mappedModel) {
 				_ = lease.Release(context.Background())
 				exclusions["model_capacity_transient"]++
 				continue

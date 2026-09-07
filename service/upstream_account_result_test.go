@@ -316,7 +316,55 @@ func TestApplyUpstreamAccountErrorUsesSecondDuration(t *testing.T) {
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.NotNil(t, updated.TempUnschedulableUntil)
 	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+7)
-	require.Nil(t, updated.RateLimitResetAt)
+	require.NotNil(t, updated.RateLimitResetAt)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, *updated.TempUnschedulableUntil)
+	require.Less(t, *updated.RateLimitResetAt, before+60)
+}
+
+func TestApplyUpstreamAccountErrorMergesLaterProviderResetWithTempRule(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "temp-unsched-provider-reset")
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update(
+		"extra",
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate limit"],"duration_seconds":7,"description":"rate limit rule"}]}`,
+	).Error)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited by upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	apiErr.SetUpstreamResponse(http.Header{"Retry-After": []string{"120"}}, nil)
+
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.TempUnschedulableUntil)
+	require.NotNil(t, updated.RateLimitResetAt)
+	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+7)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, before+120)
+	require.Greater(t, *updated.RateLimitResetAt, *updated.TempUnschedulableUntil)
+	require.Equal(t, "rate limit rule", updated.TempUnschedulableReason)
+}
+
+func TestApplyUpstreamAccountErrorDoesNotShortenExistingRateLimit(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "existing-rate-limit-window")
+	existingReset := time.Now().Unix() + 3600
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Updates(map[string]any{
+		"rate_limit_reset_at": existingReset,
+		"session_window_end":  existingReset,
+	}).Error)
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Update(
+		"extra",
+		`{"temp_unschedulable_enabled":true,"temp_unschedulable_rules":[{"error_code":429,"keywords":["rate limit"],"duration_seconds":7,"description":"rate limit rule"}]}`,
+	).Error)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited by upstream"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.RateLimitResetAt)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, existingReset)
+	require.NotNil(t, updated.SessionWindowEnd)
+	require.GreaterOrEqual(t, *updated.SessionWindowEnd, existingReset)
 }
 
 func TestApplyUpstreamAccountErrorTempUnschedulableRulesPreferCredentials(t *testing.T) {
@@ -352,7 +400,8 @@ func TestApplyUpstreamAccountErrorTempUnschedulableRulesPreferCredentials(t *tes
 	require.NoError(t, model.DB.First(&updated, input.Account.Id).Error)
 	require.NotNil(t, updated.TempUnschedulableUntil)
 	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+10*60)
-	require.Nil(t, updated.RateLimitResetAt)
+	require.NotNil(t, updated.RateLimitResetAt)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, *updated.TempUnschedulableUntil)
 	require.Equal(t, "Rate limited - pause 10 minutes", updated.TempUnschedulableReason)
 }
 
@@ -372,7 +421,8 @@ func TestApplyUpstreamAccountErrorTempUnschedulableMatchesErrorTextWithoutBody(t
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.NotNil(t, updated.TempUnschedulableUntil)
 	require.GreaterOrEqual(t, *updated.TempUnschedulableUntil, before+15*60)
-	require.Nil(t, updated.RateLimitResetAt)
+	require.NotNil(t, updated.RateLimitResetAt)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, *updated.TempUnschedulableUntil)
 	require.Equal(t, "rate limit rule", updated.TempUnschedulableReason)
 }
 
@@ -389,6 +439,16 @@ func TestShouldRetryUpstreamAccountDefaultsToThreeFailovers(t *testing.T) {
 	t.Setenv("UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS", "0")
 	require.True(t, ShouldRetryUpstreamAccount(2, time.Time{}))
 	require.False(t, ShouldRetryUpstreamAccount(3, time.Time{}))
+}
+
+func TestShouldRetryUpstreamCapacityAccountAlwaysAllowsFirstFailover(t *testing.T) {
+	t.Setenv("UPSTREAM_ACCOUNT_MAX_FAILOVERS", "2")
+	t.Setenv("UPSTREAM_ACCOUNT_CAPACITY_FAILOVER_BUDGET_MS", "100")
+
+	require.True(t, ShouldRetryUpstreamCapacityAccount(0, time.Now().Add(-time.Hour)))
+	require.True(t, ShouldRetryUpstreamCapacityAccount(1, time.Now()))
+	require.False(t, ShouldRetryUpstreamCapacityAccount(1, time.Now().Add(-time.Second)))
+	require.False(t, ShouldRetryUpstreamCapacityAccount(2, time.Time{}))
 }
 
 func TestIsUpstreamCapacityErrorRecognizesSlowDownCode(t *testing.T) {

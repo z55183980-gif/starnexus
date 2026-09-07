@@ -20,6 +20,21 @@ type codexRateLimitWindow struct {
 }
 
 func upstreamRateLimitState(apiErr *types.NewAPIError, now int64) (int64, *int64, *int64) {
+	resetAt, windowStart, windowEnd := upstreamExplicitRateLimitState(apiErr, now)
+	if resetAt > now {
+		return resetAt, windowStart, windowEnd
+	}
+	return now + int64(time.Minute.Seconds()), nil, nil
+}
+
+// upstreamExplicitRateLimitState returns only a reset supplied by the
+// provider. The caller may choose a narrower operator rule when no provider
+// reset is present; the generic rate-limit path uses a one-minute fallback in
+// upstreamRateLimitState instead.
+func upstreamExplicitRateLimitState(apiErr *types.NewAPIError, now int64) (int64, *int64, *int64) {
+	if apiErr == nil {
+		return 0, nil, nil
+	}
 	header, body := apiErr.UpstreamResponse()
 	if resetAt, windowStart, windowEnd := codexRateLimitState(header, now); resetAt > now {
 		return resetAt, windowStart, windowEnd
@@ -30,7 +45,7 @@ func upstreamRateLimitState(apiErr *types.NewAPIError, now int64) (int64, *int64
 	if resetAt := genericRateLimitResetFromHeader(header, now); resetAt > now {
 		return resetAt, nil, nil
 	}
-	return now + int64(time.Minute.Seconds()), nil, nil
+	return 0, nil, nil
 }
 
 func codexRateLimitState(header http.Header, now int64) (int64, *int64, *int64) {

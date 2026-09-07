@@ -78,6 +78,38 @@ func TestClaimRelayErrorLogHonorsNoRecordOption(t *testing.T) {
 	require.False(t, c.GetBool(relayErrorLogRecordedContextKey))
 }
 
+func TestRecordUpstreamAccountRetryEventPersistsAccountTransition(t *testing.T) {
+	dsn := "file:relay_retry_event?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.UpstreamAccountEvent{}))
+	originalDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = originalDB })
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountId, 442)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountPoolId, 2)
+	common.SetContextKey(c, constant.ContextKeyChannelId, 55)
+	c.Set(common.RequestIdKey, "request-observability")
+
+	recordUpstreamAccountRetryEvent(c, 2, 440, 442, "model capacity failover from account #440")
+
+	var event model.UpstreamAccountEvent
+	require.NoError(t, db.Where("event_type = ?", "request_retry").First(&event).Error)
+	require.NotNil(t, event.AccountId)
+	require.Equal(t, 442, *event.AccountId)
+	require.Equal(t, "request-observability", event.RequestId)
+	var metadata map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(event.Metadata, &metadata))
+	require.EqualValues(t, 2, metadata["retry_index"])
+	require.EqualValues(t, 440, metadata["failed_account_id"])
+	require.EqualValues(t, 442, metadata["replacement_account_id"])
+	require.NotContains(t, event.Metadata, "api_key")
+	require.NotContains(t, event.Metadata, "authorization")
+}
+
 func TestShouldRetryTaskStopsLocalRateLimit(t *testing.T) {
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	taskErr := &dto.TaskError{

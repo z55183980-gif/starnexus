@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -33,6 +34,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+func upstreamAccountRequestContext(c *gin.Context) context.Context {
+	if c != nil && c.Request != nil {
+		return c.Request.Context()
+	}
+	return context.Background()
+}
 
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
@@ -277,6 +285,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		addUsedChannel(c, channel.Id)
 		accountFailoverStartedAt := time.Now()
+		capacityFailoverStartedAt := time.Time{}
 		accountFailovers := 0
 		capacityFailoverExhausted := false
 		for {
@@ -353,31 +362,45 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
 			if disposition.Handled() {
 				recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(newAPIError))
-				if service.IsUpstreamCapacityError(newAPIError) {
+				capacityError := service.IsUpstreamCapacityError(newAPIError)
+				if capacityError && capacityFailoverStartedAt.IsZero() {
+					capacityFailoverStartedAt = time.Now()
+				}
+				if capacityError {
 					// 529/overload is account/model scoped. Record a model-scoped
 					// transient failure for the failed account, then fail over immediately
 					// to another account serving the same model. Do not replay the
 					// overloaded account.
-					service.RecordUpstreamAccountModelTransientFailure(accountId, relayInfo.UpstreamModelName)
+					service.RecordUpstreamAccountModelTransientFailureContext(upstreamAccountRequestContext(c), accountId, relayInfo.UpstreamModelName)
 					capacityFailoverExhausted = true
 				}
-				if disposition.RetryWithinPool() && relayInfo.SendResponseCount == 0 &&
-					service.ShouldRetryUpstreamAccount(accountFailovers, accountFailoverStartedAt) {
-					capacityError := service.IsUpstreamCapacityError(newAPIError)
+				retryAllowed := service.ShouldRetryUpstreamAccount(accountFailovers, accountFailoverStartedAt)
+				if capacityError {
+					retryAllowed = service.ShouldRetryUpstreamCapacityAccount(accountFailovers, capacityFailoverStartedAt)
+				}
+				if disposition.RetryWithinPool() && relayInfo.SendResponseCount == 0 && retryAllowed {
 					excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
 					if excludedIds == nil {
 						excludedIds = make(map[int]struct{})
 					}
 					excludedIds[accountId] = struct{}{}
 					common.SetContextKey(c, constant.ContextKeyUpstreamAccountExcluded, excludedIds)
-					if capacityError {
-						recordUpstreamRequestEvent(c, "request_retry", "retry", fmt.Sprintf("model capacity failover from account #%d", accountId))
-					}
 					if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr == nil {
 						accountFailovers++
 						capacityFailoverExhausted = false
 						service.ClearResponsesHTTPContinuationPersistTarget(c)
 						relayInfo.InitChannelMeta(c)
+						retryMessage := fmt.Sprintf("account failover from account #%d", accountId)
+						if capacityError {
+							retryMessage = fmt.Sprintf("model capacity failover from account #%d", accountId)
+						}
+						recordUpstreamAccountRetryEvent(
+							c,
+							accountFailovers,
+							accountId,
+							common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId),
+							retryMessage,
+						)
 						continue
 					} else {
 						if !capacityError {
@@ -696,6 +719,19 @@ func recordRelayErrorLog(c *gin.Context, err *types.NewAPIError) {
 
 func recordUpstreamRequestEvent(c *gin.Context, eventType string, result string, message string) {
 	recordUpstreamRequestEventWithMetadata(c, eventType, result, message, nil)
+}
+
+// recordUpstreamAccountRetryEvent records a request-scoped retry without
+// including credentials or other account secrets. Account IDs are internal
+// scheduler identifiers and make it possible to correlate the failed account
+// with the replacement selected for this attempt. Keep the generic event
+// helper above unchanged so existing callers remain source-compatible.
+func recordUpstreamAccountRetryEvent(c *gin.Context, retryIndex, failedAccountID, replacementAccountID int, message string) {
+	recordUpstreamRequestEventWithMetadata(c, "request_retry", "retry", message, map[string]any{
+		"retry_index":            retryIndex,
+		"failed_account_id":      failedAccountID,
+		"replacement_account_id": replacementAccountID,
+	})
 }
 
 func recordUpstreamRequestEventWithMetadata(c *gin.Context, eventType string, result string, message string, metadata map[string]any) {

@@ -288,6 +288,12 @@ Runtime bounds are configurable:
 
 - `UPSTREAM_ACCOUNT_MAX_FAILOVERS` defaults to `3` account switches.
 - `UPSTREAM_ACCOUNT_FAILOVER_BUDGET_MS` defaults to `5000` milliseconds.
+- `UPSTREAM_ACCOUNT_CAPACITY_FAILOVER_BUDGET_MS` defaults to `30000`
+  milliseconds. The first capacity failover is still allowed after a slow 529;
+  this budget limits subsequent capacity replacements.
+- `UPSTREAM_ACCOUNT_CAPACITY_COOLDOWN_FIRST_SECONDS` defaults to `15` seconds.
+- `UPSTREAM_ACCOUNT_CAPACITY_COOLDOWN_JITTER_PERCENT` defaults to `20`; the
+  account/model cooldown is shared through Redis when available.
 - `UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_MS` defaults to `1500` milliseconds.
 - `UPSTREAM_ACCOUNT_CONCURRENCY_WAIT_POLL_MS` defaults to `50` milliseconds.
 - `UPSTREAM_ACCOUNT_MAX_WAITERS` defaults to `64` local waiters per instance.
