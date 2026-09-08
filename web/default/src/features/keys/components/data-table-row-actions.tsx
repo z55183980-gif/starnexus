@@ -24,7 +24,6 @@ import {
   Power,
   PowerOff,
   ExternalLink,
-  ArrowRightLeft,
   Copy,
   Link,
   Loader2,
@@ -184,26 +183,14 @@ export function DataTableRowActions<TData>({
 
   return (
     <div className='flex items-center justify-end gap-1'>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              onClick={handleOpenCCSwitch}
-              disabled={isResolvingKey}
-              aria-label={t('Import to CC Switch')}
-            />
-          }
-        >
-          {isResolvingKey ? (
-            <Loader2 className='animate-spin' />
-          ) : (
-            <ArrowRightLeft />
-          )}
-        </TooltipTrigger>
-        <TooltipContent>{t('Import to CC Switch')}</TooltipContent>
-      </Tooltip>
+      <Button
+        variant='ghost'
+        size='sm'
+        onClick={handleOpenCCSwitch}
+        disabled={isResolvingKey}
+      >
+        {t('Import CC')}
+      </Button>
 
       <Tooltip>
         <TooltipTrigger

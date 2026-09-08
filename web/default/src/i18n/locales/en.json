@@ -2718,6 +2718,7 @@
     "Import / Export": "Import / Export",
     "Import failed": "Import failed",
     "Import file": "Import file",
+    "Import CC": "Import CC",
     "Import to CC Switch": "Import to CC Switch",
     "Import up to 100 HTTP, HTTPS, SOCKS5, or SOCKS5H proxies from a JSON array.": "Import up to 100 HTTP, HTTPS, SOCKS5, or SOCKS5H proxies from a JSON array.",
     "Import up to 100 OpenAI API key or Codex OAuth accounts from a JSON array.": "Import up to 100 OpenAI API key or Codex OAuth accounts from a JSON array.",

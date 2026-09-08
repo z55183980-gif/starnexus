@@ -273,6 +273,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.RetryIndex = 0
 	relayInfo.LastError = nil
 	contentModerationCompleted := false
+	incompleteEOFFailoverUsed := false
 
 	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
 		relayInfo.RetryIndex = retryParam.GetRetry()
@@ -368,6 +369,33 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 			accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 			proxyId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamProxyId)
+			if newAPIError.GetErrorCode() == types.ErrorCodeUpstreamStreamIncomplete {
+				recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(newAPIError))
+				if !incompleteEOFFailoverUsed && relayInfo.SendResponseCount == 0 {
+					excludedIds, _ := common.GetContextKeyType[map[int]struct{}](c, constant.ContextKeyUpstreamAccountExcluded)
+					if excludedIds == nil {
+						excludedIds = make(map[int]struct{})
+					}
+					excludedIds[accountId] = struct{}{}
+					common.SetContextKey(c, constant.ContextKeyUpstreamAccountExcluded, excludedIds)
+					if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr == nil {
+						incompleteEOFFailoverUsed = true
+						service.ClearResponsesHTTPContinuationPersistTarget(c)
+						relayInfo.InitChannelMeta(c)
+						relayInfo.StreamStatus = relaycommon.NewStreamStatus()
+						relayInfo.LastError = nil
+						recordUpstreamAccountRetryEvent(
+							c,
+							1,
+							accountId,
+							common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId),
+							fmt.Sprintf("incomplete EOF failover from account #%d", accountId),
+						)
+						continue
+					}
+				}
+				break
+			}
 			disposition := service.ApplyUpstreamAccountError(accountId, proxyId, newAPIError)
 			if disposition.Handled() {
 				recordUpstreamRequestEvent(c, "request_error", "error", service.UpstreamAccountErrorSummary(newAPIError))

@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -166,6 +167,78 @@ func TestResponsesStreamDoesNotRetryCapacityAfterUsageWasReported(t *testing.T) 
 	require.Contains(t, recorder.Body.String(), "response.created")
 	require.Contains(t, recorder.Body.String(), "server_is_overloaded")
 	require.NotZero(t, info.SendResponseCount)
+}
+
+func TestResponsesStreamReturnsIncompleteEOFBeforeClientOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelCredentialSource, constant.ChannelCredentialSourceAccountPool)
+	info := &relaycommon.RelayInfo{StartTime: time.Now(), StreamStatus: relaycommon.NewStreamStatus()}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_eof\"}}\n\n",
+		)),
+	}
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, response)
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeUpstreamStreamIncomplete, apiErr.GetErrorCode())
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Empty(t, recorder.Body.String())
+	require.Zero(t, info.SendResponseCount)
+}
+
+func TestResponsesStreamKeepsEOFBehaviorAfterClientOutput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelCredentialSource, constant.ChannelCredentialSourceAccountPool)
+	info := &relaycommon.RelayInfo{
+		StartTime:    time.Now(),
+		StreamStatus: relaycommon.NewStreamStatus(),
+		ChannelMeta:  &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5"},
+	}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_partial_eof\"}}\n\n" +
+				"data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n" +
+				"data: {\"type\":\"response.in_progress\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+		)),
+	}
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, response)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Contains(t, recorder.Body.String(), "partial")
+	require.NotZero(t, info.SendResponseCount)
+}
+
+func TestResponsesStreamKeepsEOFBehaviorOutsideAccountPool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{StartTime: time.Now(), StreamStatus: relaycommon.NewStreamStatus()}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_direct_eof\"}}\n\n",
+		)),
+	}
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, response)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Contains(t, recorder.Body.String(), "resp_direct_eof")
 }
 
 func TestResponsesStreamDataStartsClientOutput(t *testing.T) {

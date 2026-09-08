@@ -2718,6 +2718,7 @@
     "Import / Export": "インポート / エクスポート",
     "Import failed": "インポートに失敗しました",
     "Import file": "インポートファイル",
+    "Import CC": "CCをインポート",
     "Import to CC Switch": "CC Switch にインポート",
     "Import up to 100 HTTP, HTTPS, SOCKS5, or SOCKS5H proxies from a JSON array.": "JSON 配列から最大 100 件の HTTP、HTTPS、SOCKS5、SOCKS5H プロキシをインポートします。",
     "Import up to 100 OpenAI API key or Codex OAuth accounts from a JSON array.": "JSON 配列から最大 100 件の OpenAI API キーまたは Codex OAuth アカウントをインポートします。",

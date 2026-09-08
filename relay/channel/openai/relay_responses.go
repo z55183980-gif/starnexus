@@ -201,6 +201,21 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if capacityErr != nil {
 		return nil, capacityErr
 	}
+	// A clean upstream EOF before any terminal response, usage, or client-visible
+	// output is safe to replay on another account. Keep this narrowly scoped to
+	// account-pool Responses streams so other providers and established streams
+	// retain their existing behavior.
+	if stageCapacityPrelude && !clientOutputStarted && !accumulator.Terminal() &&
+		!accumulator.UsageReported() && info.StreamStatus != nil &&
+		info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF {
+		prelude = prelude[:0]
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("upstream Responses stream ended with EOF before a terminal response"),
+			types.ErrorCodeUpstreamStreamIncomplete,
+			http.StatusBadGateway,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	if writeErr := flushPrelude(); writeErr != nil {
 		return nil, types.NewErrorWithStatusCode(writeErr, types.ErrorCodeBadResponse, http.StatusBadGateway)
 	}
