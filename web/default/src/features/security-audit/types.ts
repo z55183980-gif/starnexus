@@ -66,6 +66,30 @@ export interface ContentModerationLogQuery {
   end_timestamp?: number
 }
 
+export interface SuspendedAPIUser {
+  id: number
+  username: string
+  display_name: string
+  email: string
+  api_status: number
+  api_suspended_at: number
+  api_suspended_reason: string
+  request_id: string
+  token_id: number
+  model_name: string
+  channel_id: number
+  upstream_account_id: number
+  node_name: string
+  prompt_monitoring_added: boolean
+}
+
+export interface SuspendedAPIUserPage {
+  page: number
+  page_size: number
+  total: number
+  items: SuspendedAPIUser[]
+}
+
 export interface ContentModerationKeyBalance {
   currency: string
   total_balance: string
@@ -118,3 +142,5 @@ export type PromptAuditLogCursorResponse = ApiResponse<PromptAuditLogCursorPage>
 export type PromptAuditClearLogsResponse = ApiResponse<{ deleted: number }>
 export type ContentModerationKeyUsageResponse =
   ApiResponse<ContentModerationKeyUsageResult>
+export type SuspendedAPIUsersResponse = ApiResponse<SuspendedAPIUserPage>
+export type RestoreUserAPIAccessResponse = ApiResponse<{ restored: boolean }>

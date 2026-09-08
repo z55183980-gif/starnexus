@@ -64,7 +64,9 @@ func collectResponsesSSE(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 	if accumulator.Failed() {
 		if upstreamErr := accumulator.FailureError(); upstreamErr != nil {
-			return nil, types.WithOpenAIError(*upstreamErr, http.StatusInternalServerError)
+			return nil, service.NormalizeUpstreamCyberPolicyError(
+				types.WithOpenAIError(*upstreamErr, http.StatusInternalServerError),
+			)
 		}
 		return nil, types.NewOpenAIError(
 			fmt.Errorf("responses stream ended with %s", accumulator.TerminalEventType()),

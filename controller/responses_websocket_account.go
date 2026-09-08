@@ -27,6 +27,12 @@ func recordResponsesWSNativeFailure(turn *responsesWebSocketTurn, apiErr *types.
 	if turn == nil || turn.ctx == nil || apiErr == nil {
 		return
 	}
+	apiErr = service.NormalizeUpstreamCyberPolicyError(apiErr)
+	modelName := ""
+	if turn.info != nil {
+		modelName = turn.info.OriginModelName
+	}
+	service.SuspendUserAPIForUpstreamCyberPolicy(turn.ctx, apiErr, modelName)
 	accountID := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamAccountId)
 	proxyID := common.GetContextKeyInt(turn.ctx, appconstant.ContextKeyUpstreamProxyId)
 	service.ApplyUpstreamAccountError(accountID, proxyID, apiErr)
@@ -87,6 +93,11 @@ func responsesWSTerminalAPIError(turn *responsesWebSocketTurn) *types.NewAPIErro
 		status = http.StatusUnauthorized
 	case strings.Contains(combined, "overload") || strings.Contains(combined, "capacity") || strings.Contains(combined, "slow_down"):
 		status = 529
+	}
+	if openAIError != nil && strings.EqualFold(errorCode, string(types.ErrorCodeCyberPolicy)) {
+		return service.NormalizeUpstreamCyberPolicyError(
+			types.WithOpenAIError(*openAIError, status, types.ErrOptionWithSkipRetry()),
+		)
 	}
 	return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeBadResponseStatusCode, status, types.ErrOptionWithSkipRetry())
 }

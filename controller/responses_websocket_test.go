@@ -1202,6 +1202,24 @@ func TestResponsesWSTerminalRateLimitRequiresStructuredCode(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, structuredErr.StatusCode)
 }
 
+func TestResponsesWSTerminalCyberPolicyPreservesStructuredCode(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	info := relaycommon.GenRelayInfoOpenAI(ctx, nil)
+	turn := &responsesWebSocketTurn{
+		ctx:         ctx,
+		info:        info,
+		accumulator: openairelay.NewResponsesEventAccumulator(),
+	}
+	_, err := turn.accumulator.Consume(ctx, info, []byte(`{"type":"response.failed","response":{"error":{"type":"invalid_request_error","code":"cyber_policy","message":"flagged"}}}`))
+	require.NoError(t, err)
+
+	apiErr := responsesWSTerminalAPIError(turn)
+	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	require.Equal(t, types.ErrorCodeCyberPolicy, apiErr.GetErrorCode())
+	require.True(t, types.IsSkipRetryError(apiErr))
+}
+
 func TestResponsesWSPreviousResponseNotFoundReplaysAsFullCreate(t *testing.T) {
 	clientServer, clientPeer, closeClient := newResponsesWSTestPair(t)
 	defer closeClient()

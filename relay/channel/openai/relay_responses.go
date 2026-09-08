@@ -119,6 +119,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	prelude := make([]stagedResponsesEvent, 0, 8)
 	clientOutputStarted := false
 	var capacityErr *types.NewAPIError
+	cyberPolicyHandled := false
 	deliver := func(streamResponse dto.ResponsesStreamResponse, data string) error {
 		clientData, err := ProjectResponsesStreamUsageData(c, info, &streamResponse, data)
 		if err != nil {
@@ -151,6 +152,19 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			logger.LogError(c, "failed to unmarshal stream response: "+err.Error())
 			sr.Error(err)
 			return
+		}
+		if !cyberPolicyHandled && accumulator.Failed() {
+			if failure := accumulator.FailureError(); failure != nil {
+				apiErr := service.NormalizeUpstreamCyberPolicyError(
+					types.WithOpenAIError(*failure, http.StatusInternalServerError),
+				)
+				modelName := ""
+				if info != nil {
+					modelName = info.OriginModelName
+				}
+				cyberPolicyHandled = service.SuspendUserAPIForUpstreamCyberPolicy(c, apiErr, modelName) ||
+					service.IsUpstreamCyberPolicyError(apiErr)
+			}
 		}
 		if stageCapacityPrelude && !clientOutputStarted && !accumulator.UsageReported() &&
 			accumulator.Terminal() && !accumulator.Successful() {

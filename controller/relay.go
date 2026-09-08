@@ -342,6 +342,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
+			newAPIError = service.NormalizeUpstreamCyberPolicyError(newAPIError)
+			service.SuspendUserAPIForUpstreamCyberPolicy(c, newAPIError, relayInfo.OriginModelName)
 			relayInfo.LastError = newAPIError
 			if relay.TryRepairCodexInvalidMessageIDForRetry(c, relayInfo, newAPIError) {
 				logger.LogWarn(c, "retrying Codex Responses once after removing an upstream-rejected message id")

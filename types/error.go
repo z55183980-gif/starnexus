@@ -68,8 +68,8 @@ const (
 	// Gateway-generated throttling errors are kept distinct from an upstream
 	// provider's rate_limit error so clients and retry logic can identify the
 	// owner of a 429 response without relying on the HTTP status alone.
-	ErrorCodeGatewayRateLimit      ErrorCode = "gateway_rate_limit_exceeded"
-	ErrorCodeUserConcurrencyLimit  ErrorCode = "user_concurrency_limit"
+	ErrorCodeGatewayRateLimit     ErrorCode = "gateway_rate_limit_exceeded"
+	ErrorCodeUserConcurrencyLimit ErrorCode = "user_concurrency_limit"
 
 	// request error
 	ErrorCodeBadRequestBody        ErrorCode = "bad_request_body"
@@ -86,6 +86,8 @@ const (
 	ErrorCodePromptBlocked                ErrorCode = "prompt_blocked"
 	ErrorCodeUserBehaviorBlocked          ErrorCode = "user_behavior_blocked"
 	ErrorCodeContentModerationUnavailable ErrorCode = "content_moderation_unavailable"
+	ErrorCodeCyberPolicy                  ErrorCode = "cyber_policy"
+	ErrorCodeAPIAccessSuspended           ErrorCode = "api_access_suspended"
 
 	// sql error
 	ErrorCodeQueryDataError  ErrorCode = "query_data_error"

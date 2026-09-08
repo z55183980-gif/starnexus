@@ -26,7 +26,33 @@ import type {
   PromptAuditPoliciesResponse,
   PromptAuditPolicy,
   PromptAuditPolicyResponse,
+  RestoreUserAPIAccessResponse,
+  SuspendedAPIUsersResponse,
 } from './types'
+
+export async function listSuspendedAPIUsers(params: {
+  p?: number
+  page_size?: number
+  keyword?: string
+}): Promise<SuspendedAPIUsersResponse> {
+  const response = await api.get('/api/security-audit/api-suspensions', {
+    params,
+  })
+  const result = response.data as SuspendedAPIUsersResponse
+  if (!result.success) throw new Error(result.message || 'Failed to load')
+  return result
+}
+
+export async function restoreUserAPIAccess(
+  userId: number,
+  reason: string
+): Promise<RestoreUserAPIAccessResponse> {
+  const response = await api.post(
+    `/api/security-audit/api-suspensions/${userId}/restore`,
+    { reason }
+  )
+  return response.data
+}
 
 export async function getContentModerationKeyUsage(params: {
   start_timestamp: number

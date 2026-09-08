@@ -320,6 +320,8 @@ func SetApiRouter(router *gin.Engine) {
 			securityAuditRoute.GET("/moderation-key-usage", controller.GetContentModerationKeyUsage)
 			securityAuditRoute.POST("/moderation-api-key/test", controller.TestContentModerationAPIKey)
 			securityAuditRoute.POST("/providers/:provider/models", controller.ListContentModerationProviderModels)
+			securityAuditRoute.GET("/api-suspensions", controller.ListSuspendedAPIUsers)
+			securityAuditRoute.POST("/api-suspensions/:user_id/restore", controller.RestoreUserAPIAccess)
 		}
 
 		affiliateAgentRoute := apiRouter.Group("/affiliate/agent")

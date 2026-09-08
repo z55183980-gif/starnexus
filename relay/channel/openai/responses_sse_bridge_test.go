@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -200,4 +201,16 @@ func TestResponsesSSEBridgePropagatesTerminalError(t *testing.T) {
 	_, apiErr := OaiResponsesSSEToNonStreamHandler(ctx, info, resp)
 	require.NotNil(t, apiErr)
 	require.Contains(t, apiErr.Error(), "upstream failed")
+}
+
+func TestResponsesSSEBridgeNormalizesStructuredCyberPolicyError(t *testing.T) {
+	t.Parallel()
+	ctx, _, info := newResponsesSSEBridgeContext()
+	resp := newResponsesSSEResponse("data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"cyber_policy\",\"message\":\"flagged\"}}}\n\n")
+
+	_, apiErr := OaiResponsesSSEToNonStreamHandler(ctx, info, resp)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
+	require.Equal(t, types.ErrorCodeCyberPolicy, apiErr.GetErrorCode())
+	require.True(t, types.IsSkipRetryError(apiErr))
 }

@@ -191,6 +191,30 @@ func RootAuth() func(c *gin.Context) {
 	}
 }
 
+// UserAPIAccessAuth applies API-only suspension to session-authenticated relay
+// routes (currently the web playground) without preventing console login.
+func UserAPIAccessAuth() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		userId := c.GetInt("id")
+		userCache, err := model.GetUserCache(userId)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("UserAPIAccessAuth GetUserCache error for user %d: %v", userId, err))
+			abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+			return
+		}
+		if userCache.APIStatus == common.UserAPIStatusSuspended {
+			abortWithOpenAiMessage(
+				c,
+				http.StatusForbidden,
+				common.TranslateMessage(c, i18n.MsgAuthAPIAccessSuspended),
+				types.ErrorCodeAPIAccessSuspended,
+			)
+			return
+		}
+		c.Next()
+	}
+}
+
 func WssAuth(c *gin.Context) {
 
 }
@@ -267,6 +291,14 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
 				"message": common.TranslateMessage(c, i18n.MsgAuthUserBanned),
+			})
+			c.Abort()
+			return
+		}
+		if userCache.APIStatus == common.UserAPIStatusSuspended {
+			c.JSON(http.StatusForbidden, gin.H{
+				"success": false,
+				"message": common.TranslateMessage(c, i18n.MsgAuthAPIAccessSuspended),
 			})
 			c.Abort()
 			return
@@ -380,6 +412,15 @@ func TokenAuth() func(c *gin.Context) {
 		userEnabled := userCache.Status == common.UserStatusEnabled
 		if !userEnabled {
 			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
+			return
+		}
+		if userCache.APIStatus == common.UserAPIStatusSuspended {
+			abortWithOpenAiMessage(
+				c,
+				http.StatusForbidden,
+				common.TranslateMessage(c, i18n.MsgAuthAPIAccessSuspended),
+				types.ErrorCodeAPIAccessSuspended,
+			)
 			return
 		}
 

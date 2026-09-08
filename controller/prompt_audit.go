@@ -29,6 +29,53 @@ type promptAuditLogCursorPage struct {
 	NextCursor int                    `json:"next_cursor"`
 }
 
+type restoreUserAPIAccessRequest struct {
+	Reason string `json:"reason" binding:"required,max=255"`
+}
+
+func ListSuspendedAPIUsers(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	users, total, err := model.ListSuspendedUsers(
+		c.Query("keyword"),
+		pageInfo.GetStartIdx(),
+		pageInfo.GetPageSize(),
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(users)
+	common.ApiSuccess(c, pageInfo)
+}
+
+func RestoreUserAPIAccess(c *gin.Context) {
+	userId, err := strconv.Atoi(c.Param("user_id"))
+	if err != nil || userId <= 0 {
+		common.ApiError(c, errors.New("invalid user id"))
+		return
+	}
+	var request restoreUserAPIAccessRequest
+	if err = c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	restored, err := model.RestoreUserAPIAccess(userId, c.GetInt("id"), request.Reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	// Invalidate even when the database row was already restored so retrying a
+	// request can recover from a previous cache invalidation failure.
+	if err = model.InvalidateUserCache(userId); err != nil {
+		common.SysLog("failed to invalidate restored user cache: " + err.Error())
+	}
+	if err = model.InvalidateUserTokensCache(userId); err != nil {
+		common.SysLog("failed to invalidate restored user token cache: " + err.Error())
+	}
+	common.ApiSuccess(c, gin.H{"restored": restored})
+}
+
 func ListPromptAuditPolicies(c *gin.Context) {
 	policies, err := model.ListPromptAuditPolicies()
 	if err != nil {

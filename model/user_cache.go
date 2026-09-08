@@ -21,6 +21,7 @@ type UserBase struct {
 	Email       string `json:"email"`
 	Quota       int    `json:"quota"`
 	Status      int    `json:"status"`
+	APIStatus   int    `json:"api_status"`
 	Username    string `json:"username"`
 	Setting     string `json:"setting"`
 	Concurrency int    `json:"concurrency"`
@@ -113,6 +114,7 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 		Group:       user.Group,
 		Quota:       user.Quota,
 		Status:      user.Status,
+		APIStatus:   user.APIStatus,
 		Username:    user.Username,
 		Setting:     user.Setting,
 		Email:       user.Email,
@@ -133,6 +135,13 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	}
 	if !hasConcurrency {
 		return nil, fmt.Errorf("user cache missing concurrency field")
+	}
+	hasAPIStatus, err := common.RDB.HExists(context.Background(), cacheKey, "APIStatus").Result()
+	if err != nil {
+		return nil, err
+	}
+	if !hasAPIStatus {
+		return nil, fmt.Errorf("user cache missing API status field")
 	}
 	var userCache UserBase
 	// Try getting from Redis first

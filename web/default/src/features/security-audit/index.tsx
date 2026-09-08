@@ -108,6 +108,7 @@ import {
   listPromptAuditPolicies,
   updatePromptAuditPolicy,
 } from './api'
+import { APISuspensionsTab } from './api-suspensions-tab'
 import { ContentModerationTab } from './content-moderation-tab'
 import type {
   PromptAuditLog,
@@ -531,7 +532,9 @@ function PromptLogSheet({
 export function SecurityAudit() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
-  const [view, setView] = useState<'policies' | 'moderation'>('moderation')
+  const [view, setView] = useState<
+    'policies' | 'moderation' | 'api-suspensions'
+  >('moderation')
   const [moderationSettingsOpen, setModerationSettingsOpen] = useState(false)
   const [moderationRefreshNonce, setModerationRefreshNonce] = useState(0)
   const [viewingPolicy, setViewingPolicy] = useState<PromptAuditPolicy | null>(
@@ -608,9 +611,13 @@ export function SecurityAudit() {
         <SectionPageLayout.Description>
           {view === 'moderation'
             ? t('Configure content audit policies and view audit records')
-            : t(
-                'Monitor selected users with local sensitive-word rules after the upstream account-risk audit.'
-              )}
+            : view === 'api-suspensions'
+              ? t(
+                  'Review users automatically suspended after a structured upstream cyber policy response.'
+                )
+              : t(
+                  'Monitor selected users with local sensitive-word rules after the upstream account-risk audit.'
+                )}
         </SectionPageLayout.Description>
         <SectionPageLayout.Actions>
           {view === 'moderation' ? (
@@ -628,30 +635,37 @@ export function SecurityAudit() {
                 {t('Content audit settings')}
               </Button>
             </>
-          ) : (
+          ) : view === 'policies' ? (
             <AddUserPopover
               excludedUserIds={excludedUserIds}
               onCreated={refreshPolicies}
             />
-          )}
+          ) : null}
         </SectionPageLayout.Actions>
         <SectionPageLayout.Content>
           <Tabs
             value={view}
             onValueChange={(value) => {
-              const nextView = value as 'policies' | 'moderation'
+              const nextView = value as
+                'policies' | 'moderation' | 'api-suspensions'
               setView(nextView)
               if (nextView === 'policies') {
                 void policiesQuery.refetch()
               }
             }}
           >
-            <TabsList variant='line'>
+            <TabsList
+              variant='line'
+              className='max-w-full justify-start overflow-x-auto'
+            >
               <TabsTrigger value='moderation'>
                 {t('Content Moderation (API)')}
               </TabsTrigger>
               <TabsTrigger value='policies'>
                 {t('User behavior rules')}
+              </TabsTrigger>
+              <TabsTrigger value='api-suspensions'>
+                {t('API suspended users')}
               </TabsTrigger>
             </TabsList>
             <TabsContent value='policies' className='mt-4 flex flex-col gap-4'>
@@ -867,6 +881,9 @@ export function SecurityAudit() {
                 onSettingsOpenChange={setModerationSettingsOpen}
                 refreshNonce={moderationRefreshNonce}
               />
+            </TabsContent>
+            <TabsContent value='api-suspensions' className='mt-4'>
+              <APISuspensionsTab />
             </TabsContent>
           </Tabs>
         </SectionPageLayout.Content>

@@ -37,6 +37,9 @@ type User struct {
 	DisplayName                    string         `json:"display_name" gorm:"index" validate:"max=20"`
 	Role                           int            `json:"role" gorm:"type:int;default:1"`   // admin, common
 	Status                         int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
+	APIStatus                      int            `json:"api_status" gorm:"column:api_status;type:int;not null;default:1;index"`
+	APISuspendedAt                 int64          `json:"api_suspended_at" gorm:"column:api_suspended_at;bigint;not null;default:0"`
+	APISuspendedReason             string         `json:"api_suspended_reason" gorm:"column:api_suspended_reason;type:varchar(64);not null;default:''"`
 	Email                          string         `json:"email" gorm:"index" validate:"max=50"`
 	GitHubId                       string         `json:"github_id" gorm:"column:github_id;index"`
 	DiscordId                      string         `json:"discord_id" gorm:"column:discord_id;index"`
@@ -140,6 +143,7 @@ func (user *User) ToBaseUser() *UserBase {
 		Group:       user.Group,
 		Quota:       user.Quota,
 		Status:      user.Status,
+		APIStatus:   user.APIStatus,
 		Username:    user.Username,
 		Setting:     user.Setting,
 		Email:       user.Email,
