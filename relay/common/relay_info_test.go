@@ -86,3 +86,34 @@ func TestRelayInfoLogStartTimeDoesNotMoveBeforeRequestStart(t *testing.T) {
 
 	require.Equal(t, start, info.GetLogStartTime())
 }
+
+func TestRelayInfoStartFirstTokenAttemptResetsUndeliveredResponse(t *testing.T) {
+	start := time.Now().Add(-time.Second)
+	info := &RelayInfo{StartTime: start, isFirstResponse: true}
+	info.SetFirstResponseTime()
+	require.True(t, info.HasSendResponse())
+
+	nextAttempt := time.Now().Add(time.Millisecond)
+	info.StartFirstTokenAttempt(nextAttempt)
+
+	require.Equal(t, nextAttempt, info.GetLogStartTime())
+	require.False(t, info.HasSendResponse())
+	info.SetFirstResponseTime()
+	require.True(t, info.HasSendResponse())
+}
+
+func TestRelayInfoStartFirstTokenAttemptKeepsDeliveredResponse(t *testing.T) {
+	start := time.Now()
+	firstResponse := start.Add(200 * time.Millisecond)
+	info := &RelayInfo{
+		StartTime:         start,
+		LogStartTime:      start,
+		FirstResponseTime: firstResponse,
+		SendResponseCount: 1,
+	}
+
+	info.StartFirstTokenAttempt(start.Add(time.Second))
+
+	require.Equal(t, start, info.LogStartTime)
+	require.Equal(t, firstResponse, info.FirstResponseTime)
+}

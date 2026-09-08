@@ -753,6 +753,17 @@ func (info *RelayInfo) SetLogStartTime(start time.Time) {
 	info.LogStartTime = start
 }
 
+// StartFirstTokenAttempt starts the display-only FRT timer for the current
+// account attempt while no response has been delivered to the client.
+func (info *RelayInfo) StartFirstTokenAttempt(start time.Time) {
+	if info == nil || start.IsZero() || info.SendResponseCount > 0 {
+		return
+	}
+	info.LogStartTime = start
+	info.FirstResponseTime = info.StartTime.Add(-time.Second)
+	info.isFirstResponse = true
+}
+
 // GetLogStartTime returns the display-only start point, falling back to the
 // canonical request start for callers that do not use the HTTP display timing.
 func (info *RelayInfo) GetLogStartTime() time.Time {

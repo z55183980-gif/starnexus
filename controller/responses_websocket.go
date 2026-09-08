@@ -719,6 +719,7 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 			return nil, nil, nil, apiErr
 		}
 	}
+	relayInfo.StartFirstTokenAttempt(time.Now())
 
 	turn := &responsesWebSocketTurn{
 		ctx:               turnCtx,
@@ -1257,6 +1258,7 @@ func (s *responsesWebSocketSession) retryResponsesWSCapacityTurn(turn *responses
 				return false
 			}
 		}
+		turn.info.StartFirstTokenAttempt(time.Now())
 		turn.accountID = replacementAccountID
 		turn.upstreamIdentity = responsesWSUpstreamIdentity(turn.ctx, turn.channel)
 		turn.accumulator = openairelay.NewResponsesEventAccumulator()
@@ -1817,6 +1819,7 @@ func (s *responsesWebSocketSession) retrySSETurnWithAnotherAccount(turn *respons
 	} else {
 		turn.info.InitChannelMeta(turn.ctx)
 	}
+	turn.info.StartFirstTokenAttempt(time.Now())
 	turn.accumulator = openairelay.NewResponsesEventAccumulator()
 	turn.upstreamEvent = false
 	turn.upstreamOutputStarted = false

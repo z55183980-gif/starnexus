@@ -605,21 +605,13 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return channel, nil
 }
 
-// markHTTPLogStart advances only the usage-log display timer after the current
-// channel/account attempt has been prepared. The canonical request timer is
-// intentionally left untouched for billing and performance metrics.
+// markHTTPLogStart restarts the usage-log display timer for the current
+// account attempt. The canonical request timer remains unchanged.
 func markHTTPLogStart(c *gin.Context, info *relaycommon.RelayInfo) {
 	if c == nil || c.Request == nil || c.Request.Method == http.MethodGet || info == nil {
 		return
 	}
-	// Do not move the display origin after a response has already been
-	// observed. A later retry must not make the original first response produce
-	// a negative (clamped-to-zero) FRT.
-	if info.HasSendResponse() {
-		return
-	}
-	now := time.Now()
-	info.SetLogStartTime(now)
+	info.StartFirstTokenAttempt(time.Now())
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
