@@ -19,6 +19,8 @@ type codexRateLimitWindow struct {
 	windowMinutes int64
 }
 
+const codexSevenDayWindowMinutes int64 = 7 * 24 * 60
+
 func upstreamRateLimitState(apiErr *types.NewAPIError, now int64) (int64, *int64, *int64) {
 	resetAt, windowStart, windowEnd := upstreamExplicitRateLimitState(apiErr, now)
 	if resetAt > now {
@@ -73,6 +75,12 @@ func codexRateLimitState(header http.Header, now int64) (int64, *int64, *int64) 
 	}
 	var resetWindow codexRateLimitWindow
 	for _, window := range selected {
+		// The seven-day usage window is informational for account usage. It is
+		// not an account cooldown trigger: a 429 must not make an otherwise
+		// usable OAuth account unavailable for the remainder of that window.
+		if window.windowMinutes >= codexSevenDayWindowMinutes {
+			continue
+		}
 		if resetWindow.resetSeconds == 0 || window.windowMinutes > resetWindow.windowMinutes ||
 			(window.windowMinutes == resetWindow.windowMinutes && window.resetSeconds > resetWindow.resetSeconds) {
 			resetWindow = window
@@ -85,7 +93,7 @@ func codexRateLimitState(header http.Header, now int64) (int64, *int64, *int64) 
 	var sessionWindow *codexRateLimitWindow
 	for i := range available {
 		window := &available[i]
-		if window.windowMinutes <= 0 {
+		if window.windowMinutes <= 0 || window.windowMinutes >= codexSevenDayWindowMinutes {
 			continue
 		}
 		if sessionWindow == nil || window.windowMinutes < sessionWindow.windowMinutes {
@@ -98,6 +106,10 @@ func codexRateLimitState(header http.Header, now int64) (int64, *int64, *int64) 
 	windowEnd := now + sessionWindow.resetSeconds
 	windowStart := windowEnd - sessionWindow.windowMinutes*60
 	return resetAt, &windowStart, &windowEnd
+}
+
+func isCodexSevenDayWindow(start, end int64) bool {
+	return start > 0 && end > start && end-start >= codexSevenDayWindowMinutes*60
 }
 
 func parseCodexRateLimitWindow(header http.Header, prefix string) codexRateLimitWindow {
@@ -205,13 +217,17 @@ func recordUpstreamAccountRateLimitHeaders(accountId int, header http.Header) {
 		if exhausted {
 			updates["session_window_status"] = "rejected"
 		}
+	} else {
+		updates["session_window_start"] = nil
+		updates["session_window_end"] = nil
+		updates["session_window_status"] = ""
 	}
 	if exhausted && resetAt > now {
 		updates["rate_limited_at"] = now
 		updates["rate_limit_reset_at"] = resetAt
-	}
-	if len(updates) == 1 {
-		return
+	} else {
+		updates["rate_limited_at"] = nil
+		updates["rate_limit_reset_at"] = nil
 	}
 	_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
 }
@@ -223,6 +239,9 @@ func hasCodexRateLimitHeaders(header http.Header) bool {
 func codexRateLimitExhausted(header http.Header) bool {
 	for _, prefix := range []string{"x-codex-primary", "x-codex-secondary"} {
 		window := parseCodexRateLimitWindow(header, prefix)
+		if window.windowMinutes >= codexSevenDayWindowMinutes {
+			continue
+		}
 		if window.hasUsed && window.usedPercent >= 100 {
 			return true
 		}

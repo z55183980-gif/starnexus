@@ -202,7 +202,13 @@ func UserAPIAccessAuth() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
 			return
 		}
-		if userCache.APIStatus == common.UserAPIStatusSuspended {
+		suspended, resolveErr := model.ResolveUserAPIAccessSuspension(userId, userCache.APIStatus, userCache.APISuspendedUntil)
+		if resolveErr != nil {
+			common.SysLog(fmt.Sprintf("UserAPIAccessAuth resolve suspension error for user %d: %v", userId, resolveErr))
+			abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+			return
+		}
+		if suspended {
 			abortWithOpenAiMessage(
 				c,
 				http.StatusForbidden,
@@ -295,7 +301,17 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			c.Abort()
 			return
 		}
-		if userCache.APIStatus == common.UserAPIStatusSuspended {
+		suspended, resolveErr := model.ResolveUserAPIAccessSuspension(token.UserId, userCache.APIStatus, userCache.APISuspendedUntil)
+		if resolveErr != nil {
+			common.SysLog(fmt.Sprintf("TokenAuthReadOnly resolve suspension error for user %d: %v", token.UserId, resolveErr))
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": common.TranslateMessage(c, i18n.MsgDatabaseError),
+			})
+			c.Abort()
+			return
+		}
+		if suspended {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
 				"message": common.TranslateMessage(c, i18n.MsgAuthAPIAccessSuspended),
@@ -414,7 +430,14 @@ func TokenAuth() func(c *gin.Context) {
 			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
 			return
 		}
-		if userCache.APIStatus == common.UserAPIStatusSuspended {
+		suspended, resolveErr := model.ResolveUserAPIAccessSuspension(token.UserId, userCache.APIStatus, userCache.APISuspendedUntil)
+		if resolveErr != nil {
+			common.SysLog(fmt.Sprintf("TokenAuth resolve suspension error for user %d: %v", token.UserId, resolveErr))
+			abortWithOpenAiMessage(c, http.StatusInternalServerError,
+				common.TranslateMessage(c, i18n.MsgDatabaseError))
+			return
+		}
+		if suspended {
 			abortWithOpenAiMessage(
 				c,
 				http.StatusForbidden,

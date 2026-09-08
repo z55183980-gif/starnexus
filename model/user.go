@@ -39,6 +39,7 @@ type User struct {
 	Status                         int            `json:"status" gorm:"type:int;default:1"` // enabled, disabled
 	APIStatus                      int            `json:"api_status" gorm:"column:api_status;type:int;not null;default:1;index"`
 	APISuspendedAt                 int64          `json:"api_suspended_at" gorm:"column:api_suspended_at;bigint;not null;default:0"`
+	APISuspendedUntil              int64          `json:"api_suspended_until" gorm:"column:api_suspended_until;bigint;not null;default:0;index"`
 	APISuspendedReason             string         `json:"api_suspended_reason" gorm:"column:api_suspended_reason;type:varchar(64);not null;default:''"`
 	Email                          string         `json:"email" gorm:"index" validate:"max=50"`
 	GitHubId                       string         `json:"github_id" gorm:"column:github_id;index"`
@@ -139,15 +140,16 @@ type UserStatistics struct {
 
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
-		Id:          user.Id,
-		Group:       user.Group,
-		Quota:       user.Quota,
-		Status:      user.Status,
-		APIStatus:   user.APIStatus,
-		Username:    user.Username,
-		Setting:     user.Setting,
-		Email:       user.Email,
-		Concurrency: user.Concurrency,
+		Id:                user.Id,
+		Group:             user.Group,
+		Quota:             user.Quota,
+		Status:            user.Status,
+		APIStatus:         user.APIStatus,
+		APISuspendedUntil: user.APISuspendedUntil,
+		Username:          user.Username,
+		Setting:           user.Setting,
+		Email:             user.Email,
+		Concurrency:       user.Concurrency,
 	}
 	return cache
 }

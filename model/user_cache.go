@@ -16,15 +16,16 @@ import (
 
 // UserBase struct remains the same as it represents the cached data structure
 type UserBase struct {
-	Id          int    `json:"id"`
-	Group       string `json:"group"`
-	Email       string `json:"email"`
-	Quota       int    `json:"quota"`
-	Status      int    `json:"status"`
-	APIStatus   int    `json:"api_status"`
-	Username    string `json:"username"`
-	Setting     string `json:"setting"`
-	Concurrency int    `json:"concurrency"`
+	Id                int    `json:"id"`
+	Group             string `json:"group"`
+	Email             string `json:"email"`
+	Quota             int    `json:"quota"`
+	Status            int    `json:"status"`
+	APIStatus         int    `json:"api_status"`
+	APISuspendedUntil int64  `json:"api_suspended_until"`
+	Username          string `json:"username"`
+	Setting           string `json:"setting"`
+	Concurrency       int    `json:"concurrency"`
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
@@ -110,15 +111,16 @@ func GetUserCache(userId int) (userCache *UserBase, err error) {
 
 	// Create cache object from user data
 	userCache = &UserBase{
-		Id:          user.Id,
-		Group:       user.Group,
-		Quota:       user.Quota,
-		Status:      user.Status,
-		APIStatus:   user.APIStatus,
-		Username:    user.Username,
-		Setting:     user.Setting,
-		Email:       user.Email,
-		Concurrency: user.Concurrency,
+		Id:                user.Id,
+		Group:             user.Group,
+		Quota:             user.Quota,
+		Status:            user.Status,
+		APIStatus:         user.APIStatus,
+		APISuspendedUntil: user.APISuspendedUntil,
+		Username:          user.Username,
+		Setting:           user.Setting,
+		Email:             user.Email,
+		Concurrency:       user.Concurrency,
 	}
 
 	return userCache, nil
@@ -142,6 +144,13 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	}
 	if !hasAPIStatus {
 		return nil, fmt.Errorf("user cache missing API status field")
+	}
+	hasAPISuspendedUntil, err := common.RDB.HExists(context.Background(), cacheKey, "APISuspendedUntil").Result()
+	if err != nil {
+		return nil, err
+	}
+	if !hasAPISuspendedUntil {
+		return nil, fmt.Errorf("user cache missing API suspension expiry field")
 	}
 	var userCache UserBase
 	// Try getting from Redis first

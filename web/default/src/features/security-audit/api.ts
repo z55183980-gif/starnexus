@@ -27,8 +27,27 @@ import type {
   PromptAuditPolicy,
   PromptAuditPolicyResponse,
   RestoreUserAPIAccessResponse,
+  SecurityAuditBanConfigResponse,
   SuspendedAPIUsersResponse,
 } from './types'
+
+export async function getSecurityAuditBanConfig(): Promise<SecurityAuditBanConfigResponse> {
+  const response = await api.get('/api/security-audit/api-suspension-settings')
+  const result = response.data as SecurityAuditBanConfigResponse
+  if (!result.success) throw new Error(result.message || 'Failed to load')
+  return result
+}
+
+export async function updateSecurityAuditBanConfig(payload: {
+  channel_ids: number[]
+  duration_seconds: 0 | 3600 | 7200 | 86400
+}): Promise<SecurityAuditBanConfigResponse> {
+  const response = await api.put(
+    '/api/security-audit/api-suspension-settings',
+    payload
+  )
+  return response.data
+}
 
 export async function listSuspendedAPIUsers(params: {
   p?: number

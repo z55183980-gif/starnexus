@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -31,6 +32,86 @@ type promptAuditLogCursorPage struct {
 
 type restoreUserAPIAccessRequest struct {
 	Reason string `json:"reason" binding:"required,max=255"`
+}
+
+type updateSecurityAuditBanConfigRequest struct {
+	ChannelIds      []int `json:"channel_ids"`
+	DurationSeconds int   `json:"duration_seconds"`
+}
+
+type securityAuditBanChannelView struct {
+	Id   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+type securityAuditBanConfigView struct {
+	ChannelIds      []int                         `json:"channel_ids"`
+	DurationSeconds int                           `json:"duration_seconds"`
+	Channels        []securityAuditBanChannelView `json:"channels"`
+}
+
+func GetSecurityAuditBanConfig(c *gin.Context) {
+	config := setting.GetSecurityAuditBanConfig()
+	common.ApiSuccess(c, securityAuditBanConfigView{
+		ChannelIds:      config.ChannelIds,
+		DurationSeconds: config.DurationSeconds,
+		Channels:        listSecurityAuditBanChannels(),
+	})
+}
+
+func UpdateSecurityAuditBanConfig(c *gin.Context) {
+	var request updateSecurityAuditBanConfigRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	data, err := common.Marshal(setting.SecurityAuditBanConfig{
+		ChannelIds: request.ChannelIds, DurationSeconds: request.DurationSeconds,
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	normalized, err := setting.ParseSecurityAuditBanConfigJSON(string(data))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(normalized.ChannelIds) > 0 {
+		var count int64
+		if err = model.DB.Model(&model.Channel{}).Where("id IN ?", normalized.ChannelIds).Count(&count).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if count != int64(len(normalized.ChannelIds)) {
+			common.ApiError(c, errors.New("one or more security audit ban channels do not exist"))
+			return
+		}
+	}
+	normalizedJSON, err := common.Marshal(normalized)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err = model.UpdateOption(setting.SecurityAuditBanOptionKey, string(normalizedJSON)); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, securityAuditBanConfigView{
+		ChannelIds:      normalized.ChannelIds,
+		DurationSeconds: normalized.DurationSeconds,
+		Channels:        listSecurityAuditBanChannels(),
+	})
+}
+
+func listSecurityAuditBanChannels() []securityAuditBanChannelView {
+	channels := make([]securityAuditBanChannelView, 0)
+	query := model.DB.Model(&model.Channel{}).Select("id", "name").Order("id ASC")
+	if err := query.Find(&channels).Error; err != nil {
+		common.SysLog("failed to list security audit ban channels: " + err.Error())
+		return []securityAuditBanChannelView{}
+	}
+	return channels
 }
 
 func ListSuspendedAPIUsers(c *gin.Context) {

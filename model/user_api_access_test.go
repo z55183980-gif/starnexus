@@ -32,6 +32,7 @@ func TestSuspendAndRestoreUserAPIForCyberPolicy(t *testing.T) {
 	var stored User
 	require.NoError(t, db.First(&stored, user.Id).Error)
 	require.Equal(t, common.UserAPIStatusSuspended, stored.APIStatus)
+	require.Zero(t, stored.APISuspendedUntil)
 	require.Equal(t, UserAPIAccessSourceCyber, stored.APISuspendedReason)
 	require.NotZero(t, stored.APISuspendedAt)
 
@@ -54,6 +55,7 @@ func TestSuspendAndRestoreUserAPIForCyberPolicy(t *testing.T) {
 	require.Equal(t, int64(1), total)
 	require.Len(t, views, 1)
 	require.Equal(t, "req-cyber", views[0].RequestId)
+	require.Equal(t, `{"error_code":"cyber_policy"}`, views[0].Evidence)
 	require.True(t, views[0].PromptMonitoringAdded)
 
 	restored, err := RestoreUserAPIAccess(user.Id, 100, "reviewed by administrator")
@@ -64,4 +66,50 @@ func TestSuspendAndRestoreUserAPIForCyberPolicy(t *testing.T) {
 	require.Zero(t, stored.APISuspendedAt)
 	require.NoError(t, db.Where("user_id = ?", user.Id).First(&policy).Error)
 	require.True(t, policy.MonitorEnabled)
+}
+
+func TestTemporaryUserAPISuspensionExpiresLazily(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&User{}, &PromptAuditPolicy{}, &UserAPIAccessEvent{}))
+	setPromptAuditTestDatabases(t, db, db)
+
+	user := &User{Username: "temporary-cyber-user", Password: "password", APIStatus: common.UserAPIStatusEnabled}
+	require.NoError(t, db.Create(user).Error)
+	changed, err := SuspendUserAPIForCyberPolicy(SuspendUserAPIInput{
+		UserId: user.Id, ChannelId: 8, DurationSeconds: 3600,
+	})
+	require.NoError(t, err)
+	require.True(t, changed)
+
+	var stored User
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	require.Greater(t, stored.APISuspendedUntil, stored.APISuspendedAt)
+
+	blocked, err := ResolveUserAPIAccessSuspension(user.Id, stored.APIStatus, stored.APISuspendedUntil)
+	require.NoError(t, err)
+	require.True(t, blocked)
+
+	require.NoError(t, db.Model(&User{}).Where("id = ?", user.Id).
+		Update("api_suspended_until", common.GetTimestamp()-1).Error)
+	blocked, err = ResolveUserAPIAccessSuspension(user.Id, stored.APIStatus, common.GetTimestamp()-1)
+	require.NoError(t, err)
+	require.False(t, blocked)
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	require.Equal(t, common.UserAPIStatusEnabled, stored.APIStatus)
+	var restoreEvent UserAPIAccessEvent
+	require.NoError(t, db.Where("user_id = ? AND action = ?", user.Id, UserAPIAccessActionRestore).
+		First(&restoreEvent).Error)
+	require.Equal(t, "system", restoreEvent.Source)
+
+	require.NoError(t, db.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+		"api_status": common.UserAPIStatusSuspended, "api_suspended_until": common.GetTimestamp() - 1,
+	}).Error)
+	changed, err = SuspendUserAPIForCyberPolicy(SuspendUserAPIInput{
+		UserId: user.Id, ChannelId: 8, DurationSeconds: 7200,
+	})
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.NoError(t, db.First(&stored, user.Id).Error)
+	require.GreaterOrEqual(t, stored.APISuspendedUntil, common.GetTimestamp()+7199)
 }

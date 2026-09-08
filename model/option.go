@@ -200,6 +200,7 @@ func InitOptionMap() {
 	common.OptionMap["StopOnSensitiveEnabled"] = strconv.FormatBool(setting.StopOnSensitiveEnabled)
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
 	common.OptionMap[setting.ContentModerationOptionKey] = setting.ContentModerationConfig2JsonString()
+	common.OptionMap[setting.SecurityAuditBanOptionKey] = setting.SecurityAuditBanConfig2JsonString()
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
@@ -317,14 +318,26 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func normalizeOptionValueForPersist(key, value string) (string, error) {
-	if key != setting.ContentModerationOptionKey {
+	switch key {
+	case setting.ContentModerationOptionKey:
+		cfg, err := setting.ParseContentModerationConfigJSON(value, setting.GetContentModerationConfig().APIKeys)
+		if err != nil {
+			return "", err
+		}
+		return setting.ContentModerationConfigJSON(cfg), nil
+	case setting.SecurityAuditBanOptionKey:
+		cfg, err := setting.ParseSecurityAuditBanConfigJSON(value)
+		if err != nil {
+			return "", err
+		}
+		data, err := common.Marshal(cfg)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	default:
 		return value, nil
 	}
-	cfg, err := setting.ParseContentModerationConfigJSON(value, setting.GetContentModerationConfig().APIKeys)
-	if err != nil {
-		return "", err
-	}
-	return setting.ContentModerationConfigJSON(cfg), nil
 }
 
 func updateOptionMap(key string, value string) (err error) {
@@ -683,6 +696,11 @@ func updateOptionMap(key string, value string) (err error) {
 		if err == nil {
 			// Persist normalized config (merged keys) back into OptionMap.
 			common.OptionMap[setting.ContentModerationOptionKey] = setting.ContentModerationConfig2JsonString()
+		}
+	case setting.SecurityAuditBanOptionKey:
+		err = setting.UpdateSecurityAuditBanConfigByJsonString(value)
+		if err == nil {
+			common.OptionMap[setting.SecurityAuditBanOptionKey] = setting.SecurityAuditBanConfig2JsonString()
 		}
 	case "AutomaticDisableKeywords":
 		operation_setting.AutomaticDisableKeywordsFromString(value)

@@ -73,6 +73,7 @@ export interface SuspendedAPIUser {
   email: string
   api_status: number
   api_suspended_at: number
+  api_suspended_until: number
   api_suspended_reason: string
   request_id: string
   token_id: number
@@ -80,7 +81,19 @@ export interface SuspendedAPIUser {
   channel_id: number
   upstream_account_id: number
   node_name: string
+  evidence: string
   prompt_monitoring_added: boolean
+}
+
+export interface SecurityAuditBanChannel {
+  id: number
+  name: string
+}
+
+export interface SecurityAuditBanConfig {
+  channel_ids: number[]
+  duration_seconds: 0 | 3600 | 7200 | 86400
+  channels: SecurityAuditBanChannel[]
 }
 
 export interface SuspendedAPIUserPage {
@@ -144,3 +157,4 @@ export type ContentModerationKeyUsageResponse =
   ApiResponse<ContentModerationKeyUsageResult>
 export type SuspendedAPIUsersResponse = ApiResponse<SuspendedAPIUserPage>
 export type RestoreUserAPIAccessResponse = ApiResponse<{ restored: boolean }>
+export type SecurityAuditBanConfigResponse = ApiResponse<SecurityAuditBanConfig>

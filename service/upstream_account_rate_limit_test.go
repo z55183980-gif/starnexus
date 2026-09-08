@@ -26,3 +26,34 @@ func TestUpstreamRateLimitStateUsesRetryAfter(t *testing.T) {
 	resetAt, _, _ := upstreamRateLimitState(apiErr, 1000)
 	require.EqualValues(t, 1090, resetAt)
 }
+
+func TestUpstreamRateLimitStateDoesNotUseSevenDayWindowAsCooldown(t *testing.T) {
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	header := http.Header{}
+	header.Set("x-codex-primary-used-percent", "100")
+	header.Set("x-codex-primary-reset-after-seconds", "604800")
+	header.Set("x-codex-primary-window-minutes", "10080")
+	apiErr.SetUpstreamResponse(header, nil)
+
+	resetAt, windowStart, windowEnd := upstreamRateLimitState(apiErr, 1000)
+	require.EqualValues(t, 1060, resetAt)
+	require.Nil(t, windowStart)
+	require.Nil(t, windowEnd)
+}
+
+func TestUpstreamRateLimitStatePrefersShortWindowOverSevenDayWindow(t *testing.T) {
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	header := http.Header{}
+	header.Set("x-codex-primary-used-percent", "100")
+	header.Set("x-codex-primary-reset-after-seconds", "604800")
+	header.Set("x-codex-primary-window-minutes", "10080")
+	header.Set("x-codex-secondary-used-percent", "100")
+	header.Set("x-codex-secondary-reset-after-seconds", "300")
+	header.Set("x-codex-secondary-window-minutes", "300")
+	apiErr.SetUpstreamResponse(header, nil)
+
+	resetAt, windowStart, windowEnd := upstreamRateLimitState(apiErr, 1000)
+	require.EqualValues(t, 1300, resetAt)
+	require.EqualValues(t, int64(1300)-int64(300*60), *windowStart)
+	require.EqualValues(t, 1300, *windowEnd)
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
@@ -53,16 +54,27 @@ func SuspendUserAPIForUpstreamCyberPolicy(c *gin.Context, apiErr *types.NewAPIEr
 	if userId <= 0 {
 		return false
 	}
+	channelId := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
+	applies, durationSeconds := setting.SecurityAuditBanAppliesToChannel(channelId)
+	if !applies {
+		return false
+	}
 	openAIError := apiErr.ToOpenAIError()
 	endpoint := ""
 	if c.Request != nil && c.Request.URL != nil {
 		endpoint = c.Request.URL.Path
 	}
+	_, upstreamBody := apiErr.UpstreamResponse()
+	if len(upstreamBody) > 16*1024 {
+		upstreamBody = upstreamBody[:16*1024]
+	}
 	evidenceBytes, _ := common.Marshal(map[string]any{
-		"error_code":  strings.TrimSpace(fmt.Sprint(openAIError.Code)),
-		"error_type":  strings.TrimSpace(openAIError.Type),
-		"status_code": apiErr.StatusCode,
-		"endpoint":    endpoint,
+		"error_code":    strings.TrimSpace(fmt.Sprint(openAIError.Code)),
+		"error_type":    strings.TrimSpace(openAIError.Type),
+		"error_message": strings.TrimSpace(openAIError.Message),
+		"status_code":   apiErr.StatusCode,
+		"endpoint":      endpoint,
+		"upstream_body": strings.TrimSpace(string(upstreamBody)),
 	})
 	changed, err := model.SuspendUserAPIForCyberPolicy(model.SuspendUserAPIInput{
 		UserId:            userId,
@@ -70,10 +82,11 @@ func SuspendUserAPIForUpstreamCyberPolicy(c *gin.Context, apiErr *types.NewAPIEr
 		RequestId:         c.GetString(common.RequestIdKey),
 		TokenId:           common.GetContextKeyInt(c, constant.ContextKeyTokenId),
 		ModelName:         strings.TrimSpace(modelName),
-		ChannelId:         common.GetContextKeyInt(c, constant.ContextKeyChannelId),
+		ChannelId:         channelId,
 		UpstreamAccountId: common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId),
 		NodeName:          common.NodeName,
 		Evidence:          string(evidenceBytes),
+		DurationSeconds:   durationSeconds,
 	})
 	if err != nil {
 		logger.LogError(c, fmt.Sprintf("failed to suspend API access for cyber_policy user %d: %v", userId, err))

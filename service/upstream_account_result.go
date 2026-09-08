@@ -157,10 +157,14 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		if !accountLoaded {
 			return resetAt, windowStart, windowEnd
 		}
-		if account.RateLimitResetAt != nil && *account.RateLimitResetAt > resetAt {
+		existingSessionIsSevenDay := account.SessionWindowStart != nil && account.SessionWindowEnd != nil &&
+			isCodexSevenDayWindow(*account.SessionWindowStart, *account.SessionWindowEnd)
+		existingResetIsSevenDay := existingSessionIsSevenDay && account.RateLimitResetAt != nil &&
+			*account.RateLimitResetAt == *account.SessionWindowEnd
+		if account.RateLimitResetAt != nil && !existingResetIsSevenDay && *account.RateLimitResetAt > resetAt {
 			resetAt = *account.RateLimitResetAt
 		}
-		if account.SessionWindowEnd != nil && *account.SessionWindowEnd > now &&
+		if !existingSessionIsSevenDay && account.SessionWindowEnd != nil && *account.SessionWindowEnd > now &&
 			(windowEnd == nil || *account.SessionWindowEnd > *windowEnd) {
 			resetAt = maxInt64(resetAt, *account.SessionWindowEnd)
 			windowEnd = account.SessionWindowEnd
@@ -210,6 +214,10 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 				updates["session_window_start"] = *windowStart
 				updates["session_window_end"] = *windowEnd
 				updates["session_window_status"] = "rejected"
+			} else {
+				updates["session_window_start"] = nil
+				updates["session_window_end"] = nil
+				updates["session_window_status"] = ""
 			}
 		}
 		_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
@@ -257,6 +265,10 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 			updates["session_window_start"] = *windowStart
 			updates["session_window_end"] = *windowEnd
 			updates["session_window_status"] = "rejected"
+		} else {
+			updates["session_window_start"] = nil
+			updates["session_window_end"] = nil
+			updates["session_window_status"] = ""
 		}
 	case apiErr.StatusCode == 408 || isUpstreamTransportError(apiErr):
 		disposition = UpstreamAccountErrorRetryTransport

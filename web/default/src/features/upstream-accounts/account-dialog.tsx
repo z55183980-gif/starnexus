@@ -2750,9 +2750,7 @@ export function AccountDialog({
                             error_code: '529',
                             keywords: 'overloaded, too many',
                             duration_seconds: '3600',
-                            description: t(
-                              'Service overload - pause 3600 seconds'
-                            ),
+                            description: t('Service overload'),
                           },
                         },
                         {
@@ -2761,7 +2759,7 @@ export function AccountDialog({
                             error_code: '429',
                             keywords: 'rate limit, too many requests',
                             duration_seconds: '600',
-                            description: t('Rate limited - pause 600 seconds'),
+                            description: t('Rate limited'),
                           },
                         },
                         {
@@ -2770,9 +2768,7 @@ export function AccountDialog({
                             error_code: '503',
                             keywords: 'unavailable, maintenance',
                             duration_seconds: '1800',
-                            description: t(
-                              'Service unavailable - pause 1800 seconds'
-                            ),
+                            description: t('Service unavailable'),
                           },
                         },
                       ] as Array<{

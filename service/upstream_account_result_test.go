@@ -142,13 +142,56 @@ func TestApplyUpstreamAccountErrorUsesCodexResetWindow(t *testing.T) {
 	var updated model.UpstreamAccount
 	require.NoError(t, model.DB.First(&updated, account.Id).Error)
 	require.NotNil(t, updated.RateLimitResetAt)
-	require.GreaterOrEqual(t, *updated.RateLimitResetAt, before+7200)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, before+300)
+	require.Less(t, *updated.RateLimitResetAt, before+7200)
 	require.NotNil(t, updated.SessionWindowEnd)
 	require.GreaterOrEqual(t, *updated.SessionWindowEnd, before+300)
 	require.Equal(t, "rejected", updated.SessionWindowStatus)
 	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
 	require.True(t, updated.Schedulable)
 	require.False(t, updated.IsSchedulableAt(time.Now().Unix()))
+}
+
+func TestApplyUpstreamAccountErrorDoesNotPersistSevenDayCooldown(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "seven-day-rate-window-account")
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	header := http.Header{}
+	header.Set("x-codex-primary-used-percent", "100")
+	header.Set("x-codex-primary-reset-after-seconds", "604800")
+	header.Set("x-codex-primary-window-minutes", "10080")
+	apiErr.SetUpstreamResponse(header, nil)
+
+	before := time.Now().Unix()
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.RateLimitResetAt)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, before+60)
+	require.Less(t, *updated.RateLimitResetAt, before+120)
+	require.Nil(t, updated.SessionWindowEnd)
+}
+
+func TestApplyUpstreamAccountErrorDoesNotReusePersistedSevenDayCooldown(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	account := createRouterTestAccountWithoutPool(t, "persisted-seven-day-rate-window-account")
+	now := time.Now().Unix()
+	sevenDayEnd := now + int64((7 * 24 * time.Hour).Seconds())
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", account.Id).Updates(map[string]any{
+		"rate_limit_reset_at":  sevenDayEnd,
+		"session_window_start": now,
+		"session_window_end":   sevenDayEnd,
+	}).Error)
+
+	apiErr := types.NewErrorWithStatusCode(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	apiErr.SetUpstreamResponse(nil, nil)
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(account.Id, 0, apiErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, account.Id).Error)
+	require.NotNil(t, updated.RateLimitResetAt)
+	require.GreaterOrEqual(t, *updated.RateLimitResetAt, now+60)
+	require.Less(t, *updated.RateLimitResetAt, now+120)
+	require.Nil(t, updated.SessionWindowEnd)
 }
 
 func TestApplyUpstreamAccountErrorStoresRevokedTokenMessage(t *testing.T) {
