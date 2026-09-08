@@ -20,8 +20,8 @@ import { useDeferredValue, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowReloadHorizontalIcon,
+  AlertCircleIcon,
   Search01Icon,
-  ShieldAlertIcon,
   UserBlock01Icon,
   UserCheck01Icon,
 } from '@hugeicons/core-free-icons'
@@ -134,7 +134,7 @@ export function APISuspensionsTab() {
   return (
     <div className='flex flex-col gap-4'>
       <Alert>
-        <HugeiconsIcon icon={ShieldAlertIcon} strokeWidth={2} />
+        <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
         <AlertTitle>{t('API-only suspension')}</AlertTitle>
         <AlertDescription>
           {t(
@@ -210,7 +210,7 @@ export function APISuspensionsTab() {
           <Empty className='min-h-72 rounded-none'>
             <EmptyHeader>
               <EmptyMedia variant='icon'>
-                <HugeiconsIcon icon={ShieldAlertIcon} strokeWidth={2} />
+                <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} />
               </EmptyMedia>
               <EmptyTitle>{t('Failed to load')}</EmptyTitle>
               <EmptyDescription>
