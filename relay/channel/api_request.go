@@ -546,7 +546,8 @@ func DoResponsesWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo) (*
 			}
 			dialer.Proxy = nil
 			dialer.NetDialContext = func(_ context.Context, network, address string) (net.Conn, error) {
-				return socksDialer.Dial(network, address)
+				conn, err := socksDialer.Dial(network, address)
+				return conn, service.MarkExplicitSOCKSProxyFailure(err)
 			}
 		default:
 			return nil, nil, fmt.Errorf("unsupported websocket proxy scheme: %s", parsedProxy.Scheme)
@@ -703,7 +704,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 }
 
 func recordRealProxyFailure(c *gin.Context, info *common.RelayInfo, err error, elapsed time.Duration) {
-	if c == nil || info == nil || err == nil || !service.IsRealProxyFailureError(err) || strings.TrimSpace(info.ChannelSetting.Proxy) == "" {
+	if c == nil || info == nil || err == nil || !service.IsExplicitProxyFailureError(err) || strings.TrimSpace(info.ChannelSetting.Proxy) == "" {
 		return
 	}
 	if common2.GetContextKeyString(c, appconstant.ContextKeyChannelCredentialSource) != appconstant.ChannelCredentialSourceAccountPool {

@@ -499,3 +499,13 @@ export async function listUpstreamProxyRealFailures(
   })
   return response.data
 }
+
+export async function deleteUpstreamProxyRealFailure(
+  proxyId: number,
+  eventId: number
+): Promise<ApiResponse<null>> {
+  const response = await api.delete(
+    `/api/upstream/proxies/${proxyId}/real-failures/${eventId}`
+  )
+  return response.data
+}

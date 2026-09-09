@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const proxyFailureMetadataContextKey = "upstream_proxy_failure_metadata"
@@ -114,26 +115,49 @@ func ClassifyProxyFailure(err error, proxyURL string, elapsed time.Duration, mod
 	return metadata
 }
 
-// IsRealProxyFailureError excludes client cancellation and local request
-// construction/body errors. The remaining errors are transport failures that
-// occurred while a configured proxy was being used for a real request.
-func IsRealProxyFailureError(err error) bool {
+type explicitProxyFailureError struct{ err error }
+
+func (e *explicitProxyFailureError) Error() string { return e.err.Error() }
+func (e *explicitProxyFailureError) Unwrap() error { return e.err }
+
+// MarkExplicitSOCKSProxyFailure is called only at the SOCKS dialer boundary.
+// A failed SOCKS CONNECT can also mean the target is unavailable, so only
+// failure to dial the proxy itself or an explicit authentication rejection
+// establishes proxy responsibility. Handshake read timeouts remain ambiguous.
+func MarkExplicitSOCKSProxyFailure(err error) error {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return err
+	}
+	var op *net.OpError
+	if !errors.As(err, &op) || !strings.HasPrefix(op.Op, "socks") {
+		return err
+	}
+	var dial *net.OpError
+	if errors.As(op.Err, &dial) && dial.Op == "dial" {
+		return &explicitProxyFailureError{err: err}
+	}
+	switch op.Err.Error() {
+	case "no acceptable authentication methods", "username/password authentication failed":
+		return &explicitProxyFailureError{err: err}
+	}
+	return err
+}
+
+// IsExplicitProxyFailureError uses transport evidence, not error substrings
+// that may originate in an upstream response or URL.
+func IsExplicitProxyFailureError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	var marked *explicitProxyFailureError
+	if errors.As(err, &marked) {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-	lower := strings.ToLower(err.Error())
-	return strings.Contains(lower, "proxy") ||
-		strings.Contains(lower, "socks") ||
-		strings.Contains(lower, "dial tcp") ||
-		strings.Contains(lower, "tls handshake") ||
-		strings.Contains(lower, "i/o timeout")
+	// net/http wraps errors at the HTTP proxy boundary with proxyconnect.
+	// Require an inner dial failure; a CONNECT read timeout is ambiguous.
+	var op, dial *net.OpError
+	return errors.As(err, &op) && op.Op == "proxyconnect" &&
+		errors.As(op.Err, &dial) && dial.Op == "dial"
 }
 
 func defaultProxyPort(scheme string) string {
@@ -275,6 +299,31 @@ func ListProxyRealRequestFailures(proxyID int, limit int) ([]ProxyRealRequestFai
 		})
 	}
 	return result, nil
+}
+
+// DeleteProxyRealRequestFailure only deletes the selected proxy's failure
+// event. Successes and unrelated account events cannot be deleted here.
+func DeleteProxyRealRequestFailure(ctx context.Context, proxyID, eventID int) error {
+	if proxyID <= 0 || eventID <= 0 {
+		return errors.New("invalid proxy failure id")
+	}
+	return model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var event model.UpstreamAccountEvent
+		if err := tx.Where("id = ? AND proxy_id = ? AND event_type = ?", eventID, proxyID, "request_error").First(&event).Error; err != nil {
+			return err
+		}
+		if _, ok := parseProxyFailureMetadata(event.Metadata); !ok {
+			return errors.New("event is not a proxy failure")
+		}
+		result := tx.Where("id = ? AND proxy_id = ? AND event_type = ? AND metadata = ?", eventID, proxyID, "request_error", event.Metadata).Delete(&model.UpstreamAccountEvent{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func ParsePositiveLimit(raw string) int {

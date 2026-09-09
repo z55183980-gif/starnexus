@@ -1169,6 +1169,24 @@ func ListUpstreamProxyRealFailures(c *gin.Context) {
 	common.ApiSuccess(c, items)
 }
 
+func DeleteUpstreamProxyRealFailure(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	eventID, err := strconv.Atoi(c.Param("eventId"))
+	if err != nil || eventID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if err := service.DeleteProxyRealRequestFailure(c.Request.Context(), id, eventID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	model.RecordLog(c.GetInt("id"), model.LogTypeManage, fmt.Sprintf("marked upstream proxy %d failure event %d as read and deleted it", id, eventID))
+	common.ApiSuccess(c, nil)
+}
+
 func TestUpstreamProxiesBatch(c *gin.Context) {
 	var request struct {
 		Ids []int `json:"ids"`

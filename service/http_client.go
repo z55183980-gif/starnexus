@@ -190,7 +190,11 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 			IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
 			ForceAttemptHTTP2:   true,
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return dialer.Dial(network, addr)
+				conn, err := dialer.Dial(network, addr)
+				if err != nil {
+					return nil, MarkExplicitSOCKSProxyFailure(err)
+				}
+				return conn, nil
 			},
 		}
 		if common.TLSInsecureSkipVerify {

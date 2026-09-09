@@ -7,7 +7,7 @@ published by the Free Software Foundation, either version 3 of the
 License, or (at your option) any later version.
 */
 import { useMemo, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Add01Icon,
   Delete02Icon,
@@ -76,6 +76,7 @@ import {
   createUpstreamProxiesBatch,
   deleteUpstreamProxy,
   deleteUpstreamProxiesBatch,
+  deleteUpstreamProxyRealFailure,
   listUpstreamAccounts,
   listUpstreamProxies,
   listUpstreamProxyRealFailures,
@@ -204,6 +205,27 @@ function ProxyRealFailuresDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const { t, i18n } = useTranslation()
+  const queryClient = useQueryClient()
+  const markAsRead = useMutation({
+    mutationFn: async (input: { proxyId: number; eventId: number }) => {
+      const response = await deleteUpstreamProxyRealFailure(
+        input.proxyId,
+        input.eventId
+      )
+      if (!response.success) {
+        throw new Error(response.message || t('Delete failed'))
+      }
+    },
+    onSuccess: async (_, input) => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['upstream-proxy-real-failures', input.proxyId],
+        }),
+        queryClient.invalidateQueries({ queryKey: ['upstream-proxies'] }),
+      ])
+    },
+    onError: (error) => toast.error(error.message || t('Delete failed')),
+  })
   const query = useQuery({
     queryKey: ['upstream-proxy-real-failures', proxy?.id],
     queryFn: async () => {
@@ -261,17 +283,18 @@ function ProxyRealFailuresDialog({
                 <TableHead>{t('Stage')}</TableHead>
                 <TableHead>{t('Elapsed')}</TableHead>
                 <TableHead>{t('Request ID')}</TableHead>
+                <TableHead>{t('Actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {query.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={6}>{t('Loading...')}</TableCell>
+                  <TableCell colSpan={7}>{t('Loading...')}</TableCell>
                 </TableRow>
               ) : query.isError && query.data == null ? (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className='text-muted-foreground py-10 text-center'
                   >
                     {t('Failed to load')}
@@ -280,7 +303,7 @@ function ProxyRealFailuresDialog({
               ) : failures.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className='text-muted-foreground py-10 text-center'
                   >
                     {t('No real request failures in the last 24 hours.')}
@@ -315,6 +338,24 @@ function ProxyRealFailuresDialog({
                       title={failure.request_id}
                     >
                       {failure.request_id || '-'}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        type='button'
+                        size='xs'
+                        variant='outline'
+                        disabled={markAsRead.isPending}
+                        onClick={() => {
+                          if (proxy) {
+                            markAsRead.mutate({
+                              proxyId: proxy.id,
+                              eventId: failure.id,
+                            })
+                          }
+                        }}
+                      >
+                        {t('Mark as read')}
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))
