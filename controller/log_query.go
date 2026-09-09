@@ -95,12 +95,11 @@ func cachedAdminLogCount(c *gin.Context, start, end int64) func(*gorm.DB) (int64
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), dashboardAggregateTimeout)
 			defer cancel()
-			select {
-			case dashboardAggregateSlots <- struct{}{}:
-				defer func() { <-dashboardAggregateSlots }()
-			default:
-				return nil, errors.New("dashboard aggregate is busy")
+			release, err := acquireDashboardSlot(ctx, dashboardAggregateSlots, dashboardAggregateWaiters, dashboardQueueTimeout)
+			if err != nil {
+				return nil, err
 			}
+			defer release()
 			var count int64
 			if err := query.WithContext(ctx).Count(&count).Error; err != nil {
 				return nil, err
@@ -127,12 +126,11 @@ func queryAdminLogStat(key string, query func(context.Context) (model.Stat, erro
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), dashboardAggregateTimeout)
 		defer cancel()
-		select {
-		case dashboardAggregateSlots <- struct{}{}:
-			defer func() { <-dashboardAggregateSlots }()
-		default:
-			return nil, errors.New("dashboard aggregate is busy")
+		release, err := acquireDashboardSlot(ctx, dashboardAggregateSlots, dashboardAggregateWaiters, dashboardQueueTimeout)
+		if err != nil {
+			return nil, err
 		}
+		defer release()
 		stat, err := query(ctx)
 		if err != nil {
 			return nil, err

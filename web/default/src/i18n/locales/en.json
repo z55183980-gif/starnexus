@@ -6123,6 +6123,11 @@
     "Stage": "Stage",
     "Elapsed": "Elapsed",
     "{{count}} timeouts": "{{count}} timeouts",
-    "Last failure": "Last failure"
+    "Last failure": "Last failure",
+    "Calculate statistics": "Calculate statistics",
+    "Calculating statistics...": "Calculating statistics...",
+    "Statistics are busy. Please retry shortly.": "Statistics are busy. Please retry shortly.",
+    "Page {{current}}": "Page {{current}}",
+    "Please retry": "Please retry"
   }
 }

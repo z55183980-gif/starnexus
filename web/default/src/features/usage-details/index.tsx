@@ -621,6 +621,7 @@ export function UsageDetails() {
     return params
   }, [filters, isManagedScope])
   const query = useQuery({
+    retry: false,
     queryKey: ['usage-details', activeTab, accessScope, params, t],
     queryFn: async () => {
       const result =
@@ -641,6 +642,8 @@ export function UsageDetails() {
     staleTime: 30_000,
   })
   const summaryQuery = useQuery({
+    retry: false,
+    refetchOnWindowFocus: false,
     queryKey: ['usage-details-summary', summaryParams, t],
     queryFn: async () => {
       const result = await getUsageDetailsSummary(summaryParams)
@@ -650,15 +653,8 @@ export function UsageDetails() {
       }
       return mapUsageSummary(result.data)
     },
-    // The summary scans the complete filtered result set. Start it only after
-    // the first page has loaded so the two database-heavy requests do not hit
-    // the log database concurrently on initial navigation.
-    enabled:
-      activeTab === 'usage' &&
-      accessScope === 'admin' &&
-      query.isSuccess &&
-      !query.isFetching,
-    placeholderData: (previousData) => previousData,
+    // Only the Calculate statistics button starts this potentially heavy query.
+    enabled: false,
     staleTime: 30_000,
   })
   const logs = useMemo(
@@ -684,7 +680,10 @@ export function UsageDetails() {
       ),
     onSortingChange: setSorting,
     manualPagination: true,
-    pageCount: Math.ceil((query.data?.total || 0) / pagination.pageSize),
+    pageCount:
+      query.data?.has_more !== undefined
+        ? pagination.pageIndex + 1 + Number(query.data.has_more)
+        : Math.ceil((query.data?.total || 0) / pagination.pageSize),
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     enableRowSelection: false,
@@ -779,20 +778,35 @@ export function UsageDetails() {
           ) : (
             <DataTablePage
               table={table}
+              cursorPagination={
+                isAdmin
+                  ? {
+                      hasNextPage:
+                        query.data?.has_more ?? table.getCanNextPage(),
+                      disabled: query.isFetching || query.isError,
+                    }
+                  : undefined
+              }
               columns={columns}
               isLoading={query.isLoading}
               isFetching={query.isFetching}
               emptyTitle={
-                activeTab === 'errors'
-                  ? t('No Error Requests Found')
-                  : t('No Usage Details Found')
+                query.isError
+                  ? t('Failed to load logs')
+                  : activeTab === 'errors'
+                    ? t('No Error Requests Found')
+                    : t('No Usage Details Found')
               }
               emptyDescription={
-                activeTab === 'errors'
-                  ? t(
-                      'Error requests will appear here when upstream calls fail.'
-                    )
-                  : t('Usage details will appear here once API calls are made.')
+                query.isError
+                  ? t('Please retry')
+                  : activeTab === 'errors'
+                    ? t(
+                        'Error requests will appear here when upstream calls fail.'
+                      )
+                    : t(
+                        'Usage details will appear here once API calls are made.'
+                      )
               }
               skeletonKeyPrefix='usage-details-skeleton'
               tableClassName='max-h-[calc(100dvh-20rem)] overflow-auto'
@@ -989,16 +1003,24 @@ export function UsageDetails() {
                           icon={Box}
                           iconClassName='bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400'
                           label={t('Total Token')}
-                          value={formatUsageTokens(summary.totalTokens)}
+                          value={
+                            isAdmin && !summaryQuery.data
+                              ? '—'
+                              : formatUsageTokens(summary.totalTokens)
+                          }
                         >
                           <span>
                             {t('Input')}:{' '}
-                            {formatUsageTokens(summary.inputTokens)}
+                            {isAdmin && !summaryQuery.data
+                              ? '—'
+                              : formatUsageTokens(summary.inputTokens)}
                           </span>
                           <span>/</span>
                           <span>
                             {t('Output')}:{' '}
-                            {formatUsageTokens(summary.outputTokens)}
+                            {isAdmin && !summaryQuery.data
+                              ? '—'
+                              : formatUsageTokens(summary.outputTokens)}
                           </span>
                           <span>/</span>
                           <span
@@ -1007,7 +1029,9 @@ export function UsageDetails() {
                           >
                             <span>
                               {t('Cache')}:{' '}
-                              {formatUsageTokens(summary.cacheTokens)}
+                              {isAdmin && !summaryQuery.data
+                                ? '—'
+                                : formatUsageTokens(summary.cacheTokens)}
                             </span>
                             <Info className='size-3.5' />
                           </span>
@@ -1016,20 +1040,39 @@ export function UsageDetails() {
                           icon={CircleDollarSign}
                           iconClassName='bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400'
                           label={t('Total Consumption')}
-                          value={formatUsageCost(summary.actualCostUSD)}
+                          value={
+                            isAdmin && !summaryQuery.data
+                              ? '—'
+                              : formatUsageCost(summary.actualCostUSD)
+                          }
                           valueClassName='text-green-600 dark:text-green-400'
                         >
                           <span className='text-orange-500'>
                             {t('Account Cost')}{' '}
-                            {formatUsageCost(summary.accountCostUSD)}
+                            {isAdmin && !summaryQuery.data
+                              ? '—'
+                              : formatUsageCost(summary.accountCostUSD)}
                           </span>
                           <span>·</span>
                           <span>
                             {t('Standard Cost')}{' '}
-                            {formatUsageCost(summary.standardCostUSD)}
+                            {isAdmin && !summaryQuery.data
+                              ? '—'
+                              : formatUsageCost(summary.standardCostUSD)}
                           </span>
                         </UsageSummaryCard>
                       </div>
+                    )}
+                    {isAdmin && activeTab === 'usage' && (
+                      <Button
+                        variant='outline'
+                        disabled={summaryQuery.isFetching || query.isFetching}
+                        onClick={() => void summaryQuery.refetch()}
+                      >
+                        {summaryQuery.isFetching
+                          ? t('Calculating statistics...')
+                          : t('Calculate statistics')}
+                      </Button>
                     )}
                     <Button
                       variant='outline'

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
+import { getDashboardResponse } from '@/lib/dashboard-request'
 import { LogCursorPages } from './lib/cursor-pages'
 import { buildQueryParams } from './lib/utils'
 import type {
@@ -56,8 +57,7 @@ async function fetchLogs<T>(
     ...params,
   })
   const path = buildApiPath(endpoint, accessScope)
-  const res = await api.get(`${path}?${queryParams}`)
-  return res.data
+  return getDashboardResponse<GetLogsResponse>(`${path}?${queryParams}`)
 }
 
 async function fetchLogStats<T>(
@@ -69,8 +69,9 @@ async function fetchLogStats<T>(
     params as unknown as Record<string, unknown>
   )
   const path = buildApiPath(endpoint, accessScope)
-  const res = await api.get(`${path}/stat?${queryParams}`)
-  return res.data
+  return getDashboardResponse<GetLogStatsResponse>(
+    `${path}/stat?${queryParams}`
+  )
 }
 
 // ============================================================================
@@ -82,7 +83,11 @@ const adminLogPages = new LogCursorPages()
 export const getAllLogs = async (params: GetLogsParams = {}) => {
   const identity = useAuthStore.getState().auth.user?.id ?? 0
   const request = adminLogPages.prepare(identity, params)
-  const result = await fetchLogs('/api/log', request.params, 'admin')
+  const result = await fetchLogs(
+    '/api/log',
+    { ...request.params, include_total: false },
+    'admin'
+  )
   if (result.success && result.data) {
     adminLogPages.remember(request, result.data.next_cursor ?? 0)
   }
@@ -100,8 +105,9 @@ export const getUsageDetailsSummary = async (
   params: Omit<GetLogsParams, 'p' | 'page_size'> = {}
 ): Promise<GetUsageDetailsSummaryResponse> => {
   const queryParams = buildQueryParams(params as Record<string, unknown>)
-  const res = await api.get(`/api/log/summary?${queryParams}`)
-  return res.data
+  return getDashboardResponse<GetUsageDetailsSummaryResponse>(
+    `/api/log/summary?${queryParams}`
+  )
 }
 
 export const getUserLogStats = (

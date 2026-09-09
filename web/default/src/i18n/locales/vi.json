@@ -6123,6 +6123,11 @@
     "Stage": "Giai đoạn",
     "Elapsed": "Thời gian xử lý",
     "{{count}} timeouts": "{{count}} lần hết thời gian",
-    "Last failure": "Lỗi gần nhất"
+    "Last failure": "Lỗi gần nhất",
+    "Calculate statistics": "Tính thống kê",
+    "Calculating statistics...": "Đang tính thống kê…",
+    "Statistics are busy. Please retry shortly.": "Dịch vụ thống kê đang bận. Vui lòng thử lại sau ít phút.",
+    "Page {{current}}": "Trang {{current}}",
+    "Please retry": "Vui lòng thử lại"
   }
 }

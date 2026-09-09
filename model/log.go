@@ -770,8 +770,9 @@ func applyLogExcludeFilters(tx *gorm.DB, filters []LogExcludeFilter, tablePrefix
 // original signature while newer callers can filter by upstream account and
 // billing metadata.
 type LogQueryOptions struct {
-	Context  context.Context
-	BeforeID int
+	Context   context.Context
+	BeforeID  int
+	SkipCount bool
 	// Count receives the filtered query before any cursor or pagination is applied.
 	Count       func(*gorm.DB) (int64, error)
 	AccountName string
@@ -886,10 +887,13 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
-	if option.Count != nil {
-		total, err = option.Count(tx.Session(&gorm.Session{}).Model(&Log{}))
-	} else {
-		err = tx.Session(&gorm.Session{}).Model(&Log{}).Count(&total).Error
+	// Cursor clients do not need an exact total to browse records.
+	if !option.SkipCount {
+		if option.Count != nil {
+			total, err = option.Count(tx.Session(&gorm.Session{}).Model(&Log{}))
+		} else {
+			err = tx.Session(&gorm.Session{}).Model(&Log{}).Count(&total).Error
+		}
 	}
 	if err != nil {
 		return nil, 0, err

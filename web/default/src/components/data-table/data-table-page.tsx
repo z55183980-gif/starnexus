@@ -55,6 +55,8 @@ export type DataTablePageProps<TData> = {
    */
   table: TanstackTable<TData>
 
+  cursorPagination?: { hasNextPage: boolean; disabled?: boolean }
+
   /**
    * Column definitions. Used for skeleton column count and empty-state colSpan.
    */
@@ -239,11 +241,17 @@ export function DataTablePage<TData>(props: DataTablePageProps<TData>) {
       {props.showPagination !== false &&
         (props.paginationInFooter !== false ? (
           <PageFooterPortal>
-            <DataTablePagination table={props.table} />
+            <DataTablePagination
+              table={props.table}
+              cursor={props.cursorPagination}
+            />
           </PageFooterPortal>
         ) : (
           <div className='pt-2'>
-            <DataTablePagination table={props.table} />
+            <DataTablePagination
+              table={props.table}
+              cursor={props.cursorPagination}
+            />
           </div>
         ))}
     </>

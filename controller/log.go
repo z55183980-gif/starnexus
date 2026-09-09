@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,22 +27,21 @@ func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	beforeID, pageErr := parseAdminLogPage(c, pageInfo)
 	if pageErr != nil {
-		common.ApiError(c, pageErr)
+		dashboardQueryError(c, pageErr)
 		return
 	}
 	queryCtx, cancel := context.WithTimeout(c.Request.Context(), dashboardAggregateTimeout)
 	defer cancel()
-	select {
-	case adminLogListSlots <- struct{}{}:
-		defer func() { <-adminLogListSlots }()
-	default:
-		common.ApiError(c, errors.New("log list is busy"))
+	release, slotErr := acquireDashboardSlot(queryCtx, adminLogListSlots, adminLogListWaiters, dashboardQueueTimeout)
+	if slotErr != nil {
+		dashboardQueryError(c, slotErr)
 		return
 	}
+	defer release()
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
 	if rangeErr != nil {
-		common.ApiError(c, rangeErr)
+		dashboardQueryError(c, rangeErr)
 		return
 	}
 	username := c.Query("username")
@@ -68,27 +66,44 @@ func GetAllLogs(c *gin.Context) {
 	}
 	excludeFilters, err := model.ParseLogExcludeFilters(c.Query("exclude_filters"))
 	if err != nil {
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
 	}
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, excludeFilters, model.LogQueryOptions{
+	// Count-free pagination is opt-in; legacy clients still receive totals.
+	includeTotal := c.Query("include_total") != "false"
+	querySize := pageInfo.GetPageSize()
+	if !includeTotal {
+		querySize++ // One extra row determines has_more without COUNT(*).
+	}
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), querySize, channel, group, requestId, upstreamRequestId, excludeFilters, model.LogQueryOptions{
 		Context:     queryCtx,
 		BeforeID:    beforeID,
 		Count:       cachedAdminLogCount(c, startTimestamp, endTimestamp),
+		SkipCount:   !includeTotal,
 		AccountName: accountName,
 		BillingMode: billingMode,
 		BillingType: billingType,
 		Stream:      stream,
 	})
 	if err != nil {
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
+	}
+	hasMore := !includeTotal && len(logs) > pageInfo.GetPageSize()
+	if hasMore {
+		logs = logs[:pageInfo.GetPageSize()]
 	}
 	nextCursor := 0
 	if len(logs) > 0 {
 		nextCursor = logs[len(logs)-1].Id
 	}
-	common.ApiSuccess(c, gin.H{"items": logs, "total": total, "page": pageInfo.Page, "page_size": pageInfo.PageSize, "next_cursor": nextCursor})
+	response := gin.H{"items": logs, "page": pageInfo.Page, "page_size": pageInfo.PageSize, "next_cursor": nextCursor}
+	if includeTotal {
+		response["total"] = total
+	} else {
+		response["has_more"] = hasMore
+	}
+	common.ApiSuccess(c, response)
 	return
 }
 
@@ -190,7 +205,7 @@ func GetLogsStat(c *gin.Context) {
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
 	if rangeErr != nil {
-		common.ApiError(c, rangeErr)
+		dashboardQueryError(c, rangeErr)
 		return
 	}
 	tokenName := c.Query("token_name")
@@ -200,7 +215,7 @@ func GetLogsStat(c *gin.Context) {
 	group := c.Query("group")
 	excludeFilters, err := model.ParseLogExcludeFilters(c.Query("exclude_filters"))
 	if err != nil {
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
 	}
 	cacheKey := dashboardCacheKey(c.Request.URL.Path, c.Request.URL.Query(), "admin-log-stat", strconv.Itoa(c.GetInt("id")), 15*time.Second)
@@ -220,7 +235,7 @@ func GetLogsStat(c *gin.Context) {
 		return model.SumUsedQuotaContext(ctx, logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
 	})
 	if err != nil {
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
 	}
 	//tokenNum := model.SumUsedToken(logType, startTimestamp, endTimestamp, modelName, username, "")
@@ -243,7 +258,7 @@ func GetLogsSummary(c *gin.Context) {
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
 	if rangeErr != nil {
-		common.ApiError(c, rangeErr)
+		dashboardQueryError(c, rangeErr)
 		return
 	}
 	username := c.Query("username")
@@ -278,14 +293,11 @@ func GetLogsSummary(c *gin.Context) {
 		// disconnected tab should not cancel work awaited by other callers.
 		queryCtx, cancel := context.WithTimeout(context.Background(), dashboardAggregateTimeout)
 		defer cancel()
-		select {
-		case dashboardAggregateSlots <- struct{}{}:
-			defer func() { <-dashboardAggregateSlots }()
-		case <-queryCtx.Done():
-			return nil, queryCtx.Err()
-		default:
-			return nil, errors.New("dashboard aggregate is busy")
+		release, err := acquireDashboardSlot(queryCtx, dashboardAggregateSlots, dashboardAggregateWaiters, dashboardQueueTimeout)
+		if err != nil {
+			return nil, err
 		}
+		defer release()
 		summary, queryErr := model.GetUsageDetailsSummaryContext(queryCtx, logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, model.LogQueryOptions{
 			AccountName: accountName,
 			BillingMode: billingMode,
@@ -303,7 +315,7 @@ func GetLogsSummary(c *gin.Context) {
 			common.ApiSuccess(c, stale)
 			return
 		}
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
 	}
 	common.ApiSuccess(c, result.(model.UsageDetailsSummary))

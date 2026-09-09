@@ -162,7 +162,8 @@ func TestAdminLogEndpointCursorAndHistoricalBilling(t *testing.T) {
 		Success bool `json:"success"`
 		Data    struct {
 			Items      []model.Log `json:"items"`
-			Total      int64       `json:"total"`
+			Total      *int64      `json:"total"`
+			HasMore    bool        `json:"has_more"`
 			NextCursor int         `json:"next_cursor"`
 		} `json:"data"`
 	}
@@ -177,13 +178,33 @@ func TestAdminLogEndpointCursorAndHistoricalBilling(t *testing.T) {
 	}
 	first := request("start_timestamp=90&end_timestamp=200&page_size=2")
 	require.True(t, first.Success)
-	require.EqualValues(t, 3, first.Data.Total)
+	require.NotNil(t, first.Data.Total)
+	require.EqualValues(t, 3, *first.Data.Total)
 	require.Equal(t, 2, first.Data.NextCursor)
 	second := request("start_timestamp=90&end_timestamp=200&page_size=2&p=2&before_id=2")
 	require.True(t, second.Success)
 	require.Len(t, second.Data.Items, 1)
 	require.Equal(t, model.LogTypeTopup, second.Data.Items[0].Type)
-	require.EqualValues(t, 3, second.Data.Total)
+	require.EqualValues(t, 3, *second.Data.Total)
+	// The list must still succeed while every aggregate slot is occupied.
+	dashboardAggregateSlots <- struct{}{}
+	dashboardAggregateSlots <- struct{}{}
+	withoutCount := request("start_timestamp=90&end_timestamp=200&page_size=2&include_total=false")
+	<-dashboardAggregateSlots
+	<-dashboardAggregateSlots
+	require.True(t, withoutCount.Success)
+	require.Nil(t, withoutCount.Data.Total)
+	require.Len(t, withoutCount.Data.Items, 2)
+	require.True(t, withoutCount.Data.HasMore)
+	require.Equal(t, 2, withoutCount.Data.NextCursor)
+	last := request("start_timestamp=90&end_timestamp=200&page_size=2&p=2&before_id=2&include_total=false")
+	require.True(t, last.Success)
+	require.False(t, last.Data.HasMore)
+	require.Len(t, last.Data.Items, 1)
+	// Exactly a full last page must not advertise an empty next page.
+	exact := request("start_timestamp=90&end_timestamp=200&page_size=3&include_total=false")
+	require.True(t, exact.Success)
+	require.False(t, exact.Data.HasMore)
 	defaultWindow := request("")
 	require.True(t, defaultWindow.Success)
 	require.Empty(t, defaultWindow.Data.Items)

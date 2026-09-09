@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -71,14 +70,11 @@ func queryQuotaData(c *gin.Context, scope string, identity string, query func(co
 		}
 		queryContext, cancel := context.WithTimeout(context.Background(), dashboardAggregateTimeout)
 		defer cancel()
-		select {
-		case quotaDataSlots <- struct{}{}:
-			defer func() { <-quotaDataSlots }()
-		case <-queryContext.Done():
-			return nil, queryContext.Err()
-		default:
-			return nil, errors.New("dashboard aggregate is busy")
+		release, err := acquireDashboardSlot(queryContext, quotaDataSlots, quotaDataWaiters, dashboardQueueTimeout)
+		if err != nil {
+			return nil, err
 		}
+		defer release()
 		data, queryErr := query(queryContext)
 		if queryErr != nil {
 			return nil, queryErr
@@ -115,7 +111,7 @@ func respondQuotaData(c *gin.Context, result quotaDataQueryResult) {
 func GetAllQuotaDates(c *gin.Context) {
 	startTimestamp, endTimestamp, err := parseQuotaDataRange(c)
 	if err != nil {
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
 	}
 	username := strings.TrimSpace(c.Query("username"))
@@ -123,7 +119,7 @@ func GetAllQuotaDates(c *gin.Context) {
 		return model.GetAllQuotaDatesContext(ctx, startTimestamp, endTimestamp, username)
 	})
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("query dashboard data: %w", err))
+		dashboardQueryError(c, fmt.Errorf("query dashboard data: %w", err))
 		return
 	}
 	respondQuotaData(c, result)
@@ -132,14 +128,14 @@ func GetAllQuotaDates(c *gin.Context) {
 func GetQuotaDatesByUser(c *gin.Context) {
 	startTimestamp, endTimestamp, err := parseQuotaDataRange(c)
 	if err != nil {
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
 	}
 	result, err := queryQuotaData(c, "admin-user-quota-data", "shared", func(ctx context.Context) ([]*model.QuotaData, error) {
 		return model.GetQuotaDataGroupByUserContext(ctx, startTimestamp, endTimestamp)
 	})
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("query dashboard user data: %w", err))
+		dashboardQueryError(c, fmt.Errorf("query dashboard user data: %w", err))
 		return
 	}
 	respondQuotaData(c, result)
@@ -149,14 +145,14 @@ func GetUserQuotaDates(c *gin.Context) {
 	userId := c.GetInt("id")
 	startTimestamp, endTimestamp, err := parseQuotaDataRange(c)
 	if err != nil {
-		common.ApiError(c, err)
+		dashboardQueryError(c, err)
 		return
 	}
 	result, err := queryQuotaData(c, "self-quota-data", strconv.Itoa(userId), func(ctx context.Context) ([]*model.QuotaData, error) {
 		return model.GetQuotaDataByUserIdContext(ctx, userId, startTimestamp, endTimestamp)
 	})
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("query dashboard data: %w", err))
+		dashboardQueryError(c, fmt.Errorf("query dashboard data: %w", err))
 		return
 	}
 	respondQuotaData(c, result)

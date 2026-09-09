@@ -319,9 +319,10 @@ export interface GetLogsResponse {
   message?: string
   data?: {
     items: UsageLog[] | MidjourneyLog[] | TaskLog[]
-    total: number
+    total?: number
     page: number
     page_size: number
+    has_more?: boolean
     next_cursor?: number
   }
 }

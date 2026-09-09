@@ -6123,6 +6123,11 @@
     "Stage": "阶段",
     "Elapsed": "耗时",
     "{{count}} timeouts": "{{count}} 次超时",
-    "Last failure": "最近异常"
+    "Last failure": "最近异常",
+    "Calculate statistics": "计算统计",
+    "Calculating statistics...": "正在计算统计…",
+    "Statistics are busy. Please retry shortly.": "统计查询繁忙，请稍后重试。",
+    "Page {{current}}": "第 {{current}} 页",
+    "Please retry": "请重试"
   }
 }

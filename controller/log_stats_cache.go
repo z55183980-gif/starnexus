@@ -45,14 +45,15 @@ func (c *ttlCache[V]) Get(key string) (V, bool) {
 
 // GetStale returns the most recently cached value even after its freshness
 // window has elapsed. Dashboard aggregates use this as a safe fallback when a
-// refresh is still running or the database query times out. Entries remain
+// refresh is still running or the database query times out, for at most two
+// minutes beyond expiration. Entries remain
 // bounded by maxEntries and are replaced on the next successful refresh.
 func (c *ttlCache[V]) GetStale(key string) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	item, ok := c.items[key]
-	if !ok {
+	if !ok || time.Now().After(item.expiresAt.Add(2*time.Minute)) {
 		var zero V
 		return zero, false
 	}

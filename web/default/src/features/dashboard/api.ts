@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { getDashboardResponse } from '@/lib/dashboard-request'
 import type { QuotaDataResponse, UptimeGroupResult } from './types'
 
 // ============================================================================
@@ -39,8 +40,7 @@ export async function getUserQuotaDates(
   isAdmin = false
 ) {
   const endpoint = isAdmin ? '/api/data' : '/api/data/self'
-  const res = await api.get<QuotaDataResponse>(endpoint, { params })
-  return res.data
+  return getDashboardResponse<QuotaDataResponse>(endpoint, params)
 }
 
 // ----------------------------------------------------------------------------
@@ -51,8 +51,7 @@ export async function getUserQuotaDataByUsers(params: {
   start_timestamp: number
   end_timestamp: number
 }) {
-  const res = await api.get<QuotaDataResponse>('/api/data/users', { params })
-  return res.data
+  return getDashboardResponse<QuotaDataResponse>('/api/data/users', params)
 }
 
 // Get uptime monitoring status for all services

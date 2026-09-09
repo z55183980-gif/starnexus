@@ -37,15 +37,23 @@ import {
 
 type DataTablePaginationProps<TData> = {
   table: Table<TData>
+  cursor?: { hasNextPage: boolean; disabled?: boolean }
 }
 
 export function DataTablePagination<TData>({
   table,
+  cursor,
 }: DataTablePaginationProps<TData>) {
   const { t } = useTranslation()
   const currentPage = table.getState().pagination.pageIndex + 1
   const totalPages = table.getPageCount()
-  const pageNumbers = getPageNumbers(currentPage, totalPages)
+  const pageNumbers = cursor ? [] : getPageNumbers(currentPage, totalPages)
+  const pageLabel = cursor
+    ? t('Page {{current}}', { current: currentPage })
+    : t('Page {{current}} of {{total}}', {
+        current: currentPage,
+        total: totalPages,
+      })
 
   return (
     <div
@@ -57,13 +65,11 @@ export function DataTablePagination<TData>({
     >
       <div className='flex w-full items-center justify-between gap-2'>
         <div className='flex min-w-0 items-center text-xs font-medium whitespace-nowrap sm:min-w-[130px] sm:text-sm @2xl/content:hidden'>
-          {t('Page {{current}} of {{total}}', {
-            current: currentPage,
-            total: totalPages,
-          })}
+          {pageLabel}
         </div>
         <div className='flex items-center gap-2 @max-2xl/content:flex-row-reverse'>
           <Select
+            disabled={cursor?.disabled}
             items={[
               ...[10, 20, 30, 40, 50, 100].map((pageSize) => ({
                 value: `${pageSize}`,
@@ -96,17 +102,14 @@ export function DataTablePagination<TData>({
 
       <div className='flex items-center sm:space-x-6 lg:space-x-8'>
         <div className='flex min-w-[130px] items-center text-sm font-medium whitespace-nowrap @max-3xl/content:hidden'>
-          {t('Page {{current}} of {{total}}', {
-            current: currentPage,
-            total: totalPages,
-          })}
+          {pageLabel}
         </div>
         <div className='flex items-center space-x-1.5 sm:space-x-2'>
           <Button
             variant='outline'
             className='size-8 p-0 @max-md/content:hidden'
             onClick={() => table.setPageIndex(0)}
-            disabled={!table.getCanPreviousPage()}
+            disabled={cursor?.disabled || !table.getCanPreviousPage()}
           >
             <span className='sr-only'>{t('Go to first page')}</span>
             <DoubleArrowLeftIcon className='h-4 w-4' />
@@ -115,7 +118,7 @@ export function DataTablePagination<TData>({
             variant='outline'
             className='size-8 p-0'
             onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
+            disabled={cursor?.disabled || !table.getCanPreviousPage()}
           >
             <span className='sr-only'>{t('Go to previous page')}</span>
             <ChevronLeftIcon className='h-4 w-4' />
@@ -143,20 +146,25 @@ export function DataTablePagination<TData>({
             variant='outline'
             className='size-8 p-0'
             onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
+            disabled={
+              cursor?.disabled ||
+              (cursor ? !cursor.hasNextPage : !table.getCanNextPage())
+            }
           >
             <span className='sr-only'>{t('Go to next page')}</span>
             <ChevronRightIcon className='h-4 w-4' />
           </Button>
-          <Button
-            variant='outline'
-            className='size-8 p-0 @max-md/content:hidden'
-            onClick={() => table.setPageIndex(table.getPageCount() - 1)}
-            disabled={!table.getCanNextPage()}
-          >
-            <span className='sr-only'>{t('Go to last page')}</span>
-            <DoubleArrowRightIcon className='h-4 w-4' />
-          </Button>
+          {!cursor && (
+            <Button
+              variant='outline'
+              className='size-8 p-0 @max-md/content:hidden'
+              onClick={() => table.setPageIndex(table.getPageCount() - 1)}
+              disabled={!table.getCanNextPage()}
+            >
+              <span className='sr-only'>{t('Go to last page')}</span>
+              <DoubleArrowRightIcon className='h-4 w-4' />
+            </Button>
+          )}
         </div>
       </div>
     </div>

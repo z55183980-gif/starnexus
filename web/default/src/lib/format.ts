@@ -177,14 +177,15 @@ export function formatTokens(tokens: number): string {
 }
 
 /**
- * Format use time in seconds with appropriate unit
+ * Format use time with appropriate unit, truncating seconds to one decimal place
  */
 export function formatUseTime(seconds: number): string {
   if (seconds < 1) return `${Math.round(seconds * 1000)}ms`
-  if (seconds < 60) return `${seconds.toFixed(3)}s`
-  const minutes = Math.floor(seconds / 60)
-  const remainingSeconds = seconds % 60
-  return `${minutes}m ${remainingSeconds.toFixed(3)}s`
+  const tenths = Math.trunc(seconds * 10)
+  if (seconds < 60) return `${tenths / 10}s`
+  const minutes = Math.floor(tenths / 600)
+  const remainingSeconds = (tenths % 600) / 10
+  return `${minutes}m ${remainingSeconds}s`
 }
 
 /**

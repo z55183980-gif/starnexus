@@ -6123,6 +6123,11 @@
     "Stage": "Этап",
     "Elapsed": "Затрачено",
     "{{count}} timeouts": "Тайм-аутов: {{count}}",
-    "Last failure": "Последний сбой"
+    "Last failure": "Последний сбой",
+    "Calculate statistics": "Рассчитать статистику",
+    "Calculating statistics...": "Расчёт статистики…",
+    "Statistics are busy. Please retry shortly.": "Сервис статистики занят. Повторите попытку чуть позже.",
+    "Page {{current}}": "Страница {{current}}",
+    "Please retry": "Повторите попытку"
   }
 }

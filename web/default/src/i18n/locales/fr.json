@@ -6123,6 +6123,11 @@
     "Stage": "Étape",
     "Elapsed": "Durée",
     "{{count}} timeouts": "{{count}} délais d'attente",
-    "Last failure": "Dernier échec"
+    "Last failure": "Dernier échec",
+    "Calculate statistics": "Calculer les statistiques",
+    "Calculating statistics...": "Calcul des statistiques…",
+    "Statistics are busy. Please retry shortly.": "Les statistiques sont temporairement indisponibles. Réessayez dans un instant.",
+    "Page {{current}}": "Page {{current}}",
+    "Please retry": "Veuillez réessayer"
   }
 }

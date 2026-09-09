@@ -21,6 +21,7 @@ import { getRouteApi } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { formatLogQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getAgentLogStats, getLogStats, getUserLogStats } from '../api'
 import { DEFAULT_LOG_STATS } from '../constants'
@@ -55,7 +56,10 @@ export function CommonLogsStats({
   const searchParams = route.useSearch()
   const { sensitiveVisible } = useUsageLogsContext()
 
-  const { data: stats, isLoading } = useQuery({
+  const statsQuery = useQuery({
+    enabled: false,
+    retry: false,
+    refetchOnWindowFocus: false,
     queryKey: ['usage-logs-stats', accessScope, searchParams],
     queryFn: async () => {
       const params = buildApiParams({
@@ -77,10 +81,12 @@ export function CommonLogsStats({
         ? result.data || DEFAULT_LOG_STATS
         : DEFAULT_LOG_STATS
     },
-    placeholderData: (previousData) => previousData,
   })
 
-  if (isLoading) {
+  const stats = statsQuery.data
+  let quotaDisplay = '••••'
+  if (sensitiveVisible) quotaDisplay = stats ? formatLogQuota(stats.quota) : '—'
+  if (statsQuery.isLoading) {
     return (
       <div className='flex items-center gap-2'>
         <Skeleton className='h-7 w-[150px] rounded-md' />
@@ -92,19 +98,27 @@ export function CommonLogsStats({
 
   return (
     <div className='flex flex-wrap items-center gap-2'>
+      <Button
+        variant='outline'
+        size='sm'
+        disabled={statsQuery.isFetching}
+        onClick={() => void statsQuery.refetch()}
+      >
+        {t('Calculate statistics')}
+      </Button>
       <StatBadge
         label={t('Usage')}
-        value={sensitiveVisible ? formatLogQuota(stats?.quota || 0) : '••••'}
+        value={quotaDisplay}
         accent='bg-sky-500/70'
       />
       <StatBadge
         label={t('RPM')}
-        value={stats?.rpm || 0}
+        value={stats?.rpm ?? '—'}
         accent='bg-rose-500/65'
       />
       <StatBadge
         label={t('TPM')}
-        value={stats?.tpm || 0}
+        value={stats?.tpm ?? '—'}
         accent='bg-slate-400/70'
       />
     </div>

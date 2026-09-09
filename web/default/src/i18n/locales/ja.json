@@ -6123,6 +6123,11 @@
     "Stage": "段階",
     "Elapsed": "経過時間",
     "{{count}} timeouts": "タイムアウト{{count}}件",
-    "Last failure": "最終失敗"
+    "Last failure": "最終失敗",
+    "Calculate statistics": "統計を計算",
+    "Calculating statistics...": "統計を計算中…",
+    "Statistics are busy. Please retry shortly.": "統計の処理が混み合っています。しばらくしてから再試行してください。",
+    "Page {{current}}": "{{current}} ページ",
+    "Please retry": "再試行してください"
   }
 }

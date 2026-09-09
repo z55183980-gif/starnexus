@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/glebarez/sqlite"
@@ -44,6 +45,13 @@ func TestAdminLogCursorPreservesFiltersAndHistory(t *testing.T) {
 	require.EqualValues(t, 4, total)
 	require.Len(t, second, 1)
 	require.Equal(t, 1, second[0].Id)
+	// Count-free mode never invokes the count callback, preserving filters.
+	noCount, _, err := query(0, LogQueryOptions{SkipCount: true, Count: func(*gorm.DB) (int64, error) {
+		return 0, errors.New("count must not run")
+	}})
+	require.NoError(t, err)
+	require.Len(t, noCount, 2)
+	require.Equal(t, 7, noCount[0].Id)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, _, err = query(0, LogQueryOptions{Context: ctx})

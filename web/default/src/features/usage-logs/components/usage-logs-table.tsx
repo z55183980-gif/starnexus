@@ -32,9 +32,9 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
+import { cn } from '@/lib/utils'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { TableCell, TableRow } from '@/components/ui/table'
@@ -103,7 +103,8 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     ],
   })
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError } = useQuery({
+    retry: false,
     queryKey: [
       'logs',
       logCategory,
@@ -140,7 +141,11 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const logs = data?.items || []
-  const columns = useColumnsByCategory(logCategory, isAdmin, canViewManagedUsers)
+  const columns = useColumnsByCategory(
+    logCategory,
+    isAdmin,
+    canViewManagedUsers
+  )
   const isLoadingData = isLoading || (isFetching && !data)
 
   const table = useReactTable({
@@ -160,7 +165,10 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getFacetedUniqueValues(),
     manualPagination: true,
-    pageCount: Math.ceil((data?.total || 0) / pagination.pageSize),
+    pageCount:
+      data?.has_more !== undefined
+        ? pagination.pageIndex + 1 + Number(data.has_more)
+        : Math.ceil((data?.total || 0) / pagination.pageSize),
   })
 
   const pageCount = table.getPageCount()
@@ -173,13 +181,25 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   return (
     <DataTablePage
       table={table}
+      cursorPagination={
+        accessScope === 'admin' && logCategory === 'common'
+          ? {
+              hasNextPage: data?.has_more ?? table.getCanNextPage(),
+              disabled: isFetching || isError,
+            }
+          : undefined
+      }
       columns={columns as ColumnDef<Record<string, unknown>>[]}
       isLoading={isLoadingData}
       isFetching={isFetching}
-      emptyTitle={t('No Logs Found')}
-      emptyDescription={t(
-        'No usage logs available. Logs will appear here once API calls are made.'
-      )}
+      emptyTitle={isError ? t('Failed to load logs') : t('No Logs Found')}
+      emptyDescription={
+        isError
+          ? t('Please retry')
+          : t(
+              'No usage logs available. Logs will appear here once API calls are made.'
+            )
+      }
       skeletonKeyPrefix='usage-log-skeleton'
       tableClassName='max-h-[calc(100dvh-13rem)] overflow-auto sm:max-h-[calc(100dvh-14rem)]'
       tableHeaderClassName='bg-muted/30 sticky top-0 z-10'
@@ -187,7 +207,11 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
         isCommon ? (
           <CommonLogsFilterBar table={table} accessScope={accessScope} />
         ) : (
-          <TaskLogsFilterBar table={table} logCategory={logCategory} accessScope={accessScope} />
+          <TaskLogsFilterBar
+            table={table}
+            logCategory={logCategory}
+            accessScope={accessScope}
+          />
         )
       }
       renderRow={(row) => {
