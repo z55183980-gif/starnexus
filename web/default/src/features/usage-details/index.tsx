@@ -653,9 +653,13 @@ export function UsageDetails() {
       }
       return mapUsageSummary(result.data)
     },
-    // Only the Calculate statistics button starts this potentially heavy query.
-    enabled: false,
-    staleTime: 30_000,
+    // Load the aggregate once when the usage tab opens. React Query keeps the
+    // result cached so returning to the page does not immediately repeat the
+    // expensive full-table aggregation.
+    enabled: activeTab === 'usage' && accessScope === 'admin',
+    refetchOnMount: false,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
   })
   const logs = useMemo(
     () => (query.data?.items || []) as UsageLog[],
