@@ -24,7 +24,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
+import { setCookie, removeCookie } from '@/lib/cookies'
 
 type Theme = 'dark' | 'light' | 'system'
 type ResolvedTheme = Exclude<Theme, 'system'>
@@ -32,7 +32,6 @@ type ResolvedTheme = Exclude<Theme, 'system'>
 const DEFAULT_THEME = 'light'
 const THEME_COOKIE_NAME = 'vite-ui-theme'
 const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
-const THEMES = new Set<Theme>(['light'])
 
 type ThemeProviderProps = {
   children: React.ReactNode
@@ -58,22 +57,6 @@ const initialState: ThemeProviderState = {
 
 const ThemeContext = createContext<ThemeProviderState>(initialState)
 
-function getSystemTheme(): ResolvedTheme {
-  if (typeof window === 'undefined') return 'light'
-  return window.matchMedia('(prefers-color-scheme: dark)').matches
-    ? 'dark'
-    : 'light'
-}
-
-function resolveTheme(theme: Theme): ResolvedTheme {
-  return theme === 'system' ? getSystemTheme() : theme
-}
-
-function getStoredTheme(storageKey: string, fallback: Theme): Theme {
-  const storedTheme = getCookie(storageKey) as Theme | undefined
-  return storedTheme && THEMES.has(storedTheme) ? storedTheme : fallback
-}
-
 export function ThemeProvider({
   children,
   defaultTheme = DEFAULT_THEME,
@@ -93,7 +76,6 @@ export function ThemeProvider({
     }
 
     applyTheme()
-
   }, [])
 
   const setTheme = useCallback(

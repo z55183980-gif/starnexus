@@ -24,7 +24,11 @@ export function formatThroughput(tps: number): string {
 
 export function formatLatency(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '—'
-  if (ms >= 1_000) return `${(ms / 1_000).toFixed(2)}s`
+  if (ms >= 1_000) {
+    // Keep one decimal place for seconds and truncate instead of rounding.
+    const seconds = Math.trunc((ms / 1_000) * 10) / 10
+    return `${seconds.toFixed(1).replace(/\.0$/, '')}s`
+  }
   return `${Math.round(ms)}ms`
 }
 

@@ -26,9 +26,26 @@ var dashboardAggregateSlots = make(chan struct{}, 2)
 
 func GetAllLogs(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
+	beforeID, pageErr := parseAdminLogPage(c, pageInfo)
+	if pageErr != nil {
+		common.ApiError(c, pageErr)
+		return
+	}
+	queryCtx, cancel := context.WithTimeout(c.Request.Context(), dashboardAggregateTimeout)
+	defer cancel()
+	select {
+	case adminLogListSlots <- struct{}{}:
+		defer func() { <-adminLogListSlots }()
+	default:
+		common.ApiError(c, errors.New("log list is busy"))
+		return
+	}
 	logType, _ := strconv.Atoi(c.Query("type"))
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
+	if rangeErr != nil {
+		common.ApiError(c, rangeErr)
+		return
+	}
 	username := c.Query("username")
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")
@@ -55,6 +72,9 @@ func GetAllLogs(c *gin.Context) {
 		return
 	}
 	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, excludeFilters, model.LogQueryOptions{
+		Context:     queryCtx,
+		BeforeID:    beforeID,
+		Count:       cachedAdminLogCount(c, startTimestamp, endTimestamp),
 		AccountName: accountName,
 		BillingMode: billingMode,
 		BillingType: billingType,
@@ -64,9 +84,11 @@ func GetAllLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(logs)
-	common.ApiSuccess(c, pageInfo)
+	nextCursor := 0
+	if len(logs) > 0 {
+		nextCursor = logs[len(logs)-1].Id
+	}
+	common.ApiSuccess(c, gin.H{"items": logs, "total": total, "page": pageInfo.Page, "page_size": pageInfo.PageSize, "next_cursor": nextCursor})
 	return
 }
 
@@ -166,8 +188,11 @@ func GetLogByKey(c *gin.Context) {
 
 func GetLogsStat(c *gin.Context) {
 	logType, _ := strconv.Atoi(c.Query("type"))
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
+	if rangeErr != nil {
+		common.ApiError(c, rangeErr)
+		return
+	}
 	tokenName := c.Query("token_name")
 	username := c.Query("username")
 	modelName := c.Query("model_name")
@@ -191,7 +216,9 @@ func GetLogsStat(c *gin.Context) {
 		})
 		return
 	}
-	stat, err := model.SumUsedQuota(logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
+	stat, err := queryAdminLogStat(cacheKey, func(ctx context.Context) (model.Stat, error) {
+		return model.SumUsedQuotaContext(ctx, logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -214,8 +241,11 @@ func GetLogsStat(c *gin.Context) {
 // usage-details view. It accepts the same filters as the paginated log list.
 func GetLogsSummary(c *gin.Context) {
 	logType, _ := strconv.Atoi(c.Query("type"))
-	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
-	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
+	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
+	if rangeErr != nil {
+		common.ApiError(c, rangeErr)
+		return
+	}
 	username := c.Query("username")
 	tokenName := c.Query("token_name")
 	modelName := c.Query("model_name")

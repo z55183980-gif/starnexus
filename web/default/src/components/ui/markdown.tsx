@@ -52,7 +52,7 @@ export function Markdown({ children, className }: MarkdownProps) {
         rehypePlugins={[rehypeRaw]}
         components={{
           // 自定义组件渲染（可选）
-          a: ({ node, ...props }) => (
+          a: ({ node: _node, ref: _ref, ...props }) => (
             <a {...props} target='_blank' rel='noopener noreferrer' />
           ),
         }}

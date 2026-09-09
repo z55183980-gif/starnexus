@@ -770,6 +770,10 @@ func applyLogExcludeFilters(tx *gorm.DB, filters []LogExcludeFilter, tablePrefix
 // original signature while newer callers can filter by upstream account and
 // billing metadata.
 type LogQueryOptions struct {
+	Context  context.Context
+	BeforeID int
+	// Count receives the filtered query before any cursor or pagination is applied.
+	Count       func(*gorm.DB) (int64, error)
 	AccountName string
 	BillingMode string
 	BillingType *int
@@ -784,6 +788,13 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
 
+	var option LogQueryOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	if option.Context != nil {
+		tx = tx.WithContext(option.Context)
+	}
 	if modelName != "" {
 		modelNamePattern, patternErr := buildFuzzyLikePattern(modelName)
 		if patternErr != nil {
@@ -834,7 +845,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 			// matching account IDs first, then pass the values to the log query so
 			// the filter remains valid on every supported database topology.
 			var accountIDs []int
-			if err = DB.Model(&UpstreamAccount{}).
+			if err = DB.WithContext(tx.Statement.Context).Model(&UpstreamAccount{}).
 				Where("LOWER(name) LIKE LOWER(?) ESCAPE '!'", accountPattern).
 				Pluck("id", &accountIDs).Error; err != nil {
 				return nil, 0, err
@@ -875,9 +886,17 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if err != nil {
 		return nil, 0, err
 	}
-	err = tx.Model(&Log{}).Count(&total).Error
+	if option.Count != nil {
+		total, err = option.Count(tx.Session(&gorm.Session{}).Model(&Log{}))
+	} else {
+		err = tx.Session(&gorm.Session{}).Model(&Log{}).Count(&total).Error
+	}
 	if err != nil {
 		return nil, 0, err
+	}
+	if option.BeforeID > 0 {
+		tx = tx.Where("logs.id < ?", option.BeforeID)
+		startIdx = 0
 	}
 	err = tx.Order("logs.id desc").Limit(num).Offset(startIdx).Find(&logs).Error
 	if err != nil {
@@ -915,7 +934,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 			}
 		} else {
 			// Bulk query channels from DB
-			if err = DB.Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
+			if err = DB.WithContext(tx.Statement.Context).Table("channels").Select("id, name").Where("id IN ?", channelIds.Items()).Find(&channels).Error; err != nil {
 				return logs, total, err
 			}
 		}
@@ -933,7 +952,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 			Id   int    `gorm:"column:id"`
 			Name string `gorm:"column:name"`
 		}
-		if err = DB.Model(&UpstreamAccount{}).
+		if err = DB.WithContext(tx.Statement.Context).Model(&UpstreamAccount{}).
 			Select("id, name").
 			Where("id IN ?", accountIds.Items()).
 			Find(&accounts).Error; err != nil {
@@ -1341,10 +1360,14 @@ func getUsageDetailsSummaryAggregate(ctx context.Context, logType int, startTime
 }
 
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("sum(quota) quota")
+	return SumUsedQuotaContext(context.Background(), logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
+}
+
+func SumUsedQuotaContext(ctx context.Context, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter) (stat Stat, err error) {
+	tx := LOG_DB.WithContext(ctx).Table("logs").Select("sum(quota) quota")
 
 	// 为rpm和tpm创建单独的查询
-	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
+	rpmTpmQuery := LOG_DB.WithContext(ctx).Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
 
 	if username != "" {
 		usernamePattern, patternErr := buildFuzzyLikePattern(username)

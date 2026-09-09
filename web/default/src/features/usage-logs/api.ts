@@ -16,7 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
+import { LogCursorPages } from './lib/cursor-pages'
 import { buildQueryParams } from './lib/utils'
 import type {
   GetLogsParams,
@@ -75,8 +77,17 @@ async function fetchLogStats<T>(
 // Common Log APIs
 // ============================================================================
 
-export const getAllLogs = (params: GetLogsParams = {}) =>
-  fetchLogs('/api/log', params, 'admin')
+const adminLogPages = new LogCursorPages()
+
+export const getAllLogs = async (params: GetLogsParams = {}) => {
+  const identity = useAuthStore.getState().auth.user?.id ?? 0
+  const request = adminLogPages.prepare(identity, params)
+  const result = await fetchLogs('/api/log', request.params, 'admin')
+  if (result.success && result.data) {
+    adminLogPages.remember(request, result.data.next_cursor ?? 0)
+  }
+  return result
+}
 
 export const getUserLogs = (
   params: Omit<GetLogsParams, 'username' | 'channel'> = {}
@@ -97,9 +108,8 @@ export const getUserLogStats = (
   params: Omit<GetLogStatsParams, 'username' | 'channel'> = {}
 ) => fetchLogStats('/api/log', params, 'self')
 
-export const getAgentLogs = (
-  params: Omit<GetLogsParams, 'channel'> = {}
-) => fetchLogs('/api/log', params, 'agent')
+export const getAgentLogs = (params: Omit<GetLogsParams, 'channel'> = {}) =>
+  fetchLogs('/api/log', params, 'agent')
 
 export const getAgentLogStats = (
   params: Omit<GetLogStatsParams, 'channel'> = {}
@@ -123,14 +133,10 @@ export async function updateUserNodeBinding(
   userId: number,
   node: UserRoutingNode
 ): Promise<UserNodeBindingResponse> {
-  const res = await api.put(
-    `/api/user/${userId}/node_binding`,
-    { node },
-    {
-      skipBusinessError: true,
-      skipErrorHandler: true,
-    } as Record<string, unknown>
-  )
+  const res = await api.put(`/api/user/${userId}/node_binding`, { node }, {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  } as Record<string, unknown>)
   return res.data
 }
 

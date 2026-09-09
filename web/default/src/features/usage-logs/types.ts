@@ -294,6 +294,7 @@ export interface TaskLog {
 // ============================================================================
 
 export interface GetLogsParams {
+  before_id?: number
   p?: number
   page_size?: number
   type?: number
@@ -321,6 +322,7 @@ export interface GetLogsResponse {
     total: number
     page: number
     page_size: number
+    next_cursor?: number
   }
 }
 
