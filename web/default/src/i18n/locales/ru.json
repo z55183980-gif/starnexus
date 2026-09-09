@@ -6112,6 +6112,17 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "Настройки материалов ZQBAPI"
+    "ZQBAPI material settings": "Настройки материалов ZQBAPI",
+    "Real request failures": "Сбои реальных запросов",
+    "Only failures recorded during real upstream account requests are shown.": "Показываются только сбои, записанные во время реальных запросов к исходным аккаунтам.",
+    "No real request failures in the last 24 hours.": "За последние 24 часа сбоев реальных запросов нет.",
+    "Real request health": "Состояние реальных запросов",
+    "No failures": "Сбоев нет",
+    "{{count}} failures": "Сбоев: {{count}}",
+    "{{count}} consecutive": "Подряд: {{count}}",
+    "Stage": "Этап",
+    "Elapsed": "Затрачено",
+    "{{count}} timeouts": "Тайм-аутов: {{count}}",
+    "Last failure": "Последний сбой"
   }
 }

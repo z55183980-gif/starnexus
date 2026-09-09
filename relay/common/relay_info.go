@@ -94,9 +94,10 @@ type RelayInfo struct {
 	UserGroup      string // 用户所在分组
 	TokenUnlimited bool
 	StartTime      time.Time
-	// LogStartTime is the HTTP usage-log display start point. It is set just
-	// before dispatching an upstream attempt, so displayed FRT excludes local
-	// preparation. StartTime remains canonical for billing and performance.
+	// LogStartTime is the usage-log and performance-metric start point. It is set just
+	// before dispatching an upstream attempt, so displayed FRT and total duration
+	// exclude local preparation and earlier attempts. StartTime remains canonical
+	// for request-level billing and control logic.
 	LogStartTime      time.Time
 	FirstResponseTime time.Time
 	isFirstResponse   bool
@@ -743,9 +744,8 @@ func (info *RelayInfo) SetFirstResponseTime() {
 	}
 }
 
-// SetLogStartTime updates the start point used by the usage-log FRT display.
-// It intentionally does not change StartTime, which is also used by billing
-// and aggregate performance metrics.
+// SetLogStartTime updates the start point used by usage logs and performance
+// metrics. It does not change StartTime used by request-level billing and control.
 func (info *RelayInfo) SetLogStartTime(start time.Time) {
 	if info == nil || start.IsZero() {
 		return
@@ -753,8 +753,8 @@ func (info *RelayInfo) SetLogStartTime(start time.Time) {
 	info.LogStartTime = start
 }
 
-// StartFirstTokenAttempt starts the display-only FRT timer for the current
-// account attempt while no response has been delivered to the client.
+// StartFirstTokenAttempt starts the usage-log FRT and total-duration timers for
+// the current account attempt while no response has been delivered to the client.
 func (info *RelayInfo) StartFirstTokenAttempt(start time.Time) {
 	if info == nil || start.IsZero() || info.SendResponseCount > 0 {
 		return

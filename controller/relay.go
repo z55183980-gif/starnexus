@@ -84,8 +84,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
 	var (
-		newAPIError *types.NewAPIError
-		ws          *websocket.Conn
+		newAPIError        *types.NewAPIError
+		ws                 *websocket.Conn
+		attemptCompletedAt time.Time
 	)
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
@@ -314,8 +315,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				break
 			}
 			c.Request.Body = io.NopCloser(bodyStorage)
-			// The usage-log FRT is a display metric. Start it at the last point
-			// before dispatching this HTTP attempt so routing, local audits, token
+			// Usage-log FRT and total duration measure the current attempt. Start
+			// just before dispatching this HTTP attempt so routing, local audits, token
 			// estimation, billing reservation, and account lease waits are excluded.
 			if relayFormat != types.RelayFormatOpenAIRealtime {
 				markHTTPLogStart(c, relayInfo)
@@ -331,6 +332,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			default:
 				newAPIError = relayHandler(c, relayInfo)
 			}
+			attemptCompletedAt = time.Now()
 
 			if newAPIError == nil {
 				relayInfo.LastError = nil
@@ -471,8 +473,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		logger.LogInfo(c, retryLogStr)
 	}
 	if newAPIError != nil {
+		perfSample := perfmetrics.NewRelaySample(relayInfo, false, 0, attemptCompletedAt)
 		gopool.Go(func() {
-			perfmetrics.RecordRelaySample(relayInfo, false, 0)
+			perfmetrics.Record(perfSample)
 		})
 	}
 }
@@ -770,6 +773,16 @@ func recordUpstreamRequestEventWithMetadata(c *gin.Context, eventType string, re
 	accountId := common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId)
 	if accountId <= 0 {
 		return
+	}
+	if eventType == "request_error" {
+		if proxyMetadata, ok := service.ConsumeProxyFailureMetadata(c); ok {
+			if metadata == nil {
+				metadata = make(map[string]any)
+			}
+			for key, value := range proxyMetadata {
+				metadata[key] = value
+			}
+		}
 	}
 	service.RecordUpstreamAccountEvent(service.UpstreamAccountEventInput{
 		AccountId: accountId,

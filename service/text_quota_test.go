@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -128,6 +129,36 @@ func TestCalculateTextQuotaSummaryRecordsMillisecondDuration(t *testing.T) {
 	require.Equal(t, int64(1), summary.UseTimeSeconds)
 	require.GreaterOrEqual(t, summary.UseTimeMilliseconds, int64(1400))
 	require.Less(t, summary.UseTimeMilliseconds, int64(2000))
+}
+
+func TestCalculateTextQuotaSummaryUsesCurrentAttemptDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, stream := range []bool{false, true} {
+		for _, retry := range []bool{false, true} {
+			t.Run(fmt.Sprintf("stream=%t/retry=%t", stream, retry), func(t *testing.T) {
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				now := time.Now()
+				requestStart := now.Add(-30 * time.Second)
+				relayInfo := &relaycommon.RelayInfo{
+					OriginModelName: "gpt-5.6-sol",
+					StartTime:       requestStart,
+					IsStream:        stream,
+				}
+				if retry {
+					relayInfo.StartFirstTokenAttempt(now.Add(-20 * time.Second))
+					relayInfo.SetFirstResponseTime()
+				}
+				relayInfo.StartFirstTokenAttempt(now.Add(-1450 * time.Millisecond))
+
+				summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{})
+
+				require.Equal(t, int64(1), summary.UseTimeSeconds)
+				require.GreaterOrEqual(t, summary.UseTimeMilliseconds, int64(1450))
+				require.Less(t, summary.UseTimeMilliseconds, int64(2000))
+				require.Equal(t, requestStart, relayInfo.StartTime)
+			})
+		}
+	}
 }
 
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {

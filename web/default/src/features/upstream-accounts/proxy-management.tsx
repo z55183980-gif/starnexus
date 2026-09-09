@@ -18,10 +18,12 @@ import {
   PlayIcon,
   RefreshIcon,
   TestTubeIcon,
+  Alert02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -76,6 +78,7 @@ import {
   deleteUpstreamProxiesBatch,
   listUpstreamAccounts,
   listUpstreamProxies,
+  listUpstreamProxyRealFailures,
   testUpstreamProxy,
   updateUpstreamProxy,
   updateUpstreamProxiesBatch,
@@ -88,6 +91,7 @@ import type {
   UpstreamProxyPayload,
   UpstreamProxyProtocol,
   UpstreamProxyStatus,
+  UpstreamProxyRealFailure,
 } from './types'
 
 type ProxyDraft = {
@@ -187,6 +191,137 @@ function ProxyAccountsDialog({
             {t('Close')}
           </Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function ProxyRealFailuresDialog({
+  proxy,
+  onOpenChange,
+}: {
+  proxy: UpstreamProxy | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t, i18n } = useTranslation()
+  const query = useQuery({
+    queryKey: ['upstream-proxy-real-failures', proxy?.id],
+    queryFn: async () => {
+      const response = await listUpstreamProxyRealFailures(proxy!.id)
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to load')
+      }
+      return response
+    },
+    enabled: proxy != null,
+  })
+  const failures: UpstreamProxyRealFailure[] = query.data?.data ?? []
+  const formatTime = (seconds: number) =>
+    new Intl.DateTimeFormat(i18n.language, {
+      dateStyle: 'short',
+      timeStyle: 'medium',
+    }).format(new Date(seconds * 1000))
+
+  return (
+    <Dialog open={proxy != null} onOpenChange={onOpenChange}>
+      <DialogContent className='sm:max-w-4xl'>
+        <DialogHeader>
+          <DialogTitle>
+            {t('Real request failures')} · {proxy?.name}
+          </DialogTitle>
+          <DialogDescription>
+            {t(
+              'Only failures recorded during real upstream account requests are shown.'
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {query.isError ? (
+          <Alert variant='destructive'>
+            <AlertDescription>{t('Failed to load')}</AlertDescription>
+            <AlertAction>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                disabled={query.isFetching}
+                onClick={() => void query.refetch()}
+              >
+                {t('Retry')}
+              </Button>
+            </AlertAction>
+          </Alert>
+        ) : null}
+        <div className='max-h-[28rem] overflow-auto rounded-lg border'>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('Time')}</TableHead>
+                <TableHead>{t('Account')}</TableHead>
+                <TableHead>{t('Error')}</TableHead>
+                <TableHead>{t('Stage')}</TableHead>
+                <TableHead>{t('Elapsed')}</TableHead>
+                <TableHead>{t('Request ID')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {query.isLoading ? (
+                <TableRow>
+                  <TableCell colSpan={6}>{t('Loading...')}</TableCell>
+                </TableRow>
+              ) : query.isError && query.data == null ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className='text-muted-foreground py-10 text-center'
+                  >
+                    {t('Failed to load')}
+                  </TableCell>
+                </TableRow>
+              ) : failures.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className='text-muted-foreground py-10 text-center'
+                  >
+                    {t('No real request failures in the last 24 hours.')}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                failures.map((failure) => (
+                  <TableRow key={failure.id}>
+                    <TableCell className='text-xs whitespace-nowrap'>
+                      {formatTime(failure.created_at)}
+                    </TableCell>
+                    <TableCell>{failure.account_id ?? '-'}</TableCell>
+                    <TableCell>
+                      <div className='flex flex-col gap-1'>
+                        <Badge
+                          variant={failure.timeout ? 'destructive' : 'warning'}
+                        >
+                          {failure.error_class}
+                        </Badge>
+                        <span
+                          className='text-muted-foreground max-w-72 truncate text-xs'
+                          title={failure.message}
+                        >
+                          {failure.message}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>{failure.error_stage}</TableCell>
+                    <TableCell>{failure.elapsed_ms}ms</TableCell>
+                    <TableCell
+                      className='max-w-48 truncate font-mono text-xs'
+                      title={failure.request_id}
+                    >
+                      {failure.request_id || '-'}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -724,7 +859,15 @@ export function ProxyManagement() {
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ['upstream-proxies'],
-    queryFn: listUpstreamProxies,
+    queryFn: async () => {
+      const response = await listUpstreamProxies()
+      if (!response.success) {
+        throw new Error(response.message || 'Failed to load')
+      }
+      return response
+    },
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   })
   const proxies = useMemo(() => query.data?.data ?? [], [query.data?.data])
   const [search, setSearch] = useState('')
@@ -737,6 +880,7 @@ export function ProxyManagement() {
   const [selectedIds, setSelectedIds] = useState<number[]>([])
   const [selected, setSelected] = useState<UpstreamProxy | null>(null)
   const [accountsProxy, setAccountsProxy] = useState<UpstreamProxy | null>(null)
+  const [failuresProxy, setFailuresProxy] = useState<UpstreamProxy | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<UpstreamProxy | null>(null)
   const [testingId, setTestingId] = useState<number | null>(null)
   const [batchTesting, setBatchTesting] = useState(false)
@@ -889,6 +1033,26 @@ export function ProxyManagement() {
         )}
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>
+        {query.isError ? (
+          <Alert variant='destructive' className='mb-3'>
+            <AlertDescription>
+              {query.error instanceof Error
+                ? query.error.message
+                : t('Failed to load')}
+            </AlertDescription>
+            <AlertAction>
+              <Button
+                type='button'
+                size='sm'
+                variant='outline'
+                disabled={query.isFetching}
+                onClick={() => void query.refetch()}
+              >
+                {t('Retry')}
+              </Button>
+            </AlertAction>
+          </Alert>
+        ) : null}
         <div className='flex flex-wrap items-center gap-2'>
           <Input
             className='max-w-sm min-w-48 flex-1'
@@ -1064,6 +1228,7 @@ export function ProxyManagement() {
                 <TableHead>{t('Location')}</TableHead>
                 <TableHead>{t('Accounts')}</TableHead>
                 <TableHead>{t('Latency')}</TableHead>
+                <TableHead>{t('Real request health')}</TableHead>
                 <TableHead>{t('Expires')}</TableHead>
                 <TableHead>{t('Status')}</TableHead>
                 <TableHead className='text-right'>{t('Actions')}</TableHead>
@@ -1072,12 +1237,32 @@ export function ProxyManagement() {
             <TableBody>
               {query.isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={9}>{t('Loading...')}</TableCell>
+                  <TableCell colSpan={10}>{t('Loading...')}</TableCell>
+                </TableRow>
+              ) : query.isError && query.data == null ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={10}
+                    className='text-muted-foreground py-10 text-center'
+                  >
+                    <div className='flex flex-col items-center gap-3'>
+                      <span>{t('Failed to load')}</span>
+                      <Button
+                        type='button'
+                        size='sm'
+                        variant='outline'
+                        disabled={query.isFetching}
+                        onClick={() => void query.refetch()}
+                      >
+                        {t('Retry')}
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ) : filteredProxies.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={9}
+                    colSpan={10}
                     className='text-muted-foreground py-10 text-center'
                   >
                     {t('No proxies')}
@@ -1182,6 +1367,48 @@ export function ProxyManagement() {
                         </Badge>
                       )}
                     </TableCell>
+                    <TableCell>
+                      {proxy.real_failure_count_24h > 0 ? (
+                        <Button
+                          size='xs'
+                          variant='outline'
+                          onClick={() => setFailuresProxy(proxy)}
+                        >
+                          <HugeiconsIcon
+                            icon={Alert02Icon}
+                            data-icon='inline-start'
+                          />
+                          {t('{{count}} failures', {
+                            count: proxy.real_failure_count_24h,
+                          })}
+                        </Button>
+                      ) : (
+                        <Badge variant='secondary'>{t('No failures')}</Badge>
+                      )}
+                      {proxy.real_consecutive_failures > 0 && (
+                        <div className='text-muted-foreground mt-1 text-xs'>
+                          {t('{{count}} consecutive', {
+                            count: proxy.real_consecutive_failures,
+                          })}
+                        </div>
+                      )}
+                      {proxy.real_timeout_count_24h > 0 && (
+                        <div className='text-muted-foreground text-xs'>
+                          {t('{{count}} timeouts', {
+                            count: proxy.real_timeout_count_24h,
+                          })}
+                        </div>
+                      )}
+                      {proxy.real_last_failure_at && (
+                        <div className='text-muted-foreground text-xs'>
+                          {t('Last failure')}:{' '}
+                          {formatProxyDateTime(
+                            proxy.real_last_failure_at,
+                            i18n.language
+                          )}
+                        </div>
+                      )}
+                    </TableCell>
                     <TableCell className='text-muted-foreground text-xs whitespace-nowrap'>
                       {proxy.expires_at
                         ? `${formatProxyDateTime(proxy.expires_at, i18n.language)} · ${
@@ -1279,6 +1506,10 @@ export function ProxyManagement() {
         <ProxyAccountsDialog
           proxy={accountsProxy}
           onOpenChange={(open) => !open && setAccountsProxy(null)}
+        />
+        <ProxyRealFailuresDialog
+          proxy={failuresProxy}
+          onOpenChange={(open) => !open && setFailuresProxy(null)}
         />
         <BatchImportDialog
           open={batchImportOpen}

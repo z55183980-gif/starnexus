@@ -5413,7 +5413,7 @@
     "Tiered price table": "段階別価格表",
     "Tiered pricing": "階層料金",
     "tiers": "階層",
-    "Time": "時間",
+    "Time": "時刻",
     "Time Granularity": "時間の粒度",
     "Time remaining": "残り時間",
     "Time window for rate limiting": "レート制限の時間枠",
@@ -6112,6 +6112,17 @@
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "ZQBAPI 素材設定"
+    "ZQBAPI material settings": "ZQBAPI 素材設定",
+    "Real request failures": "実リクエストの失敗",
+    "Only failures recorded during real upstream account requests are shown.": "実際の上流アカウントリクエストで記録された失敗のみを表示します。",
+    "No real request failures in the last 24 hours.": "過去24時間に実リクエストの失敗はありません。",
+    "Real request health": "実リクエストの健全性",
+    "No failures": "失敗なし",
+    "{{count}} failures": "{{count}}件の失敗",
+    "{{count}} consecutive": "連続{{count}}回",
+    "Stage": "段階",
+    "Elapsed": "経過時間",
+    "{{count}} timeouts": "タイムアウト{{count}}件",
+    "Last failure": "最終失敗"
   }
 }

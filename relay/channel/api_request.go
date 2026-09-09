@@ -367,11 +367,13 @@ func doApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 }
 
 func doRequestWithoutDownstreamStreamEffects(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	service.ClearProxyFailureMetadata(c)
 	var client *http.Client
 	var err error
 	if info.ChannelSetting.Proxy != "" {
 		client, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
 		if err != nil {
+			recordRealProxyFailure(c, info, err, 0)
 			return nil, fmt.Errorf("new proxy http client failed: %w", err)
 		}
 	} else {
@@ -381,8 +383,10 @@ func doRequestWithoutDownstreamStreamEffects(c *gin.Context, req *http.Request, 
 		client = http.DefaultClient
 	}
 
+	startedAt := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
+		recordRealProxyFailure(c, info, err, time.Since(startedAt))
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
@@ -469,6 +473,7 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 // The caller owns the returned connection and must keep it pinned to the same
 // channel for its entire lifetime.
 func DoResponsesWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo) (*websocket.Conn, *http.Response, error) {
+	service.ClearProxyFailureMetadata(c)
 	fullRequestURL, err := a.GetRequestURL(info)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get responses websocket URL failed: %w", err)
@@ -548,8 +553,10 @@ func DoResponsesWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo) (*
 		}
 	}
 
+	startedAt := time.Now()
 	conn, resp, err := dialer.DialContext(c.Request.Context(), parsedURL.String(), targetHeader)
 	if err != nil {
+		recordRealProxyFailure(c, info, err, time.Since(startedAt))
 		return nil, resp, fmt.Errorf("dial responses websocket %s failed: %w", parsedURL.Redacted(), err)
 	}
 	return conn, resp, nil
@@ -644,11 +651,13 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return doRequest(c, req, info)
 }
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	service.ClearProxyFailureMetadata(c)
 	var client *http.Client
 	var err error
 	if info.ChannelSetting.Proxy != "" {
 		client, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
 		if err != nil {
+			recordRealProxyFailure(c, info, err, 0)
 			return nil, fmt.Errorf("new proxy http client failed: %w", err)
 		}
 	} else {
@@ -673,8 +682,10 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
+	startedAt := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
+		recordRealProxyFailure(c, info, err, time.Since(startedAt))
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
 	}
@@ -689,6 +700,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	_ = req.Body.Close()
 	_ = c.Request.Body.Close()
 	return resp, nil
+}
+
+func recordRealProxyFailure(c *gin.Context, info *common.RelayInfo, err error, elapsed time.Duration) {
+	if c == nil || info == nil || err == nil || !service.IsRealProxyFailureError(err) || strings.TrimSpace(info.ChannelSetting.Proxy) == "" {
+		return
+	}
+	if common2.GetContextKeyString(c, appconstant.ContextKeyChannelCredentialSource) != appconstant.ChannelCredentialSourceAccountPool {
+		return
+	}
+	if common2.GetContextKeyInt(c, appconstant.ContextKeyUpstreamProxyId) <= 0 {
+		return
+	}
+	service.SetProxyFailureMetadata(c, service.ClassifyProxyFailure(err, info.ChannelSetting.Proxy, elapsed, info.UpstreamModelName))
 }
 
 func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

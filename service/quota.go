@@ -171,7 +171,7 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		tieredResult = tieredRes
 	}
 
-	elapsed := time.Since(relayInfo.StartTime)
+	elapsed := time.Since(relayInfo.GetLogStartTime())
 	if elapsed < 0 {
 		elapsed = 0
 	}
@@ -295,7 +295,7 @@ func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData)
 }
 
 func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) {
-
+	perfSample := perfmetrics.NewRelaySample(relayInfo, true, 0, time.Now())
 	var tieredUsedVars map[string]bool
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 		tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
@@ -307,7 +307,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		tieredResult = tieredRes
 	}
 
-	elapsed := time.Since(relayInfo.StartTime)
+	elapsed := time.Since(relayInfo.GetLogStartTime())
 	if elapsed < 0 {
 		elapsed = 0
 	}
@@ -407,8 +407,9 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		Group:               relayInfo.UsingGroup,
 		Other:               other,
 	})
+	perfSample.OutputTokens = int64(usage.CompletionTokens)
 	gopool.Go(func() {
-		perfmetrics.RecordRelaySample(relayInfo, true, int64(usage.CompletionTokens))
+		perfmetrics.Record(perfSample)
 	})
 }
 

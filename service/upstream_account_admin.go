@@ -144,12 +144,16 @@ type upstreamAccountPoolLastEventRow struct {
 
 type UpstreamProxyView struct {
 	model.UpstreamProxy
-	AuthConfigured bool   `json:"auth_configured"`
-	AuthUsername   string `json:"username"`
-	AuthPassword   string `json:"password,omitempty"`
-	AccountCount   int64  `json:"account_count"`
-	PoolCount      int64  `json:"pool_count"`
-	BackupCount    int64  `json:"backup_count"`
+	AuthConfigured          bool   `json:"auth_configured"`
+	AuthUsername            string `json:"username"`
+	AuthPassword            string `json:"password,omitempty"`
+	AccountCount            int64  `json:"account_count"`
+	PoolCount               int64  `json:"pool_count"`
+	BackupCount             int64  `json:"backup_count"`
+	RealFailureCount24h     int64  `json:"real_failure_count_24h"`
+	RealTimeoutCount24h     int64  `json:"real_timeout_count_24h"`
+	RealLastFailureAt       *int64 `json:"real_last_failure_at"`
+	RealConsecutiveFailures int64  `json:"real_consecutive_failures"`
 }
 
 type UpstreamAccountCreateInput struct {
@@ -1435,12 +1439,25 @@ func ListUpstreamProxies() ([]UpstreamProxyView, error) {
 		return nil, err
 	}
 	views := make([]UpstreamProxyView, 0, len(proxies))
+	proxyIDs := make([]int, 0, len(proxies))
 	for _, proxy := range proxies {
 		view, err := upstreamProxyView(model.DB, proxy)
 		if err != nil {
 			return nil, err
 		}
 		views = append(views, view)
+		proxyIDs = append(proxyIDs, proxy.Id)
+	}
+	health, err := LoadProxyRealRequestHealth(proxyIDs, 24*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	for index := range views {
+		item := health[views[index].Id]
+		views[index].RealFailureCount24h = item.FailureCount24h
+		views[index].RealTimeoutCount24h = item.TimeoutCount24h
+		views[index].RealLastFailureAt = item.LastFailureAt
+		views[index].RealConsecutiveFailures = item.ConsecutiveFailures
 	}
 	return views, nil
 }

@@ -47,7 +47,7 @@ const getSystemTheme = () => {
 export const ThemeProvider = ({ children }) => {
   const [theme, _setTheme] = useState(() => {
     try {
-      return localStorage.getItem('theme-mode') || 'auto';
+      return 'light';
     } catch {
       return 'auto';
     }
@@ -56,7 +56,7 @@ export const ThemeProvider = ({ children }) => {
   const [systemTheme, setSystemTheme] = useState(getSystemTheme());
 
   // 计算实际应用的主题
-  const actualTheme = theme === 'auto' ? systemTheme : theme;
+  const actualTheme = 'light';
 
   // 监听系统主题变化
   useEffect(() => {
@@ -78,13 +78,9 @@ export const ThemeProvider = ({ children }) => {
   // 应用主题到DOM
   useEffect(() => {
     const body = document.body;
-    if (actualTheme === 'dark') {
-      body.setAttribute('theme-mode', 'dark');
-      document.documentElement.classList.add('dark');
-    } else {
-      body.removeAttribute('theme-mode');
-      document.documentElement.classList.remove('dark');
-    }
+    body.removeAttribute('theme-mode');
+    document.documentElement.classList.remove('dark');
+    document.documentElement.classList.add('light');
   }, [actualTheme]);
 
   const setTheme = useCallback((newTheme) => {
@@ -100,8 +96,8 @@ export const ThemeProvider = ({ children }) => {
       themeValue = 'auto';
     }
 
-    _setTheme(themeValue);
-    localStorage.setItem('theme-mode', themeValue);
+    _setTheme('light');
+    localStorage.setItem('theme-mode', 'light');
   }, []);
 
   return (

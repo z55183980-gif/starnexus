@@ -252,6 +252,7 @@ func SetApiRouter(router *gin.Engine) {
 			upstreamRoute.PUT("/proxies/:id", controller.UpdateUpstreamProxy)
 			upstreamRoute.DELETE("/proxies/:id", controller.DeleteUpstreamProxy)
 			upstreamRoute.POST("/proxies/:id/test", controller.TestUpstreamProxy)
+			upstreamRoute.GET("/proxies/:id/real-failures", controller.ListUpstreamProxyRealFailures)
 			upstreamRoute.POST("/proxies/test", controller.TestUpstreamProxiesBatch)
 		}
 

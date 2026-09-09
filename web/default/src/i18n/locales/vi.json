@@ -6112,6 +6112,17 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "Cài đặt tư liệu ZQBAPI"
+    "ZQBAPI material settings": "Cài đặt tư liệu ZQBAPI",
+    "Real request failures": "Lỗi yêu cầu thực tế",
+    "Only failures recorded during real upstream account requests are shown.": "Chỉ hiển thị các lỗi được ghi nhận trong yêu cầu tài khoản upstream thực tế.",
+    "No real request failures in the last 24 hours.": "Không có lỗi yêu cầu thực tế trong 24 giờ qua.",
+    "Real request health": "Sức khỏe yêu cầu thực tế",
+    "No failures": "Không có lỗi",
+    "{{count}} failures": "{{count}} lỗi",
+    "{{count}} consecutive": "{{count}} lần liên tiếp",
+    "Stage": "Giai đoạn",
+    "Elapsed": "Thời gian xử lý",
+    "{{count}} timeouts": "{{count}} lần hết thời gian",
+    "Last failure": "Lỗi gần nhất"
   }
 }

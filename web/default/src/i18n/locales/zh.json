@@ -6112,6 +6112,17 @@
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
     "ZQBAPI": "ZQBAPI",
-    "ZQBAPI material settings": "ZQBAPI 素材设置"
+    "ZQBAPI material settings": "ZQBAPI 素材设置",
+    "Real request failures": "真实请求异常",
+    "Only failures recorded during real upstream account requests are shown.": "这里只显示真实上游账号请求中记录的失败。",
+    "No real request failures in the last 24 hours.": "最近 24 小时没有真实请求异常。",
+    "Real request health": "真实请求健康度",
+    "No failures": "无异常",
+    "{{count}} failures": "{{count}} 次异常",
+    "{{count}} consecutive": "连续 {{count}} 次",
+    "Stage": "阶段",
+    "Elapsed": "耗时",
+    "{{count}} timeouts": "{{count}} 次超时",
+    "Last failure": "最近异常"
   }
 }

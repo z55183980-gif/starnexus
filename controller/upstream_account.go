@@ -1156,6 +1156,19 @@ func TestUpstreamProxy(c *gin.Context) {
 	common.ApiSuccess(c, result)
 }
 
+func ListUpstreamProxyRealFailures(c *gin.Context) {
+	id, ok := positivePathId(c)
+	if !ok {
+		return
+	}
+	items, err := service.ListProxyRealRequestFailures(id, service.ParsePositiveLimit(c.Query("limit")))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, items)
+}
+
 func TestUpstreamProxiesBatch(c *gin.Context) {
 	var request struct {
 		Ids []int `json:"ids"`

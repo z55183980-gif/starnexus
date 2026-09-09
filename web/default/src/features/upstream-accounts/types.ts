@@ -297,8 +297,27 @@ export interface UpstreamProxy {
   account_count: number
   pool_count: number
   backup_count: number
+  real_failure_count_24h: number
+  real_timeout_count_24h: number
+  real_last_failure_at?: number | null
+  real_consecutive_failures: number
   created_at: number
   updated_at: number
+}
+
+export interface UpstreamProxyRealFailure {
+  id: number
+  created_at: number
+  account_id?: number | null
+  request_id: string
+  result: string
+  message: string
+  elapsed_ms: number
+  error_class: string
+  error_stage: string
+  timeout: boolean
+  endpoint?: string
+  model?: string
 }
 
 export interface UpstreamAccountPayload {

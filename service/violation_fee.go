@@ -131,7 +131,7 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota)
 	model.UpdateChannelUsedQuota(relayInfo.ChannelId, feeQuota)
 
-	elapsed := time.Since(relayInfo.StartTime)
+	elapsed := time.Since(relayInfo.GetLogStartTime())
 	if elapsed < 0 {
 		elapsed = 0
 	}

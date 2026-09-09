@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useMemo } from 'react';
 import { Button, Dropdown } from '@douyinfe/semi-ui';
-import { Sun, Moon, Monitor } from 'lucide-react';
+import { Sun } from 'lucide-react';
 import { useActualTheme } from '../../../context/Theme';
 
 const ThemeToggle = ({ theme, onThemeToggle, t }) => {
@@ -34,20 +34,6 @@ const ThemeToggle = ({ theme, onThemeToggle, t }) => {
         label: t('浅色模式'),
         description: t('始终使用浅色主题'),
       },
-      {
-        key: 'dark',
-        icon: <Moon size={18} />,
-        buttonIcon: <Moon size={18} />,
-        label: t('深色模式'),
-        description: t('始终使用深色主题'),
-      },
-      {
-        key: 'auto',
-        icon: <Monitor size={18} />,
-        buttonIcon: <Monitor size={18} />,
-        label: t('自动模式'),
-        description: t('跟随系统主题设置'),
-      },
     ],
     [t],
   );
@@ -59,7 +45,7 @@ const ThemeToggle = ({ theme, onThemeToggle, t }) => {
 
   const currentButtonIcon = useMemo(() => {
     const currentOption = themeOptions.find((option) => option.key === theme);
-    return currentOption?.buttonIcon || themeOptions[2].buttonIcon;
+    return currentOption?.buttonIcon || themeOptions[0].buttonIcon;
   }, [theme, themeOptions]);
 
   return (

@@ -29,10 +29,10 @@ import { getCookie, setCookie, removeCookie } from '@/lib/cookies'
 type Theme = 'dark' | 'light' | 'system'
 type ResolvedTheme = Exclude<Theme, 'system'>
 
-const DEFAULT_THEME = 'system'
+const DEFAULT_THEME = 'light'
 const THEME_COOKIE_NAME = 'vite-ui-theme'
 const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year
-const THEMES = new Set<Theme>(['dark', 'light', 'system'])
+const THEMES = new Set<Theme>(['light'])
 
 type ThemeProviderProps = {
   children: React.ReactNode
@@ -80,19 +80,13 @@ export function ThemeProvider({
   storageKey = THEME_COOKIE_NAME,
   ...props
 }: ThemeProviderProps) {
-  const [theme, _setTheme] = useState<Theme>(() =>
-    getStoredTheme(storageKey, defaultTheme)
-  )
-  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
-    resolveTheme(getStoredTheme(storageKey, defaultTheme))
-  )
+  const [theme, _setTheme] = useState<Theme>('light')
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>('light')
 
   useEffect(() => {
     const root = window.document.documentElement
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
-
     const applyTheme = () => {
-      const nextResolvedTheme = theme === 'system' ? getSystemTheme() : theme
+      const nextResolvedTheme = 'light'
       root.classList.remove('light', 'dark')
       root.classList.add(nextResolvedTheme)
       setResolvedTheme(nextResolvedTheme)
@@ -100,23 +94,20 @@ export function ThemeProvider({
 
     applyTheme()
 
-    mediaQuery.addEventListener('change', applyTheme)
-
-    return () => mediaQuery.removeEventListener('change', applyTheme)
-  }, [theme])
+  }, [])
 
   const setTheme = useCallback(
-    (theme: Theme) => {
-      setCookie(storageKey, theme, THEME_COOKIE_MAX_AGE)
-      _setTheme(theme)
+    (_theme: Theme) => {
+      setCookie(storageKey, 'light', THEME_COOKIE_MAX_AGE)
+      _setTheme('light')
     },
     [storageKey]
   )
 
   const resetTheme = useCallback(() => {
     removeCookie(storageKey)
-    _setTheme(defaultTheme)
-  }, [defaultTheme, storageKey])
+    _setTheme('light')
+  }, [storageKey])
 
   const contextValue = useMemo(
     () => ({

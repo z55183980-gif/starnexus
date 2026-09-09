@@ -24,25 +24,31 @@ func Init() {
 	go flushLoop()
 }
 
-func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
+// NewRelaySample snapshots timing before settlement, logging, or asynchronous
+// recording. completedAt is the time forwarding finished for this attempt.
+func NewRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64, completedAt time.Time) Sample {
 	if info == nil {
-		return
+		return Sample{}
 	}
-	now := time.Now()
-	hasTtft := info.IsStream && info.HasSendResponse()
+	if completedAt.IsZero() {
+		completedAt = time.Now()
+	}
+	start := info.GetLogStartTime()
+	hasTtft := info.IsStream && info.HasSendResponse() &&
+		!info.FirstResponseTime.Before(start) && !info.FirstResponseTime.After(completedAt)
 	ttftMs := int64(0)
 	if hasTtft {
-		ttftMs = info.FirstResponseTime.Sub(info.StartTime).Milliseconds()
+		ttftMs = info.FirstResponseTime.Sub(start).Milliseconds()
 	}
-	latencyMs := now.Sub(info.StartTime).Milliseconds()
+	latencyMs := max(int64(0), completedAt.Sub(start).Milliseconds())
 	generationMs := latencyMs
 	if hasTtft {
-		generationMs = now.Sub(info.FirstResponseTime).Milliseconds()
+		generationMs = completedAt.Sub(info.FirstResponseTime).Milliseconds()
 	}
 	if generationMs <= 0 {
 		generationMs = latencyMs
 	}
-	Record(Sample{
+	return Sample{
 		Model:        info.OriginModelName,
 		Group:        info.UsingGroup,
 		LatencyMs:    latencyMs,
@@ -51,7 +57,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
 		Success:      success,
 		OutputTokens: outputTokens,
 		GenerationMs: generationMs,
-	})
+	}
 }
 
 func Record(sample Sample) {

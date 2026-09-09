@@ -33,6 +33,7 @@ import type {
   UpstreamBatchResult,
   UpstreamPoolPayload,
   UpstreamProxy,
+  UpstreamProxyRealFailure,
   UpstreamProxyPayload,
   UpstreamDataImportResult,
 } from './types'
@@ -486,5 +487,15 @@ export async function testUpstreamProxy(
   id: number
 ): Promise<ApiResponse<{ result: string; latency_ms: number }>> {
   const response = await api.post(`/api/upstream/proxies/${id}/test`)
+  return response.data
+}
+
+export async function listUpstreamProxyRealFailures(
+  id: number,
+  limit = 50
+): Promise<ApiResponse<UpstreamProxyRealFailure[]>> {
+  const response = await api.get(`/api/upstream/proxies/${id}/real-failures`, {
+    params: { limit },
+  })
   return response.data
 }

@@ -280,7 +280,7 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 }
 
 func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) textQuotaSummary {
-	elapsed := time.Since(relayInfo.StartTime)
+	elapsed := time.Since(relayInfo.GetLogStartTime())
 	if elapsed < 0 {
 		elapsed = 0
 	}
@@ -469,6 +469,7 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 }
 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
+	perfSample := perfmetrics.NewRelaySample(relayInfo, true, 0, time.Now())
 	originUsage := usage
 	if usage == nil {
 		extraContent = append(extraContent, "上游无计费信息")
@@ -664,8 +665,9 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		Group:               relayInfo.UsingGroup,
 		Other:               other,
 	})
+	perfSample.OutputTokens = int64(summary.CompletionTokens)
 	gopool.Go(func() {
-		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
+		perfmetrics.Record(perfSample)
 	})
 }
 

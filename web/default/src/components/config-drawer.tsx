@@ -28,9 +28,7 @@ import { IconLayoutFull } from '@/assets/custom/icon-layout-full'
 import { IconSidebarFloating } from '@/assets/custom/icon-sidebar-floating'
 import { IconSidebarInset } from '@/assets/custom/icon-sidebar-inset'
 import { IconSidebarSidebar } from '@/assets/custom/icon-sidebar-sidebar'
-import { IconThemeDark } from '@/assets/custom/icon-theme-dark'
 import { IconThemeLight } from '@/assets/custom/icon-theme-light'
-import { IconThemeSystem } from '@/assets/custom/icon-theme-system'
 import {
   type ContentLayout,
   THEME_PRESETS,
@@ -214,14 +212,12 @@ function ThemeConfig() {
       <Radio
         value={theme}
         onValueChange={setTheme}
-        className='grid w-full max-w-md grid-cols-3 gap-4'
+        className='grid w-full max-w-md grid-cols-1 gap-4'
         aria-label={t('Select theme preference')}
         aria-describedby='theme-description'
       >
         {[
-          { value: 'system', label: t('System'), icon: IconThemeSystem },
           { value: 'light', label: t('Light'), icon: IconThemeLight },
-          { value: 'dark', label: t('Dark'), icon: IconThemeDark },
         ].map((item) => (
           <RadioGroupItem key={item.value} item={item} isTheme />
         ))}
