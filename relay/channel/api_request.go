@@ -384,6 +384,7 @@ func doRequestWithoutDownstreamStreamEffects(c *gin.Context, req *http.Request, 
 	}
 
 	startedAt := time.Now()
+	req = service.WithUpstreamLatencyMetadata(req, c.GetString(common2.RequestIdKey), info.ChannelId, info.UserId, common2.GetContextKeyInt(c, appconstant.ContextKeyUpstreamProxyId), info.OriginModelName, info.StartTime)
 	resp, err := client.Do(req)
 	if err != nil {
 		recordRealProxyFailure(c, info, err, time.Since(startedAt))
@@ -684,6 +685,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	startedAt := time.Now()
+	req = service.WithUpstreamLatencyMetadata(req, c.GetString(common2.RequestIdKey), info.ChannelId, info.UserId, common2.GetContextKeyInt(c, appconstant.ContextKeyUpstreamProxyId), info.OriginModelName, info.StartTime)
 	resp, err := client.Do(req)
 	if err != nil {
 		recordRealProxyFailure(c, info, err, time.Since(startedAt))
