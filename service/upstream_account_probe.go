@@ -20,7 +20,8 @@ import (
 	"github.com/google/uuid"
 )
 
-const upstreamManagementTestBodyLimit = 64 * 1024
+const upstreamManagementTestBodyLimit = 1024 * 1024
+const upstreamProxyTestTimeout = 10 * time.Second
 const upstreamAccountProbeOutputLimit = 8 * 1024
 
 const (
@@ -793,47 +794,84 @@ func TestUpstreamProxy(ctx context.Context, proxyId int) (*UpstreamProxyTestResu
 	if err != nil {
 		return nil, errors.New("proxy client cannot be created")
 	}
+	// Match sub2api: use multiple probe endpoints and fall back when a provider is blocked.
+	type probeTarget struct{ url, parser string }
 	testURL := strings.TrimSpace(os.Getenv("UPSTREAM_PROXY_TEST_URL"))
-	if testURL == "" {
-		testURL = "https://ipinfo.io/json"
+	targets := []probeTarget{{"http://ip-api.com/json/?lang=zh-CN", "ip-api"}, {"http://api64.ipify.org?format=json", "ipify"}}
+	if testURL != "" {
+		targets = []probeTarget{{testURL, "ipinfo"}}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, testURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	startedAt := time.Now()
-	resp, err := client.Do(req)
-	latencyMs := time.Since(startedAt).Milliseconds()
-	result := &UpstreamProxyTestResult{ProxyId: proxy.Id, LatencyMs: latencyMs, Result: "connection_failed"}
-	if err == nil && resp != nil {
-		defer resp.Body.Close()
-		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-			limited := io.LimitReader(resp.Body, upstreamManagementTestBodyLimit)
-			var payload struct {
-				IP      string `json:"ip"`
-				Country string `json:"country"`
-				Region  string `json:"region"`
-				City    string `json:"city"`
-			}
-			if decodeErr := common.DecodeJson(limited, &payload); decodeErr == nil && strings.TrimSpace(payload.IP) != "" {
-				result.Success = true
-				result.Result = "ok"
-				result.IP = strings.TrimSpace(payload.IP)
-				result.Country = strings.TrimSpace(payload.Country)
-				result.Region = strings.TrimSpace(payload.Region)
-				result.City = strings.TrimSpace(payload.City)
-			} else {
-				result.Result = "invalid_probe_response"
-			}
-		} else {
-			result.Result = fmt.Sprintf("probe_status_%d", resp.StatusCode)
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, upstreamManagementTestBodyLimit))
+	probeClient := *client
+	probeClient.Timeout = upstreamProxyTestTimeout
+	result := &UpstreamProxyTestResult{ProxyId: proxy.Id, Result: "connection_failed"}
+	var lastErr error
+	for _, target := range targets {
+		startedAt := time.Now()
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodGet, target.url, nil)
+		if requestErr != nil {
+			lastErr = requestErr
+			continue
 		}
+		req.Header.Set("Accept", "application/json")
+		resp, requestErr := probeClient.Do(req)
+		latencyMs := time.Since(startedAt).Milliseconds()
+		result.LatencyMs = latencyMs
+		if requestErr != nil {
+			lastErr = requestErr
+			continue
+		}
+		if resp == nil {
+			lastErr = errors.New("empty probe response")
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, upstreamManagementTestBodyLimit+1))
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			lastErr = fmt.Errorf("probe status %d", resp.StatusCode)
+			continue
+		}
+		var payload struct {
+			IP         string `json:"ip"`
+			Query      string `json:"query"`
+			Status     string `json:"status"`
+			Country    string `json:"country"`
+			Region     string `json:"region"`
+			RegionName string `json:"regionName"`
+			City       string `json:"city"`
+		}
+		if decodeErr := common.Unmarshal(body, &payload); decodeErr != nil {
+			lastErr = decodeErr
+			continue
+		}
+		ip := strings.TrimSpace(payload.IP)
+		if target.parser == "ip-api" {
+			ip = strings.TrimSpace(payload.Query)
+			if strings.ToLower(payload.Status) != "success" {
+				lastErr = errors.New("ip-api probe failed")
+				continue
+			}
+		}
+		if ip == "" {
+			lastErr = errors.New("probe response missing ip")
+			continue
+		}
+		result.Success, result.Result, result.IP = true, "ok", ip
+		result.Country, result.Region, result.City = strings.TrimSpace(payload.Country), strings.TrimSpace(payload.RegionName), strings.TrimSpace(payload.City)
+		if result.Region == "" {
+			result.Region = strings.TrimSpace(payload.Region)
+		}
+		break
+	}
+	if !result.Success && lastErr != nil {
+		result.Result = "connection_failed"
 	}
 	recordUpstreamProxyTestState(&proxy, result)
 	recordUpstreamAccountEvent(0, proxy.Id, "proxy_test", result.Result, result.Result, map[string]any{
-		"latency_ms": latencyMs, "country": result.Country,
+		"latency_ms": result.LatencyMs, "country": result.Country,
 	})
 	return result, nil
 }

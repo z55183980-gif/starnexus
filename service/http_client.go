@@ -2,19 +2,79 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"golang.org/x/net/proxy"
 )
+
+// latencyTraceTransport records outbound proxy/upstream timing when enabled
+// with UPSTREAM_LATENCY_TRACE=1. It is intentionally opt-in to avoid log noise.
+type latencyTraceTransport struct {
+	base     http.RoundTripper
+	proxyURL string
+}
+
+func wrapLatencyTransport(base http.RoundTripper, proxyURL string) http.RoundTripper {
+	if os.Getenv("UPSTREAM_LATENCY_TRACE") != "1" {
+		return base
+	}
+	return &latencyTraceTransport{base: base, proxyURL: proxyURL}
+}
+
+func (t *latencyTraceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if os.Getenv("UPSTREAM_LATENCY_TRACE") != "1" {
+		return t.base.RoundTrip(req)
+	}
+	start := time.Now()
+	var connectStart, connectDone, tlsStart, tlsDone, wrote, first time.Time
+	reused := false
+	trace := &httptrace.ClientTrace{
+		ConnectStart:      func(_, _ string) { connectStart = time.Now() },
+		ConnectDone:       func(_, _ string, _ error) { connectDone = time.Now() },
+		TLSHandshakeStart: func() { tlsStart = time.Now() },
+		TLSHandshakeDone:  func(_ tls.ConnectionState, _ error) { tlsDone = time.Now() },
+		GotConn: func(i httptrace.GotConnInfo) {
+			if connectDone.IsZero() {
+				connectDone = time.Now()
+			}
+			reused = i.Reused
+		},
+		WroteRequest:         func(httptrace.WroteRequestInfo) { wrote = time.Now() },
+		GotFirstResponseByte: func() { first = time.Now() },
+	}
+	resp, err := t.base.RoundTrip(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))
+	end := time.Now()
+	if first.IsZero() {
+		first = end
+	}
+	logger.LogInfo(req.Context(), fmt.Sprintf("upstream_latency proxy=%s target=%s connect=%dms tls=%dms write=%dms ttft=%dms total=%dms reused=%t err=%v", t.proxyURL, req.URL.Host, duration(connectStart, connectDone), duration(tlsStart, tlsDone), ms(start, wrote), ms(start, first), end.Sub(start).Milliseconds(), reused, err))
+	return resp, err
+}
+func ms(start, end time.Time) int64 {
+	if end.IsZero() {
+		return -1
+	}
+	return end.Sub(start).Milliseconds()
+}
+func duration(start, end time.Time) int64 {
+	if start.IsZero() || end.IsZero() {
+		return -1
+	}
+	return end.Sub(start).Milliseconds()
+}
 
 var (
 	httpClient              *http.Client
@@ -68,12 +128,12 @@ func InitHttpClient() {
 
 	if common.RelayTimeout == 0 {
 		httpClient = &http.Client{
-			Transport:     transport,
+			Transport:     wrapLatencyTransport(transport, ""),
 			CheckRedirect: checkRedirect,
 		}
 	} else {
 		httpClient = &http.Client{
-			Transport:     transport,
+			Transport:     wrapLatencyTransport(transport, ""),
 			Timeout:       time.Duration(common.RelayTimeout) * time.Second,
 			CheckRedirect: checkRedirect,
 		}
@@ -155,7 +215,7 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 			transport.TLSClientConfig = common.InsecureTLSConfig
 		}
 		client := &http.Client{
-			Transport:     transport,
+			Transport:     wrapLatencyTransport(transport, proxyURL),
 			CheckRedirect: checkRedirect,
 		}
 		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
@@ -201,7 +261,7 @@ func NewProxyHttpClient(proxyURL string) (*http.Client, error) {
 			transport.TLSClientConfig = common.InsecureTLSConfig
 		}
 
-		client := &http.Client{Transport: transport, CheckRedirect: checkRedirect}
+		client := &http.Client{Transport: wrapLatencyTransport(transport, proxyURL), CheckRedirect: checkRedirect}
 		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
 		proxyClientLock.Lock()
 		proxyClients[proxyURL] = client
@@ -224,6 +284,9 @@ func NewOpenAIUpstreamHttpClient(proxyURL string) (*http.Client, error) {
 		return nil, errors.New("OpenAI upstream HTTP client is unavailable")
 	}
 	transport, ok := client.Transport.(*http.Transport)
+	if wrapped, wrappedOK := client.Transport.(*latencyTraceTransport); wrappedOK {
+		transport, ok = wrapped.base.(*http.Transport)
+	}
 	if !ok || transport == nil {
 		return client, nil
 	}
