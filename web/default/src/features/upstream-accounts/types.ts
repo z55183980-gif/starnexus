@@ -124,6 +124,7 @@ export interface UpstreamAccount {
     compact_supported: boolean
     credential_readable: boolean
     credential_read_error?: string
+    codex_fingerprint_seed_present: boolean
     base_url?: string
     model_mapping?: Record<string, string>
     compact_model_mapping?: Record<string, string>

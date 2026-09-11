@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,6 +132,23 @@ func TestSetupRequestHeaderDerivesSessionFromPromptCacheKey(t *testing.T) {
 	want := isolateCodexSessionHeader(c, "cache-key")
 	require.Equal(t, want, headers.Get("session_id"))
 	require.Equal(t, want, headers.Get("conversation_id"))
+}
+
+func TestSetupRequestHeaderScopesSessionBySelectedOAuthAccount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Request.Header.Set("session_id", "client-session")
+	common.SetContextKey(c, constant.ContextKeyUserId, 7)
+	common.SetContextKey(c, constant.ContextKeyTokenId, 11)
+	common.SetContextKey(c, constant.ContextKeyUpstreamAccountSelection, &service.UpstreamAccountSelection{
+		Account:     model.UpstreamAccount{Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeOAuth, Extra: `{"codex_fingerprint_mode":"full","codex_fingerprint_seed":"55555555-5555-4555-8555-555555555555"}`},
+		Credentials: map[string]any{"account_id": "account-a"},
+	})
+	info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeResponses, ChannelMeta: &relaycommon.ChannelMeta{ApiKey: `{"access_token":"token","account_id":"account-a"}`}}
+	headers := make(http.Header)
+	require.NoError(t, (&Adaptor{}).SetupRequestHeader(c, &headers, info))
+	require.NotEqual(t, isolateCodexSessionHeader(nil, "client-session"), headers.Get("session_id"))
 }
 
 func TestSetupRequestHeaderPromptCacheKeyOverridesClientSession(t *testing.T) {

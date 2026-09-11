@@ -42,29 +42,30 @@ type UpstreamAccountView struct {
 }
 
 type UpstreamAccountMetadata struct {
-	Email                      string                        `json:"email,omitempty"`
-	PlanType                   string                        `json:"plan_type,omitempty"`
-	SubscriptionExpiresAt      string                        `json:"subscription_expires_at,omitempty"`
-	PrivacyMode                string                        `json:"privacy_mode,omitempty"`
-	CompactMode                string                        `json:"compact_mode,omitempty"`
-	CompactSupported           bool                          `json:"compact_supported"`
-	CredentialReadable         bool                          `json:"credential_readable"`
-	CredentialReadError        string                        `json:"credential_read_error,omitempty"`
-	BaseURL                    string                        `json:"base_url,omitempty"`
-	ModelMapping               map[string]string             `json:"model_mapping,omitempty"`
-	CompactModelMapping        map[string]string             `json:"compact_model_mapping,omitempty"`
-	OpenAIEndpointCapabilities []string                      `json:"openai_capabilities,omitempty"`
-	InterceptWarmupRequests    bool                          `json:"intercept_warmup_requests"`
-	TempUnschedulableEnabled   bool                          `json:"temp_unschedulable_enabled"`
-	TempUnschedulableRules     []model.TempUnschedulableRule `json:"temp_unschedulable_rules,omitempty"`
-	HeaderOverrideEnabled      bool                          `json:"header_override_enabled"`
-	HeaderOverrides            map[string]string             `json:"header_overrides,omitempty"`
-	BedrockAuthMode            string                        `json:"bedrock_auth_mode,omitempty"`
-	AWSRegion                  string                        `json:"aws_region,omitempty"`
-	AWSAccessKeyID             string                        `json:"aws_access_key_id,omitempty"`
-	VertexProjectID            string                        `json:"vertex_project_id,omitempty"`
-	VertexClientEmail          string                        `json:"vertex_client_email,omitempty"`
-	VertexLocation             string                        `json:"vertex_location,omitempty"`
+	Email                       string                        `json:"email,omitempty"`
+	PlanType                    string                        `json:"plan_type,omitempty"`
+	SubscriptionExpiresAt       string                        `json:"subscription_expires_at,omitempty"`
+	PrivacyMode                 string                        `json:"privacy_mode,omitempty"`
+	CompactMode                 string                        `json:"compact_mode,omitempty"`
+	CompactSupported            bool                          `json:"compact_supported"`
+	CredentialReadable          bool                          `json:"credential_readable"`
+	CredentialReadError         string                        `json:"credential_read_error,omitempty"`
+	CodexFingerprintSeedPresent bool                          `json:"codex_fingerprint_seed_present"`
+	BaseURL                     string                        `json:"base_url,omitempty"`
+	ModelMapping                map[string]string             `json:"model_mapping,omitempty"`
+	CompactModelMapping         map[string]string             `json:"compact_model_mapping,omitempty"`
+	OpenAIEndpointCapabilities  []string                      `json:"openai_capabilities,omitempty"`
+	InterceptWarmupRequests     bool                          `json:"intercept_warmup_requests"`
+	TempUnschedulableEnabled    bool                          `json:"temp_unschedulable_enabled"`
+	TempUnschedulableRules      []model.TempUnschedulableRule `json:"temp_unschedulable_rules,omitempty"`
+	HeaderOverrideEnabled       bool                          `json:"header_override_enabled"`
+	HeaderOverrides             map[string]string             `json:"header_overrides,omitempty"`
+	BedrockAuthMode             string                        `json:"bedrock_auth_mode,omitempty"`
+	AWSRegion                   string                        `json:"aws_region,omitempty"`
+	AWSAccessKeyID              string                        `json:"aws_access_key_id,omitempty"`
+	VertexProjectID             string                        `json:"vertex_project_id,omitempty"`
+	VertexClientEmail           string                        `json:"vertex_client_email,omitempty"`
+	VertexLocation              string                        `json:"vertex_location,omitempty"`
 }
 
 type UpstreamAccountPoolView struct {
@@ -1118,6 +1119,9 @@ func CreateUpstreamAccount(input *UpstreamAccountCreateInput) error {
 	if err := model.ValidateUpstreamAccount(&input.Account); err != nil {
 		return err
 	}
+	if err := PrepareCodexFingerprintExtraForCreate(&input.Account); err != nil {
+		return fmt.Errorf("prepare Codex fingerprint identity: %w", err)
+	}
 	if err := validateUpstreamCredentialPayload(input.Account.Platform, input.Account.Type, input.Credentials); err != nil {
 		return err
 	}
@@ -1224,6 +1228,9 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 		}
 		if current.Type != input.Account.Type && !credentialUpdateRequested {
 			return errors.New("changing account type requires replacement credentials")
+		}
+		if err := PrepareCodexFingerprintExtraForUpdate(&current, &input.Account); err != nil {
+			return fmt.Errorf("prepare Codex fingerprint identity: %w", err)
 		}
 		credentialsToStore := input.Credentials
 		if input.CredentialPatch != nil {
@@ -1866,6 +1873,7 @@ func normalizePositiveIds(ids []int) []int {
 func upstreamAccountView(account model.UpstreamAccount, poolIds []int) UpstreamAccountView {
 	configured := account.CredentialCiphertext != ""
 	metadata := upstreamAccountMetadata(&account)
+	account.Extra = RedactCodexFingerprintSeed(account.Extra)
 	account.CredentialCiphertext = ""
 	account.CredentialNonce = ""
 	return UpstreamAccountView{UpstreamAccount: account, CredentialConfigured: configured, PoolIds: poolIds, Metadata: metadata}
@@ -1891,6 +1899,10 @@ func upstreamAccountMetadata(account *model.UpstreamAccount) UpstreamAccountMeta
 	metadata := UpstreamAccountMetadata{}
 	if account == nil {
 		return metadata
+	}
+	if account.Platform == constant.UpstreamPlatformOpenAI &&
+		(account.Type == constant.UpstreamAccountTypeOAuth || account.Type == constant.UpstreamAccountTypeSetupToken) {
+		_, metadata.CodexFingerprintSeedPresent = CodexFingerprintSeed(account.Extra)
 	}
 	credentials, credentialErr := DecryptUpstreamAccountCredentials(account)
 	if credentialErr == nil {

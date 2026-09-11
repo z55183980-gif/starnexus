@@ -2,7 +2,6 @@ package codex
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -34,7 +33,7 @@ func (a *Adaptor) FinalizeOutboundJSONBody(c *gin.Context, info *relaycommon.Rel
 	}
 	info.CodexOutboundState = state
 
-	if info.RelayMode != relayconstant.RelayModeResponses || ResponsesUsesNativeWebSocket(c, info) {
+	if info.RelayMode != relayconstant.RelayModeResponses {
 		return body, nil
 	}
 	selection, ok := currentOpenAIOAuthSelection(c)
@@ -54,7 +53,7 @@ func (a *Adaptor) FinalizeOutboundJSONBody(c *gin.Context, info *relaycommon.Rel
 		return body, nil
 	}
 	state.Fingerprint = fingerprint
-	return applyCodexFingerprintBody(body, fingerprint)
+	return applyCodexFingerprintBody(c, body, fingerprint)
 }
 
 func (a *Adaptor) FinalizeOutboundRequest(c *gin.Context, info *relaycommon.RelayInfo, request *http.Request) error {
@@ -70,6 +69,18 @@ func (a *Adaptor) FinalizeOutboundRequest(c *gin.Context, info *relaycommon.Rela
 
 	applyCodexEndpointBetaPolicy(request.Header, c, info)
 	applyCodexOAuthCredentials(request.Header, c)
+	if state == nil && info.RelayMode == relayconstant.RelayModeResponses {
+		if selection, ok := currentOpenAIOAuthSelection(c); ok {
+			if options, err := model.ParseUpstreamAccountOptionsWithCredentials(selection.Account.Extra, selection.Credentials); err == nil {
+				mode := options.EffectiveCodexFingerprintMode(system_setting.GetCodexSetting().FingerprintDefaultMode)
+				if mode != model.UpstreamCodexFingerprintModeOff {
+					state = &relaycommon.CodexOutboundState{AccountID: selection.Account.Id}
+					state.Fingerprint = resolveCodexFingerprint(c, nil, selection, mode)
+					info.CodexOutboundState = state
+				}
+			}
+		}
+	}
 	// The identity convergence policy is specific to OpenAI OAuth. Keep
 	// non-OAuth Codex-compatible requests' client identity untouched.
 	if _, ok := currentOpenAIOAuthSelection(c); ok {
@@ -107,23 +118,26 @@ func resolveCodexFingerprint(c *gin.Context, body []byte, selection *service.Ups
 	if selection == nil {
 		return nil
 	}
-	externalAccountID := firstCredentialString(selection.Credentials, "account_id", "chatgpt_account_id")
-	if externalAccountID == "" {
-		externalAccountID = fmt.Sprintf("local-account:%d", selection.Account.Id)
+	seed, ok := service.CodexFingerprintSeed(selection.Account.Extra)
+	if !ok {
+		// A convergence mode without a system-managed seed is not safe to
+		// synthesize from account_id/local row IDs. The lifecycle service will
+		// mint one on the next save/backfill; until then preserve client identity.
+		return nil
 	}
 	installationID := firstCredentialString(selection.Credentials, "openai_device_id", "device_id", "codex_installation_id")
 	if installationID == "" {
-		installationID = stableCodexUUID("new-api:codex-installation:v1:" + externalAccountID)
+		installationID = stableCodexUUID("starnexus:codex-installation:v2:" + seed)
 	} else if parsed, err := uuid.Parse(installationID); err == nil {
 		installationID = parsed.String()
 	} else {
-		installationID = stableCodexUUID("new-api:codex-installation:explicit:v1:" + installationID)
+		installationID = stableCodexUUID("starnexus:codex-installation:explicit:v2:" + installationID)
 	}
 	result := &relaycommon.CodexFingerprintState{Mode: mode, InstallationID: installationID}
 	if mode == model.UpstreamCodexFingerprintModeDevice {
 		return result
 	}
-	result.SessionID = stableCodexUUID("new-api:codex-session:v1:" + externalAccountID)
+	result.SessionID = stableCodexUUID("starnexus:codex-session:v2:" + seed)
 	clientSessionID := ""
 	if c != nil {
 		clientSessionID = strings.TrimSpace(c.GetHeader("session-id"))
@@ -131,19 +145,17 @@ func resolveCodexFingerprint(c *gin.Context, body []byte, selection *service.Ups
 			clientSessionID = strings.TrimSpace(c.GetHeader("session_id"))
 		}
 	}
-	if clientSessionID == "" {
-		clientSessionID = strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
-	}
 	if mode == model.UpstreamCodexFingerprintModeFull || clientSessionID == "" {
 		result.ThreadID = result.SessionID
 	} else {
-		result.ThreadID = stableCodexUUID("new-api:codex-thread:v1:" + externalAccountID + ":" + clientSessionID)
+		result.ThreadID = stableCodexUUID("starnexus:codex-thread:v2:" + seed + ":" + clientSessionID)
 	}
 	turnID, err := uuid.NewV7()
 	if err != nil {
 		turnID = uuid.New()
 	}
 	result.TurnID = turnID.String()
+	result.TurnStartedAtUnixMs = time.Now().UnixMilli()
 	result.WindowID = result.ThreadID + ":0"
 	return result
 }
@@ -166,14 +178,28 @@ func firstCredentialString(credentials map[string]any, keys ...string) string {
 	return ""
 }
 
-func applyCodexFingerprintBody(body []byte, fingerprint *relaycommon.CodexFingerprintState) ([]byte, error) {
+func applyCodexFingerprintBody(c *gin.Context, body []byte, fingerprint *relaycommon.CodexFingerprintState) ([]byte, error) {
 	var payload map[string]any
 	if err := common.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
+	originalSessionID := ""
+	if c != nil {
+		originalSessionID = strings.TrimSpace(c.GetHeader("session-id"))
+		if originalSessionID == "" {
+			originalSessionID = strings.TrimSpace(c.GetHeader("session_id"))
+		}
+	}
 	metadata, _ := payload["client_metadata"].(map[string]any)
 	if metadata == nil {
 		metadata = make(map[string]any)
+	}
+	bodySessionID := ""
+	if raw, ok := metadata["session_id"].(string); ok {
+		bodySessionID = strings.TrimSpace(raw)
+	}
+	if originalSessionID == "" {
+		originalSessionID = bodySessionID
 	}
 	metadata["x-codex-installation-id"] = fingerprint.InstallationID
 	turnFields := map[string]any{"installation_id": fingerprint.InstallationID}
@@ -186,10 +212,19 @@ func applyCodexFingerprintBody(body []byte, fingerprint *relaycommon.CodexFinger
 		turnFields["thread_id"] = fingerprint.ThreadID
 		turnFields["turn_id"] = fingerprint.TurnID
 		turnFields["window_id"] = fingerprint.WindowID
-		turnFields["turn_started_at_unix_ms"] = time.Now().UnixMilli()
+		turnFields["turn_started_at_unix_ms"] = fingerprint.TurnStartedAtUnixMs
 	}
 	rewriteEmbeddedTurnMetadata(metadata, turnFields)
 	payload["client_metadata"] = metadata
+	if fingerprint.Mode != model.UpstreamCodexFingerprintModeDevice {
+		promptCacheKey := strings.TrimSpace(gjson.GetBytes(body, "prompt_cache_key").String())
+		if bodySessionID == "" {
+			bodySessionID = originalSessionID
+		}
+		if bodySessionID != "" && promptCacheKey == bodySessionID && promptCacheKey != fingerprint.SessionID {
+			payload["prompt_cache_key"] = fingerprint.SessionID
+		}
+	}
 	return common.Marshal(payload)
 }
 
@@ -209,7 +244,7 @@ func applyCodexFingerprintHeaders(header http.Header, fingerprint *relaycommon.C
 		fields["thread_id"] = fingerprint.ThreadID
 		fields["turn_id"] = fingerprint.TurnID
 		fields["window_id"] = fingerprint.WindowID
-		fields["turn_started_at_unix_ms"] = time.Now().UnixMilli()
+		fields["turn_started_at_unix_ms"] = fingerprint.TurnStartedAtUnixMs
 	}
 	rewriteHeaderTurnMetadata(header, fields)
 }

@@ -6128,6 +6128,8 @@
     "Calculating statistics...": "Расчёт статистики…",
     "Statistics are busy. Please retry shortly.": "Сервис статистики занят. Повторите попытку чуть позже.",
     "Page {{current}}": "Страница {{current}}",
-    "Please retry": "Повторите попытку"
+    "Please retry": "Повторите попытку",
+    "Persistent account identity is configured.": "Постоянная идентичность аккаунта настроена",
+    "Persistent account identity will be generated when this mode is saved.": "Постоянная идентичность будет создана при сохранении этого режима"
   }
 }

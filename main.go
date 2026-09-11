@@ -331,6 +331,15 @@ func InitResources() error {
 
 	model.CheckSetup()
 
+	// Upgrade explicitly configured OpenAI OAuth accounts to the persistent
+	// per-account Codex fingerprint namespace used by the latest Sub2API
+	// lifecycle. This is idempotent and safe during rolling startup.
+	if migrated, migrateErr := service.EnsureCodexFingerprintSeedsBackfill(); migrateErr != nil {
+		common.SysError("failed to backfill Codex fingerprint seeds: " + migrateErr.Error())
+	} else if migrated > 0 {
+		common.SysLog("backfilled persistent Codex fingerprint seeds for " + strconv.Itoa(migrated) + " upstream account(s)")
+	}
+
 	// Initialize options, should after model.InitDB()
 	model.InitOptionMap()
 

@@ -6128,6 +6128,8 @@
     "Calculating statistics...": "Đang tính thống kê…",
     "Statistics are busy. Please retry shortly.": "Dịch vụ thống kê đang bận. Vui lòng thử lại sau ít phút.",
     "Page {{current}}": "Trang {{current}}",
-    "Please retry": "Vui lòng thử lại"
+    "Please retry": "Vui lòng thử lại",
+    "Persistent account identity is configured.": "Định danh tài khoản bền vững đã được cấu hình",
+    "Persistent account identity will be generated when this mode is saved.": "Định danh tài khoản bền vững sẽ được tạo khi lưu chế độ này"
   }
 }

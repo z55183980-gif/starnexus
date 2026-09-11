@@ -2379,9 +2379,16 @@ export function AccountDialog({
                         </FieldLabel>
                         <FieldDescription>
                           {t(
-                            'Controls stable device and session identity for ordinary Codex Responses requests. WebSocket and compact requests are not modified.'
+                            'Controls stable device and session identity for Codex Responses requests, including native WebSocket turns. Compact requests are not modified.'
                           )}
                         </FieldDescription>
+                        {account && (
+                          <FieldDescription>
+                            {account.metadata.codex_fingerprint_seed_present
+                              ? t('Persistent account identity is configured.')
+                              : t('Persistent account identity will be generated when this mode is saved.')}
+                          </FieldDescription>
+                        )}
                         <ToggleGroup
                           variant='outline'
                           value={[draft.codexFingerprintMode]}

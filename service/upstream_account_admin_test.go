@@ -115,6 +115,31 @@ func TestCreateUpstreamAccountWithoutCredentialKeyring(t *testing.T) {
 	require.Empty(t, views[0].PoolIds)
 }
 
+func TestCreateOAuthAccountMintsAndRedactsCodexFingerprintSeed(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	input := UpstreamAccountCreateInput{
+		Account: model.UpstreamAccount{
+			Name: "oauth-fingerprint", Platform: constant.UpstreamPlatformOpenAI,
+			Type:        constant.UpstreamAccountTypeOAuth,
+			Extra:       `{"codex_fingerprint_mode":"full","codex_fingerprint_seed":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}`,
+			Concurrency: 1, Priority: 50, Weight: 1, Status: constant.UpstreamStatusActive,
+			Schedulable: true, AutoPauseOnExpired: true,
+		},
+		Credentials: map[string]any{"access_token": "access", "refresh_token": "refresh", "account_id": "acct"},
+	}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	var stored model.UpstreamAccount
+	require.NoError(t, model.DB.First(&stored, input.Account.Id).Error)
+	seed, ok := CodexFingerprintSeed(stored.Extra)
+	require.True(t, ok)
+	require.NotEqual(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", seed)
+
+	view, err := GetUpstreamAccount(input.Account.Id)
+	require.NoError(t, err)
+	require.True(t, view.Metadata.CodexFingerprintSeedPresent)
+	require.NotContains(t, view.Extra, CodexFingerprintSeedExtraKey)
+}
+
 func TestUpstreamAccountAdminCredentialLifecycleAndSafeDelete(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 

@@ -6128,6 +6128,8 @@
     "Calculating statistics...": "Calculating statistics...",
     "Statistics are busy. Please retry shortly.": "Statistics are busy. Please retry shortly.",
     "Page {{current}}": "Page {{current}}",
-    "Please retry": "Please retry"
+    "Please retry": "Please retry",
+    "Persistent account identity is configured.": "Persistent account identity is configured.",
+    "Persistent account identity will be generated when this mode is saved.": "Persistent account identity will be generated when this mode is saved."
   }
 }

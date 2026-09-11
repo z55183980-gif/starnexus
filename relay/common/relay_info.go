@@ -212,12 +212,13 @@ type CodexOutboundState struct {
 }
 
 type CodexFingerprintState struct {
-	Mode           string
-	InstallationID string
-	SessionID      string
-	ThreadID       string
-	TurnID         string
-	WindowID       string
+	Mode                string
+	InstallationID      string
+	SessionID           string
+	ThreadID            string
+	TurnID              string
+	WindowID            string
+	TurnStartedAtUnixMs int64
 }
 
 func (info *RelayInfo) InitChannelMeta(c *gin.Context) {

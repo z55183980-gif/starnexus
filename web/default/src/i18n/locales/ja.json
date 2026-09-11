@@ -6128,6 +6128,8 @@
     "Calculating statistics...": "統計を計算中…",
     "Statistics are busy. Please retry shortly.": "統計の処理が混み合っています。しばらくしてから再試行してください。",
     "Page {{current}}": "{{current}} ページ",
-    "Please retry": "再試行してください"
+    "Please retry": "再試行してください",
+    "Persistent account identity is configured.": "永続アカウント ID は設定済みです",
+    "Persistent account identity will be generated when this mode is saved.": "このモードを保存すると永続アカウント ID が生成されます"
   }
 }

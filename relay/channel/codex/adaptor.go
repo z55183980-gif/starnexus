@@ -422,9 +422,18 @@ func isolateCodexSessionHeader(c *gin.Context, value string) string {
 	}
 	tokenID := common.GetContextKeyInt(c, appconstant.ContextKeyTokenId)
 	userID := common.GetContextKeyInt(c, appconstant.ContextKeyUserId)
-	if tokenID <= 0 && userID <= 0 {
+	accountNamespace := ""
+	if selection, ok := common.GetContextKeyType[*service.UpstreamAccountSelection](c, appconstant.ContextKeyUpstreamAccountSelection); ok && selection != nil &&
+		selection.Account.Platform == appconstant.UpstreamPlatformOpenAI && selection.Account.Type == appconstant.UpstreamAccountTypeOAuth {
+		if seed, seeded := service.CodexFingerprintSeed(selection.Account.Extra); seeded {
+			accountNamespace = "seed:" + seed
+		} else {
+			accountNamespace = firstCredentialString(selection.Credentials, "account_id", "chatgpt_account_id")
+		}
+	}
+	if tokenID <= 0 && userID <= 0 && accountNamespace == "" {
 		return value
 	}
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%s", userID, tokenID, value)))
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%d:%s:%s", userID, tokenID, accountNamespace, value)))
 	return fmt.Sprintf("%x", sum[:])
 }
