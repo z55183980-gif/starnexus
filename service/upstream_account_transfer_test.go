@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/base64"
 	"testing"
 	"time"
 
@@ -9,6 +10,18 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/require"
 )
+
+func testOAuthJWTWithAccountID(t *testing.T, accountID string) string {
+	t.Helper()
+	header, err := common.Marshal(map[string]any{"alg": "none", "typ": "JWT"})
+	require.NoError(t, err)
+	payload, err := common.Marshal(map[string]any{
+		"https://api.openai.com/auth": map[string]any{"chatgpt_account_id": accountID},
+	})
+	require.NoError(t, err)
+	return base64.RawURLEncoding.EncodeToString(header) + "." +
+		base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
 
 func TestExportUpstreamAccountsIncludesImportableCredentials(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
@@ -295,6 +308,36 @@ func TestImportLegacySub2APIOAuthAccountWithoutFrontendNormalization(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, "legacy-account-id", credentials["account_id"])
 	require.Equal(t, "legacy-account-id", credentials["chatgpt_account_id"])
+}
+
+func TestImportOAuthAccountDerivesAccountIDFromJWT(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	t.Setenv(upstreamCredentialKeysEnv, "")
+	t.Setenv(upstreamCredentialActiveVersionEnv, "")
+
+	payload := UpstreamAccountExport{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Accounts: []UpstreamAccountExportItem{{
+			Name: "jwt-only-oauth", Platform: constant.UpstreamPlatformOpenAI,
+			Type: constant.UpstreamAccountTypeOAuth,
+			Credentials: map[string]any{
+				"access_token":  testOAuthJWTWithAccountID(t, "acct-from-jwt"),
+				"refresh_token": "refresh-token",
+			},
+			Extra: map[string]any{},
+		}},
+	}
+
+	result, err := ImportUpstreamData(payload)
+	require.NoError(t, err)
+	require.Equal(t, 1, result.AccountCreated)
+	require.Zero(t, result.AccountFailed)
+
+	var account model.UpstreamAccount
+	require.NoError(t, model.DB.Where("name = ?", "jwt-only-oauth").First(&account).Error)
+	credentials, err := DecryptUpstreamAccountCredentials(&account)
+	require.NoError(t, err)
+	require.Equal(t, "acct-from-jwt", credentials["account_id"])
 }
 
 func TestCRSSourceIDIsStableAndPositive(t *testing.T) {

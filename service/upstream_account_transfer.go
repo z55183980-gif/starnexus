@@ -344,6 +344,17 @@ func ImportUpstreamData(payload UpstreamAccountExport, defaultConfigs ...string)
 			if legacyId := upstreamDataCredentialString(credentials, "chatgpt_account_id"); legacyId != "" {
 				credentials["account_id"] = credentials["chatgpt_account_id"]
 			}
+			// Some sub2api exports only carry the ChatGPT account identity in
+			// the OAuth JWT. Normalize it before credential validation so imports
+			// do not depend on the browser having rewritten the file first.
+			if upstreamDataCredentialString(credentials, "account_id") == "" {
+				for _, tokenKey := range []string{"access_token", "id_token"} {
+					if accountID, ok := ExtractCodexAccountIDFromJWT(upstreamDataCredentialString(credentials, tokenKey)); ok {
+						credentials["account_id"] = accountID
+						break
+					}
+				}
+			}
 		}
 		extra, err := normalizeUpstreamDataExtra(item.Extra)
 		if err != nil {
