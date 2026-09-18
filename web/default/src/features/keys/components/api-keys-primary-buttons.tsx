@@ -16,18 +16,87 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Plus } from 'lucide-react'
+import {
+  Add01Icon,
+  AppleIcon,
+  ArrowDown01Icon,
+  ComputerIcon,
+  Download03Icon,
+} from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { useApiKeys } from './api-keys-provider'
+
+const CODEX_CONFIG_TOOL_DOWNLOADS = {
+  windows:
+    'https://docs.dkby.com/docs/doc/STN-Codex-ConfigMode.exe',
+  macos:
+    'https://docs.dkby.com/docs/doc/STN-Codex-Config-Writer-mac.command',
+} as const
 
 export function ApiKeysPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen } = useApiKeys()
   return (
     <div className='flex gap-2'>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant='outline'
+              size='sm'
+              aria-label={t('Download API Key Config Tool')}
+            />
+          }
+        >
+          <HugeiconsIcon icon={Download03Icon} data-icon='inline-start' />
+          <span className='max-sm:hidden'>
+            {t('Download API Key Config Tool')}
+          </span>
+          <HugeiconsIcon icon={ArrowDown01Icon} data-icon='inline-end' />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align='end' className='w-56'>
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              render={
+                <a
+                  href={CODEX_CONFIG_TOOL_DOWNLOADS.windows}
+                  download
+                  target='_blank'
+                  rel='noreferrer'
+                />
+              }
+            >
+              <HugeiconsIcon icon={ComputerIcon} data-icon='inline-start' />
+              {t('Windows version')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              render={
+                <a
+                  href={CODEX_CONFIG_TOOL_DOWNLOADS.macos}
+                  download
+                  target='_blank'
+                  rel='noreferrer'
+                />
+              }
+            >
+              <HugeiconsIcon icon={AppleIcon} data-icon='inline-start' />
+              {t('macOS version')}
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <Button size='sm' onClick={() => setOpen('create')}>
-        <Plus className='h-4 w-4' />
+        <HugeiconsIcon icon={Add01Icon} data-icon='inline-start' />
         {t('Create API Key')}
       </Button>
     </div>

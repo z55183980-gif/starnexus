@@ -91,15 +91,11 @@ export function DataTableRowActions<TData>({
     setOpen,
     setCurrentRow,
     triggerRefresh,
-    setResolvedKey,
     resolveRealKey,
-    loadingKeys,
   } = useApiKeys()
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const { chatPresets, serverAddress } = useChatPresets()
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
-  const isResolvingKey = Boolean(loadingKeys[apiKey.id])
-
   const hasChatPresets = chatPresets.length > 0
 
   const handleOpenChatPreset = useCallback(
@@ -170,28 +166,8 @@ export function DataTableRowActions<TData>({
     }
   }
 
-  const handleOpenCCSwitch = async (
-    e?: React.MouseEvent<HTMLButtonElement>
-  ) => {
-    e?.stopPropagation()
-    const realKey = await resolveRealKey(apiKey.id)
-    if (!realKey) return
-    setResolvedKey(realKey)
-    setCurrentRow(apiKey)
-    setOpen('cc-switch')
-  }
-
   return (
     <div className='flex items-center justify-end gap-1'>
-      <Button
-        variant='ghost'
-        size='sm'
-        onClick={handleOpenCCSwitch}
-        disabled={isResolvingKey}
-      >
-        {t('Import CC')}
-      </Button>
-
       <Tooltip>
         <TooltipTrigger
           render={
