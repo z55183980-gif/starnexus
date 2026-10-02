@@ -67,6 +67,19 @@ func TestUpstreamAccountSchedulableGate(t *testing.T) {
 	require.False(t, account.IsSchedulableAt(now))
 }
 
+func TestUpstreamAccountSchedulableGateCanIgnoreTemporaryState(t *testing.T) {
+	now := time.Now().Unix()
+	future := now + 60
+	account := &UpstreamAccount{
+		Status: constant.UpstreamStatusActive, Schedulable: true,
+		RateLimitResetAt: &future, OverloadUntil: &future,
+		TempUnschedulableUntil:  &future,
+		TempUnschedulableReason: "rate_limited",
+	}
+	require.False(t, account.IsSchedulableAtWithTemporaryState(now, true))
+	require.True(t, account.IsSchedulableAtWithTemporaryState(now, false))
+}
+
 func TestValidateAnthropicUpstreamAccountTypes(t *testing.T) {
 	for _, accountType := range []string{
 		constant.UpstreamAccountTypeOAuth,

@@ -744,7 +744,7 @@ export function AccountDialog({
         draft.tempUnschedRules
       )
     } else {
-      delete credentials.temp_unschedulable_enabled
+      credentials.temp_unschedulable_enabled = false
       delete credentials.temp_unschedulable_rules
     }
     if (isHeaderOverrideCapable(draft.platform, draft.type)) {
@@ -801,7 +801,7 @@ export function AccountDialog({
         draft.tempUnschedRules
       )
     } else {
-      patch.temp_unschedulable_enabled = null
+      patch.temp_unschedulable_enabled = false
       patch.temp_unschedulable_rules = null
     }
     if (isHeaderOverrideCapable(draft.platform, draft.type)) {
@@ -1021,7 +1021,7 @@ export function AccountDialog({
       )
     }
     if (draftChanged('tempUnschedEnabled')) {
-      patch.temp_unschedulable_enabled = draft.tempUnschedEnabled ? true : null
+      patch.temp_unschedulable_enabled = draft.tempUnschedEnabled ? true : false
       patch.temp_unschedulable_rules = draft.tempUnschedEnabled
         ? buildTempUnschedRules(draft.tempUnschedRules)
         : null

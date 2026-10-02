@@ -267,16 +267,26 @@ func (account *UpstreamAccount) EffectiveLoadFactor() int {
 }
 
 func (account *UpstreamAccount) IsSchedulableAt(now int64) bool {
+	return account.IsSchedulableAtWithTemporaryState(now, true)
+}
+
+// IsSchedulableAtWithTemporaryState applies the account's permanent gates and
+// optionally applies runtime cooldowns. The temporary-unschedulable switch is
+// stored with credentials, so callers that can read the account options should
+// pass its current value here.
+func (account *UpstreamAccount) IsSchedulableAtWithTemporaryState(now int64, temporaryStateEnabled bool) bool {
 	if account == nil || account.Status != constant.UpstreamStatusActive || !account.Schedulable {
 		return false
 	}
-	if constant.UpstreamAccountOAuthRefreshBlocksScheduling(account.TempUnschedulableReason) {
+	if account.TempUnschedulableReason == constant.UpstreamAccountReasonOAuthRefreshPermanent ||
+		account.TempUnschedulableReason == constant.UpstreamAccountReasonAuthenticationFailed {
 		return false
 	}
 	if account.AutoPauseOnExpired && timestampInFutureOrEqual(now, account.ExpiresAt) {
 		return false
 	}
-	if timestampInFuture(now, account.RateLimitResetAt) || timestampInFuture(now, account.OverloadUntil) || timestampInFuture(now, account.TempUnschedulableUntil) {
+	if temporaryStateEnabled && (constant.UpstreamAccountOAuthRefreshBlocksScheduling(account.TempUnschedulableReason) ||
+		timestampInFuture(now, account.RateLimitResetAt) || timestampInFuture(now, account.OverloadUntil) || timestampInFuture(now, account.TempUnschedulableUntil)) {
 		return false
 	}
 	return true

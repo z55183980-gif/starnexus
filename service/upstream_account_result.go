@@ -148,6 +148,12 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		accountLoaded = true
 		return true
 	}
+	temporaryStateEnabled := func() bool {
+		if !loadAccount() {
+			return true
+		}
+		return upstreamAccountTemporaryStateEnabled(&account)
+	}
 	mergeExistingRateLimitState := func(resetAt int64, windowStart, windowEnd *int64) (int64, *int64, *int64) {
 		// A later 429 must never shorten a cooldown already persisted for this
 		// account. This applies to both the generic 429 path and custom rules.
@@ -210,8 +216,12 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 			resetAt, windowStart, windowEnd = mergeExistingRateLimitState(resetAt, windowStart, windowEnd)
 			updates["rate_limited_at"] = now
 			updates["rate_limit_reset_at"] = resetAt
-			if windowStart != nil && windowEnd != nil {
-				updates["session_window_start"] = *windowStart
+			if windowEnd != nil {
+				if windowStart != nil {
+					updates["session_window_start"] = *windowStart
+				} else {
+					updates["session_window_start"] = nil
+				}
 				updates["session_window_end"] = *windowEnd
 				updates["session_window_status"] = "rejected"
 			} else {
@@ -242,8 +252,13 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		} else {
 			updates["status"] = constant.UpstreamStatusActive
 			updates["schedulable"] = true
-			updates["temp_unschedulable_until"] = now + int64((10 * time.Minute).Seconds())
-			updates["temp_unschedulable_reason"] = constant.UpstreamAccountReasonOAuthRefreshPending
+			if temporaryStateEnabled() {
+				updates["temp_unschedulable_until"] = now + int64((10 * time.Minute).Seconds())
+				updates["temp_unschedulable_reason"] = constant.UpstreamAccountReasonOAuthRefreshPending
+			} else {
+				updates["temp_unschedulable_until"] = nil
+				updates["temp_unschedulable_reason"] = ""
+			}
 			refreshAfterUpdate = true
 		}
 	case apiErr.StatusCode == 402:
@@ -252,20 +267,38 @@ func ApplyUpstreamAccountError(accountId int, proxyId int, apiErr *types.NewAPIE
 		updates["temp_unschedulable_until"] = nil
 		updates["temp_unschedulable_reason"] = "payment_required"
 	case apiErr.StatusCode == 403:
-		until := now + int64((5 * time.Minute).Seconds())
-		updates["temp_unschedulable_until"] = until
-		updates["temp_unschedulable_reason"] = message
-	case apiErr.StatusCode == 429:
-		resetAt, windowStart, windowEnd := upstreamRateLimitState(apiErr, now)
-		resetAt, windowStart, windowEnd = mergeExistingRateLimitState(resetAt, windowStart, windowEnd)
-		updates["rate_limited_at"] = now
-		updates["rate_limit_reset_at"] = resetAt
-		updates["temp_unschedulable_reason"] = "rate_limited"
-		if windowStart != nil && windowEnd != nil {
-			updates["session_window_start"] = *windowStart
-			updates["session_window_end"] = *windowEnd
-			updates["session_window_status"] = "rejected"
+		if temporaryStateEnabled() {
+			until := now + int64((5 * time.Minute).Seconds())
+			updates["temp_unschedulable_until"] = until
+			updates["temp_unschedulable_reason"] = message
 		} else {
+			updates["temp_unschedulable_until"] = nil
+			updates["temp_unschedulable_reason"] = ""
+		}
+	case apiErr.StatusCode == 429:
+		if temporaryStateEnabled() {
+			resetAt, windowStart, windowEnd := upstreamRateLimitState(apiErr, now)
+			resetAt, windowStart, windowEnd = mergeExistingRateLimitState(resetAt, windowStart, windowEnd)
+			updates["rate_limited_at"] = now
+			updates["rate_limit_reset_at"] = resetAt
+			updates["temp_unschedulable_reason"] = "rate_limited"
+			if windowEnd != nil {
+				if windowStart != nil {
+					updates["session_window_start"] = *windowStart
+				} else {
+					updates["session_window_start"] = nil
+				}
+				updates["session_window_end"] = *windowEnd
+				updates["session_window_status"] = "rejected"
+			} else {
+				updates["session_window_start"] = nil
+				updates["session_window_end"] = nil
+				updates["session_window_status"] = ""
+			}
+		} else {
+			updates["rate_limited_at"] = nil
+			updates["rate_limit_reset_at"] = nil
+			updates["temp_unschedulable_reason"] = ""
 			updates["session_window_start"] = nil
 			updates["session_window_end"] = nil
 			updates["session_window_status"] = ""

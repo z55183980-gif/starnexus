@@ -683,7 +683,7 @@ func (router *UpstreamAccountRouter) loadCandidates(ctx context.Context, pool mo
 			exclusions[openAITeamLinkedErrorBlockReason]++
 			continue
 		}
-		if !account.IsSchedulableAt(now) {
+		if !account.IsSchedulableAtWithTemporaryState(now, upstreamAccountTemporaryStateEnabled(&account)) {
 			exclusions[upstreamAccountIneligibleReason(account, now)]++
 			continue
 		}

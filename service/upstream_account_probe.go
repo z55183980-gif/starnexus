@@ -756,6 +756,16 @@ func recordUpstreamAccountTestState(account *model.UpstreamAccount, success bool
 		ApplyUpstreamAccountError(accountId, 0, apiErr)
 		return
 	} else if statusCode == http.StatusTooManyRequests {
+		if !upstreamAccountTemporaryStateEnabled(account) {
+			updates["rate_limited_at"] = nil
+			updates["rate_limit_reset_at"] = nil
+			updates["temp_unschedulable_reason"] = ""
+			updates["session_window_start"] = nil
+			updates["session_window_end"] = nil
+			updates["session_window_status"] = ""
+			_ = model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", accountId).Updates(updates).Error
+			return
+		}
 		apiErr := types.NewErrorWithStatusCode(errors.New("upstream rate limited"), types.ErrorCodeBadResponseStatusCode, statusCode)
 		apiErr.SetUpstreamResponse(header, body)
 		resetAt, windowStart, windowEnd := upstreamRateLimitState(apiErr, now)

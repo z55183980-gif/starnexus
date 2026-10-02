@@ -206,6 +206,10 @@ func RecordUpstreamAccountRateLimitHeadersAsync(accountId int, header http.Heade
 }
 
 func recordUpstreamAccountRateLimitHeaders(accountId int, header http.Header) {
+	var account model.UpstreamAccount
+	if err := model.DB.First(&account, accountId).Error; err != nil {
+		return
+	}
 	now := common.GetTimestamp()
 	resetAt, windowStart, windowEnd := codexRateLimitState(header, now)
 	updates := map[string]any{"updated_at": now}
@@ -222,7 +226,7 @@ func recordUpstreamAccountRateLimitHeaders(accountId int, header http.Header) {
 		updates["session_window_end"] = nil
 		updates["session_window_status"] = ""
 	}
-	if exhausted && resetAt > now {
+	if exhausted && resetAt > now && upstreamAccountTemporaryStateEnabled(&account) {
 		updates["rate_limited_at"] = now
 		updates["rate_limit_reset_at"] = resetAt
 	} else {

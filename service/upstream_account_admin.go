@@ -170,6 +170,40 @@ type UpstreamAccountUpdateInput struct {
 	PoolIds         *[]int
 }
 
+// upstreamAccountTemporaryStateEnabled reads the account-level switch that
+// controls runtime cooldowns. New records keep this setting in encrypted
+// credentials; the Extra fallback preserves older records.
+func upstreamAccountTemporaryStateEnabled(account *model.UpstreamAccount) bool {
+	if account == nil {
+		return true
+	}
+	credentials, _ := DecryptUpstreamAccountCredentials(account)
+	return upstreamAccountTemporaryStateEnabledForCredentials(account.Extra, credentials)
+}
+
+func upstreamAccountTemporaryStateEnabledForCredentials(extra string, credentials map[string]any) bool {
+	// Explicit credential settings override legacy Extra settings.
+	// Older accounts predate the switch and must retain the historical
+	// cooldown behavior until an operator explicitly saves the switch off.
+	if _, present := credentials["temp_unschedulable_enabled"]; !present {
+		var legacy map[string]any
+		if common.UnmarshalJsonStr(extra, &legacy) != nil {
+			return true
+		}
+		if _, present := legacy["temp_unschedulable_enabled"]; !present {
+			return true
+		}
+	}
+	options, err := model.ParseUpstreamAccountOptionsWithCredentials(extra, credentials)
+	if err != nil {
+		options, err = model.ParseUpstreamAccountOptions(extra)
+	}
+	if err != nil {
+		return true
+	}
+	return options.TempUnschedulableEnabled
+}
+
 type UpstreamAccountRecoveryScope string
 
 const (
@@ -260,16 +294,20 @@ func getUpstreamAccountPoolCapabilities(db *gorm.DB, id int) (*UpstreamAccountPo
 	now := common.GetTimestamp()
 	for i := range accounts {
 		account := &accounts[i]
-		if !account.IsSchedulableAt(now) {
-			continue
-		}
-		capabilities.SchedulableAccountCount++
 		credentials, err := DecryptUpstreamAccountCredentials(account)
 		if err != nil {
+			if account.IsSchedulableAt(now) {
+				capabilities.SchedulableAccountCount++
+			}
 			capabilities.UnreadableAccountCount++
 			continue
 		}
 		options, optionsErr := model.ParseUpstreamAccountOptionsWithCredentials(account.Extra, credentials)
+		temporaryStateEnabled := optionsErr != nil || upstreamAccountTemporaryStateEnabled(account)
+		if !account.IsSchedulableAtWithTemporaryState(now, temporaryStateEnabled) {
+			continue
+		}
+		capabilities.SchedulableAccountCount++
 		passthrough := optionsErr == nil && (options.OpenAIPassthrough || options.AnthropicPassthrough)
 		if passthrough {
 			capabilities.PassthroughAccountCount++
@@ -1310,6 +1348,29 @@ func UpdateUpstreamAccount(input *UpstreamAccountUpdateInput) error {
 			updates["credential_nonce"] = envelope.Nonce
 			updates["credential_key_version"] = envelope.KeyVersion
 			updates["credential_version"] = newVersion
+		}
+		temporaryStateEnabled := true
+		if credentialsToStore != nil {
+			temporaryStateEnabled = upstreamAccountTemporaryStateEnabledForCredentials(input.Account.Extra, *credentialsToStore)
+		} else {
+			currentCredentials, decryptErr := DecryptUpstreamAccountCredentials(&current)
+			if decryptErr == nil {
+				temporaryStateEnabled = upstreamAccountTemporaryStateEnabledForCredentials(input.Account.Extra, currentCredentials)
+			} else {
+				temporaryStateEnabled = upstreamAccountTemporaryStateEnabledForCredentials(input.Account.Extra, nil)
+			}
+		}
+		if !temporaryStateEnabled {
+			// Turning the account-level switch off immediately releases all
+			// runtime cooldowns. Permanent account states remain untouched.
+			updates["rate_limited_at"] = nil
+			updates["rate_limit_reset_at"] = nil
+			updates["overload_until"] = nil
+			updates["temp_unschedulable_until"] = nil
+			updates["temp_unschedulable_reason"] = ""
+			updates["session_window_start"] = nil
+			updates["session_window_end"] = nil
+			updates["session_window_status"] = ""
 		}
 		result := tx.Model(&model.UpstreamAccount{}).Where("id = ? AND credential_version = ?", current.Id, current.CredentialVersion).Updates(updates)
 		if result.Error != nil {

@@ -34,6 +34,26 @@ func TestApplyUpstreamAccountErrorOwnership(t *testing.T) {
 	require.False(t, updated.Schedulable)
 }
 
+func TestApplyUpstreamAccountErrorDisabledTemporaryStateClears429(t *testing.T) {
+	setupUpstreamAdminTestDB(t)
+	input := UpstreamAccountCreateInput{Account: model.UpstreamAccount{
+		Name: "temporary-state-off", Platform: constant.UpstreamPlatformOpenAI, Type: constant.UpstreamAccountTypeAPIKey,
+		Extra: `{"temp_unschedulable_enabled":false}`, Concurrency: 1, Priority: 1, Weight: 1,
+		Status: constant.UpstreamStatusActive, Schedulable: true, AutoPauseOnExpired: true,
+	}, Credentials: map[string]any{"api_key": "secret", "temp_unschedulable_enabled": false}}
+	require.NoError(t, CreateUpstreamAccount(&input))
+	reset := time.Now().Unix() + 300
+	require.NoError(t, model.DB.Model(&model.UpstreamAccount{}).Where("id = ?", input.Account.Id).Updates(map[string]any{
+		"rate_limit_reset_at": reset, "temp_unschedulable_until": reset,
+	}).Error)
+	rateErr := types.NewErrorWithStatusCode(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+	require.Equal(t, UpstreamAccountErrorRetryAccount, ApplyUpstreamAccountError(input.Account.Id, 0, rateErr))
+	var updated model.UpstreamAccount
+	require.NoError(t, model.DB.First(&updated, input.Account.Id).Error)
+	require.Nil(t, updated.RateLimitResetAt)
+	require.True(t, updated.IsSchedulableAtWithTemporaryState(time.Now().Unix(), false))
+}
+
 func TestApplyUpstreamAccountRateLimitDoesNotAffectSiblingAccount(t *testing.T) {
 	setupUpstreamAdminTestDB(t)
 	limited := createRouterTestAccountWithoutPool(t, "rate-limit-owner")
