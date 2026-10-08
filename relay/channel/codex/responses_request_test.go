@@ -56,13 +56,15 @@ func TestNormalizeCodexResponsesInputDropsOutputStatusFromReplayItems(t *testing
 	t.Parallel()
 	request := dto.OpenAIResponsesRequest{Input: json.RawMessage(`[
 		{"type":"message","role":"assistant","status":"completed","content":"hello"},
-		{"type":"function_call_output","call_id":"call_1","status":"completed","output":{"status":"keep"}}
+		{"type":"function_call_output","call_id":"call_1","status":"completed","output":{"status":"keep"}},
+		{"type":"reasoning","status":"completed","summary":[]}
 	]`)}
 
 	require.NoError(t, normalizeCodexResponsesRequest(&request))
 	require.False(t, gjson.GetBytes(request.Input, "0.status").Exists())
 	require.False(t, gjson.GetBytes(request.Input, "1.status").Exists())
 	require.Equal(t, "keep", gjson.GetBytes(request.Input, "1.output.status").String())
+	require.Equal(t, "completed", gjson.GetBytes(request.Input, "2.status").String())
 }
 
 func TestRepairAccountPassthroughResponsesBodyDropsOutputStatus(t *testing.T) {

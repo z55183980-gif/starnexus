@@ -677,13 +677,15 @@ func scrubCodexResponsesInputItem(item json.RawMessage) (json.RawMessage, bool, 
 	}
 	itemType := codexJSONRawString(obj["type"])
 	changed := false
-	// Clients commonly replay a prior Responses output item as the next
-	// request input. `status` is output-only for the Codex backend and causes
-	// errors such as `input[4].status`; remove it only from the known top-level
-	// input-item envelope, leaving arbitrary nested user/tool JSON untouched.
-	if _, exists := obj["status"]; exists {
-		delete(obj, "status")
-		changed = true
+	// Clients commonly replay prior Responses output items as the next request
+	// input. Most replayed item types must omit the output-only `status` field,
+	// but Codex reasoning items require it when replayed. Keep this exception
+	// narrow and leave arbitrary nested user/tool JSON untouched.
+	if itemType != "reasoning" {
+		if _, exists := obj["status"]; exists {
+			delete(obj, "status")
+			changed = true
+		}
 	}
 	if itemType != "image_generation_call" {
 		if _, exists := obj["quality"]; exists {
