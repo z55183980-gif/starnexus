@@ -679,9 +679,9 @@ func scrubCodexResponsesInputItem(item json.RawMessage) (json.RawMessage, bool, 
 	changed := false
 	// Clients commonly replay prior Responses output items as the next request
 	// input. Most replayed item types must omit the output-only `status` field,
-	// but Codex reasoning items require it when replayed. Keep this exception
+	// but Codex reasoning and web_search_call items require it when replayed. Keep this exception
 	// narrow and leave arbitrary nested user/tool JSON untouched.
-	if itemType != "reasoning" {
+	if itemType != "reasoning" && itemType != "web_search_call" {
 		if _, exists := obj["status"]; exists {
 			delete(obj, "status")
 			changed = true

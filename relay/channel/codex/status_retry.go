@@ -52,7 +52,7 @@ func captureCodexInputStatusCandidates(c *gin.Context, raw json.RawMessage) {
 			continue
 		}
 		itemType := codexJSONRawString(envelope["type"])
-		if itemType == "reasoning" {
+		if itemType == "reasoning" || itemType == "web_search_call" {
 			continue
 		}
 		status, exists := envelope["status"]

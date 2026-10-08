@@ -57,7 +57,8 @@ func TestNormalizeCodexResponsesInputDropsOutputStatusFromReplayItems(t *testing
 	request := dto.OpenAIResponsesRequest{Input: json.RawMessage(`[
 		{"type":"message","role":"assistant","status":"completed","content":"hello"},
 		{"type":"function_call_output","call_id":"call_1","status":"completed","output":{"status":"keep"}},
-		{"type":"reasoning","status":"completed","summary":[]}
+		{"type":"reasoning","status":"completed","summary":[]},
+		{"type":"web_search_call","status":"completed","action":{"type":"search","query":"test"}}
 	]`)}
 
 	require.NoError(t, normalizeCodexResponsesRequest(&request))
@@ -65,6 +66,7 @@ func TestNormalizeCodexResponsesInputDropsOutputStatusFromReplayItems(t *testing
 	require.False(t, gjson.GetBytes(request.Input, "1.status").Exists())
 	require.Equal(t, "keep", gjson.GetBytes(request.Input, "1.output.status").String())
 	require.Equal(t, "completed", gjson.GetBytes(request.Input, "2.status").String())
+	require.Equal(t, "completed", gjson.GetBytes(request.Input, "3.status").String())
 }
 
 func TestRepairAccountPassthroughResponsesBodyDropsOutputStatus(t *testing.T) {
@@ -72,7 +74,8 @@ func TestRepairAccountPassthroughResponsesBodyDropsOutputStatus(t *testing.T) {
 	body := []byte(`{
 		"input":[
 			{"type":"message","role":"assistant","status":"completed","content":"hello"},
-			{"type":"function_call_output","call_id":"call_1","status":"completed","output":{"status":"keep"}}
+			{"type":"function_call_output","call_id":"call_1","status":"completed","output":{"status":"keep"}},
+			{"type":"web_search_call","status":"completed","action":{"type":"search","query":"test"}}
 		],
 		"stream":true,
 		"custom_zero":0,
@@ -83,6 +86,7 @@ func TestRepairAccountPassthroughResponsesBodyDropsOutputStatus(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, gjson.GetBytes(repaired, "input.0.status").Exists())
 	require.False(t, gjson.GetBytes(repaired, "input.1.status").Exists())
+	require.Equal(t, "completed", gjson.GetBytes(repaired, "input.2.status").String())
 	require.Equal(t, "keep", gjson.GetBytes(repaired, "input.1.output.status").String())
 	require.True(t, gjson.GetBytes(repaired, "stream").Bool())
 	require.True(t, gjson.GetBytes(repaired, "custom_zero").Exists())
