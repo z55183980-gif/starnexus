@@ -25,6 +25,13 @@ func (a *Adaptor) FinalizeOutboundJSONBody(c *gin.Context, info *relaycommon.Rel
 	if info == nil || !gjson.ValidBytes(body) {
 		return body, nil
 	}
+	if info.RelayMode == relayconstant.RelayModeResponses {
+		var err error
+		body, err = finalizeCodexMissingStatusRetry(c, body)
+		if err != nil {
+			return nil, err
+		}
+	}
 	accountID := common.GetContextKeyInt(c, appconstant.ContextKeyUpstreamAccountId)
 	state := &relaycommon.CodexOutboundState{
 		AccountID:   accountID,

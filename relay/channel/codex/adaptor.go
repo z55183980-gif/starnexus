@@ -91,6 +91,7 @@ func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommo
 		return nil, err
 	}
 	request.Input = repairedInput
+	captureCodexInputStatusCandidates(c, request.Input)
 	if err := normalizeCodexResponsesRequest(&request); err != nil {
 		return nil, types.NewErrorWithStatusCode(
 			err,
