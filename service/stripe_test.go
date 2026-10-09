@@ -115,3 +115,12 @@ func TestCalculateStripeChargedAmountUsesGroupRatio(t *testing.T) {
 	charged := CalculateStripeChargedAmount(10, "unknown-group")
 	require.Equal(t, float64(10), charged)
 }
+
+func TestApplyStripeWeChatPayClientUsesWeb(t *testing.T) {
+	params := &stripe.CheckoutSessionParams{}
+	applyStripeWeChatPayClient(params)
+	require.NotNil(t, params.PaymentMethodOptions)
+	require.NotNil(t, params.PaymentMethodOptions.WeChatPay)
+	require.Equal(t, "web", stripe.StringValue(params.PaymentMethodOptions.WeChatPay.Client))
+	require.Nil(t, params.PaymentMethodTypes)
+}

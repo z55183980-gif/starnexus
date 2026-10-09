@@ -196,6 +196,7 @@ func CreateTopUpCheckoutSession(input StripeCheckoutSessionInput) (*StripeChecko
 		},
 	}
 	applyStripeCustomer(params, input.CustomerID, input.Email)
+	applyStripeWeChatPayClient(params)
 
 	stripe.Key = setting.StripeApiSecret
 	result, err := session.New(params)
@@ -270,6 +271,19 @@ func applyStripeCustomer(params *stripe.CheckoutSessionParams, customerID, email
 		params.CustomerEmail = stripe.String(email)
 	}
 	params.CustomerCreation = stripe.String(string(stripe.CheckoutSessionCustomerCreationAlways))
+}
+
+// applyStripeWeChatPayClient lets Checkout start WeChat Pay on the web.
+// Payment methods come from the dashboard's payment method configuration, so
+// WeChat Pay can appear on the page; without a client, choosing it and pressing
+// continue only shows Stripe's generic error.
+func applyStripeWeChatPayClient(params *stripe.CheckoutSessionParams) {
+	if params.PaymentMethodOptions == nil {
+		params.PaymentMethodOptions = &stripe.CheckoutSessionPaymentMethodOptionsParams{}
+	}
+	params.PaymentMethodOptions.WeChatPay = &stripe.CheckoutSessionPaymentMethodOptionsWeChatPayParams{
+		Client: stripe.String("web"),
+	}
 }
 
 // ConstructStripeWebhookEvent verifies and parses a Stripe webhook payload.
