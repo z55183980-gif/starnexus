@@ -770,14 +770,14 @@ func UpdateUser(c *gin.Context) {
 	} else if updatedUser.InviterId < 0 || updatedUser.InviterId == updatedUser.Id {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
-	} else if updatedUser.InviterId > 0 {
-		if _, err := model.GetUserById(updatedUser.InviterId, false); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
-			return
+	} else if updatedUser.InviterId != originUser.InviterId {
+		if updatedUser.InviterId > 0 {
+			if _, err := model.GetUserById(updatedUser.InviterId, false); err != nil {
+				common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+				return
+			}
 		}
-		inviterChanged = updatedUser.InviterId != originUser.InviterId
-	} else {
-		inviterChanged = originUser.InviterId != 0
+		inviterChanged = true
 	}
 	desiredInviterID := updatedUser.InviterId
 	desiredRole := updatedUser.Role

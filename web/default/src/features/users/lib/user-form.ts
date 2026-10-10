@@ -83,7 +83,8 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
  */
 export function transformFormDataToPayload(
   data: UserFormValues,
-  userId?: number
+  userId?: number,
+  originalInviterId?: number
 ): UserFormData & { id?: number } {
   const payload: UserFormData & { id?: number } = {
     username: data.username,
@@ -99,7 +100,10 @@ export function transformFormDataToPayload(
     // For update: quota is adjusted atomically via /api/user/manage, not sent here
     payload.role = data.role
     payload.group = data.group
-    if (data.inviter_id !== undefined) {
+    if (
+      data.inviter_id !== undefined &&
+      data.inviter_id !== (originalInviterId ?? 0)
+    ) {
       payload.inviter_id = data.inviter_id
     }
     payload.remark = data.remark || undefined
