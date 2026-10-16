@@ -107,10 +107,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
 			case types.RelayFormatClaude:
-				c.JSON(newAPIError.StatusCode, gin.H{
-					"type":  "error",
-					"error": newAPIError.ToClaudeError(),
-				})
+				writeClaudeRelayError(c, newAPIError)
 			default:
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"error": newAPIError.ToOpenAIError(),
@@ -348,6 +345,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			newAPIError = service.NormalizeUpstreamCyberPolicyError(newAPIError)
 			service.SuspendUserAPIForUpstreamCyberPolicy(c, newAPIError, relayInfo.OriginModelName)
 			relayInfo.LastError = newAPIError
+			if newAPIError.GetErrorCode() == "managed_partial_response" {
+				// Published text cannot be withdrawn or replayed on another account.
+				break
+			}
 			if relay.TryRepairCodexMissingStatusForRetry(c, relayInfo, newAPIError) {
 				logger.LogWarn(c, "retrying Codex Responses once after restoring an upstream-required input status")
 				recordUpstreamRequestEvent(c, "request_retry", "retry", "restored upstream-required Codex input status")
@@ -624,7 +625,23 @@ func markHTTPLogStart(c *gin.Context, info *relaycommon.RelayInfo) {
 	info.StartFirstTokenAttempt(time.Now())
 }
 
+func writeClaudeRelayError(c *gin.Context, failure *types.NewAPIError) {
+	payload := gin.H{"type": "error", "error": failure.ToClaudeError()}
+	if failure.GetErrorCode() == "managed_partial_response" && c.Writer.Written() {
+		data, err := common.Marshal(payload)
+		if err != nil {
+			return
+		}
+		helper.ClaudeChunkData(c, dto.ClaudeResponse{Type: "error"}, string(data))
+		return
+	}
+	c.JSON(failure.StatusCode, payload)
+}
+
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
+	if openaiErr != nil && openaiErr.GetErrorCode() == "managed_partial_response" {
+		return false
+	}
 	if openaiErr == nil {
 		return false
 	}
