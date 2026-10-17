@@ -13,6 +13,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestGenerationTimingOnlyOverridesDisplayedFRT(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	start := time.Now().Add(-10 * time.Second)
+	first := int64(1250)
+	info := &relaycommon.RelayInfo{StartTime: start, FirstResponseTime: start.Add(9 * time.Second), ChannelMeta: &relaycommon.ChannelMeta{}, GenerationFirstTokenMs: &first}
+	other := GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, -1, -1)
+	require.Equal(t, float64(1250), other["frt"])
+	require.Equal(t, "upstream_generation", other["frt_source"])
+	require.Equal(t, start.Add(9*time.Second), info.FirstResponseTime)
+	require.False(t, c.Writer.Written())
+	info.GenerationFirstTokenMs = nil
+	other = GenerateTextOtherInfo(c, info, 1, 1, 1, 0, 0, -1, -1)
+	require.Equal(t, float64(9000), other["frt"])
+	require.NotContains(t, other, "frt_source")
+}
+
 func TestInjectTieredBillingInfoKeepsCacheAdjustmentUnderAdminInfo(t *testing.T) {
 	other := map[string]interface{}{
 		"cache_tokens": 9391,

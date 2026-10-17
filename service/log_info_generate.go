@@ -86,6 +86,10 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	if frt < 0 {
 		frt = 0
 	}
+	if relayInfo.GenerationFirstTokenMs != nil && *relayInfo.GenerationFirstTokenMs >= 0 {
+		frt = *relayInfo.GenerationFirstTokenMs
+		other["frt_source"] = "upstream_generation"
+	}
 	other["frt"] = float64(frt)
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort

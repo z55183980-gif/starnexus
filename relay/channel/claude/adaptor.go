@@ -104,6 +104,9 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *rel
 	}
 	req.Set("anthropic-version", anthropicVersion)
 	CommonClaudeHeadersOperation(c, req, info)
+	if info.IsStream {
+		req.Set("X-Gateway-Timing", "generation-v1")
+	}
 	if isClaudeCode {
 		applyClaudeCodeHeaders(req)
 	}
