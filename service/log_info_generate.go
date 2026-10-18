@@ -91,6 +91,18 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		other["frt_source"] = "upstream_generation"
 	}
 	other["frt"] = float64(frt)
+	if relayInfo.ContentTimingTracked {
+		// A heartbeat or protocol start is not a first token. nil renders N/A.
+		other["frt"] = nil
+		other["frt_source"] = "content_unobserved"
+		if relayInfo.FirstContentMs != nil {
+			other["frt"] = float64(*relayInfo.FirstContentMs)
+			other["frt_source"] = "downstream_content"
+		}
+		if relayInfo.GenerationFirstTokenMs != nil {
+			other["generation_first_token_ms"] = *relayInfo.GenerationFirstTokenMs
+		}
+	}
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
 	}

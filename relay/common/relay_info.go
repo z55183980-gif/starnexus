@@ -103,7 +103,10 @@ type RelayInfo struct {
 	// GenerationFirstTokenMs is optional upstream telemetry used only by usage logs.
 	// Keep FirstResponseTime unchanged: it also controls response/retry decisions.
 	GenerationFirstTokenMs *int64
-	isFirstResponse        bool
+	// Display-only content timing; never use it for response/retry decisions.
+	ContentTimingTracked bool
+	FirstContentMs       *int64
+	isFirstResponse      bool
 	//SendLastReasoningResponse bool
 	IsStream               bool
 	IsGeminiBatchEmbedding bool
@@ -766,6 +769,8 @@ func (info *RelayInfo) StartFirstTokenAttempt(start time.Time) {
 	info.LogStartTime = start
 	info.FirstResponseTime = info.StartTime.Add(-time.Second)
 	info.GenerationFirstTokenMs = nil
+	info.ContentTimingTracked = false
+	info.FirstContentMs = nil
 	info.isFirstResponse = true
 }
 
