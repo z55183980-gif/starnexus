@@ -92,14 +92,13 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 	}
 	other["frt"] = float64(frt)
 	if relayInfo.ContentTimingTracked {
-		// A heartbeat or protocol start is not a first token. nil renders N/A.
-		other["frt"] = nil
-		other["frt_source"] = "content_unobserved"
-		if relayInfo.FirstContentMs != nil {
-			other["frt"] = float64(*relayInfo.FirstContentMs)
-			other["frt_source"] = "downstream_content"
+		// Match Sub2API: use the generation receipt when available, otherwise
+		// the first upstream SSE data event (including ping/message_start).
+		// Downstream content timing must not override that display metric.
+		if relayInfo.GenerationFirstTokenMs == nil || *relayInfo.GenerationFirstTokenMs < 0 {
+			other["frt_source"] = "upstream_sse"
 		}
-		if relayInfo.GenerationFirstTokenMs != nil {
+		if relayInfo.GenerationFirstTokenMs != nil && *relayInfo.GenerationFirstTokenMs >= 0 {
 			other["generation_first_token_ms"] = *relayInfo.GenerationFirstTokenMs
 		}
 	}

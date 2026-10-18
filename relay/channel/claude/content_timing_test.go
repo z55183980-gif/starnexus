@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -78,6 +79,14 @@ func TestHeartbeatDoesNotBecomeContentOrChangeUsage(t *testing.T) {
 	require.Equal(t, 100, usage.PromptTokensDetails.CachedCreationTokens)
 	require.Equal(t, 100, usage.ClaudeCacheCreation1hTokens)
 	require.Contains(t, w.Body.String(), `"type":"ping"`, "keepalive must still reach the client")
+	other := service.GenerateTextOtherInfo(c, info, 1, 1, 1, 2259, .05, -1, -1)
+	require.Equal(t, "upstream_sse", other["frt_source"])
+	require.Less(t, other["frt"].(float64), float64(*info.FirstContentMs), "display must match Sub2API's first SSE event")
+	generation := int64(5)
+	info.GenerationFirstTokenMs = &generation
+	other = service.GenerateTextOtherInfo(c, info, 1, 1, 1, 2259, .05, -1, -1)
+	require.Equal(t, float64(5), other["frt"], "managed generation receipt takes display precedence")
+	require.Equal(t, "upstream_generation", other["frt_source"])
 	info.StartFirstTokenAttempt(time.Now())
 	require.Nil(t, info.FirstContentMs)
 	require.False(t, info.ContentTimingTracked)

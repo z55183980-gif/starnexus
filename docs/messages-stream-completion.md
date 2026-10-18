@@ -6,13 +6,13 @@ handler to finish recording this result. Cancellation before the terminal frame
 and failed writes remain errors. Cleanup closes the upstream body before waiting
 for its scanner, including when protocol completion precedes HTTP EOF.
 
-For native Messages responses, usage-log `frt` now measures the first successfully
-forwarded nonempty text or tool event. Pings, message headers, thinking, signatures
-and usage-only events do not count as answer content. If no content was observed,
-`frt` is null and `frt_source` is `content_unobserved`; otherwise the source is
-`downstream_content`. Valid upstream generation timing is retained separately as
-`generation_first_token_ms`. This describes server-side write/flush, not a client
-receipt acknowledgement.
+For native Messages responses, usage-log `frt` follows Sub2API's existing metric:
+valid upstream generation timing takes precedence (`upstream_generation`);
+otherwise the first nonempty upstream SSE data event is used (`upstream_sse`),
+including ping and message_start. Generation timing is also retained as
+`generation_first_token_ms`. Observed downstream content does not override `frt`.
+This display policy supersedes the earlier downstream_content policy; see
+[Sub2API first-token display](sub2api-first-token-display.md).
 
 Transport `FirstResponseTime` and its retry guard remain unchanged. Heartbeats
 still reach clients and count as connection activity. This change does not alter
@@ -22,7 +22,7 @@ existing display timing. No channel setting or database migration is required.
 
 Regression checks cover delayed upstream EOF, cancellation during terminal
 flush, early cancellation, downstream write failure, heartbeat-before-content,
-unknown content timing, and preservation of cache usage including one-hour writes.
+generation receipt precedence, and preservation of cache usage including one-hour writes.
 
 Deployment verification must correlate new test request IDs with usage logs:
 both EOF readers and clients closing immediately after message_stop must report
