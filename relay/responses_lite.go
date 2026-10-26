@@ -1,11 +1,13 @@
 package relay
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
@@ -32,9 +34,12 @@ func normalizeSelectedResponsesLitePayload(c *gin.Context, info *relaycommon.Rel
 		return body, false, nil
 	}
 
-	normalized, _, err := codex.NormalizeResponsesLitePayload(body)
+	normalized, _, diagnostics, err := codex.NormalizeResponsesLitePayloadWithDiagnostics(body)
 	if err != nil {
 		return body, true, err
+	}
+	if diagnostics.FallbackReason != "" {
+		logger.LogWarn(c, fmt.Sprintf("responses lite tools preserved for upstream: reason=%s additional_tool_items=%d", diagnostics.FallbackReason, diagnostics.AdditionalToolItems))
 	}
 	return normalized, true, nil
 }

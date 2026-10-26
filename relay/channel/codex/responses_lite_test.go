@@ -70,11 +70,12 @@ func TestNormalizeResponsesLitePayloadMovesNamespaceTools(t *testing.T) {
 	require.Equal(t, "all_turns", gjson.GetBytes(normalized, "reasoning.context").String())
 	require.False(t, gjson.GetBytes(normalized, "tools").Exists())
 	require.Equal(t, "additional_tools", gjson.GetBytes(normalized, "input.0.type").String())
-	require.Equal(t, "exec", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.0.name`).String())
-	require.Equal(t, "shell", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.1.name`).String())
-	require.Equal(t, "apply_patch", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.2.name`).String())
-	require.Equal(t, "tool_search", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.3.type`).String())
-	require.Equal(t, "collaboration", gjson.GetBytes(normalized, `input.#(type=="additional_tools").tools.4.name`).String())
+	require.Equal(t, "shell", gjson.GetBytes(normalized, "input.0.tools.0.name").String())
+	require.Equal(t, "apply_patch", gjson.GetBytes(normalized, "input.0.tools.1.name").String())
+	require.Equal(t, "tool_search", gjson.GetBytes(normalized, "input.0.tools.2.type").String())
+	require.Equal(t, "collaboration", gjson.GetBytes(normalized, "input.0.tools.3.name").String())
+	require.Equal(t, "user", gjson.GetBytes(normalized, "input.1.role").String())
+	require.JSONEq(t, gjson.GetBytes(body, "input.1").Raw, gjson.GetBytes(normalized, "input.2").Raw)
 
 	second, changedAgain, err := NormalizeResponsesLitePayload(normalized)
 	require.NoError(t, err)
@@ -125,8 +126,6 @@ func TestNormalizeResponsesLitePayloadRejectsUnsupportedToolShapes(t *testing.T)
 		body string
 		want string
 	}{
-		{name: "non array", body: `{"input":"hello","tools":{}}`, want: "tools to be an array"},
-		{name: "unsupported hosted tool", body: `{"input":"hello","tools":[{"type":"web_search_preview"}]}`, want: `does not support top-level tool type "web_search_preview"`},
 		{name: "non object reasoning", body: `{"input":"hello","reasoning":"high"}`, want: "reasoning to be an object"},
 	}
 	for _, testCase := range testCases {
@@ -139,12 +138,14 @@ func TestNormalizeResponsesLitePayloadRejectsUnsupportedToolShapes(t *testing.T)
 	}
 }
 
-func TestNormalizeResponsesLitePayloadRejectsConflictingAdditionalTools(t *testing.T) {
+func TestNormalizeResponsesLitePayloadPreservesConflictingHistoricalTools(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{
 		"input":[{"type":"additional_tools","tools":[{"type":"namespace","name":"collaboration","description":"old"}]}],
 		"tools":[{"type":"namespace","name":"collaboration","description":"new"}]
 	}`)
-	_, _, err := NormalizeResponsesLitePayload(body)
-	require.ErrorContains(t, err, "conflicts with migrated")
+	normalized, _, err := NormalizeResponsesLitePayload(body)
+	require.NoError(t, err)
+	require.Equal(t, "new", gjson.GetBytes(normalized, "input.0.tools.0.description").String())
+	require.Equal(t, "old", gjson.GetBytes(normalized, "input.1.tools.0.description").String())
 }
