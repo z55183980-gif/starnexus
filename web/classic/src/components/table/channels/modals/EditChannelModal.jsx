@@ -2550,8 +2550,10 @@ const EditChannelModal = (props) => {
                   </Text>
 
                   {inputs.type === 14 && (
+                    <>
                     <Form.Switch field='claude_beta_query' label={t('Claude 强制 beta=true')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_beta_query', value)} extraText={t('开启后，该渠道请求 Claude 时将强制追加 ?beta=true（无需客户端手动传参）')} />
                     <Form.Switch field='claude_session_metadata' label={t('注入 Claude 会话标识')} checkedText={t('开')} uncheckedText={t('关')} onChange={(value) => handleChannelOtherSettingsChange('claude_session_metadata', value)} extraText={t('请求未携带 metadata.user_id 时注入按对话稳定的会话标识，使下游网关（如 Sub2API）保持粘性路由与缓存复用')} />
+                    </>
                   )}
 
                   {inputs.type === 1 && (
