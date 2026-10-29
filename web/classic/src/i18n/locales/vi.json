@@ -104,6 +104,8 @@
     "ChatCompletions→Responses 兼容配置": "Cấu hình tương thích ChatCompletions→Responses",
     "ChatCompletions→Responses 兼容配置（Beta）": "Tương thích ChatCompletions→Responses (Beta)",
     "Claude 强制 beta=true": "Claude buộc beta=true",
+    "注入 Claude 会话标识": "Chèn metadata phiên Claude",
+    "请求未携带 metadata.user_id 时注入按对话稳定的会话标识，使下游网关（如 Sub2API）保持粘性路由与缓存复用": "Thêm metadata.user_id ổn định theo từng cuộc hội thoại khi yêu cầu không có, để gateway định tuyến cố định giữ mỗi hội thoại trên cùng một tài khoản",
     "Claude会在原有请求头基础上追加这些值，不会覆盖已有同名请求头；重复值会自动忽略。": "Claude sẽ thêm các giá trị này vào các tiêu đề yêu cầu hiện có. Các tiêu đề cùng tên sẽ không bị ghi đè và các giá trị trùng lặp sẽ tự động bị bỏ qua.",
     "Claude思考适配 BudgetTokens = MaxTokens * BudgetTokens 百分比": "Thích ứng tư duy Claude BudgetTokens = MaxTokens * Tỷ lệ phần trăm BudgetTokens",
     "Claude设置": "Cài đặt Claude",

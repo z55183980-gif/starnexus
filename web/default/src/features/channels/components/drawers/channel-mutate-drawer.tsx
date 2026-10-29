@@ -267,6 +267,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
       (values.doubao_video2_material_mode !== 'off' ||
         values.doubao_video2_group_id?.trim())) ||
     values.claude_beta_query ||
+    values.claude_session_metadata ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
     values.upstream_model_update_ignored_models?.trim()
@@ -3626,6 +3627,31 @@ export function ChannelMutateDrawer({
                                       <FormDescription>
                                         {t(
                                           'Pass through the anthropic-beta header for beta features'
+                                        )}
+                                      </FormDescription>
+                                    </div>
+                                    <FormControl>
+                                      <Switch
+                                        checked={field.value}
+                                        onCheckedChange={field.onChange}
+                                      />
+                                    </FormControl>
+                                  </FormItem>
+                                )}
+                              />
+
+                              <FormField
+                                control={form.control}
+                                name='claude_session_metadata'
+                                render={({ field }) => (
+                                  <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                    <div className='space-y-0.5'>
+                                      <FormLabel className='text-sm'>
+                                        {t('Inject Claude session metadata')}
+                                      </FormLabel>
+                                      <FormDescription>
+                                        {t(
+                                          'Add a stable per-conversation metadata.user_id when the request has none, so sticky-routing gateways keep each conversation on one account'
                                         )}
                                       </FormDescription>
                                     </div>

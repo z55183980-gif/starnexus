@@ -114,6 +114,8 @@
     "ChatCompletions→Responses 兼容配置": "Настройка совместимости ChatCompletions→Responses",
     "ChatCompletions→Responses 兼容配置（Beta）": "Совместимость ChatCompletions→Responses (бета)",
     "Claude 强制 beta=true": "Claude принудительно beta=true",
+    "注入 Claude 会话标识": "Добавлять метаданные сессии Claude",
+    "请求未携带 metadata.user_id 时注入按对话稳定的会话标识，使下游网关（如 Sub2API）保持粘性路由与缓存复用": "Добавляет стабильный для диалога metadata.user_id, если его нет в запросе, чтобы шлюзы с привязкой маршрутизации держали диалог на одном аккаунте",
     "Claude会在原有请求头基础上追加这些值，不会覆盖已有同名请求头；重复值会自动忽略。": "Claude добавляет эти значения поверх существующих заголовков запроса. Уже существующие заголовки не перезаписываются, а дублирующиеся значения автоматически игнорируются.",
     "Claude思考适配 BudgetTokens = MaxTokens * BudgetTokens 百分比": "Адаптация мышления Claude BudgetTokens = MaxTokens * процент BudgetTokens",
     "Claude设置": "Настройки Claude",
