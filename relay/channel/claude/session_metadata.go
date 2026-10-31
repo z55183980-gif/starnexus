@@ -30,14 +30,15 @@ func SessionMetadataEnabled(info *relaycommon.RelayInfo) bool {
 	return info != nil && info.ChannelMeta != nil && info.ApiType == constant.APITypeAnthropic && info.ChannelOtherSettings.ClaudeSessionMetadata
 }
 
-// ApplySessionMetadata gives a Claude request without metadata.user_id a stable
+// ApplySessionMetadata gives a Claude request without a usable metadata.user_id a stable
 // per-conversation identity. A sticky-routing Claude gateway (Sub2API) otherwise
 // hashes the whole message list, which changes every turn, so each turn lands
 // on a different upstream account and rebuilds the full prompt cache.
 //
 // The identity is derived only from data that every turn of one conversation
 // repeats: the token, the optional OpenAI `user` field, the system text and the
-// first user message text. Caller-supplied metadata always wins.
+// first user message text. Caller-supplied metadata wins; a caller's session
+// without a device only gains the device (see completeUserID).
 func ApplySessionMetadata(info *relaycommon.RelayInfo, body []byte) ([]byte, error) {
 	if !SessionMetadataEnabled(info) || !gjson.ValidBytes(body) {
 		return body, nil
@@ -46,14 +47,21 @@ func ApplySessionMetadata(info *relaycommon.RelayInfo, body []byte) ([]byte, err
 	if metadata.Exists() && metadata.Type != gjson.Null && !metadata.IsObject() {
 		return body, nil
 	}
+	tokenID := strconv.Itoa(info.TokenId)
 	if existing := metadata.Get("user_id"); existing.Exists() && strings.TrimSpace(existing.String()) != "" {
-		return body, nil
+		if existing.Type != gjson.String {
+			return body, nil
+		}
+		completed, ok := completeUserID(existing.String(), tokenID)
+		if !ok {
+			return body, nil
+		}
+		return sjson.SetBytes(body, "metadata.user_id", completed)
 	}
 	firstUser := firstUserMessageText(body)
 	if firstUser == "" {
 		return body, nil
 	}
-	tokenID := strconv.Itoa(info.TokenId)
 	seed := strings.Join([]string{
 		"claude-session-v1",
 		tokenID,
@@ -61,15 +69,40 @@ func ApplySessionMetadata(info *relaycommon.RelayInfo, body []byte) ([]byte, err
 		systemText(body),
 		firstUser,
 	}, "\x00")
-	device := sha256.Sum256([]byte("claude-device-v1\x00" + tokenID))
 	userID, err := common.Marshal(sessionMetadataUserID{
-		DeviceID:  hex.EncodeToString(device[:]),
+		DeviceID:  sessionDeviceID(tokenID),
 		SessionID: uuid.NewSHA1(sessionMetadataNamespace, []byte(seed)).String(),
 	})
 	if err != nil {
 		return nil, err
 	}
 	return sjson.SetBytes(body, "metadata.user_id", string(userID))
+}
+
+func sessionDeviceID(tokenID string) string {
+	device := sha256.Sum256([]byte("claude-device-v1\x00" + tokenID))
+	return hex.EncodeToString(device[:])
+}
+
+// completeUserID adds a device_id to a JSON user_id that names a session but no
+// device, such as {"session_id":"..."}. Sub2API rejects that shape and falls back
+// to hashing cache-marked content, which differs between turns and moves the
+// conversation between accounts. The caller's session and other fields stay.
+func completeUserID(raw string, tokenID string) (string, bool) {
+	if !gjson.Valid(raw) {
+		return "", false
+	}
+	parsed := gjson.Parse(raw)
+	session := parsed.Get("session_id")
+	if !parsed.IsObject() || session.Type != gjson.String || strings.TrimSpace(session.String()) == "" ||
+		strings.TrimSpace(parsed.Get("device_id").String()) != "" {
+		return "", false
+	}
+	completed, err := sjson.Set(raw, "device_id", sessionDeviceID(tokenID))
+	if err != nil {
+		return "", false
+	}
+	return completed, true
 }
 
 // systemText covers both Claude top-level system and OpenAI system/developer

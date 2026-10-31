@@ -83,6 +83,12 @@ func TestApplySessionMetadataPreservesCallerMetadata(t *testing.T) {
 	info := sessionMetadataInfo(42, true)
 	for _, body := range []string{
 		`{"metadata":{"user_id":"user_abc_account__session_123"},"messages":[{"role":"user","content":"hello"}]}`,
+		`{"metadata":{"user_id":"{\"device_id\":\"d\",\"account_uuid\":\"\",\"session_id\":\"s\"}"},"messages":[{"role":"user","content":"hello"}]}`,
+		`{"metadata":{"user_id":"{\"device_id\":\"d\"}"},"messages":[{"role":"user","content":"hello"}]}`,
+		`{"metadata":{"user_id":"{\"session_id\":\"  \"}"},"messages":[{"role":"user","content":"hello"}]}`,
+		`{"metadata":{"user_id":"{\"session_id\":7}"},"messages":[{"role":"user","content":"hello"}]}`,
+		`{"metadata":{"user_id":"{broken"},"messages":[{"role":"user","content":"hello"}]}`,
+		`{"metadata":{"user_id":{"session_id":"object, not a string"}},"messages":[{"role":"user","content":"hello"}]}`,
 		`{"metadata":"opaque","messages":[{"role":"user","content":"hello"}]}`,
 		`{"messages":[{"role":"assistant","content":"no user turn"}]}`,
 		`not json`,
@@ -107,4 +113,32 @@ func TestApplySessionMetadataRequiresAnthropicChannelOptIn(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, firstTurn, string(out))
 	}
+}
+
+// Clients such as omp send a session without a device. The session must survive
+// and every turn must carry the same user_id, or the gateway loses stickiness.
+func TestApplySessionMetadataCompletesCallerSessionWithoutDevice(t *testing.T) {
+	info := sessionMetadataInfo(42, true)
+	turn := func(text string) string {
+		return `{"metadata":{"trace":"keep","user_id":"{\"session_id\":\"01a19136-b3d7-7763-bbc9-da3cf97e4dcb\",\"extra\":1}"},"messages":[{"role":"user","content":"` + text + `"}]}`
+	}
+	first, err := ApplySessionMetadata(info, []byte(turn("first")))
+	require.NoError(t, err)
+	second, err := ApplySessionMetadata(info, []byte(turn("a different turn")))
+	require.NoError(t, err)
+
+	userID := gjson.GetBytes(first, "metadata.user_id").String()
+	require.Equal(t, userID, gjson.GetBytes(second, "metadata.user_id").String())
+	require.Equal(t, "01a19136-b3d7-7763-bbc9-da3cf97e4dcb", gjson.Get(userID, "session_id").String())
+	require.Equal(t, int64(1), gjson.Get(userID, "extra").Int())
+	require.Regexp(t, regexp.MustCompile(`^[0-9a-f]{64}$`), gjson.Get(userID, "device_id").String())
+	require.Equal(t, "keep", gjson.GetBytes(first, "metadata.trace").String())
+
+	other, err := ApplySessionMetadata(sessionMetadataInfo(43, true), []byte(turn("first")))
+	require.NoError(t, err)
+	require.NotEqual(t, gjson.Get(userID, "device_id").String(), gjson.Get(gjson.GetBytes(other, "metadata.user_id").String(), "device_id").String())
+
+	off, err := ApplySessionMetadata(sessionMetadataInfo(42, false), []byte(turn("first")))
+	require.NoError(t, err)
+	require.Equal(t, turn("first"), string(off), "the channel switch still decides")
 }
