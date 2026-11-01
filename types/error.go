@@ -255,9 +255,14 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 	switch e.errorType {
 	case ErrorTypeOpenAIError:
 		if openAIError, ok := e.RelayError.(OpenAIError); ok {
+			errorType := fmt.Sprintf("%v", openAIError.Code)
+			// An Anthropic upstream error carries a type and no code.
+			if openAIError.Code == nil {
+				errorType = openAIError.Type
+			}
 			result = ClaudeError{
 				Message: e.Error(),
-				Type:    fmt.Sprintf("%v", openAIError.Code),
+				Type:    errorType,
 			}
 		}
 	case ErrorTypeClaudeError:
