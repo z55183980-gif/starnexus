@@ -312,10 +312,7 @@ func (c *ClaudeRequest) GetTokenCountMeta() *types.TokenCountMeta {
 					texts = append(texts, string(b))
 				}
 			case "tool_result":
-				if media.Content != nil {
-					b, _ := common.Marshal(media.Content)
-					texts = append(texts, string(b))
-				}
+				appendClaudeToolResultTokenContent(media.Content, &texts, &fileMeta)
 			}
 		}
 	}
@@ -356,6 +353,47 @@ func (c *ClaudeRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	tokenCountMeta.CombineText = strings.Join(texts, "\n")
 	tokenCountMeta.Files = fileMeta
 	return &tokenCountMeta
+}
+
+// Tool results contain the same text/image blocks as a user message. Serializing
+// the whole result into CombineText would count image base64 as millions of text
+// tokens. Build estimation metadata only; never rewrite the forwarded content.
+func appendClaudeToolResultTokenContent(content any, texts *[]string, files *[]*types.FileMeta) {
+	if content == nil {
+		return
+	}
+	if text, ok := content.(string); ok {
+		*texts = append(*texts, text)
+		return
+	}
+	blocks, err := common.Any2Type[[]json.RawMessage](content)
+	if err != nil {
+		// Retain estimates for non-block structured tool output.
+		if raw, err := common.Marshal(content); err == nil {
+			*texts = append(*texts, string(raw))
+		}
+		return
+	}
+	for _, raw := range blocks {
+		var block ClaudeMediaMessage
+		if err := common.Unmarshal(raw, &block); err != nil {
+			*texts = append(*texts, string(raw))
+			continue
+		}
+		switch block.Type {
+		case "text":
+			*texts = append(*texts, block.GetText())
+		case "image":
+			if source := block.ToFileSource(); source != nil {
+				*files = append(*files, types.NewFileMeta(types.FileTypeImage, source))
+			}
+		case "tool_result":
+			appendClaudeToolResultTokenContent(block.Content, texts, files)
+		default:
+			// Preserve unrecognized block fields in the estimate as before.
+			*texts = append(*texts, string(raw))
+		}
+	}
 }
 
 func (c *ClaudeRequest) IsStream(ctx *gin.Context) bool {

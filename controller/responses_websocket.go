@@ -714,6 +714,7 @@ func (s *responsesWebSocketSession) prepareTurn(request *dto.OpenAIResponsesRequ
 		return nil, nil, nil, types.NewErrorWithStatusCode(err, types.ErrorCodeModelPriceError, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	if !priceData.FreeModel {
+		service.CapturePreConsumeEstimate(turnCtx, relayInfo, meta)
 		if apiErr := service.PreConsumeBilling(turnCtx, priceData.QuotaToPreConsume, relayInfo); apiErr != nil {
 			cleanup()
 			return nil, nil, nil, apiErr
