@@ -14,14 +14,16 @@ Deployed on 2026-11-13 to the **current S1 entry**, as established by the Novemb
 - Deployed application revision: `8fb01bd73fd78db33afaf16a4087d04f0b37b623`.
 - Image: `ghcr.io/z55183980-gif/starnexus@sha256:79a056f2ac367f594ae2aacaa3e5e93e534556c84b98465b7832b0224b386b1c`.
 - Image build: https://github.com/z55183980-gif/starnexus/actions/runs/43379554967
-- Current Compose: `/www/wwwroot/starnexus/compose.json`; project `starnexus-s1-desktop-auth-8fb01bd73`.
-- New instance: `xingyuapi-new-api`, localhost port 3002. Nginx was gracefully reloaded at 06:42:53 UTC.
-- Previous instance: `xingyuapi-new-api-prev-ddbb4b62f`, port 3001, retained to finish existing requests and support rollback.
+- Existing business instance and Compose are preserved: `xingyuapi-new-api`, localhost port 3001, `/www/wwwroot/starnexus/compose.json`, project `starnexus-s1-toolresult-ddbb4b62f`.
+- Desktop authentication instance: `starnexus-desktop-auth-8fb01bd73`, localhost port 3002, project `starnexus-s1-desktop-auth-8fb01bd73`. Its separate Compose is `desktop-auth-8fb01bd73/compose.desktop-auth.json` under the production directory.
+- Nginx routes exactly `/desktop-login`, `/api/desktop/config`, `/api/desktop/authorize` and `/api/desktop/exchange` to port 3002. All other routes use the existing port 3001 instance.
 - Server-only backups and observations: `/www/wwwroot/starnexus/desktop-auth-8fb01bd73/`. Compose backups contain secrets and must remain private with mode 600.
 
 Existing environment, shared session configuration, mounts, database, Redis and slave role were preserved. No schema, channel, model, DNS or zAI changes were made. The image was built from an isolated production checkout; unrelated changes in the main working directory were not included. Branch-only image tagging changes were reverted after the build so merging this feature does not alter normal main-branch publication.
 
-For rollback, first verify the previous instance is healthy, restore `nginx.before.conf` to `/etc/nginx/nginx.conf`, run `nginx -t`, then gracefully reload Nginx. Keep both instances running until requests drain. Restore the saved Compose only if making the rollback persistent; it references the previous project and must be reconciled with the retained container name before running Compose commands. Do not recreate shared dependencies.
+The initial full-entry switch at 06:42:53 UTC was narrowed after observation showed additional Responses 503 responses. Business traffic was restored to the original instance with a graceful Nginx reload; container names and the original business Compose were restored without restarting either process. No claim is made that the initial cutover was free of customer-visible errors. The current deployment intentionally isolates the four new routes; do not consolidate all traffic onto the desktop authentication instance without separately checking production inference runtime state. The final switch timestamp and observation are stored as `isolated-at` and `isolated-observation.json` in the backup directory.
+
+For rollback, restore `nginx.before.conf` to `/etc/nginx/nginx.conf`, run `nginx -t`, then gracefully reload Nginx. This removes the four desktop routes while preserving all existing business routing. Keep the authentication instance running until requests drain. Do not recreate shared dependencies. A future normal application release may consolidate these routes once this source change is included and inference runtime continuity is verified.
 
 ## Validation
 
