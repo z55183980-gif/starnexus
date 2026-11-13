@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: production-image-main
+  group: desktop-auth-image
   cancel-in-progress: true
 
 permissions:
@@ -47,7 +47,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=main
+            type=raw,value=desktop-auth
             type=sha,format=long
 
       - name: Build and push

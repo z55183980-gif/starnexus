@@ -32,6 +32,7 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 	router.Use(middleware.Cache())
 	router.Use(webCanonicalRedirect())
 	registerSEORoutes(router)
+	router.GET("/desktop-login", controller.DesktopLoginPage)
 	rootHandler := webFallbackHandler(assets)
 	router.GET("/", rootHandler)
 	router.HEAD("/", rootHandler)
