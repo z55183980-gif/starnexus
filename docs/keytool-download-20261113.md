@@ -1,5 +1,21 @@
 # StarNexus Key Tool download entry
 
+## Latest update: fixed download entries and docs hosting
+
+The website now uses the four fixed entries documented in [the download runbook](../deploy/downloads/README.md). Primary downloads redirect to immutable files in the docs site's existing R2 bucket; GitHub remains available through separate backup entries. The version badge was removed so future installer version changes do not require a frontend rebuild. Both public mirrors and actual browser-initiated downloads matched the hashes in `deploy/downloads/starnexus-keytool.json`; HTTP range downloads returned 206 with the expected bytes.
+
+- Runtime source: `24b21bbb099b6a9f0ee23802a6f64dd32de29eb1`.
+- Successful build: https://github.com/z55183980-gif/starnexus/actions/runs/43407323343.
+- Image: `ghcr.io/z55183980-gif/starnexus@sha256:68e831893f5e0d4064bb2ec5db40b0a9ce84be78a0c3a702e813ef98d870de6c`.
+- Current web container: `starnexus-keytool-web-24b21bbb0`, localhost port 3004. Previous port 3003 remains available for old static chunks and rollback.
+- Business API port 3001 and desktop-login port 3002 remain unchanged, with their original containers and start times preserved. The existing desktop-login HTML route also remains on port 3002.
+- Nginx loads only four exact-match redirect locations from `/www/wwwroot/starnexus/keytool-downloads/starnexus-keytool.conf`. These return 302/no-store and can be changed independently of the frontend. The corresponding manifest is stored alongside it.
+- Web deployment evidence and the previous Nginx configuration are in `/www/wwwroot/starnexus/keytool-web-24b21bbb0/`. Restoring that release's `nginx.before.conf` rolls the web UI back to port 3003 while retaining fixed download entries; verify no newer routing edits exist before restoring a full backup.
+- Static fallback order is current web 3004, previous web 3003, business 3001, then desktop-login 3002. No application restart was required for the switch.
+- Typecheck, focused lint/format, production build and browser checks passed. Browser tests used mocked account/API responses and real public HTML, static files and installer downloads. Checks covered 320/390/1440 widths, Chinese/English text, both primary downloads, both backup URLs, menu keyboard operation, and opening the create-key dialog without submitting.
+
+The following sections record the original deployment, before the fixed-entry update.
+
 Deployed on 2026-11-13 (Asia/Singapore) to https://dkby.com/keys.
 
 The API key page now uses the approved StarNexus logo button, a blue/indigo background, a visible download label and separate Windows/macOS menu entries. The Mac entry identifies Apple Silicon/Intel support and Apple notarization. The action group wraps on small screens; the create-key dialog remains available. The original copyright notices and other project identities are unchanged.
