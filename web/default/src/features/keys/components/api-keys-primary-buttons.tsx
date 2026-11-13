@@ -32,15 +32,17 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { useApiKeys } from './api-keys-provider'
 
 const STARNEXUS_KEY_TOOL_DOWNLOADS = {
-  windows:
-    'https://github.com/z55183980-gif/starnexus-keytool/releases/download/v0.1.2/StarNexus-Key-Tool_Windows_x64-setup.exe',
-  macos:
-    'https://github.com/z55183980-gif/starnexus-keytool/releases/download/v0.1.2/StarNexus-Key-Tool_macOS_universal.dmg',
+  windows: 'https://dkby.com/downloads/starnexus-keytool/windows',
+  macos: 'https://dkby.com/downloads/starnexus-keytool/macos',
+  windowsBackup: 'https://dkby.com/downloads/starnexus-keytool/windows/github',
+  macosBackup: 'https://dkby.com/downloads/starnexus-keytool/macos/github',
 } as const
 
 export function ApiKeysPrimaryButtons() {
@@ -94,9 +96,6 @@ export function ApiKeysPrimaryButtons() {
                 {t('Key setup · Health checks · Repairs')}
               </p>
             </div>
-            <span className='text-muted-foreground self-start text-[11px]'>
-              v0.1.2
-            </span>
           </div>
           <DropdownMenuGroup>
             <DropdownMenuItem
@@ -162,6 +161,40 @@ export function ApiKeysPrimaryButtons() {
                 aria-hidden='true'
               />
             </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className='px-2 pt-2'>
+              {t('Backup downloads (GitHub)')}
+            </DropdownMenuLabel>
+            <div className='grid grid-cols-2 gap-1'>
+              <DropdownMenuItem
+                className='px-2 py-2'
+                render={
+                  <a
+                    href={STARNEXUS_KEY_TOOL_DOWNLOADS.windowsBackup}
+                    target='_blank'
+                    rel='noopener noreferrer'
+                  />
+                }
+              >
+                <HugeiconsIcon icon={ComputerIcon} aria-hidden='true' />
+                {t('Windows backup')}
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className='px-2 py-2'
+                render={
+                  <a
+                    href={STARNEXUS_KEY_TOOL_DOWNLOADS.macosBackup}
+                    target='_blank'
+                    rel='noopener noreferrer'
+                  />
+                }
+              >
+                <HugeiconsIcon icon={AppleIcon} aria-hidden='true' />
+                {t('Mac backup')}
+              </DropdownMenuItem>
+            </div>
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>

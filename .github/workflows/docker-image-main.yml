@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: production-image-main
+  group: production-image-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
