@@ -47,7 +47,7 @@ export function ApiKeysPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen } = useApiKeys()
   return (
-    <div className='flex max-w-full flex-wrap items-center gap-3'>
+    <div className='flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center gap-3'>
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
@@ -78,7 +78,7 @@ export function ApiKeysPrimaryButtons() {
         <DropdownMenuContent
           align='end'
           sideOffset={8}
-          className='w-80 max-w-[calc(100vw-2rem)] rounded-xl p-2 shadow-xl'
+          className='w-80 max-w-[calc(100vw-2rem)] rounded-xl bg-white p-2 text-zinc-950 shadow-xl dark:bg-zinc-950 dark:text-zinc-50'
         >
           <div className='mb-1 flex items-center gap-2.5 border-b px-2 pt-2 pb-3'>
             <img
