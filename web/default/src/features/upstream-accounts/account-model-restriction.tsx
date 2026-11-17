@@ -40,6 +40,13 @@ export type AccountModelRestrictionMode = 'whitelist' | 'mapping'
 export type AccountModelMapping = { from: string; to: string }
 
 export const openAIAccountModels = [
+  'gpt-6.2-astra',
+  'gpt-6.2-sol',
+  'gpt-6.1-sol',
+  'gpt-6.1-terra',
+  'gpt-6-astra',
+  'gpt-6-sol',
+  'gpt-6-luna',
   'gpt-5.2',
   'gpt-5.2-2025-12-11',
   'gpt-5.2-chat-latest',

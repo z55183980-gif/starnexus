@@ -206,6 +206,12 @@ func TestImportUpstreamAccountsCopiesTeamCredentialOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "team", credentials["plan_type"])
 	require.Equal(t, upstreamAccountImportTeamModelMapping, upstreamCredentialStringMap(credentials["model_mapping"]))
+	for _, modelName := range []string{"gpt-6.1-sol", "gpt-6.1-terra", "gpt-6.2-astra", "gpt-6.2-sol"} {
+		mapped, changed, supported := resolveUpstreamAccountModel(&account, credentials, model.UpstreamAccountOptions{}, modelName, false, "")
+		require.True(t, supported, modelName)
+		require.False(t, changed, modelName)
+		require.Equal(t, modelName, mapped)
+	}
 	var extra map[string]any
 	require.NoError(t, common.UnmarshalJsonStr(account.Extra, &extra))
 	require.Equal(t, "ctx_pool", extra["openai_oauth_responses_websockets_v2_mode"])

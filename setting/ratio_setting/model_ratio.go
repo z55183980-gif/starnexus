@@ -102,6 +102,10 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5.6-sol":                      2.5,
 	"gpt-5.6-terra":                    1.25,
 	"gpt-5.6-luna":                     0.5,
+	"gpt-6.1-sol":                      1,   // $2 / 1M input tokens
+	"gpt-6.1-terra":                    0.5, // $1 / 1M input tokens
+	"gpt-6.2-astra":                    4,   // $8 / 1M input tokens
+	"gpt-6.2-sol":                      1,   // $2 / 1M input tokens
 	//"gpt-3.5-turbo-0301":           0.75, //deprecated
 	"gpt-3.5-turbo":          0.25,
 	"gpt-3.5-turbo-0613":     0.75,
@@ -343,6 +347,10 @@ var modelRatioMap = types.NewRWMap[string, float64]()
 var completionRatioMap = types.NewRWMap[string, float64]()
 
 var defaultCompletionRatio = map[string]float64{
+	"gpt-6.1-sol":    5,
+	"gpt-6.1-terra":  5,
+	"gpt-6.2-astra":  5,
+	"gpt-6.2-sol":    5,
 	"gpt-4-gizmo-*":  2,
 	"gpt-4o-gizmo-*": 3,
 	"gpt-4-all":      2,
