@@ -107,6 +107,7 @@ const channelFormBaseSchema = z.object({
   allow_include_obfuscation: z.boolean().optional(), // OpenAI: include usage obfuscation
   allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
   allow_speed: z.boolean().optional(), // Anthropic: speed mode control
+  claude_responses_proxy_enabled: z.boolean().optional(),
   claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
   // Upstream model update settings (stored in settings JSON)
   upstream_model_update_check_enabled: z.boolean().optional(),
@@ -235,6 +236,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_include_obfuscation: false,
   allow_inference_geo: false,
   allow_speed: false,
+  claude_responses_proxy_enabled: false,
   claude_beta_query: false,
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
@@ -347,6 +349,7 @@ export function transformChannelToFormDefaults(
   let allowIncludeObfuscation = false
   let allowInferenceGeo = false
   let allowSpeed = false
+  let claudeResponsesProxyEnabled = false
   let claudeBetaQuery = false
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
@@ -371,6 +374,8 @@ export function transformChannelToFormDefaults(
       allowIncludeObfuscation = parsed.allow_include_obfuscation === true
       allowInferenceGeo = parsed.allow_inference_geo === true
       allowSpeed = parsed.allow_speed === true
+      claudeResponsesProxyEnabled =
+        parsed.claude_responses_proxy_enabled === true
       claudeBetaQuery = parsed.claude_beta_query === true
       upstreamModelUpdateCheckEnabled =
         parsed.upstream_model_update_check_enabled === true
@@ -446,6 +451,9 @@ export function transformChannelToFormDefaults(
     allow_include_obfuscation: allowIncludeObfuscation,
     allow_inference_geo: allowInferenceGeo,
     allow_speed: allowSpeed,
+    claude_responses_proxy_enabled: useAccountPool
+      ? false
+      : claudeResponsesProxyEnabled,
     claude_beta_query: claudeBetaQuery,
     allow_safety_identifier: allowSafetyIdentifier,
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
@@ -587,9 +595,12 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
   if (formData.type === 14) {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
     settingsObj.allow_speed = formData.allow_speed === true
+    settingsObj.claude_responses_proxy_enabled =
+      !useAccountPool && formData.claude_responses_proxy_enabled === true
     settingsObj.claude_beta_query = formData.claude_beta_query === true
   } else {
     if ('allow_speed' in settingsObj) delete settingsObj.allow_speed
+    delete settingsObj.claude_responses_proxy_enabled
     if ('claude_beta_query' in settingsObj) delete settingsObj.claude_beta_query
   }
 

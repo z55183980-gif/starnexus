@@ -93,6 +93,7 @@ export interface GetUsersResponse {
 
 export interface SearchUsersParams {
   keyword?: string
+  exact_username?: boolean
   group?: string
   status?: string | number
   role?: string | number

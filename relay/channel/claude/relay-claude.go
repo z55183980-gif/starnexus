@@ -675,12 +675,13 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 }
 
 type ClaudeResponseInfo struct {
-	ResponseId   string
-	Created      int64
-	Model        string
-	ResponseText strings.Builder
-	Usage        *dto.Usage
-	Done         bool
+	ResponseId     string
+	Created        int64
+	Model          string
+	ResponseText   strings.Builder
+	Usage          *dto.Usage
+	Done           bool
+	MessageStopped bool
 }
 
 func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
@@ -923,7 +924,11 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			}
 			data = string(projectedData)
 		}
-		helper.ClaudeChunkData(c, claudeResponse, data)
+		if writeErr := helper.ClaudeChunkData(c, claudeResponse, data); writeErr != nil {
+			return types.NewError(writeErr, types.ErrorCodeBadResponseBody)
+		}
+		// Usage arrives at message_delta, but only message_stop completes the stream.
+		claudeInfo.MessageStopped = claudeResponse.Type == "message_stop"
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		response := StreamResponseClaude2OpenAI(&claudeResponse)
 
@@ -991,6 +996,10 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		err = HandleStreamResponseData(c, info, claudeInfo, data)
 		if err != nil {
 			sr.Stop(err)
+			return
+		}
+		if claudeInfo.MessageStopped {
+			sr.Done()
 		}
 	})
 	if err != nil {

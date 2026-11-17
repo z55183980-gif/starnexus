@@ -25,7 +25,56 @@ import {
   requiresChannelKeyForCreate,
   transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
+  transformChannelToFormDefaults,
 } from './channel-form'
+
+describe('Claude Responses gateway capability', () => {
+  test('defaults off and round-trips the explicit gateway opt-in', () => {
+    assert.equal(
+      CHANNEL_FORM_DEFAULT_VALUES.claude_responses_proxy_enabled,
+      false
+    )
+    const payload = transformFormDataToUpdatePayload(
+      {
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        name: 'Sub2API',
+        type: 14,
+        models: 'claude-opus-5-5',
+        group: ['default'],
+        claude_responses_proxy_enabled: true,
+      },
+      86
+    )
+    assert.equal(
+      JSON.parse(payload.settings || '{}').claude_responses_proxy_enabled,
+      true
+    )
+    const defaults = transformChannelToFormDefaults({
+      ...payload,
+      channel_info: {},
+    } as Parameters<typeof transformChannelToFormDefaults>[0])
+    assert.equal(defaults.claude_responses_proxy_enabled, true)
+  })
+
+  test('removes the capability when switching channel types', () => {
+    const payload = transformFormDataToUpdatePayload(
+      {
+        ...CHANNEL_FORM_DEFAULT_VALUES,
+        name: 'OpenAI',
+        type: 1,
+        models: 'gpt-5',
+        group: ['default'],
+        settings: JSON.stringify({ claude_responses_proxy_enabled: true }),
+        claude_responses_proxy_enabled: true,
+      },
+      86
+    )
+    assert.equal(
+      JSON.parse(payload.settings || '{}').claude_responses_proxy_enabled,
+      undefined
+    )
+  })
+})
 
 describe('DoubaoVideo2.0 material settings', () => {
   test('keeps material automation disabled by default', () => {

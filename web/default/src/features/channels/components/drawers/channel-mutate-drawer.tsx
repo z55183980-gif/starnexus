@@ -266,6 +266,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     (values.type === 62 &&
       (values.doubao_video2_material_mode !== 'off' ||
         values.doubao_video2_group_id?.trim())) ||
+    values.claude_responses_proxy_enabled ||
     values.claude_beta_query ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
@@ -3612,6 +3613,32 @@ export function ChannelMutateDrawer({
                                 )}
                               />
 
+                              {!isLocalChannel && (
+                                <FormField
+                                  control={form.control}
+                                  name='claude_responses_proxy_enabled'
+                                  render={({ field }) => (
+                                    <FormItem className='flex items-center justify-between gap-3 px-4 py-3'>
+                                      <div className='space-y-0.5'>
+                                        <FormLabel className='text-sm'>
+                                          {t('Enable Claude Responses proxy')}
+                                        </FormLabel>
+                                        <FormDescription>
+                                          {t(
+                                            'Enable only when the upstream gateway supports /v1/responses, such as Sub2API. The official Anthropic API does not support this endpoint.'
+                                          )}
+                                        </FormDescription>
+                                      </div>
+                                      <FormControl>
+                                        <Switch
+                                          checked={field.value}
+                                          onCheckedChange={field.onChange}
+                                        />
+                                      </FormControl>
+                                    </FormItem>
+                                  )}
+                                />
+                              )}
                               <FormField
                                 control={form.control}
                                 name='claude_beta_query'

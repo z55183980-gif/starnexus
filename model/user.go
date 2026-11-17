@@ -16,6 +16,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const UserNameMaxLength = 20
@@ -361,17 +362,20 @@ func GetUsersByInviterId(inviterId int, pageInfo *common.PageInfo) (users []*Use
 	return users, total, nil
 }
 
-func applyUserSearchFilters(query *gorm.DB, keyword string, group string, status *int, role *int) *gorm.DB {
+func applyUserSearchFilters(query *gorm.DB, keyword string, group string, status *int, role *int, exactUsername bool) *gorm.DB {
 	keyword = strings.TrimSpace(keyword)
 	group = strings.TrimSpace(group)
 
-	if keyword != "" {
+	if keyword != "" && exactUsername {
+		query = query.Where("username = ?", NormalizeUsername(keyword))
+	} else if keyword != "" {
 		likeKeyword := "%" + keyword + "%"
-		likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
+		likeCondition := "username = ? OR username LIKE ? OR email LIKE ? OR display_name LIKE ?"
+		username := NormalizeUsername(keyword)
 		if keywordInt, err := strconv.Atoi(keyword); err == nil {
-			query = query.Where("(id = ? OR "+likeCondition+")", keywordInt, likeKeyword, likeKeyword, likeKeyword)
+			query = query.Where("(id = ? OR "+likeCondition+")", keywordInt, username, likeKeyword, likeKeyword, likeKeyword)
 		} else {
-			query = query.Where("("+likeCondition+")", likeKeyword, likeKeyword, likeKeyword)
+			query = query.Where("("+likeCondition+")", username, likeKeyword, likeKeyword, likeKeyword)
 		}
 	}
 	if group != "" {
@@ -387,24 +391,35 @@ func applyUserSearchFilters(query *gorm.DB, keyword string, group string, status
 	return query
 }
 
-func SearchUsersByInviterId(inviterId int, keyword string, group string, status *int, role *int, startIdx int, num int) ([]*User, int64, error) {
+func applyUserSearchOrder(query *gorm.DB, keyword string, exactUsername bool) *gorm.DB {
+	if strings.TrimSpace(keyword) == "" || exactUsername {
+		return query.Order("id desc")
+	}
+	// Rank before pagination; CASE works on SQLite, MySQL and PostgreSQL.
+	return query.Clauses(clause.OrderBy{Expression: clause.Expr{
+		SQL:  "CASE WHEN username = ? THEN 0 ELSE 1 END, id DESC",
+		Vars: []interface{}{NormalizeUsername(keyword)},
+	}})
+}
+
+func SearchUsersByInviterId(inviterId int, keyword string, group string, status *int, role *int, exactUsername bool, startIdx int, num int) ([]*User, int64, error) {
 	if inviterId <= 0 {
 		return []*User{}, 0, nil
 	}
 	query := DB.Model(&User{}).Where("inviter_id = ? AND role = ?", inviterId, common.RoleCommonUser)
-	query = applyUserSearchFilters(query, keyword, group, status, role)
+	query = applyUserSearchFilters(query, keyword, group, status, role, exactUsername)
 	var users []*User
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	if err := query.Omit("password").Order("id desc").Limit(num).Offset(startIdx).Find(&users).Error; err != nil {
+	if err := applyUserSearchOrder(query, keyword, exactUsername).Omit("password").Limit(num).Offset(startIdx).Find(&users).Error; err != nil {
 		return nil, 0, err
 	}
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, status *int, role *int, startIdx int, num int) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, status *int, role *int, exactUsername bool, startIdx int, num int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -423,7 +438,7 @@ func SearchUsers(keyword string, group string, status *int, role *int, startIdx 
 
 	// 构建基础查询
 	query := tx.Unscoped().Model(&User{})
-	query = applyUserSearchFilters(query, keyword, group, status, role)
+	query = applyUserSearchFilters(query, keyword, group, status, role, exactUsername)
 
 	// 获取总数
 	err = query.Count(&total).Error
@@ -433,7 +448,7 @@ func SearchUsers(keyword string, group string, status *int, role *int, startIdx 
 	}
 
 	// 获取分页数据
-	err = query.Omit("password").Order("id desc").Limit(num).Offset(startIdx).Find(&users).Error
+	err = applyUserSearchOrder(query, keyword, exactUsername).Omit("password").Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err

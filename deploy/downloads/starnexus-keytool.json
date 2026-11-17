@@ -1,0 +1,20 @@
+{
+  "version": "0.1.2",
+  "bucket": "docs",
+  "releases": {
+    "windows": {
+      "filename": "StarNexus-Key-Tool_Windows_x64-setup.exe",
+      "bytes": 4372565,
+      "sha256": "a4fedf0f381629506d470b7722669f6be82e2595374544fcef7bb60bc20a112e",
+      "primary": "https://docs.dkby.com/docs/downloads/starnexus-keytool/0.1.2/StarNexus-Key-Tool_Windows_x64-setup.exe",
+      "backup": "https://github.com/z55183980-gif/starnexus-keytool/releases/download/v0.1.2/StarNexus-Key-Tool_Windows_x64-setup.exe"
+    },
+    "macos": {
+      "filename": "StarNexus-Key-Tool_macOS_universal.dmg",
+      "bytes": 8659922,
+      "sha256": "79cc43f1ebba16dbd64d2e11e05e11c63d6d2b3d55fdc0b3d62c235cf90499c6",
+      "primary": "https://docs.dkby.com/docs/downloads/starnexus-keytool/0.1.2/StarNexus-Key-Tool_macOS_universal.dmg",
+      "backup": "https://github.com/z55183980-gif/starnexus-keytool/releases/download/v0.1.2/StarNexus-Key-Tool_macOS_universal.dmg"
+    }
+  }
+}

@@ -29,12 +29,14 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table'
-import { useMediaQuery } from '@/hooks'
+import { useDebounce, useMediaQuery } from '@/hooks'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { Field, FieldLabel } from '@/components/ui/field'
+import { Switch } from '@/components/ui/switch'
 import {
   DISABLED_ROW_DESKTOP,
   DISABLED_ROW_MOBILE,
@@ -70,9 +72,14 @@ export function UsersTable() {
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
+  const search = route.useSearch()
+  const navigate = route.useNavigate()
+  const globalFilter = search.filter ?? ''
+  const exactUsername = search.exactUsername ?? false
+  const keyword = useDebounce(globalFilter.trim(), 300)
+  const isSearchPending = keyword !== globalFilter.trim()
 
   const {
-    globalFilter,
     onGlobalFilterChange,
     columnFilters,
     onColumnFiltersChange,
@@ -80,8 +87,8 @@ export function UsersTable() {
     onPaginationChange,
     ensurePageInRange,
   } = useTableUrlState({
-    search: route.useSearch(),
-    navigate: route.useNavigate(),
+    search,
+    navigate,
     pagination: { defaultPage: 1, defaultPageSize: isMobile ? 10 : 20 },
     globalFilter: { enabled: true, key: 'filter' },
     columnFilters: [
@@ -117,19 +124,20 @@ export function UsersTable() {
   )
 
   // Fetch data with React Query
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
     queryKey: [
       'users',
       pagination.pageIndex + 1,
       pagination.pageSize,
-      globalFilter,
+      keyword,
+      exactUsername,
       statusFilter,
       roleFilter,
       groupFilter,
       refreshTrigger,
     ],
+    enabled: !isSearchPending,
     queryFn: async () => {
-      const keyword = globalFilter?.trim() || ''
       const hasFilter = Boolean(
         keyword || statusFilter || roleFilter || groupFilter
       )
@@ -142,6 +150,7 @@ export function UsersTable() {
         ? await searchUsers({
             ...params,
             keyword,
+            exact_username: exactUsername,
             status: statusFilter,
             role: roleFilter,
             group: groupFilter,
@@ -204,7 +213,10 @@ export function UsersTable() {
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getFacetedUniqueValues(),
     onPaginationChange,
-    onGlobalFilterChange,
+    onGlobalFilterChange: (updater) => {
+      setSorting([])
+      onGlobalFilterChange?.(updater)
+    },
     onColumnFiltersChange,
     manualPagination: true,
     manualFiltering: true,
@@ -213,22 +225,67 @@ export function UsersTable() {
 
   const pageCount = table.getPageCount()
   useEffect(() => {
-    ensurePageInRange(pageCount)
-  }, [pageCount, ensurePageInRange])
+    if (!isSearchPending && !isFetching && !isPlaceholderData) {
+      ensurePageInRange(pageCount)
+    }
+  }, [
+    pageCount,
+    ensurePageInRange,
+    isSearchPending,
+    isFetching,
+    isPlaceholderData,
+  ])
 
   return (
     <DataTablePage
       table={table}
       columns={columns}
       isLoading={isLoading}
-      isFetching={isFetching}
+      isFetching={isFetching || isSearchPending}
       emptyTitle={t('No Users Found')}
       emptyDescription={t(
         'No users available. Try adjusting your search or filters.'
       )}
       skeletonKeyPrefix='users-skeleton'
       toolbarProps={{
-        searchPlaceholder: t('Filter by username, name or email...'),
+        searchPlaceholder: exactUsername
+          ? t('Enter exact username...')
+          : t('Filter by username, name or email...'),
+        additionalSearch: (
+          <Field orientation='horizontal' className='w-auto'>
+            <Switch
+              id='users-exact-username'
+              checked={exactUsername}
+              onCheckedChange={(checked) => {
+                setSorting([])
+                void navigate({
+                  search: (prev) => ({
+                    ...prev,
+                    page: undefined,
+                    exactUsername: checked || undefined,
+                  }),
+                })
+              }}
+            />
+            <FieldLabel htmlFor='users-exact-username'>
+              {t('Exact username')}
+            </FieldLabel>
+          </Field>
+        ),
+        hasAdditionalFilters: exactUsername,
+        onReset: () => {
+          void navigate({
+            search: (prev) => ({
+              ...prev,
+              page: undefined,
+              filter: undefined,
+              status: undefined,
+              role: undefined,
+              group: undefined,
+              exactUsername: undefined,
+            }),
+          })
+        },
         filters: [
           {
             columnId: 'status',

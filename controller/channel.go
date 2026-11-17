@@ -587,6 +587,7 @@ func normalizeLocalAccountPoolChannel(channel *model.Channel) {
 	otherSettings.ResponsesWebSocketV2Mode = ""
 	otherSettings.ResponsesWebSocketV2ReplayEnabled = false
 	otherSettings.AlphaSearchEnabled = false
+	otherSettings.ClaudeResponsesProxyEnabled = false
 	channel.SetOtherSettings(otherSettings)
 }
 

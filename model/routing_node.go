@@ -255,7 +255,9 @@ func EnsureDefaultRoutingNodes() error {
 		{Key: "s2", Name: "S2", Origin: "origin-s2.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Visible: true, Sort: 2},
 		{Key: "s3", Name: "S3", Origin: "origin-s3.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Visible: true, Sort: 3},
 		{Key: "s4", Name: "S4", Origin: "origin-s4.dkby.com", Type: RoutingNodeTypeApplication, Enabled: true, Visible: true, Sort: 4},
-		{Key: "spg", Name: "SPG", Origin: "", Type: RoutingNodeTypeDatabase, Enabled: true, Visible: true, MonitorEnabled: true, Sort: 5},
+		// Keep the historical key so existing user bindings continue to resolve,
+		// while the display name follows the current production database host.
+		{Key: "spg", Name: "DB7", Origin: "", Type: RoutingNodeTypeDatabase, Enabled: true, Visible: true, MonitorEnabled: true, Sort: 5},
 	}
 	for i := range defaults {
 		now := common.GetTimestamp()

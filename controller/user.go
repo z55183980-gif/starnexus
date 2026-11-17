@@ -375,6 +375,7 @@ func parseUserStatisticsRange(c *gin.Context) (time.Time, time.Time, bool) {
 
 func SearchUsers(c *gin.Context) {
 	keyword := c.Query("keyword")
+	exactUsername := c.Query("exact_username") == "true"
 	group := c.Query("group")
 	status := parseOptionalIntQuery(c, "status")
 	role := parseOptionalIntQuery(c, "role")
@@ -385,9 +386,9 @@ func SearchUsers(c *gin.Context) {
 	var total int64
 	var err error
 	if myRole == common.RoleAgentUser {
-		users, total, err = model.SearchUsersByInviterId(myId, keyword, group, status, role, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+		users, total, err = model.SearchUsersByInviterId(myId, keyword, group, status, role, exactUsername, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	} else {
-		users, total, err = model.SearchUsers(keyword, group, status, role, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+		users, total, err = model.SearchUsers(keyword, group, status, role, exactUsername, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	}
 	if err != nil {
 		common.ApiError(c, err)

@@ -73,6 +73,20 @@ func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *
 		writeMutex sync.Mutex     // Mutex to protect concurrent writes
 		wg         sync.WaitGroup // 用于等待所有 goroutine 退出
 	)
+	// A client may close immediately after receiving the terminal frame. Let
+	// an in-flight handler finish writing and marking completion first.
+	clientGone := func() {
+		writeMutex.Lock()
+		defer writeMutex.Unlock()
+		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+	}
+	defer func() {
+		if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
+			logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
+		} else {
+			logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
+		}
+	}()
 
 	generalSettings := operation_setting.GetGeneralSetting()
 	pingEnabled := generalSettings.PingIntervalEnabled && !info.DisablePing
@@ -95,6 +109,11 @@ func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *
 	defer func() {
 		// 通知所有 goroutine 停止
 		common.SafeSendBool(stopChan, true)
+		// Unblock Scan before waiting for the scanner goroutine. The protocol
+		// can finish before the upstream HTTP connection reaches EOF.
+		if resp.Body != nil {
+			resp.Body.Close()
+		}
 
 		ticker.Stop()
 		if pingTicker != nil {
@@ -203,9 +222,11 @@ func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *
 		sr := newStreamResult(info.StreamStatus)
 		for data := range dataChan {
 			sr.reset()
-			writeMutex.Lock()
-			dataHandler(data, sr)
-			writeMutex.Unlock()
+			func() {
+				writeMutex.Lock()
+				defer writeMutex.Unlock()
+				dataHandler(data, sr)
+			}()
 			if sr.IsStopped() {
 				return
 			}
@@ -234,7 +255,7 @@ func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *
 			case <-ctx.Done():
 				return
 			case <-c.Request.Context().Done():
-				info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+				clientGone()
 				return
 			default:
 			}
@@ -274,6 +295,9 @@ func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *
 			}
 		}
 
+		if ctx.Err() != nil {
+			return // Closing the body during cleanup is not an upstream failure.
+		}
 		if err := scanner.Err(); err != nil {
 			if err != io.EOF {
 				logger.LogError(c, "scanner error: "+err.Error())
@@ -290,12 +314,6 @@ func StreamScannerHandlerWithOptions(c *gin.Context, resp *http.Response, info *
 	case <-stopChan:
 		// EndReason already set by the goroutine that triggered stopChan
 	case <-c.Request.Context().Done():
-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
-	}
-
-	if info.StreamStatus.IsNormalEnd() && !info.StreamStatus.HasErrors() {
-		logger.LogInfo(c, fmt.Sprintf("stream ended: %s", info.StreamStatus.Summary()))
-	} else {
-		logger.LogError(c, fmt.Sprintf("stream ended: %s, received=%d", info.StreamStatus.Summary(), info.ReceivedResponseCount))
+		clientGone()
 	}
 }

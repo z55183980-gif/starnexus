@@ -197,6 +197,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		clientOutputStarted = true
+		if accumulator.Successful() {
+			sr.Done()
+		}
 	})
 	if capacityErr != nil {
 		return nil, capacityErr

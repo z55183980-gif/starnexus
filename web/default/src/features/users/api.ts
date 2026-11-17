@@ -89,6 +89,7 @@ export async function searchUsers(
 ): Promise<GetUsersResponse> {
   const {
     keyword = '',
+    exact_username = false,
     group = '',
     status,
     role,
@@ -103,6 +104,9 @@ export async function searchUsers(
 
   if (group) {
     searchParams.set('group', group)
+  }
+  if (exact_username) {
+    searchParams.set('exact_username', 'true')
   }
   if (status !== undefined && status !== '') {
     searchParams.set('status', String(status))

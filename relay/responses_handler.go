@@ -79,6 +79,7 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	forceAccountChatCompletions := accountResponsesMode == model.UpstreamOpenAIResponsesModeForceChatCompletions
 	forceAccountResponses := accountResponsesMode == model.UpstreamOpenAIResponsesModeForceResponses
 	if info.RelayMode == relayconstant.RelayModeResponses &&
+		!(info.ApiType == appconstant.APITypeAnthropic && info.ChannelOtherSettings.ClaudeResponsesProxyEnabled) &&
 		!passThroughGlobal &&
 		!info.ChannelSetting.ShouldPassThroughBody() &&
 		(forceAccountChatCompletions ||

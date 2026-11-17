@@ -136,6 +136,7 @@ const (
 )
 
 type ChannelOtherSettings struct {
+	ClaudeResponsesProxyEnabled           bool                  `json:"claude_responses_proxy_enabled,omitempty"` // Only for gateways that implement /v1/responses; not the Anthropic API.
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
 	ResponsesWebSocketV2Enabled           bool                  `json:"responses_websocket_v2_enabled,omitempty"`
 	ResponsesWebSocketV2Mode              string                `json:"responses_websocket_v2_mode,omitempty"`

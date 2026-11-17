@@ -12,7 +12,9 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/types"
 
@@ -45,6 +47,15 @@ func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if info.RelayMode == relayconstant.RelayModeResponses {
+		if !info.ChannelOtherSettings.ClaudeResponsesProxyEnabled {
+			return "", errors.New("Claude channel requires an upstream Responses proxy with claude_responses_proxy_enabled")
+		}
+		return strings.TrimRight(info.ChannelBaseUrl, "/") + "/v1/responses", nil
+	}
+	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
+		return "", errors.New("Claude Responses proxy does not support /v1/responses/compact")
+	}
 	requestURL := fmt.Sprintf("%s/v1/messages", info.ChannelBaseUrl)
 	if !shouldAppendClaudeBetaQuery(info) {
 		return requestURL, nil
@@ -84,6 +95,11 @@ func CommonClaudeHeadersOperation(c *gin.Context, req *http.Header, info *relayc
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, req *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, req)
+	if info.RelayMode == relayconstant.RelayModeResponses && info.ChannelOtherSettings.ClaudeResponsesProxyEnabled {
+		req.Del("x-api-key")
+		req.Set("Authorization", "Bearer "+info.ApiKey)
+		return nil
+	}
 	accountPlatform := common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountPlatform)
 	accountType := common.GetContextKeyString(c, constant.ContextKeyUpstreamAccountType)
 	isClaudeCode := accountPlatform == constant.UpstreamPlatformAnthropic &&
@@ -163,8 +179,13 @@ func (a *Adaptor) ConvertEmbeddingRequest(c *gin.Context, info *relaycommon.Rela
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
-	// TODO implement me
-	return nil, errors.New("not implemented")
+	if !info.ChannelOtherSettings.ClaudeResponsesProxyEnabled {
+		return nil, errors.New("Claude channel requires an upstream Responses proxy with claude_responses_proxy_enabled")
+	}
+	if request.Reasoning != nil {
+		info.ReasoningEffort = request.Reasoning.Effort
+	}
+	return request, nil
 }
 
 func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (any, error) {
@@ -172,6 +193,13 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 }
 
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
+	if info.RelayMode == relayconstant.RelayModeResponses && info.ChannelOtherSettings.ClaudeResponsesProxyEnabled {
+		info.FinalRequestRelayFormat = types.RelayFormatOpenAIResponses
+		if info.IsStream {
+			return openai.OaiResponsesStreamHandler(c, info, resp)
+		}
+		return openai.OaiResponsesHandler(c, info, resp)
+	}
 	info.FinalRequestRelayFormat = types.RelayFormatClaude
 	if info.IsStream {
 		return ClaudeStreamHandler(c, resp, info)
