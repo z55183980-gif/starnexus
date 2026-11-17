@@ -91,12 +91,16 @@ import type {
   GetUsageDetailsSummary,
   LogAccessScope,
 } from '@/features/usage-logs/types'
+import {
+  UserFilterSelect,
+  type SelectedLogUser,
+} from '@/features/users/components/user-filter-select'
 import { UsersRankingCard } from '@/features/users/components/users-ranking-card'
 
 type UsageDetailsTab = 'usage' | 'errors' | 'ranking'
 
 type UsageDetailsFilters = {
-  username: string
+  user?: SelectedLogUser
   token: string
   model: string
   account: string
@@ -111,7 +115,7 @@ type UsageDetailsFilters = {
 const defaultFilters = (): UsageDetailsFilters => {
   const { start, end } = getDefaultTimeRange()
   return {
-    username: '',
+    user: undefined,
     token: '',
     model: '',
     account: '',
@@ -142,10 +146,7 @@ function buildQueryParams(
     // characters; wait until that threshold instead of issuing an error.
     if (trimmed.length >= 2) assign(trimmed)
   }
-  if (isManagedScope)
-    addFuzzyFilter(filters.username, (value) => {
-      params.username = value
-    })
+  if (isManagedScope && filters.user) params.user_id = filters.user.id
   addFuzzyFilter(filters.token, (value) => {
     params.token_name = value
   })
@@ -821,16 +822,10 @@ export function UsageDetails() {
                     {isManagedScope &&
                       filterField(
                         t('User'),
-                        <Input
-                          value={filters.username}
-                          onChange={(e) =>
-                            setFilter('username', e.target.value)
-                          }
-                          onKeyDown={(e) =>
-                            e.key === 'Enter' &&
-                            setPagination((prev) => ({ ...prev, pageIndex: 0 }))
-                          }
-                          placeholder={t('Search by username...')}
+                        <UserFilterSelect
+                          value={filters.user}
+                          onChange={(user) => setFilter('user', user)}
+                          className='w-full'
                         />
                       )}
                     {filterField(

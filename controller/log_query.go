@@ -77,7 +77,7 @@ func parseAdminLogPage(c *gin.Context, page *common.PageInfo) (int, error) {
 
 func cachedAdminLogCount(c *gin.Context, start, end int64) func(*gorm.DB) (int64, error) {
 	values := make(url.Values)
-	for _, key := range []string{"type", "username", "token_name", "model_name", "channel", "group", "request_id", "upstream_request_id", "exclude_filters", "account", "billing_mode", "billing_type", "stream"} {
+	for _, key := range []string{"type", "user_id", "username", "token_name", "model_name", "channel", "group", "request_id", "upstream_request_id", "exclude_filters", "account", "billing_mode", "billing_type", "stream"} {
 		if value := c.Query(key); value != "" {
 			values.Set(key, value)
 		}

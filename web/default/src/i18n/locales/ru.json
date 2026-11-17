@@ -6152,6 +6152,9 @@
     "Enable only when the upstream gateway supports /v1/responses, such as Sub2API. The official Anthropic API does not support this endpoint.": "Включайте только если вышестоящий шлюз поддерживает /v1/responses, например Sub2API. Официальный API Anthropic не поддерживает этот endpoint.",
     "Download config tool": "Скачать инструмент настройки",
     "Config tool": "Инструмент настройки",
-    "For your system": "Для вашей системы"
+    "For your system": "Для вашей системы",
+    "Search and select a user": "Найти и выбрать пользователя",
+    "Type to search users": "Введите имя пользователя для поиска",
+    "More users match. Refine your search.": "Найдено больше пользователей. Уточните поиск."
   }
 }

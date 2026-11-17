@@ -6152,6 +6152,9 @@
     "Enable only when the upstream gateway supports /v1/responses, such as Sub2API. The official Anthropic API does not support this endpoint.": "Chỉ bật khi cổng thượng nguồn hỗ trợ /v1/responses, chẳng hạn Sub2API. API Anthropic chính thức không hỗ trợ điểm cuối này.",
     "Download config tool": "Tải công cụ cấu hình",
     "Config tool": "Công cụ cấu hình",
-    "For your system": "Dành cho hệ thống của bạn"
+    "For your system": "Dành cho hệ thống của bạn",
+    "Search and select a user": "Tìm và chọn người dùng",
+    "Type to search users": "Nhập tên người dùng để tìm kiếm",
+    "More users match. Refine your search.": "Còn người dùng phù hợp khác. Hãy thu hẹp tìm kiếm."
   }
 }

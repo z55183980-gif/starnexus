@@ -236,8 +236,8 @@ export function buildApiParams(config: {
     ...(isAdmin && searchParams.channel
       ? { channel: Number(searchParams.channel) || 0 }
       : {}),
-    ...(isAdmin && searchParams.username
-      ? { username: String(searchParams.username) }
+    ...(isAdmin && searchParams.user_id
+      ? { user_id: Number(searchParams.user_id) }
       : {}),
     ...(searchParams.requestId
       ? { request_id: String(searchParams.requestId) }
@@ -288,7 +288,7 @@ export function buildApiParams(config: {
           if (isAdmin) params.channel = Number(value) || 0
           break
         case 'username':
-          if (isAdmin) params.username = String(value)
+          // Usernames are display labels; only an explicit selection filters logs.
           break
       }
     })

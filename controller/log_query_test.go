@@ -215,3 +215,47 @@ func TestAdminLogEndpointCursorAndHistoricalBilling(t *testing.T) {
 	require.NoError(t, db.Model(&model.Log{}).Count(&remaining).Error)
 	require.EqualValues(t, 3, remaining)
 }
+
+func TestParseLogUserID(t *testing.T) {
+	for _, tc := range []struct {
+		query   string
+		id      int
+		invalid bool
+	}{
+		{"", 0, false}, {"user_id=11", 11, false}, {"user_id=", 0, true},
+		{"user_id=0", 0, true}, {"user_id=-1", 0, true}, {"user_id=d", 0, true},
+		{"user_id=1.5", 0, true}, {"user_id=999999999999999999999", 0, true},
+		{"user_id=11&user_id=12", 0, true},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			id, err := parseLogUserID(logQueryContext(tc.query))
+			require.Equal(t, tc.invalid, err != nil)
+			require.Equal(t, tc.id, id)
+		})
+	}
+}
+
+func TestAdminLogCountCacheSeparatesSelectedUsers(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/user-counts.db"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	for _, id := range []int{11, 11, 12} {
+		require.NoError(t, db.Create(&model.Log{UserId: id}).Error)
+	}
+	adminLogCountCache = newTTLCache[int64](time.Minute, 1024)
+	defer func() { adminLogCountCache = newTTLCache[int64](time.Minute, 1024) }()
+	for _, tc := range []struct {
+		query string
+		id    int
+		count int64
+	}{
+		{"user_id=11", 11, 2}, {"user_id=12", 12, 1}, {"user_id=999", 999, 0}, {"user_id=11&p=2", 11, 2},
+	} {
+		count, err := cachedAdminLogCount(logQueryContext(tc.query), 1, 200)(db.Model(&model.Log{}).Where("user_id = ?", tc.id))
+		require.NoError(t, err)
+		require.Equal(t, tc.count, count)
+	}
+}

@@ -6152,6 +6152,9 @@
     "Enable only when the upstream gateway supports /v1/responses, such as Sub2API. The official Anthropic API does not support this endpoint.": "À activer uniquement si la passerelle amont prend en charge /v1/responses, comme Sub2API. L’API officielle Anthropic ne prend pas en charge ce point de terminaison.",
     "Download config tool": "Télécharger l’outil de configuration",
     "Config tool": "Outil de configuration",
-    "For your system": "Pour votre système"
+    "For your system": "Pour votre système",
+    "Search and select a user": "Rechercher et sélectionner un utilisateur",
+    "Type to search users": "Saisissez un nom d’utilisateur",
+    "More users match. Refine your search.": "D’autres utilisateurs correspondent. Affinez votre recherche."
   }
 }

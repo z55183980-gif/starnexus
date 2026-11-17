@@ -549,3 +549,67 @@ func TestGetAgentUserLogsScopesToAgentAndInvitees(t *testing.T) {
 		t.Fatalf("agent stat = %+v, want quota=300 rpm=2 tpm=17", stat)
 	}
 }
+
+func TestSelectedLogUserID(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(t.TempDir()+"/selected-user.db"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	defer sqlDB.Close()
+	originalDB, originalLogDB := DB, LOG_DB
+	DB, LOG_DB = db, db
+	t.Cleanup(func() { DB, LOG_DB = originalDB, originalLogDB })
+	require.NoError(t, db.AutoMigrate(&User{}, &Log{}))
+	for _, user := range []User{
+		{Id: 10, Username: "agent", Role: common.RoleAgentUser, AffCode: "agent"},
+		{Id: 11, Username: "d", Role: common.RoleCommonUser, InviterId: 10, AffCode: "d"},
+		{Id: 12, Username: "david", Role: common.RoleCommonUser, InviterId: 99, AffCode: "david"},
+	} {
+		require.NoError(t, db.Create(&user).Error)
+	}
+	now := common.GetTimestamp()
+	for _, log := range []Log{
+		{UserId: 11, Username: "d", Type: LogTypeConsume, CreatedAt: now, Quota: 100, PromptTokens: 2, CompletionTokens: 3, UsageStatsReady: 1},
+		{UserId: 11, Username: "old-name", Type: LogTypeConsume, CreatedAt: now, Quota: 200, PromptTokens: 5, CompletionTokens: 7, UsageStatsReady: 1},
+		{UserId: 12, Username: "david", Type: LogTypeConsume, CreatedAt: now, Quota: 900, PromptTokens: 100, CompletionTokens: 100, UsageStatsReady: 1},
+	} {
+		require.NoError(t, db.Create(&log).Error)
+	}
+	for _, id := range []int{11, 12, 999} {
+		option := LogQueryOptions{UserID: id}
+		logs, total, err := GetAllLogs(LogTypeConsume, 0, 0, "", "d", "", 0, 20, 0, "", "", "", nil, option)
+		require.NoError(t, err)
+		expectedCount, expectedQuota, expectedTokens := int64(0), 0, 0
+		if id == 11 {
+			expectedCount, expectedQuota, expectedTokens = 2, 300, 17
+		}
+		if id == 12 {
+			expectedCount, expectedQuota, expectedTokens = 1, 900, 200
+		}
+		require.Equal(t, expectedCount, total)
+		require.Len(t, logs, int(expectedCount))
+		for _, log := range logs {
+			require.Equal(t, id, log.UserId)
+		}
+		stat, err := SumUsedQuota(LogTypeConsume, 0, 0, "", "d", "", 0, "", nil, option)
+		require.NoError(t, err)
+		require.Equal(t, expectedQuota, stat.Quota)
+		require.EqualValues(t, expectedCount, stat.Rpm)
+		require.Equal(t, expectedTokens, stat.Tpm)
+		summary, err := GetUsageDetailsSummary(LogTypeConsume, 0, 0, "", "d", "", "", option)
+		require.NoError(t, err)
+		require.EqualValues(t, expectedTokens, summary.TotalTokens)
+		agentLogs, agentTotal, err := GetAgentUserLogs(10, LogTypeConsume, 0, 0, "", "d", "", 0, 20, "", "", "", nil, option)
+		require.NoError(t, err)
+		agentStat, err := SumAgentUsedQuota(10, LogTypeConsume, 0, 0, "", "d", "", "", nil, option)
+		require.NoError(t, err)
+		if id != 11 {
+			expectedCount, expectedQuota, expectedTokens = 0, 0, 0
+		}
+		require.Equal(t, expectedCount, agentTotal)
+		require.Len(t, agentLogs, int(expectedCount))
+		require.Equal(t, expectedQuota, agentStat.Quota)
+		require.EqualValues(t, expectedCount, agentStat.Rpm)
+		require.Equal(t, expectedTokens, agentStat.Tpm)
+	}
+}

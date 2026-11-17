@@ -55,6 +55,7 @@ export interface LogExcludeFilter {
  * Common logs specific filters
  */
 export interface CommonLogFilters extends CommonFilters {
+  user_id?: number
   model?: string
   token?: string
   group?: string
@@ -294,6 +295,7 @@ export interface TaskLog {
 // ============================================================================
 
 export interface GetLogsParams {
+  user_id?: number
   before_id?: number
   p?: number
   page_size?: number
@@ -361,6 +363,7 @@ export interface UserNodeBindingResponse {
 }
 
 export interface GetLogStatsParams {
+  user_id?: number
   type?: number
   username?: string
   token_name?: string

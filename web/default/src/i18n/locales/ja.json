@@ -6152,6 +6152,9 @@
     "Enable only when the upstream gateway supports /v1/responses, such as Sub2API. The official Anthropic API does not support this endpoint.": "Sub2APIなど、上流ゲートウェイが /v1/responses に対応している場合のみ有効にしてください。Anthropic公式APIはこのエンドポイントに対応していません。",
     "Download config tool": "設定ツールをダウンロード",
     "Config tool": "設定ツール",
-    "For your system": "お使いのシステム向け"
+    "For your system": "お使いのシステム向け",
+    "Search and select a user": "ユーザーを検索して選択",
+    "Type to search users": "ユーザー名を入力して検索",
+    "More users match. Refine your search.": "他にも一致するユーザーがいます。検索条件を絞り込んでください。"
   }
 }

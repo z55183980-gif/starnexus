@@ -38,13 +38,13 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DataTableToolbar } from '@/components/data-table'
+import { UserFilterSelect } from '@/features/users/components/user-filter-select'
 import { LOG_TYPES } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
-import type { CommonLogFilters } from '../types'
-import { CommonLogsStats } from './common-logs-stats'
-import type { LogAccessScope } from '../types'
+import type { CommonLogFilters, LogAccessScope } from '../types'
 import { ChannelCombobox } from './channel-combobox'
+import { CommonLogsStats } from './common-logs-stats'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 import { ExcludeFiltersEditor } from './exclude-filters-editor'
 import { useUsageLogsContext } from './usage-logs-provider'
@@ -83,7 +83,10 @@ export function CommonLogsFilterBar<TData>(
   const [logType, setLogType] = useState<LogTypeValue | ''>('')
 
   useEffect(() => {
-    const next: Partial<CommonLogFilters> = {}
+    const next: Partial<CommonLogFilters> = {
+      user_id: searchParams.user_id,
+      username: searchParams.username,
+    }
     if (searchParams.startTime)
       next.startTime = new Date(searchParams.startTime)
     if (searchParams.endTime) next.endTime = new Date(searchParams.endTime)
@@ -91,7 +94,6 @@ export function CommonLogsFilterBar<TData>(
     if (searchParams.model) next.model = searchParams.model
     if (searchParams.token) next.token = searchParams.token
     if (searchParams.group) next.group = searchParams.group
-    if (searchParams.username) next.username = searchParams.username
     if (searchParams.requestId) next.requestId = searchParams.requestId
     if (searchParams.upstreamRequestId)
       next.upstreamRequestId = searchParams.upstreamRequestId
@@ -115,6 +117,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.token,
     searchParams.group,
     searchParams.username,
+    searchParams.user_id,
     searchParams.requestId,
     searchParams.upstreamRequestId,
     searchParams.excludeFilters,
@@ -184,7 +187,7 @@ export function CommonLogsFilterBar<TData>(
 
   const hasSecondaryFilters =
     !!filters.token ||
-    !!filters.username ||
+    !!filters.user_id ||
     !!filters.channel ||
     !!filters.requestId ||
     !!filters.upstreamRequestId ||
@@ -293,12 +296,20 @@ export function CommonLogsFilterBar<TData>(
             className={inputClass}
           />
           {canViewManagedUsers && (
-            <Input
-              placeholder={t('Username')}
-              type={sensitiveType}
-              value={filters.username || ''}
-              onChange={(e) => handleChange('username', e.target.value)}
-              onKeyDown={handleKeyDown}
+            <UserFilterSelect
+              value={
+                filters.user_id
+                  ? { id: filters.user_id, username: filters.username || '' }
+                  : undefined
+              }
+              onChange={(user) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  user_id: user?.id,
+                  username: user?.username,
+                }))
+              }
+              sensitiveVisible={sensitiveVisible}
               className={inputClass}
             />
           )}

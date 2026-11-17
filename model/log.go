@@ -770,6 +770,7 @@ func applyLogExcludeFilters(tx *gorm.DB, filters []LogExcludeFilter, tablePrefix
 // original signature while newer callers can filter by upstream account and
 // billing metadata.
 type LogQueryOptions struct {
+	UserID    int
 	Context   context.Context
 	BeforeID  int
 	SkipCount bool
@@ -803,7 +804,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		}
 		tx = tx.Where("logs.model_name LIKE ? ESCAPE '!'", modelNamePattern)
 	}
-	if username != "" {
+	if len(options) > 0 && options[0].UserID > 0 {
+		tx = tx.Where("logs.user_id = ?", options[0].UserID)
+	} else if username != "" {
 		usernamePattern, patternErr := buildFuzzyLikePattern(username)
 		if patternErr != nil {
 			return nil, 0, patternErr
@@ -994,7 +997,7 @@ func getInviteeUserIDsByAgent(agentID int) ([]int, error) {
 	return userIDs, nil
 }
 
-func GetAgentUserLogs(agentID int, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, excludeFilters []LogExcludeFilter) (logs []*Log, total int64, err error) {
+func GetAgentUserLogs(agentID int, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, excludeFilters []LogExcludeFilter, options ...LogQueryOptions) (logs []*Log, total int64, err error) {
 	userIDs, err := getInviteeUserIDsByAgent(agentID)
 	if err != nil {
 		return nil, 0, err
@@ -1017,7 +1020,9 @@ func GetAgentUserLogs(agentID int, logType int, startTimestamp int64, endTimesta
 		}
 		tx = tx.Where("logs.model_name LIKE ? ESCAPE '!'", modelNamePattern)
 	}
-	if username != "" {
+	if len(options) > 0 && options[0].UserID > 0 {
+		tx = tx.Where("logs.user_id = ?", options[0].UserID)
+	} else if username != "" {
 		usernamePattern, patternErr := buildFuzzyLikePattern(username)
 		if patternErr != nil {
 			return nil, 0, patternErr
@@ -1272,7 +1277,9 @@ func getUsageDetailsSummaryAggregate(ctx context.Context, logType int, startTime
 		}
 		query = query.Where("logs.model_name LIKE ? ESCAPE '!'", pattern)
 	}
-	if username != "" {
+	if len(options) > 0 && options[0].UserID > 0 {
+		query = query.Where("logs.user_id = ?", options[0].UserID)
+	} else if username != "" {
 		pattern, patternErr := buildFuzzyLikePattern(username)
 		if patternErr != nil {
 			return UsageDetailsSummary{}, patternErr
@@ -1363,17 +1370,20 @@ func getUsageDetailsSummaryAggregate(ctx context.Context, logType int, startTime
 	return summary, err
 }
 
-func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter) (stat Stat, err error) {
-	return SumUsedQuotaContext(context.Background(), logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
+func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter, options ...LogQueryOptions) (stat Stat, err error) {
+	return SumUsedQuotaContext(context.Background(), logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters, options...)
 }
 
-func SumUsedQuotaContext(ctx context.Context, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter) (stat Stat, err error) {
+func SumUsedQuotaContext(ctx context.Context, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string, excludeFilters []LogExcludeFilter, options ...LogQueryOptions) (stat Stat, err error) {
 	tx := LOG_DB.WithContext(ctx).Table("logs").Select("sum(quota) quota")
 
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.WithContext(ctx).Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
 
-	if username != "" {
+	if len(options) > 0 && options[0].UserID > 0 {
+		tx = tx.Where("user_id = ?", options[0].UserID)
+		rpmTpmQuery = rpmTpmQuery.Where("user_id = ?", options[0].UserID)
+	} else if username != "" {
 		usernamePattern, patternErr := buildFuzzyLikePattern(username)
 		if patternErr != nil {
 			return stat, patternErr
@@ -1440,7 +1450,7 @@ func SumUsedQuotaContext(ctx context.Context, logType int, startTimestamp int64,
 	return stat, nil
 }
 
-func SumAgentUsedQuota(agentID int, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, group string, excludeFilters []LogExcludeFilter) (stat Stat, err error) {
+func SumAgentUsedQuota(agentID int, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, group string, excludeFilters []LogExcludeFilter, options ...LogQueryOptions) (stat Stat, err error) {
 	userIDs, err := getInviteeUserIDsByAgent(agentID)
 	if err != nil || len(userIDs) == 0 {
 		return stat, err
@@ -1449,7 +1459,10 @@ func SumAgentUsedQuota(agentID int, logType int, startTimestamp int64, endTimest
 	tx := LOG_DB.Table("logs").Select("sum(quota) quota").Where("user_id IN ?", userIDs)
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm").Where("user_id IN ?", userIDs)
 
-	if username != "" {
+	if len(options) > 0 && options[0].UserID > 0 {
+		tx = tx.Where("user_id = ?", options[0].UserID)
+		rpmTpmQuery = rpmTpmQuery.Where("user_id = ?", options[0].UserID)
+	} else if username != "" {
 		usernamePattern, patternErr := buildFuzzyLikePattern(username)
 		if patternErr != nil {
 			return stat, patternErr

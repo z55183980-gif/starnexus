@@ -6152,6 +6152,9 @@
     "Enable only when the upstream gateway supports /v1/responses, such as Sub2API. The official Anthropic API does not support this endpoint.": "仅在上游网关支持 /v1/responses 时启用，例如 Sub2API。Anthropic 官方 API 不支持此端点。",
     "Download config tool": "下载配置工具",
     "Config tool": "配置工具",
-    "For your system": "适用于当前系统"
+    "For your system": "适用于当前系统",
+    "Search and select a user": "搜索并选择用户",
+    "Type to search users": "输入用户名搜索",
+    "More users match. Refine your search.": "匹配用户较多，请输入更完整的用户名。"
   }
 }

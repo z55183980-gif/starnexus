@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,6 +25,11 @@ const dashboardAggregateTimeout = 30 * time.Second
 var dashboardAggregateSlots = make(chan struct{}, 2)
 
 func GetAllLogs(c *gin.Context) {
+	userID, userIDErr := parseLogUserID(c)
+	if userIDErr != nil {
+		common.ApiError(c, userIDErr)
+		return
+	}
 	pageInfo := common.GetPageQuery(c)
 	beforeID, pageErr := parseAdminLogPage(c, pageInfo)
 	if pageErr != nil {
@@ -76,6 +82,7 @@ func GetAllLogs(c *gin.Context) {
 		querySize++ // One extra row determines has_more without COUNT(*).
 	}
 	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), querySize, channel, group, requestId, upstreamRequestId, excludeFilters, model.LogQueryOptions{
+		UserID:      userID,
 		Context:     queryCtx,
 		BeforeID:    beforeID,
 		Count:       cachedAdminLogCount(c, startTimestamp, endTimestamp),
@@ -108,6 +115,11 @@ func GetAllLogs(c *gin.Context) {
 }
 
 func GetAgentUserLogs(c *gin.Context) {
+	userID, userIDErr := parseLogUserID(c)
+	if userIDErr != nil {
+		common.ApiError(c, userIDErr)
+		return
+	}
 	pageInfo := common.GetPageQuery(c)
 	agentId := c.GetInt("id")
 	logType, _ := strconv.Atoi(c.Query("type"))
@@ -124,7 +136,7 @@ func GetAgentUserLogs(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	logs, total, err := model.GetAgentUserLogs(agentId, logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId, upstreamRequestId, excludeFilters)
+	logs, total, err := model.GetAgentUserLogs(agentId, logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId, upstreamRequestId, excludeFilters, model.LogQueryOptions{UserID: userID})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -202,6 +214,11 @@ func GetLogByKey(c *gin.Context) {
 }
 
 func GetLogsStat(c *gin.Context) {
+	userID, userIDErr := parseLogUserID(c)
+	if userIDErr != nil {
+		common.ApiError(c, userIDErr)
+		return
+	}
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
 	if rangeErr != nil {
@@ -232,7 +249,7 @@ func GetLogsStat(c *gin.Context) {
 		return
 	}
 	stat, err := queryAdminLogStat(cacheKey, func(ctx context.Context) (model.Stat, error) {
-		return model.SumUsedQuotaContext(ctx, logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters)
+		return model.SumUsedQuotaContext(ctx, logType, startTimestamp, endTimestamp, modelName, username, tokenName, channel, group, excludeFilters, model.LogQueryOptions{UserID: userID})
 	})
 	if err != nil {
 		dashboardQueryError(c, err)
@@ -255,6 +272,11 @@ func GetLogsStat(c *gin.Context) {
 // GetLogsSummary returns aggregate usage metrics for the administrator
 // usage-details view. It accepts the same filters as the paginated log list.
 func GetLogsSummary(c *gin.Context) {
+	userID, userIDErr := parseLogUserID(c)
+	if userIDErr != nil {
+		common.ApiError(c, userIDErr)
+		return
+	}
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, endTimestamp, rangeErr := parseAdminLogRange(c, time.Now())
 	if rangeErr != nil {
@@ -299,6 +321,7 @@ func GetLogsSummary(c *gin.Context) {
 		}
 		defer release()
 		summary, queryErr := model.GetUsageDetailsSummaryContext(queryCtx, logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, model.LogQueryOptions{
+			UserID:      userID,
 			AccountName: accountName,
 			BillingMode: billingMode,
 			BillingType: billingType,
@@ -322,6 +345,11 @@ func GetLogsSummary(c *gin.Context) {
 }
 
 func GetAgentLogsStat(c *gin.Context) {
+	userID, userIDErr := parseLogUserID(c)
+	if userIDErr != nil {
+		common.ApiError(c, userIDErr)
+		return
+	}
 	agentId := c.GetInt("id")
 	logType, _ := strconv.Atoi(c.Query("type"))
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
@@ -348,7 +376,7 @@ func GetAgentLogsStat(c *gin.Context) {
 		})
 		return
 	}
-	stat, err := model.SumAgentUsedQuota(agentId, logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, excludeFilters)
+	stat, err := model.SumAgentUsedQuota(agentId, logType, startTimestamp, endTimestamp, modelName, username, tokenName, group, excludeFilters, model.LogQueryOptions{UserID: userID})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -432,4 +460,20 @@ func DeleteHistoryLogs(c *gin.Context) {
 		"data":    count,
 	})
 	return
+}
+
+// Reject malformed IDs rather than silently broadening the selected-user query.
+func parseLogUserID(c *gin.Context) (int, error) {
+	values, exists := c.Request.URL.Query()["user_id"]
+	if !exists {
+		return 0, nil
+	}
+	if len(values) != 1 {
+		return 0, errors.New("invalid user_id")
+	}
+	id, err := strconv.Atoi(values[0])
+	if err != nil || id <= 0 {
+		return 0, errors.New("invalid user_id")
+	}
+	return id, nil
 }
