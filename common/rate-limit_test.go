@@ -2,7 +2,6 @@ package common
 
 import (
 	"testing"
-	"time"
 )
 
 func TestInMemoryRateLimiterFailedReservationDoesNotConsumeSuccessQuota(t *testing.T) {

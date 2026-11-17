@@ -88,9 +88,11 @@ func TestApplyUpstreamAccountErrorFansOutDeactivatedTeamWorkspace(t *testing.T) 
 	require.Equal(t, constant.UpstreamStatusError, updated.Status)
 	require.False(t, updated.Schedulable)
 	require.Contains(t, updated.ErrorMessage, fmt.Sprintf("account #%d", trigger.Id))
+	updated = model.UpstreamAccount{}
 	require.NoError(t, model.DB.First(&updated, otherTeam.Id).Error)
 	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
 	require.True(t, updated.Schedulable)
+	updated = model.UpstreamAccount{}
 	require.NoError(t, model.DB.First(&updated, apiKey.Id).Error)
 	require.Equal(t, constant.UpstreamStatusActive, updated.Status)
 	require.True(t, updated.Schedulable)
