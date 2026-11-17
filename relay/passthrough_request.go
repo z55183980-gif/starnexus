@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/claude"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -52,7 +53,8 @@ func preparePassthroughRequestBodyWithAdaptor(adaptor channel.Adaptor, c *gin.Co
 	needsCodexInputRepair := accountPassthrough && !info.ChannelSetting.PassThroughBodyEnabled &&
 		!model_setting.GetGlobalSettings().PassThroughRequestEnabled && needsCodexStream
 	_, needsFinalization := adaptor.(channel.OutboundJSONBodyFinalizer)
-	if !accountPassthrough && !needsAccountModelMapping && !needsResponsesLiteNormalization && !needsCodexStream && !needsCodexInputRepair && !needsFinalization {
+	needsClaudeSessionMetadata := claude.SessionMetadataEnabled(info)
+	if !accountPassthrough && !needsAccountModelMapping && !needsResponsesLiteNormalization && !needsCodexStream && !needsCodexInputRepair && !needsFinalization && !needsClaudeSessionMetadata {
 		return common.ReaderOnly(storage), nil, nil
 	}
 
@@ -136,6 +138,12 @@ func preparePassthroughRequestBodyWithAdaptor(adaptor channel.Adaptor, c *gin.Co
 	}
 	if needsFinalization {
 		jsonData, err = channel.FinalizeOutboundJSONBody(adaptor, c, info, jsonData)
+		if err != nil {
+			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+		}
+	}
+	if needsClaudeSessionMetadata {
+		jsonData, err = claude.ApplySessionMetadata(info, jsonData)
 		if err != nil {
 			return nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}

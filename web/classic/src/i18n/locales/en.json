@@ -108,6 +108,8 @@
     "ChatCompletions→Responses 兼容配置": "ChatCompletions→Responses Compatibility Configuration",
     "ChatCompletions→Responses 兼容配置（Beta）": "ChatCompletions→Responses Compatibility (Beta)",
     "Claude 强制 beta=true": "Claude Force beta=true",
+    "注入 Claude 会话标识": "Inject Claude session metadata",
+    "请求未携带 metadata.user_id 时注入按对话稳定的会话标识，使下游网关（如 Sub2API）保持粘性路由与缓存复用": "Adds a stable per-conversation session identifier when the request has no metadata.user_id, so downstream gateways (e.g. Sub2API) keep sticky routing and cache reuse",
     "Claude会在原有请求头基础上追加这些值，不会覆盖已有同名请求头；重复值会自动忽略。": "Claude appends these values on top of existing request headers. Existing headers are not overwritten, and duplicate values are ignored automatically.",
     "Claude思考适配 BudgetTokens = MaxTokens * BudgetTokens 百分比": "Claude thinking adaptation BudgetTokens = MaxTokens * BudgetTokens percentage",
     "Claude设置": "Claude settings",

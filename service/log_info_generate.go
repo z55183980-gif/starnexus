@@ -91,6 +91,17 @@ func GenerateTextOtherInfo(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, m
 		other["frt_source"] = "upstream_generation"
 	}
 	other["frt"] = float64(frt)
+	if relayInfo.ContentTimingTracked {
+		// Match Sub2API: use the generation receipt when available, otherwise
+		// the first upstream SSE data event (including ping/message_start).
+		// Downstream content timing must not override that display metric.
+		if relayInfo.GenerationFirstTokenMs == nil || *relayInfo.GenerationFirstTokenMs < 0 {
+			other["frt_source"] = "upstream_sse"
+		}
+		if relayInfo.GenerationFirstTokenMs != nil && *relayInfo.GenerationFirstTokenMs >= 0 {
+			other["generation_first_token_ms"] = *relayInfo.GenerationFirstTokenMs
+		}
+	}
 	if relayInfo.ReasoningEffort != "" {
 		other["reasoning_effort"] = relayInfo.ReasoningEffort
 	}

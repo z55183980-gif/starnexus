@@ -90,3 +90,17 @@ func TestClaudeTerminalWriteFailure(t *testing.T) {
 	err := HandleStreamResponseData(c, info, &ClaudeResponseInfo{Usage: &dto.Usage{}}, `{"type":"message_stop"}`)
 	require.NotNil(t, err, "a failed terminal write must not count as completed")
 }
+
+func TestClaudeMissingTerminalRemainsIncomplete(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/messages", nil)
+	info := relaycommon.GenRelayInfoOpenAI(c, nil)
+	info.ChannelMeta = &relaycommon.ChannelMeta{}
+	info.RelayFormat = types.RelayFormatClaude
+	info.DisablePing = true
+	body := "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\n"
+	usage, err := ClaudeStreamHandler(c, &http.Response{Body: io.NopCloser(strings.NewReader(body))}, info)
+	require.Nil(t, err)
+	require.Equal(t, 3, usage.CompletionTokens, "confirmed usage must be retained")
+	require.Equal(t, relaycommon.StreamEndReasonIncomplete, info.StreamStatus.EndReason)
+}

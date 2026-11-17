@@ -220,3 +220,33 @@ func TestPreparePassthroughRequestBodyNormalizesResponsesLite(t *testing.T) {
 	require.Equal(t, "developer", gjson.GetBytes(data, "input.1.role").String())
 	require.Equal(t, "Use the repository tools.", gjson.GetBytes(data, "input.1.content.0.text").String())
 }
+
+func TestPreparePassthroughRequestBodyInjectsClaudeSessionMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	raw := `{"model":"claude-opus-5-5","system":"rules","messages":[{"role":"user","content":"hello"}]}`
+	prepare := func(enabled bool) []byte {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(raw))
+		t.Cleanup(func() { common.CleanupBodyStorage(c) })
+		info := &relaycommon.RelayInfo{TokenId: 7, ChannelMeta: &relaycommon.ChannelMeta{
+			ApiType:              constant.APITypeAnthropic,
+			ChannelSetting:       dto.ChannelSettings{PassThroughBodyEnabled: true},
+			ChannelOtherSettings: dto.ChannelOtherSettings{ClaudeSessionMetadata: enabled},
+		}}
+		body, closer, apiErr := preparePassthroughRequestBody(c, info)
+		require.Nil(t, apiErr)
+		if closer != nil {
+			defer closer.Close()
+		}
+		data, err := io.ReadAll(body)
+		require.NoError(t, err)
+		return data
+	}
+
+	require.JSONEq(t, raw, string(prepare(false)))
+	injected := prepare(true)
+	userID := gjson.GetBytes(injected, "metadata.user_id").String()
+	require.NotEmpty(t, gjson.Get(userID, "device_id").String())
+	require.NotEmpty(t, gjson.Get(userID, "session_id").String())
+	require.Equal(t, "hello", gjson.GetBytes(injected, "messages.0.content").String())
+}

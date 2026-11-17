@@ -108,6 +108,7 @@ export interface ChannelOtherSettings {
   allow_speed?: boolean
   claude_responses_proxy_enabled?: boolean
   claude_beta_query?: boolean
+  claude_session_metadata?: boolean
   upstream_model_update_check_enabled?: boolean
   upstream_model_update_auto_sync_enabled?: boolean
   upstream_model_update_ignored_models?: string[]

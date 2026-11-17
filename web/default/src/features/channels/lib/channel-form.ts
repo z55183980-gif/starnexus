@@ -109,6 +109,7 @@ const channelFormBaseSchema = z.object({
   allow_speed: z.boolean().optional(), // Anthropic: speed mode control
   claude_responses_proxy_enabled: z.boolean().optional(),
   claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
+  claude_session_metadata: z.boolean().optional(), // Anthropic: inject stable metadata.user_id
   // Upstream model update settings (stored in settings JSON)
   upstream_model_update_check_enabled: z.boolean().optional(),
   upstream_model_update_auto_sync_enabled: z.boolean().optional(),
@@ -238,6 +239,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_speed: false,
   claude_responses_proxy_enabled: false,
   claude_beta_query: false,
+  claude_session_metadata: false,
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
@@ -351,6 +353,7 @@ export function transformChannelToFormDefaults(
   let allowSpeed = false
   let claudeResponsesProxyEnabled = false
   let claudeBetaQuery = false
+  let claudeSessionMetadata = false
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
@@ -377,6 +380,7 @@ export function transformChannelToFormDefaults(
       claudeResponsesProxyEnabled =
         parsed.claude_responses_proxy_enabled === true
       claudeBetaQuery = parsed.claude_beta_query === true
+      claudeSessionMetadata = parsed.claude_session_metadata === true
       upstreamModelUpdateCheckEnabled =
         parsed.upstream_model_update_check_enabled === true
       upstreamModelUpdateAutoSyncEnabled =
@@ -455,6 +459,7 @@ export function transformChannelToFormDefaults(
       ? false
       : claudeResponsesProxyEnabled,
     claude_beta_query: claudeBetaQuery,
+    claude_session_metadata: claudeSessionMetadata,
     allow_safety_identifier: allowSafetyIdentifier,
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
@@ -591,17 +596,21 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       delete settingsObj.allow_inference_geo
   }
 
-  // Anthropic (type 14): claude_beta_query, allow_inference_geo, allow_speed
+  // Anthropic (type 14): claude_beta_query, claude_session_metadata, allow_inference_geo, allow_speed
   if (formData.type === 14) {
     settingsObj.allow_inference_geo = formData.allow_inference_geo === true
     settingsObj.allow_speed = formData.allow_speed === true
     settingsObj.claude_responses_proxy_enabled =
       !useAccountPool && formData.claude_responses_proxy_enabled === true
     settingsObj.claude_beta_query = formData.claude_beta_query === true
+    settingsObj.claude_session_metadata =
+      formData.claude_session_metadata === true
   } else {
     if ('allow_speed' in settingsObj) delete settingsObj.allow_speed
     delete settingsObj.claude_responses_proxy_enabled
     if ('claude_beta_query' in settingsObj) delete settingsObj.claude_beta_query
+    if ('claude_session_metadata' in settingsObj)
+      delete settingsObj.claude_session_metadata
   }
 
   // Upstream model update settings (for model-fetchable channel types)

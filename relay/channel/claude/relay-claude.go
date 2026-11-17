@@ -682,6 +682,9 @@ type ClaudeResponseInfo struct {
 	Usage          *dto.Usage
 	Done           bool
 	MessageStopped bool
+	// FinalUsageReported is set when a message_delta states output_tokens,
+	// i.e. the upstream gave its final account of this response.
+	FinalUsageReported bool
 }
 
 func cacheCreationTokensForOpenAIUsage(usage *dto.Usage) int {
@@ -894,6 +897,9 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 	if claudeResponse.Delta != nil && claudeResponse.Delta.StopReason != nil {
 		maybeMarkClaudeRefusal(c, *claudeResponse.Delta.StopReason)
 	}
+	if claudeResponse.Type == "message_delta" && gjson.Get(data, "usage.output_tokens").Exists() {
+		claudeInfo.FinalUsageReported = true
+	}
 	if info.RelayFormat == types.RelayFormatClaude {
 		FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo)
 
@@ -927,6 +933,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		if writeErr := helper.ClaudeChunkData(c, claudeResponse, data); writeErr != nil {
 			return types.NewError(writeErr, types.ErrorCodeBadResponseBody)
 		}
+		observeClaudeContentTiming(info, data)
 		// Usage arrives at message_delta, but only message_stop completes the stream.
 		claudeInfo.MessageStopped = claudeResponse.Type == "message_stop"
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
@@ -948,7 +955,10 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 	if claudeInfo.Usage.PromptTokens == 0 {
 		//上游出错
 	}
-	if claudeInfo.Usage.CompletionTokens == 0 || !claudeInfo.Done {
+	// Reported final usage is authoritative even when zero: a gateway replay of an
+	// already completed response runs no inference and reports zero usage, and a
+	// local estimate would bill the whole prompt as uncached input.
+	if !claudeInfo.FinalUsageReported && (claudeInfo.Usage.CompletionTokens == 0 || !claudeInfo.Done) {
 		if common.DebugEnabled {
 			common.SysLog("claude response usage is not complete, maybe upstream error")
 		}
@@ -984,6 +994,10 @@ func HandleStreamFinalResponse(c *gin.Context, info *relaycommon.RelayInfo, clau
 }
 
 func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*dto.Usage, *types.NewAPIError) {
+	if info.RelayFormat == types.RelayFormatClaude {
+		info.ContentTimingTracked = true
+		info.FirstContentMs = nil
+	}
 	claudeInfo := &ClaudeResponseInfo{
 		ResponseId:   helper.GetResponseID(c),
 		Created:      common.GetTimestamp(),
@@ -1006,6 +1020,9 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 		return nil, err
 	}
 
+	if info.RelayFormat == types.RelayFormatClaude && !claudeInfo.MessageStopped {
+		info.StreamStatus.MarkIncompleteIfEOF(fmt.Errorf("Anthropic stream ended before message_stop"))
+	}
 	HandleStreamFinalResponse(c, info, claudeInfo)
 	return claudeInfo.Usage, nil
 }

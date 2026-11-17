@@ -1,8 +1,9 @@
 package codex
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,406 +20,208 @@ func IsResponsesLiteHeader(value string) bool {
 }
 
 func IsResponsesLiteWebSocketPayload(body []byte) bool {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return false
-	}
-	return IsResponsesLiteHeader(gjson.GetBytes(body, "client_metadata."+ResponsesLiteWSMetadataKey).String())
+	return gjson.ValidBytes(body) && IsResponsesLiteHeader(gjson.GetBytes(body, "client_metadata."+ResponsesLiteWSMetadataKey).String())
 }
 
-// NormalizeResponsesLitePayload applies the wire contract used by the Codex
-// Responses Lite endpoint. Lite requires reasoning over all turns, keeps
-// instructions and tools inside input, and uses store=false with serialized
-// tool declarations in input.additional_tools.
+// ResponsesLiteDiagnostics contains no user content, schemas, or tool names.
+// A compatibility fallback is not a request failure.
+type ResponsesLiteDiagnostics struct {
+	AdditionalToolItems int
+	MigratedTools       int
+	FallbackReason      string
+}
+
 func NormalizeResponsesLitePayload(body []byte) ([]byte, bool, error) {
-	var requestBody map[string]any
-	if err := common.Unmarshal(body, &requestBody); err != nil {
-		return body, false, fmt.Errorf("decode Responses Lite request body: %w", err)
-	}
-
-	changed, err := normalizeResponsesLiteTools(requestBody)
-	if err != nil {
-		return body, false, err
-	}
-	instructionsChanged, err := normalizeResponsesLiteInstructions(requestBody)
-	if err != nil {
-		return body, false, err
-	}
-	if instructionsChanged {
-		changed = true
-	}
-	if ensureResponsesLiteParallelToolCalls(requestBody) {
-		changed = true
-	}
-	if ensureResponsesLiteStore(requestBody) {
-		changed = true
-	}
-	if ensureResponsesLiteReasoningInclude(requestBody) {
-		changed = true
-	}
-	if !changed {
-		return body, false, nil
-	}
-
-	rebuilt, err := common.Marshal(requestBody)
-	if err != nil {
-		return body, false, fmt.Errorf("encode Responses Lite request body: %w", err)
-	}
-	return rebuilt, true, nil
+	normalized, changed, _, err := NormalizeResponsesLitePayloadWithDiagnostics(body)
+	return normalized, changed, err
 }
 
-func ensureResponsesLiteStore(requestBody map[string]any) bool {
-	if requestBody == nil {
-		return false
+// NormalizeResponsesLitePayloadWithDiagnostics preserves the ordered tool
+// history. Additional tools become available at their position in input; they
+// are not a globally unique registry. Only request-level tools are migrated.
+// RawMessage avoids rounding schema numbers or losing unknown extension fields.
+func NormalizeResponsesLitePayloadWithDiagnostics(body []byte) ([]byte, bool, ResponsesLiteDiagnostics, error) {
+	var request map[string]json.RawMessage
+	var diagnostics ResponsesLiteDiagnostics
+	if err := common.Unmarshal(body, &request); err != nil || request == nil {
+		return body, false, diagnostics, fmt.Errorf("Responses Lite request body must be a JSON object")
 	}
-	if value, exists := requestBody["store"]; exists {
-		if store, ok := value.(bool); ok && !store {
-			return false
-		}
+	original, _ := common.Marshal(request)
+	// Decode into fresh data and return only fully normalized requests. Errors
+	// must never expose a partially migrated tools catalog to the caller.
+	if err := normalizeResponsesLiteReasoning(request); err != nil {
+		return body, false, diagnostics, err
 	}
-	requestBody["store"] = false
-	return true
-}
-
-func normalizeResponsesLiteInstructions(requestBody map[string]any) (bool, error) {
-	if requestBody == nil {
-		return false, nil
+	diagnostics = normalizeResponsesLiteTools(request)
+	if err := normalizeResponsesLiteInstructions(request); err != nil {
+		return body, false, diagnostics, err
 	}
-
-	rawInstructions, exists := requestBody["instructions"]
-	if !exists || rawInstructions == nil {
-		requestBody["instructions"] = ""
-		return true, nil
-	}
-	instructions, ok := rawInstructions.(string)
-	if !ok {
-		return false, fmt.Errorf("Responses Lite instructions must be a string")
-	}
-	if strings.TrimSpace(instructions) == "" {
-		if instructions == "" {
-			return false, nil
-		}
-		requestBody["instructions"] = ""
-		return true, nil
-	}
-
-	input, err := prependResponsesLiteDeveloperMessage(requestBody["input"], instructions)
+	request["parallel_tool_calls"] = json.RawMessage("false")
+	request["store"] = json.RawMessage("false")
+	rebuilt, err := common.Marshal(request)
 	if err != nil {
-		return false, err
+		return body, false, diagnostics, fmt.Errorf("encode Responses Lite request body: %w", err)
 	}
-	requestBody["input"] = input
-	requestBody["instructions"] = ""
-	return true, nil
+	if bytes.Equal(original, rebuilt) {
+		return body, false, diagnostics, nil
+	}
+	return rebuilt, true, diagnostics, nil
 }
 
-func ensureResponsesLiteParallelToolCalls(requestBody map[string]any) bool {
-	if requestBody == nil {
-		return false
-	}
-	if value, exists := requestBody["parallel_tool_calls"]; exists {
-		if parallel, ok := value.(bool); ok && !parallel {
-			return false
+func normalizeResponsesLiteReasoning(request map[string]json.RawMessage) error {
+	reasoning := make(map[string]json.RawMessage)
+	if raw := request["reasoning"]; !responsesLiteNull(raw) {
+		if common.Unmarshal(raw, &reasoning) != nil || reasoning == nil {
+			return fmt.Errorf("Responses Lite requires reasoning to be an object")
 		}
 	}
-	requestBody["parallel_tool_calls"] = false
-	return true
-}
-
-func normalizeResponsesLiteTools(requestBody map[string]any) (bool, error) {
-	if requestBody == nil {
-		return false, nil
-	}
-	if rawReasoning, exists := requestBody["reasoning"]; exists && rawReasoning != nil {
-		if _, ok := rawReasoning.(map[string]any); !ok {
-			return false, fmt.Errorf("Responses Lite requires reasoning to be an object")
+	reasoning["context"] = json.RawMessage(`"all_turns"`)
+	request["reasoning"], _ = common.Marshal(reasoning)
+	var include []json.RawMessage
+	if raw := request["include"]; !responsesLiteNull(raw) {
+		if common.Unmarshal(raw, &include) != nil {
+			return nil // Preserve the previous policy for unknown include shapes.
 		}
-	}
-
-	rawTools, exists := requestBody["tools"]
-	if !exists || rawTools == nil {
-		if exists {
-			delete(requestBody, "tools")
-		}
-		contextChanged, err := ensureResponsesLiteReasoningContext(requestBody)
-		if err != nil {
-			return false, err
-		}
-		input, inputChanged, inputErr := appendResponsesLiteAdditionalTools(requestBody["input"], nil)
-		if inputErr != nil {
-			return false, inputErr
-		}
-		requestBody["input"] = input
-		return contextChanged || inputChanged || exists, nil
-	}
-	tools, ok := rawTools.([]any)
-	if !ok {
-		return false, fmt.Errorf("Responses Lite requires tools to be an array")
-	}
-
-	liteTools := make([]any, 0, len(tools))
-	for index, rawTool := range tools {
-		if customTool, ok := rawTool.(string); ok {
-			if strings.TrimSpace(customTool) == "" {
-				return false, fmt.Errorf("Responses Lite custom tool at index %d must not be empty", index)
-			}
-			liteTools = append(liteTools, rawTool)
-			continue
-		}
-
-		tool, ok := rawTool.(map[string]any)
-		if !ok {
-			return false, fmt.Errorf("Responses Lite tool at index %d must be an object", index)
-		}
-		toolType := strings.TrimSpace(responsesLiteString(tool["type"]))
-		switch toolType {
-		case "function", "custom", "tool_search", "namespace":
-			liteTools = append(liteTools, rawTool)
-		case "":
-			return false, fmt.Errorf("Responses Lite tool at index %d is missing type", index)
-		default:
-			return false, fmt.Errorf("Responses Lite does not support top-level tool type %q at index %d", toolType, index)
-		}
-	}
-
-	contextChanged, err := ensureResponsesLiteReasoningContext(requestBody)
-	if err != nil {
-		return false, err
-	}
-	if len(liteTools) == 0 {
-		if _, exists := requestBody["tools"]; exists {
-			delete(requestBody, "tools")
-			input, _, inputErr := appendResponsesLiteAdditionalTools(requestBody["input"], nil)
-			if inputErr != nil {
-				return false, inputErr
-			}
-			requestBody["input"] = input
-			return true, nil
-		}
-		return contextChanged, nil
-	}
-
-	input, _, err := appendResponsesLiteAdditionalTools(requestBody["input"], liteTools)
-	if err != nil {
-		return false, err
-	}
-	requestBody["input"] = input
-	delete(requestBody, "tools")
-	return true, nil
-}
-
-func ensureResponsesLiteReasoningContext(requestBody map[string]any) (bool, error) {
-	rawReasoning, exists := requestBody["reasoning"]
-	if !exists || rawReasoning == nil {
-		requestBody["reasoning"] = map[string]any{"context": "all_turns"}
-		return true, nil
-	}
-	reasoning, ok := rawReasoning.(map[string]any)
-	if !ok {
-		return false, fmt.Errorf("Responses Lite requires reasoning to be an object")
-	}
-	if context, ok := reasoning["context"].(string); ok && context == "all_turns" {
-		return false, nil
-	}
-	reasoning["context"] = "all_turns"
-	return true, nil
-}
-
-func ensureResponsesLiteReasoningInclude(requestBody map[string]any) bool {
-	reasoning, ok := requestBody["reasoning"].(map[string]any)
-	if !ok || len(reasoning) == 0 {
-		return false
-	}
-	const encryptedContent = "reasoning.encrypted_content"
-
-	existing, exists := requestBody["include"]
-	if !exists || existing == nil {
-		requestBody["include"] = []any{encryptedContent}
-		return true
-	}
-	include, ok := existing.([]any)
-	if !ok {
-		return false
 	}
 	for _, item := range include {
-		if value, ok := item.(string); ok && value == encryptedContent {
-			return false
+		var value string
+		if common.Unmarshal(item, &value) == nil && value == "reasoning.encrypted_content" {
+			return nil
 		}
 	}
-	requestBody["include"] = append(include, encryptedContent)
-	return true
+	include = append(include, json.RawMessage(`"reasoning.encrypted_content"`))
+	request["include"], _ = common.Marshal(include)
+	return nil
 }
 
-func appendResponsesLiteAdditionalTools(input any, liteTools []any) ([]any, bool, error) {
-	var items []any
-	switch typed := input.(type) {
-	case nil:
-		items = make([]any, 0, 1)
-	case string:
-		items = []any{map[string]any{
-			"type":    "message",
-			"role":    "user",
-			"content": typed,
-		}}
-	case []any:
-		items = typed
-	default:
-		return nil, false, fmt.Errorf("Responses Lite tools require input to be a string or array")
-	}
-
-	var target map[string]any
-	var targetTools []any
-	targetIndex := -1
-	var allAdditionalTools []any
-	for index, rawItem := range items {
-		item, ok := rawItem.(map[string]any)
-		if !ok || strings.TrimSpace(responsesLiteString(item["type"])) != "additional_tools" {
-			continue
-		}
-		rawAdditionalTools, exists := item["tools"]
-		additionalTools := []any(nil)
-		toolsOK := true
-		if exists && rawAdditionalTools != nil {
-			additionalTools, toolsOK = rawAdditionalTools.([]any)
-		}
-		if !toolsOK {
-			return nil, false, fmt.Errorf("Responses Lite input.additional_tools tools must be an array")
-		}
-		if target == nil {
-			target = item
-			targetTools = additionalTools
-			targetIndex = index
-		}
-		allAdditionalTools = append(allAdditionalTools, additionalTools...)
-	}
-
-	merged, err := mergeResponsesLiteAdditionalTools(allAdditionalTools, liteTools)
-	if err != nil {
-		return nil, false, err
-	}
-	newTools := merged[len(allAdditionalTools):]
-	changed := false
-	if target != nil {
-		if strings.TrimSpace(responsesLiteString(target["role"])) != "developer" {
-			target["role"] = "developer"
-			changed = true
-		}
-		if len(newTools) > 0 {
-			target["tools"] = append(append([]any(nil), targetTools...), newTools...)
-			changed = true
-		} else if targetTools == nil {
-			target["tools"] = []any{}
-			changed = true
-		}
-		if targetIndex > 0 {
-			copy(items[targetIndex:], items[targetIndex+1:])
-			items = items[:len(items)-1]
-			items = append([]any{target}, items...)
-			changed = true
-		}
-		return items, changed, nil
-	}
-
-	if newTools == nil {
-		newTools = []any{}
-	}
-	items = append([]any{map[string]any{
-		"type":  "additional_tools",
-		"role":  "developer",
-		"tools": newTools,
-	}}, items...)
-	return items, true, nil
-}
-
-func prependResponsesLiteDeveloperMessage(input any, instructions string) ([]any, error) {
-	var items []any
-	switch typed := input.(type) {
-	case nil:
-		items = make([]any, 0, 1)
-	case string:
-		items = []any{map[string]any{
-			"type":    "message",
-			"role":    "user",
-			"content": typed,
-		}}
-	case []any:
-		items = typed
-	default:
-		return nil, fmt.Errorf("Responses Lite instructions require input to be a string or array")
-	}
-
-	developerMessage := map[string]any{
-		"type": "message",
-		"role": "developer",
-		"content": []any{
-			map[string]any{
-				"type": "input_text",
-				"text": instructions,
-			},
-		},
-	}
-	insertAt := 0
-	for insertAt < len(items) {
-		item, ok := items[insertAt].(map[string]any)
-		if !ok || strings.TrimSpace(responsesLiteString(item["type"])) != "additional_tools" {
-			break
-		}
-		insertAt++
-	}
-	items = append(items, nil)
-	copy(items[insertAt+1:], items[insertAt:])
-	items[insertAt] = developerMessage
-	return items, nil
-}
-
-func mergeResponsesLiteAdditionalTools(existing []any, moved []any) ([]any, error) {
-	merged := append([]any(nil), existing...)
-	seen := make(map[string]any, len(existing)+len(moved))
-	for _, rawTool := range existing {
-		if identity := responsesLiteToolIdentity(rawTool); identity != "" {
-			if previous, exists := seen[identity]; exists && !reflect.DeepEqual(previous, rawTool) {
-				return nil, fmt.Errorf("Responses Lite additional_tools contains conflicting definitions for %s", responsesLiteToolIdentityForError(rawTool))
-			}
-			seen[identity] = rawTool
-		}
-	}
-	for _, rawTool := range moved {
-		identity := responsesLiteToolIdentity(rawTool)
-		if identity != "" {
-			if previous, exists := seen[identity]; exists {
-				if reflect.DeepEqual(previous, rawTool) {
-					continue
-				}
-				return nil, fmt.Errorf("Responses Lite additional_tools conflicts with migrated %s", responsesLiteToolIdentityForError(rawTool))
-			}
-			seen[identity] = rawTool
-		}
-		merged = append(merged, rawTool)
-	}
-	return merged, nil
-}
-
-func responsesLiteToolIdentity(rawTool any) string {
-	tool, ok := rawTool.(map[string]any)
+func normalizeResponsesLiteTools(request map[string]json.RawMessage) ResponsesLiteDiagnostics {
+	var diagnostics ResponsesLiteDiagnostics
+	items, ok := responsesLiteInputItems(request["input"])
 	if !ok {
-		return ""
+		diagnostics.FallbackReason = "unsupported_input_shape"
+		return diagnostics
 	}
-	toolType := strings.TrimSpace(responsesLiteString(tool["type"]))
-	name := strings.TrimSpace(responsesLiteString(tool["name"]))
-	if toolType == "" || name == "" {
-		return ""
+	for _, item := range items {
+		if gjson.GetBytes(item, "type").String() == "additional_tools" {
+			diagnostics.AdditionalToolItems++
+		}
 	}
-	return toolType + "\x00" + name
+	if common.GetEnvOrDefaultBool("RESPONSES_LITE_TOOLS_PASSTHROUGH", false) {
+		diagnostics.FallbackReason = "tools_passthrough_enabled"
+		return diagnostics
+	}
+	var tools []json.RawMessage
+	if raw := request["tools"]; !responsesLiteNull(raw) {
+		if common.Unmarshal(raw, &tools) != nil {
+			diagnostics.FallbackReason = "unsupported_tools_shape"
+			return diagnostics
+		}
+		for _, tool := range tools {
+			if !responsesLiteMigratableTool(tool) {
+				diagnostics.FallbackReason = "unsupported_tool_definition"
+				return diagnostics
+			}
+		}
+	}
+	// Never deduplicate, validate conflicts, or mutate existing declarations.
+	// A request-level catalog belongs before history, in a separate item.
+	if len(tools) > 0 || diagnostics.AdditionalToolItems == 0 {
+		if tools == nil {
+			tools = []json.RawMessage{}
+		}
+		prefix, err := common.Marshal(struct {
+			Type  string            `json:"type"`
+			Role  string            `json:"role"`
+			Tools []json.RawMessage `json:"tools"`
+		}{"additional_tools", "developer", tools})
+		if err != nil {
+			diagnostics.FallbackReason = "tool_prefix_encoding_failed"
+			return diagnostics
+		}
+		updated, err := common.Marshal(append([]json.RawMessage{prefix}, items...))
+		if err != nil {
+			diagnostics.FallbackReason = "tool_input_encoding_failed"
+			return diagnostics
+		}
+		request["input"] = updated
+		diagnostics.MigratedTools = len(tools)
+	}
+	// Remove tools only after the complete migration succeeded. Unknown tool
+	// shapes above retain both original tools and input for the upstream.
+	delete(request, "tools")
+	return diagnostics
 }
 
-func responsesLiteToolIdentityForError(rawTool any) string {
-	tool, _ := rawTool.(map[string]any)
-	return fmt.Sprintf(
-		"tool type %q name %q",
-		strings.TrimSpace(responsesLiteString(tool["type"])),
-		strings.TrimSpace(responsesLiteString(tool["name"])),
-	)
+func responsesLiteMigratableTool(raw json.RawMessage) bool {
+	var shorthand string
+	if common.Unmarshal(raw, &shorthand) == nil && strings.TrimSpace(shorthand) != "" {
+		return true
+	}
+	var tool struct {
+		Type string `json:"type"`
+	}
+	if common.Unmarshal(raw, &tool) != nil {
+		return false
+	}
+	switch strings.TrimSpace(tool.Type) {
+	case "function", "custom", "tool_search", "namespace":
+		return true
+	default:
+		return false
+	}
 }
 
-func responsesLiteString(value any) string {
-	text, _ := value.(string)
-	return text
+func normalizeResponsesLiteInstructions(request map[string]json.RawMessage) error {
+	var instructions string
+	if raw := request["instructions"]; !responsesLiteNull(raw) && common.Unmarshal(raw, &instructions) != nil {
+		return fmt.Errorf("Responses Lite instructions must be a string")
+	}
+	if strings.TrimSpace(instructions) != "" {
+		items, ok := responsesLiteInputItems(request["input"])
+		if !ok {
+			return fmt.Errorf("Responses Lite instructions require input to be a string or array")
+		}
+		message, err := common.Marshal(map[string]any{
+			"type": "message", "role": "developer",
+			"content": []map[string]string{{"type": "input_text", "text": instructions}},
+		})
+		if err != nil {
+			return err
+		}
+		insertAt := 0
+		for insertAt < len(items) && gjson.GetBytes(items[insertAt], "type").String() == "additional_tools" {
+			insertAt++
+		}
+		updated := make([]json.RawMessage, 0, len(items)+1)
+		updated = append(updated, items[:insertAt]...)
+		updated = append(updated, message)
+		updated = append(updated, items[insertAt:]...)
+		encoded, err := common.Marshal(updated)
+		if err != nil {
+			return err
+		}
+		request["input"] = encoded
+	}
+	request["instructions"] = json.RawMessage(`""`)
+	return nil
+}
+
+func responsesLiteInputItems(raw json.RawMessage) ([]json.RawMessage, bool) {
+	if responsesLiteNull(raw) {
+		return nil, true
+	}
+	var items []json.RawMessage
+	if common.Unmarshal(raw, &items) == nil {
+		return items, true
+	}
+	var text string
+	if common.Unmarshal(raw, &text) == nil {
+		message, err := common.Marshal(map[string]string{"type": "message", "role": "user", "content": text})
+		return []json.RawMessage{message}, err == nil
+	}
+	return nil, false
+}
+
+func responsesLiteNull(raw json.RawMessage) bool {
+	return len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
