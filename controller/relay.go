@@ -109,6 +109,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			case types.RelayFormatClaude:
 				writeClaudeRelayError(c, newAPIError)
 			default:
+				if isUpstreamRefusalTerminal(c) && !c.Writer.Written() {
+					resetEventStreamHeadersForJSONError(c)
+				}
 				c.JSON(newAPIError.StatusCode, gin.H{
 					"error": newAPIError.ToOpenAIError(),
 				})
@@ -344,6 +347,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
 			newAPIError = service.NormalizeUpstreamCyberPolicyError(newAPIError)
+			if terminal, refused := terminateOnUpstreamRefusal(c, channel.Id, retryParam.GetRetry(), newAPIError); refused {
+				// An explicit model refusal ends this inbound request here: no
+				// account failover, no channel health penalty, no channel retry
+				// and no user suspension. The deferred error log still records it.
+				newAPIError = terminal
+				relayInfo.LastError = newAPIError
+				break
+			}
 			service.SuspendUserAPIForUpstreamCyberPolicy(c, newAPIError, relayInfo.OriginModelName)
 			relayInfo.LastError = newAPIError
 			if newAPIError.GetErrorCode() == "managed_partial_response" {
@@ -626,15 +637,65 @@ func markHTTPLogStart(c *gin.Context, info *relaycommon.RelayInfo) {
 	info.StartFirstTokenAttempt(time.Now())
 }
 
+// terminateOnUpstreamRefusal normalizes an explicit upstream refusal on an
+// opted-in channel into a terminal error and logs the decision without any
+// prompt content.
+func terminateOnUpstreamRefusal(c *gin.Context, channelId int, attempt int, apiErr *types.NewAPIError) (*types.NewAPIError, bool) {
+	normalized, source := service.NormalizeUpstreamRefusalError(channelId, apiErr)
+	if source == "" {
+		return apiErr, false
+	}
+	// The writers key off this request-scoped mark, not the error code: a raw
+	// streamed refusal already carries the same code, and with the channel not
+	// opted in its output must stay exactly as before.
+	c.Set(upstreamRefusalTerminalKey, true)
+	logger.LogWarn(c, fmt.Sprintf(
+		"upstream refusal ends request without retry (channel #%d, account #%d, attempt %d, source=%s, upstream_status=%d, response_started=%t)",
+		channelId,
+		common.GetContextKeyInt(c, constant.ContextKeyUpstreamAccountId),
+		attempt,
+		source,
+		apiErr.StatusCode,
+		c.Writer.Written(),
+	))
+	return normalized, true
+}
+
+const upstreamRefusalTerminalKey = "upstream_refusal_terminal"
+
+func isUpstreamRefusalTerminal(c *gin.Context) bool {
+	return c.GetBool(upstreamRefusalTerminalKey)
+}
+
+// resetEventStreamHeadersForJSONError replaces SSE headers that a stream
+// handler staged but never sent, so an error answered before the first frame
+// is a plain JSON response.
+func resetEventStreamHeadersForJSONError(c *gin.Context) {
+	header := c.Writer.Header()
+	if !strings.HasPrefix(header.Get("Content-Type"), "text/event-stream") {
+		return
+	}
+	header.Set("Content-Type", "application/json; charset=utf-8")
+	header.Del("Cache-Control")
+	header.Del("Connection")
+	header.Del("Transfer-Encoding")
+	header.Del("X-Accel-Buffering")
+}
+
 func writeClaudeRelayError(c *gin.Context, failure *types.NewAPIError) {
 	payload := gin.H{"type": "error", "error": failure.ToClaudeError()}
-	if failure.GetErrorCode() == "managed_partial_response" && c.Writer.Written() {
+	refusal := isUpstreamRefusalTerminal(c)
+	terminalStream := failure.GetErrorCode() == "managed_partial_response" || refusal
+	if terminalStream && c.Writer.Written() {
 		data, err := common.Marshal(payload)
 		if err != nil {
 			return
 		}
 		helper.ClaudeChunkData(c, dto.ClaudeResponse{Type: "error"}, string(data))
 		return
+	}
+	if refusal {
+		resetEventStreamHeadersForJSONError(c)
 	}
 	c.JSON(failure.StatusCode, payload)
 }

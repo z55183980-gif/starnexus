@@ -201,6 +201,7 @@ func InitOptionMap() {
 	common.OptionMap["SensitiveWords"] = setting.SensitiveWordsToString()
 	common.OptionMap[setting.ContentModerationOptionKey] = setting.ContentModerationConfig2JsonString()
 	common.OptionMap[setting.SecurityAuditBanOptionKey] = setting.SecurityAuditBanConfig2JsonString()
+	common.OptionMap[setting.UpstreamRefusalNoRetryOptionKey] = setting.UpstreamRefusalNoRetryConfig2JsonString()
 	common.OptionMap["StreamCacheQueueLength"] = strconv.Itoa(setting.StreamCacheQueueLength)
 	common.OptionMap["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	common.OptionMap["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
@@ -327,6 +328,16 @@ func normalizeOptionValueForPersist(key, value string) (string, error) {
 		return setting.ContentModerationConfigJSON(cfg), nil
 	case setting.SecurityAuditBanOptionKey:
 		cfg, err := setting.ParseSecurityAuditBanConfigJSON(value)
+		if err != nil {
+			return "", err
+		}
+		data, err := common.Marshal(cfg)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	case setting.UpstreamRefusalNoRetryOptionKey:
+		cfg, err := setting.ParseUpstreamRefusalNoRetryConfigJSON(value)
 		if err != nil {
 			return "", err
 		}
@@ -701,6 +712,11 @@ func updateOptionMap(key string, value string) (err error) {
 		err = setting.UpdateSecurityAuditBanConfigByJsonString(value)
 		if err == nil {
 			common.OptionMap[setting.SecurityAuditBanOptionKey] = setting.SecurityAuditBanConfig2JsonString()
+		}
+	case setting.UpstreamRefusalNoRetryOptionKey:
+		err = setting.UpdateUpstreamRefusalNoRetryConfigByJsonString(value)
+		if err == nil {
+			common.OptionMap[setting.UpstreamRefusalNoRetryOptionKey] = setting.UpstreamRefusalNoRetryConfig2JsonString()
 		}
 	case "AutomaticDisableKeywords":
 		operation_setting.AutomaticDisableKeywordsFromString(value)

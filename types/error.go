@@ -89,6 +89,10 @@ const (
 	ErrorCodeContentModerationUnavailable ErrorCode = "content_moderation_unavailable"
 	ErrorCodeCyberPolicy                  ErrorCode = "cyber_policy"
 	ErrorCodeAPIAccessSuspended           ErrorCode = "api_access_suspended"
+	// ErrorCodeUpstreamRefusal is an explicit model refusal relayed by a trusted
+	// upstream gateway. It is a content outcome, not an account, channel or
+	// policy-enforcement signal, so it never reuses cyber_policy.
+	ErrorCodeUpstreamRefusal ErrorCode = "upstream_refusal_error"
 
 	// sql error
 	ErrorCodeQueryDataError  ErrorCode = "query_data_error"
