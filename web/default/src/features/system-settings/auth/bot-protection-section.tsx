@@ -21,6 +21,7 @@ import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useTranslation } from 'react-i18next'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -46,10 +47,12 @@ type BotProtectionFormValues = z.infer<typeof botProtectionSchema>
 
 type BotProtectionSectionProps = {
   defaultValues: BotProtectionFormValues
+  secretKeyConfigured?: boolean
 }
 
 export function BotProtectionSection({
   defaultValues,
+  secretKeyConfigured = false,
 }: BotProtectionSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -64,12 +67,21 @@ export function BotProtectionSection({
   }, [defaultValues, form])
 
   const onSubmit = async (data: BotProtectionFormValues) => {
-    const updates = Object.entries(data).filter(
-      ([key, value]) =>
-        value !== defaultValues[key as keyof BotProtectionFormValues]
-    )
+    const orderedKeys: (keyof BotProtectionFormValues)[] = [
+      'TurnstileSiteKey',
+      'TurnstileSecretKey',
+      'TurnstileCheckEnabled',
+    ]
 
-    for (const [key, value] of updates) {
+    for (const key of orderedKeys) {
+      const rawVal = data[key]
+      const value = typeof rawVal === 'string' ? rawVal.trim() : rawVal
+      if (key === 'TurnstileSecretKey' && !value) {
+        continue
+      }
+      if (value === defaultValues[key]) {
+        continue
+      }
       await updateOption.mutateAsync({ key, value: value ?? '' })
     }
   }
@@ -135,11 +147,25 @@ export function BotProtectionSection({
             name='TurnstileSecretKey'
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{t('Secret Key')}</FormLabel>
+                <div className='flex items-center gap-2'>
+                  <FormLabel>{t('Secret Key')}</FormLabel>
+                  <Badge
+                    variant={secretKeyConfigured ? 'secondary' : 'outline'}
+                    className='text-xs font-normal'
+                  >
+                    {secretKeyConfigured
+                      ? t('Configured')
+                      : t('Not configured')}
+                  </Badge>
+                </div>
                 <FormControl>
                   <Input
                     type='password'
-                    placeholder={t('Your Turnstile secret key')}
+                    placeholder={
+                      secretKeyConfigured
+                        ? t('Leave blank unless rotating the secret')
+                        : t('Your Turnstile secret key')
+                    }
                     autoComplete='new-password'
                     {...field}
                   />

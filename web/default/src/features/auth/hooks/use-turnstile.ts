@@ -16,9 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import i18next from 'i18next'
 import { toast } from 'sonner'
+import type { TurnstileInstance } from '@/components/turnstile'
 import { useStatus } from '@/hooks/use-status'
 
 /**
@@ -26,31 +27,67 @@ import { useStatus } from '@/hooks/use-status'
  */
 export function useTurnstile() {
   const { status } = useStatus()
-  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileToken, setTurnstileTokenState] = useState('')
+  const [turnstileError, setTurnstileError] = useState<string | null>(null)
+  const turnstileRef = useRef<TurnstileInstance | null>(null)
 
   const isTurnstileEnabled = !!(
     status?.turnstile_check && status?.turnstile_site_key
   )
   const turnstileSiteKey = status?.turnstile_site_key || ''
 
+  const setTurnstileToken = useCallback((token: string) => {
+    setTurnstileTokenState(token)
+    if (token) {
+      setTurnstileError(null)
+    }
+  }, [])
+
+  const handleTurnstileExpire = useCallback(() => {
+    setTurnstileTokenState('')
+  }, [])
+
+  const handleTurnstileError = useCallback((errorCode?: string) => {
+    setTurnstileTokenState('')
+    setTurnstileError(errorCode || 'error')
+  }, [])
+
+  const resetTurnstile = useCallback(() => {
+    setTurnstileTokenState('')
+    setTurnstileError(null)
+    turnstileRef.current?.reset()
+  }, [])
+
   /**
    * Validate if turnstile is ready when required
    */
-  const validateTurnstile = (): boolean => {
+  const validateTurnstile = useCallback((): boolean => {
     if (isTurnstileEnabled && !turnstileToken) {
+      if (turnstileError) {
+        resetTurnstile()
+        toast.error(
+          i18next.t('Human verification failed to load, retrying...')
+        )
+        return false
+      }
       toast.info(
         i18next.t('Please wait a moment, human check is initializing...')
       )
       return false
     }
     return true
-  }
+  }, [isTurnstileEnabled, resetTurnstile, turnstileError, turnstileToken])
 
   return {
     isTurnstileEnabled,
     turnstileSiteKey,
     turnstileToken,
+    turnstileError,
+    turnstileRef,
     setTurnstileToken,
+    handleTurnstileExpire,
+    handleTurnstileError,
+    resetTurnstile,
     validateTurnstile,
   }
 }

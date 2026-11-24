@@ -137,7 +137,8 @@ func GetOptions(c *gin.Context) {
 			strings.HasSuffix(k, "Key") ||
 			strings.HasSuffix(k, "secret") ||
 			strings.HasSuffix(k, "api_key")
-		if isSensitiveKey {
+		// TurnstileSiteKey is a public client-side widget identifier (also exposed in /api/status).
+		if isSensitiveKey && k != "TurnstileSiteKey" {
 			continue
 		}
 		if k == setting.ContentModerationOptionKey {
@@ -252,11 +253,13 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "TurnstileSiteKey", "TurnstileSecretKey":
+		option.Value = strings.TrimSpace(option.Value.(string))
 	case "TurnstileCheckEnabled":
-		if option.Value == "true" && common.TurnstileSiteKey == "" {
+		if option.Value == "true" && (strings.TrimSpace(common.TurnstileSiteKey) == "" || strings.TrimSpace(common.TurnstileSecretKey) == "") {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"message": "无法启用 Turnstile 校验，请先填入 Turnstile 校验相关配置信息！",
+				"message": "无法启用 Turnstile 校验，请先填入 Turnstile Site Key 和 Secret Key！",
 			})
 
 			return

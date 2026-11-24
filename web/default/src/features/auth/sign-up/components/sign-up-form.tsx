@@ -76,7 +76,11 @@ export function SignUpForm({
     isTurnstileEnabled,
     turnstileSiteKey,
     turnstileToken,
+    turnstileRef,
     setTurnstileToken,
+    handleTurnstileExpire,
+    handleTurnstileError,
+    resetTurnstile,
     validateTurnstile,
   } = useTurnstile()
   const { redirectToLogin, handleLoginSuccess } = useAuthRedirect()
@@ -88,6 +92,7 @@ export function SignUpForm({
   } = useEmailVerification({
     turnstileToken,
     validateTurnstile,
+    resetTurnstile,
   })
   const initialAffiliateCode = useMemo(() => getAffiliateCode(), [])
 
@@ -180,9 +185,16 @@ export function SignUpForm({
 
         toast.success(t('Account created! Please sign in'))
         redirectToLogin()
+        return
+      }
+      if (isTurnstileEnabled) {
+        resetTurnstile()
       }
     } catch (_error) {
       // Errors are handled by global interceptor
+      if (isTurnstileEnabled) {
+        resetTurnstile()
+      }
     } finally {
       setIsLoading(false)
     }
@@ -363,8 +375,11 @@ export function SignUpForm({
         {isTurnstileEnabled && (
           <div className='mt-2'>
             <Turnstile
+              ref={turnstileRef}
               siteKey={turnstileSiteKey}
               onVerify={setTurnstileToken}
+              onExpire={handleTurnstileExpire}
+              onError={handleTurnstileError}
             />
           </div>
         )}

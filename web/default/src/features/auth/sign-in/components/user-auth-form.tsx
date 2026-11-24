@@ -85,7 +85,11 @@ export function UserAuthForm({
     isTurnstileEnabled,
     turnstileSiteKey,
     turnstileToken,
+    turnstileRef,
     setTurnstileToken,
+    handleTurnstileExpire,
+    handleTurnstileError,
+    resetTurnstile,
     validateTurnstile,
   } = useTurnstile()
   const { handleLoginSuccess, redirectTo2FA } = useAuthRedirect()
@@ -159,9 +163,16 @@ export function UserAuthForm({
 
         await handleLoginSuccess(res.data as { id?: number } | null, redirectTo)
         toast.success(t('Welcome back!'))
+        return
+      }
+      if (isTurnstileEnabled) {
+        resetTurnstile()
       }
     } catch (_error) {
       // Errors are handled by global interceptor
+      if (isTurnstileEnabled) {
+        resetTurnstile()
+      }
     } finally {
       setIsLoading(false)
     }
@@ -340,8 +351,11 @@ export function UserAuthForm({
         {isTurnstileEnabled && (
           <div className='mt-2'>
             <Turnstile
+              ref={turnstileRef}
               siteKey={turnstileSiteKey}
               onVerify={setTurnstileToken}
+              onExpire={handleTurnstileExpire}
+              onError={handleTurnstileError}
             />
           </div>
         )}

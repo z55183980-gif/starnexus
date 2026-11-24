@@ -16,61 +16,193 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useRef } from 'react'
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+} from 'react'
+
+interface TurnstileApi {
+  render: (element: HTMLElement, options: Record<string, unknown>) => string
+  reset?: (widgetId?: string) => void
+  remove?: (widgetId: string) => void
+}
 
 declare global {
   interface Window {
-    turnstile?: {
-      render: (element: HTMLElement, options: Record<string, unknown>) => void
-    }
+    turnstile?: TurnstileApi
   }
+}
+
+export interface TurnstileInstance {
+  reset: () => void
 }
 
 interface TurnstileProps {
   siteKey: string
   onVerify: (token: string) => void
   onExpire?: () => void
+  onError?: (errorCode?: string) => void
   className?: string
 }
 
-export function Turnstile({
-  siteKey,
-  onVerify,
-  onExpire,
-  className,
-}: TurnstileProps) {
-  const ref = useRef<HTMLDivElement | null>(null)
+const TURNSTILE_SCRIPT_ID = 'cf-turnstile'
+const TURNSTILE_SCRIPT_SRC =
+  'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
 
-  useEffect(() => {
-    const render = () => {
-      if (!ref.current || !window.turnstile) return
-      try {
-        window.turnstile.render(ref.current, {
-          sitekey: siteKey,
-          callback: (token: string) => onVerify(token),
-          'error-callback': () => onExpire?.(),
-          'expired-callback': () => onExpire?.(),
-        })
-      } catch {
-        /* empty */
+let turnstileScriptPromise: Promise<TurnstileApi> | null = null
+
+function loadTurnstileScript(): Promise<TurnstileApi> {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('Window is not available'))
+  }
+  if (window.turnstile) {
+    return Promise.resolve(window.turnstile)
+  }
+  if (turnstileScriptPromise) {
+    return turnstileScriptPromise
+  }
+
+  turnstileScriptPromise = new Promise<TurnstileApi>((resolve, reject) => {
+    let script = document.getElementById(
+      TURNSTILE_SCRIPT_ID
+    ) as HTMLScriptElement | null
+
+    const handleLoad = () => {
+      cleanup()
+      if (window.turnstile) {
+        resolve(window.turnstile)
+      } else {
+        turnstileScriptPromise = null
+        reject(new Error('Turnstile API unavailable after script load'))
       }
     }
 
-    if (window.turnstile) {
-      render()
+    const handleError = () => {
+      cleanup()
+      script?.remove()
+      turnstileScriptPromise = null
+      reject(new Error('Failed to load Cloudflare Turnstile script'))
+    }
+
+    const cleanup = () => {
+      script?.removeEventListener('load', handleLoad)
+      script?.removeEventListener('error', handleError)
+    }
+
+    if (!script) {
+      script = document.createElement('script')
+      script.id = TURNSTILE_SCRIPT_ID
+      script.src = TURNSTILE_SCRIPT_SRC
+      script.async = true
+      script.defer = true
+      script.addEventListener('load', handleLoad)
+      script.addEventListener('error', handleError)
+      document.head.appendChild(script)
       return
     }
-    const scriptId = 'cf-turnstile'
-    if (document.getElementById(scriptId)) return
-    const s = document.createElement('script')
-    s.id = scriptId
-    s.src =
-      'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
-    s.async = true
-    s.defer = true
-    s.onload = () => render()
-    document.head.appendChild(s)
-  }, [siteKey, onVerify, onExpire])
 
-  return <div ref={ref} className={className} />
+    script.addEventListener('load', handleLoad)
+    script.addEventListener('error', handleError)
+  })
+
+  return turnstileScriptPromise
 }
+
+export const Turnstile = forwardRef<TurnstileInstance, TurnstileProps>(
+  function Turnstile(
+    { siteKey, onVerify, onExpire, onError, className },
+    forwardedRef
+  ) {
+    const containerRef = useRef<HTMLDivElement | null>(null)
+    const widgetIdRef = useRef<string | null>(null)
+    const onVerifyRef = useRef(onVerify)
+    const onExpireRef = useRef(onExpire)
+    const onErrorRef = useRef(onError)
+
+    onVerifyRef.current = onVerify
+    onExpireRef.current = onExpire
+    onErrorRef.current = onError
+
+    const renderWidget = () => {
+      if (!containerRef.current || !window.turnstile || !siteKey) return
+      if (widgetIdRef.current !== null) {
+        try {
+          window.turnstile.remove?.(widgetIdRef.current)
+        } catch {
+          /* empty */
+        }
+        widgetIdRef.current = null
+      }
+      containerRef.current.innerHTML = ''
+      try {
+        widgetIdRef.current = window.turnstile.render(containerRef.current, {
+          sitekey: siteKey,
+          callback: (token: string) => onVerifyRef.current(token),
+          'expired-callback': () => onExpireRef.current?.(),
+          'error-callback': (errorCode?: unknown) => {
+            onExpireRef.current?.()
+            onErrorRef.current?.(
+              errorCode !== undefined && errorCode !== null
+                ? String(errorCode)
+                : undefined
+            )
+          },
+        })
+      } catch {
+        onErrorRef.current?.('render-failed')
+      }
+    }
+
+    useImperativeHandle(forwardedRef, () => ({
+      reset: () => {
+        if (widgetIdRef.current !== null && window.turnstile?.reset) {
+          try {
+            window.turnstile.reset(widgetIdRef.current)
+            return
+          } catch {
+            /* fall through to full re-render */
+          }
+        }
+        loadTurnstileScript()
+          .then(() => {
+            renderWidget()
+          })
+          .catch(() => {
+            onErrorRef.current?.('script-load-failed')
+          })
+      },
+    }))
+
+    useEffect(() => {
+      if (!siteKey) return
+      let cancelled = false
+
+      loadTurnstileScript()
+        .then(() => {
+          if (cancelled) return
+          renderWidget()
+        })
+        .catch(() => {
+          if (cancelled) return
+          onExpireRef.current?.()
+          onErrorRef.current?.('script-load-failed')
+        })
+
+      return () => {
+        cancelled = true
+        if (widgetIdRef.current !== null) {
+          try {
+            window.turnstile?.remove?.(widgetIdRef.current)
+          } catch {
+            /* empty */
+          }
+          widgetIdRef.current = null
+        }
+      }
+    }, [siteKey])
+
+    return <div ref={containerRef} className={className} />
+  }
+)

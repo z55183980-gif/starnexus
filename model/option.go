@@ -610,8 +610,12 @@ func updateOptionMap(key string, value string) (err error) {
 	case "TelegramBotName":
 		common.TelegramBotName = value
 	case "TurnstileSiteKey":
+		value = strings.TrimSpace(value)
+		common.OptionMap[key] = value
 		common.TurnstileSiteKey = value
 	case "TurnstileSecretKey":
+		value = strings.TrimSpace(value)
+		common.OptionMap[key] = value
 		common.TurnstileSecretKey = value
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
@@ -741,7 +745,7 @@ func updateOptionMap(key string, value string) (err error) {
 	}
 
 	switch key {
-	case "StripeApiSecret", "StripeWebhookSecret", "EpUSDTApiToken":
+	case "StripeApiSecret", "StripeWebhookSecret", "EpUSDTApiToken", "TurnstileSecretKey":
 		syncPaymentSecretConfiguredFlagsLocked()
 	}
 
@@ -757,6 +761,7 @@ func syncPaymentSecretConfiguredFlagsLocked() {
 	common.OptionMap["StripeApiSecretConfigured"] = strconv.FormatBool(isStripeApiSecretConfigured())
 	common.OptionMap["StripeWebhookSecretConfigured"] = strconv.FormatBool(strings.TrimSpace(setting.StripeWebhookSecret) != "")
 	common.OptionMap["EpUSDTApiTokenConfigured"] = strconv.FormatBool(strings.TrimSpace(setting.EpUSDTApiToken) != "")
+	common.OptionMap["TurnstileSecretKeyConfigured"] = strconv.FormatBool(strings.TrimSpace(common.TurnstileSecretKey) != "")
 }
 
 func syncPaymentSecretConfiguredFlags() {

@@ -26,6 +26,7 @@ import { EMAIL_VERIFICATION_COUNTDOWN } from '../constants'
 interface UseEmailVerificationOptions {
   turnstileToken?: string
   validateTurnstile?: () => boolean
+  resetTurnstile?: () => void
 }
 
 /**
@@ -66,6 +67,11 @@ export function useEmailVerification(options?: UseEmailVerificationOptions) {
       // Errors are handled by global interceptor
       return false
     } finally {
+      // A Turnstile token is single-use and consumed by the verification middleware
+      // regardless of downstream email validation outcome, so refresh it immediately.
+      if (options?.turnstileToken) {
+        options.resetTurnstile?.()
+      }
       setIsSending(false)
     }
   }

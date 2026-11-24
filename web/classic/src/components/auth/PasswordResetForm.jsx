@@ -45,8 +45,14 @@ const PasswordResetForm = () => {
   const [turnstileEnabled, setTurnstileEnabled] = useState(false);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState('');
   const [turnstileToken, setTurnstileToken] = useState('');
+  const [turnstileKey, setTurnstileKey] = useState(0);
   const [disableButton, setDisableButton] = useState(false);
   const [countdown, setCountdown] = useState(30);
+
+  const resetTurnstileWidget = () => {
+    setTurnstileToken('');
+    setTurnstileKey((prev) => prev + 1);
+  };
 
   const logo = getLogo();
   const systemName = getSystemName();
@@ -90,17 +96,22 @@ const PasswordResetForm = () => {
     }
     setDisableButton(true);
     setLoading(true);
-    const res = await API.get(
-      `/api/reset_password?email=${email}&turnstile=${turnstileToken}`,
-    );
-    const { success, message } = res.data;
-    if (success) {
-      showSuccess(t('重置邮件发送成功，请检查邮箱！'));
-      setInputs({ ...inputs, email: '' });
-    } else {
-      showError(message);
+    try {
+      const res = await API.get(
+        `/api/reset_password?email=${encodeURIComponent(email)}&turnstile=${turnstileToken}`,
+      );
+      const { success, message } = res.data;
+      if (success) {
+        showSuccess(t('重置邮件发送成功，请检查邮箱！'));
+        setInputs({ ...inputs, email: '' });
+      } else {
+        showError(message);
+        setDisableButton(false);
+      }
+    } finally {
+      if (turnstileEnabled) resetTurnstileWidget();
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (
@@ -176,10 +187,13 @@ const PasswordResetForm = () => {
             {turnstileEnabled && (
               <div className='flex justify-center mt-6'>
                 <Turnstile
+                  key={turnstileKey}
                   sitekey={turnstileSiteKey}
                   onVerify={(token) => {
                     setTurnstileToken(token);
                   }}
+                  onExpire={resetTurnstileWidget}
+                  onError={resetTurnstileWidget}
                 />
               </div>
             )}
